@@ -97,6 +97,14 @@ impl Config {
     pub fn service_name(profile: &str) -> String {
         format!("kronk-{}", profile)
     }
+
+    pub fn save(&self) -> Result<()> {
+        let config_path = Self::config_path()?;
+        let toml_str =
+            toml::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&config_path, &toml_str).context("Failed to write config")?;
+        Ok(())
+    }
 }
 
 impl Default for Config {

@@ -1,64 +1,108 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
-pub struct ServiceManager {
-    config_dir: PathBuf,
+/// Manage systemd user services on Linux.
+pub fn install_service(service_name: &str, exe_path: &str, args: &[String]) -> Result<()> {
+    let config_dir = systemd_user_dir()?;
+    fs::create_dir_all(&config_dir).context("Failed to create systemd user dir")?;
+
+    let args_str = args.join(" ");
+    let unit = format!(
+        "[Unit]\n\
+         Description=Kronk: {service_name}\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         ExecStart={exe_path} {args_str}\n\
+         Restart=always\n\
+         RestartSec=3\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n"
+    );
+
+    let unit_path = config_dir.join(format!("{}.service", service_name));
+    fs::write(&unit_path, unit).context("Failed to write unit file")?;
+
+    Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status()
+        .context("Failed to reload systemd")?;
+
+    Command::new("systemctl")
+        .args(["--user", "enable", service_name])
+        .status()
+        .context("Failed to enable service")?;
+
+    Ok(())
 }
 
-impl ServiceManager {
-    pub fn new() -> Self {
-        let home = dirs::home_dir().expect("Home directory not found");
-        Self {
-            config_dir: home.join(".config/systemd/user"),
-        }
+pub fn start_service(service_name: &str) -> Result<()> {
+    let status = Command::new("systemctl")
+        .args(["--user", "start", service_name])
+        .status()
+        .context("Failed to start service")?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to start service '{}'", service_name);
+    }
+    Ok(())
+}
+
+pub fn stop_service(service_name: &str) -> Result<()> {
+    let status = Command::new("systemctl")
+        .args(["--user", "stop", service_name])
+        .status()
+        .context("Failed to stop service")?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to stop service '{}'", service_name);
+    }
+    Ok(())
+}
+
+pub fn remove_service(service_name: &str) -> Result<()> {
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", service_name])
+        .status();
+
+    let _ = Command::new("systemctl")
+        .args(["--user", "disable", service_name])
+        .status();
+
+    let config_dir = systemd_user_dir()?;
+    let unit_path = config_dir.join(format!("{}.service", service_name));
+    if unit_path.exists() {
+        fs::remove_file(&unit_path).context("Failed to remove unit file")?;
     }
 
-    pub fn install(&self, name: &str) -> Result<()> {
-        fs::create_dir_all(&self.config_dir).context("Failed to create config dir")?;
-        let unit_path = self.config_dir.join(format!("{}.service", name));
-        
-        let unit = format!(
-            "[Unit]
-Description={}
-After=network.target
+    Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status()
+        .context("Failed to reload systemd")?;
 
-[Service]
-Type=simple
-ExecStart={}
-Restart=always
-RestartSec={}
+    Ok(())
+}
 
-[Install]
-WantedBy=default.target
-",
-            name,
-            std::env::current_dir()?.display(),
-            "1000"
-        );
-        
-        fs::write(&unit_path, unit).context("Failed to write unit file")?;
-        
-        Ok(())
+pub fn query_service(service_name: &str) -> Result<String> {
+    let output = Command::new("systemctl")
+        .args(["--user", "is-active", service_name])
+        .output()
+        .context("Failed to query service")?;
+
+    let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match state.as_str() {
+        "active" => Ok("RUNNING".to_string()),
+        "inactive" => Ok("STOPPED".to_string()),
+        "failed" => Ok("FAILED".to_string()),
+        _ => Ok("NOT_INSTALLED".to_string()),
     }
+}
 
-    pub fn remove(&self, name: &str) -> Result<()> {
-        let unit_path = self.config_dir.join(format!("{}.service", name));
-        if unit_path.exists() {
-            fs::remove_file(&unit_path).context("Failed to remove unit file")?;
-        }
-        Ok(())
-    }
-
-    pub fn start(&self, name: &str) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn stop(&self, name: &str) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn status(&self, name: &str) -> Result<String> {
-        Ok("unknown".to_string())
-    }
+fn systemd_user_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    Ok(PathBuf::from(home).join(".config/systemd/user"))
 }

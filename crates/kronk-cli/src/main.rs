@@ -36,6 +36,22 @@ enum Commands {
         #[arg(short, long, default_value = "default")]
         profile: String,
     },
+    /// Add a new profile from a raw command line
+    Add {
+        /// Profile name
+        name: String,
+        /// The full command: binary path followed by all arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Update an existing profile with a new command line
+    Update {
+        /// Profile name
+        name: String,
+        /// The full command: binary path followed by all arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
     /// Show status of all profiles
     Status,
     /// View or edit configuration
@@ -108,6 +124,8 @@ fn main() -> Result<()> {
             Commands::Run { profile } => cmd_run(&config, &profile).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
+            Commands::Add { name, command } => cmd_add(&config, &name, command, false),
+            Commands::Update { name, command } => cmd_add(&config, &name, command, true),
             Commands::Stop { profile } => cmd_service(&config, ServiceCommands::Stop { profile }),
             Commands::Status => cmd_status(&config).await,
             Commands::Config { command } => cmd_config(&config, command),
@@ -367,50 +385,84 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
 }
 
 fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (config, command);
-        anyhow::bail!("Service management is only supported on Windows");
-    }
+    match command {
+        ServiceCommands::Install { profile } => {
+            let (_prof, _backend) = config.resolve_profile(&profile)?;
+            let service_name = Config::service_name(&profile);
 
-    #[cfg(target_os = "windows")]
-    {
-        use kronk_core::platform::windows;
-
-        match command {
-            ServiceCommands::Install { profile } => {
-                // Validate profile exists
-                config.resolve_profile(&profile)?;
-
-                let service_name = Config::service_name(&profile);
+            #[cfg(target_os = "windows")]
+            {
                 let display_name = format!("Kronk: {}", profile);
+                kronk_core::platform::windows::install_service(&service_name, &display_name, &profile)?;
+            }
 
-                windows::install_service(&service_name, &display_name, &profile)?;
-                println!("Oh right. The service. The service for {}.", profile);
-                println!("  Installed. Auto-starts on boot.");
+            #[cfg(target_os = "linux")]
+            {
+                let args = config.build_args(prof, backend);
+                kronk_core::platform::linux::install_service(&service_name, &backend.path, &args)?;
+            }
 
-                // Start it
-                windows::start_service(&service_name)?;
-                println!("  Oh yeah, it's all coming together.");
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+            {
+                let _ = (prof, backend);
+                anyhow::bail!("Service management not supported on this platform");
             }
-            ServiceCommands::Start { profile } => {
-                let service_name = Config::service_name(&profile);
-                windows::start_service(&service_name)?;
-                println!("Pull the lever! '{}' started.", service_name);
-            }
-            ServiceCommands::Stop { profile } => {
-                let service_name = Config::service_name(&profile);
-                windows::stop_service(&service_name)?;
-                println!("Wrong lever! '{}' stopped.", service_name);
-            }
-            ServiceCommands::Remove { profile } => {
-                let service_name = Config::service_name(&profile);
-                windows::remove_service(&service_name)?;
-                println!("No touchy! '{}' removed.", service_name);
-            }
+
+            println!("Oh right. The service. The service for {}.", profile);
+            println!("  Installed. Auto-starts on boot.");
+
+            service_start_inner(&service_name)?;
+            println!("  Oh yeah, it's all coming together.");
         }
-        Ok(())
+        ServiceCommands::Start { profile } => {
+            let service_name = Config::service_name(&profile);
+            service_start_inner(&service_name)?;
+            println!("Pull the lever! '{}' started.", service_name);
+        }
+        ServiceCommands::Stop { profile } => {
+            let service_name = Config::service_name(&profile);
+            service_stop_inner(&service_name)?;
+            println!("Wrong lever! '{}' stopped.", service_name);
+        }
+        ServiceCommands::Remove { profile } => {
+            let service_name = Config::service_name(&profile);
+
+            #[cfg(target_os = "windows")]
+            kronk_core::platform::windows::remove_service(&service_name)?;
+
+            #[cfg(target_os = "linux")]
+            kronk_core::platform::linux::remove_service(&service_name)?;
+
+            println!("No touchy! '{}' removed.", service_name);
+        }
     }
+    Ok(())
+}
+
+fn service_start_inner(service_name: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    kronk_core::platform::windows::start_service(service_name)?;
+
+    #[cfg(target_os = "linux")]
+    kronk_core::platform::linux::start_service(service_name)?;
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+
+    Ok(())
+}
+
+fn service_stop_inner(service_name: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    kronk_core::platform::windows::stop_service(service_name)?;
+
+    #[cfg(target_os = "linux")]
+    kronk_core::platform::linux::stop_service(service_name)?;
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+
+    Ok(())
 }
 
 async fn cmd_status(config: &Config) -> Result<()> {
@@ -434,7 +486,12 @@ async fn cmd_status(config: &Config) -> Result<()> {
                 use kronk_core::platform::windows;
                 windows::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string())
             }
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(target_os = "linux")]
+            {
+                use kronk_core::platform::linux;
+                linux::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             {
                 let _ = &service_name;
                 "N/A".to_string()
@@ -460,6 +517,81 @@ async fn cmd_status(config: &Config) -> Result<()> {
     }
 
     println!();
+    Ok(())
+}
+
+fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {
+    use kronk_core::config::{BackendConfig, ProfileConfig};
+
+    if command.is_empty() {
+        anyhow::bail!("No command provided");
+    }
+
+    let exe_path = &command[0];
+    let args: Vec<String> = command[1..].to_vec();
+
+    // Resolve the exe to an absolute path
+    let exe_abs = std::path::Path::new(exe_path);
+    let exe_resolved = if exe_abs.is_absolute() {
+        exe_abs.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(exe_abs)
+    };
+    let exe_str = exe_resolved.to_string_lossy().to_string();
+
+    // Check if this backend path already exists
+    let mut config = config.clone();
+    let backend_name = config
+        .backends
+        .iter()
+        .find(|(_, b)| b.path == exe_str)
+        .map(|(k, _)| k.clone());
+
+    let backend_key = match backend_name {
+        Some(k) => k,
+        None => {
+            // Derive a backend name from the exe filename
+            let stem = exe_resolved
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "backend".to_string())
+                .replace('-', "_");
+
+            config.backends.insert(
+                stem.clone(),
+                BackendConfig {
+                    path: exe_str.clone(),
+                    default_args: vec![],
+                    health_check_url: Some("http://localhost:8080/health".to_string()),
+                },
+            );
+            stem
+        }
+    };
+
+    // Check for duplicate profile
+    if config.profiles.contains_key(name) && !overwrite {
+        anyhow::bail!("Profile '{}' already exists. Use `kronk update` to modify it.", name);
+    }
+
+    config.profiles.insert(
+        name.to_string(),
+        ProfileConfig {
+            backend: backend_key.clone(),
+            args,
+        },
+    );
+
+    config.save()?;
+
+    println!("Oh yeah, it's all coming together.");
+    println!();
+    println!("  Profile:  {}", name);
+    println!("  Backend:  {} ({})", backend_key, exe_str);
+    println!();
+    println!("Run it:     kronk run --profile {}", name);
+    println!("Install it: kronk service install --profile {}", name);
+
     Ok(())
 }
 
