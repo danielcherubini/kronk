@@ -82,13 +82,18 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     let models_dir = config.models_dir()?;
     // Strip -GGUF suffix from directory name (cleaner paths)
     // "Tesslate/OmniCoder-9B-GGUF" -> models_dir/Tesslate/OmniCoder-9B
-    let model_dir = repo_id.split('/').fold(models_dir.clone(), |acc, part| {
-        let clean = part
-            .strip_suffix("-GGUF")
-            .or_else(|| part.strip_suffix("-gguf"))
-            .unwrap_or(part);
-        acc.join(clean)
-    });
+    let clean_parts: Vec<&str> = repo_id
+        .split('/')
+        .map(|part| {
+            part.strip_suffix("-GGUF")
+                .or_else(|| part.strip_suffix("-gguf"))
+                .unwrap_or(part)
+        })
+        .collect();
+    let model_id = clean_parts.join("/");
+    let model_dir = clean_parts
+        .iter()
+        .fold(models_dir.clone(), |acc, part| acc.join(part));
     std::fs::create_dir_all(&model_dir)
         .with_context(|| format!("Failed to create directory: {}", model_dir.display()))?;
 
@@ -250,7 +255,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("  Create a profile:");
     println!(
         "    kronk model create my-profile --model {} --use-case coding",
-        repo_id
+        model_id
     );
 
     Ok(())
