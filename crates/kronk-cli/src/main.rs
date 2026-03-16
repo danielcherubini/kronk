@@ -667,37 +667,13 @@ async fn cmd_status(config: &Config) -> Result<()> {
     }
 
     // GPU VRAM usage
-    if let Some(vram) = get_vram_usage() {
+    if let Some(vram) = kronk_core::gpu::query_vram() {
         println!();
-        println!("  VRAM:     {} / {} MiB", vram.0, vram.1);
+        println!("  VRAM:     {} / {} MiB", vram.used_mib, vram.total_mib);
     }
 
     println!();
     Ok(())
-}
-
-fn get_vram_usage() -> Option<(u64, u64)> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = stdout.trim().split(", ").collect();
-    if parts.len() == 2 {
-        let used = parts[0].trim().parse().ok()?;
-        let total = parts[1].trim().parse().ok()?;
-        Some((used, total))
-    } else {
-        None
-    }
 }
 
 fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {

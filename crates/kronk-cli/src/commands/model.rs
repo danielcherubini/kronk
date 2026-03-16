@@ -121,7 +121,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                 model: ModelMeta {
                     name,
                     source: repo_id.to_string(),
-                    default_context_length: Some(8192),
+                    default_context_length: None, // set by interactive context prompt
                     default_gpu_layers: Some(999),
                 },
                 sampling: HashMap::new(),
@@ -153,6 +153,58 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         );
 
         println!("  Downloaded: {}", local_path.display());
+    }
+
+    // Suggest context sizes based on VRAM and model size
+    let largest_model_bytes = card
+        .quants
+        .values()
+        .filter_map(|q| q.size_bytes)
+        .max()
+        .unwrap_or(0);
+
+    if largest_model_bytes > 0 {
+        let vram = kronk_core::gpu::query_vram();
+        let suggestions =
+            kronk_core::gpu::suggest_context_sizes(largest_model_bytes, vram.as_ref());
+
+        if let Some(ref v) = vram {
+            println!();
+            println!(
+                "  GPU: {} MiB total, {} MiB available",
+                v.total_mib,
+                v.available_mib()
+            );
+            println!(
+                "  Model: ~{:.1} GiB",
+                largest_model_bytes as f64 / 1_073_741_824.0
+            );
+        }
+
+        let options: Vec<String> = suggestions.iter().map(|s| s.label.clone()).collect();
+
+        // Default to the largest context that fits
+        let default_idx = suggestions.iter().rposition(|s| s.fits).unwrap_or(2); // fall back to 8K
+
+        let selected_label = inquire::Select::new("Select context size:", options)
+            .with_starting_cursor(default_idx)
+            .with_help_message("Based on your GPU VRAM and model size")
+            .prompt()
+            .context("Context selection cancelled")?;
+
+        let selected_ctx = suggestions
+            .iter()
+            .find(|s| s.label == selected_label)
+            .map(|s| s.context_length)
+            .unwrap_or(8192);
+
+        // Apply context length to all downloaded quants
+        card.model.default_context_length = Some(selected_ctx);
+        for quant in card.quants.values_mut() {
+            quant.context_length = Some(selected_ctx);
+        }
+
+        println!("  Context: {} tokens", selected_ctx);
     }
 
     card.save(&card_path)?;

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod gpu;
 pub mod models;
 pub mod platform;
 pub mod process;
