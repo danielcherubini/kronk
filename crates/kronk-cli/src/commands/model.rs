@@ -166,8 +166,9 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         .max()
         .unwrap_or(0);
 
-    if largest_model_bytes > 0 {
-        let vram = kronk_core::gpu::query_vram();
+    let vram = kronk_core::gpu::query_vram();
+
+    let selected_ctx = if largest_model_bytes > 0 {
         let suggestions =
             kronk_core::gpu::suggest_context_sizes(largest_model_bytes, vram.as_ref());
 
@@ -187,7 +188,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         let options: Vec<String> = suggestions.iter().map(|s| s.label.clone()).collect();
 
         // Default to the largest context that fits
-        let default_idx = suggestions.iter().rposition(|s| s.fits).unwrap_or(2); // fall back to 8K
+        let default_idx = suggestions.iter().rposition(|s| s.fits).unwrap_or(2);
 
         let selected_label = inquire::Select::new("Select context size:", options)
             .with_starting_cursor(default_idx)
@@ -195,20 +196,46 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
             .prompt()
             .context("Context selection cancelled")?;
 
-        let selected_ctx = suggestions
+        suggestions
             .iter()
             .find(|s| s.label == selected_label)
             .map(|s| s.context_length)
-            .unwrap_or(8192);
+            .unwrap_or(8192)
+    } else {
+        // No file size info — show plain presets
+        println!();
+        let presets = vec![
+            "2048 (2K — minimal)".to_string(),
+            "4096 (4K — small)".to_string(),
+            "8192 (8K — standard)".to_string(),
+            "16384 (16K)".to_string(),
+            "32768 (32K)".to_string(),
+            "65536 (64K)".to_string(),
+            "100000 (100K)".to_string(),
+            "131072 (128K — max for most models)".to_string(),
+        ];
 
-        // Apply context length to all downloaded quants
-        card.model.default_context_length = Some(selected_ctx);
-        for quant in card.quants.values_mut() {
-            quant.context_length = Some(selected_ctx);
-        }
+        let selected = inquire::Select::new("Select context size:", presets)
+            .with_starting_cursor(2) // default to 8K
+            .with_help_message("Could not detect model size — choose based on your GPU")
+            .prompt()
+            .context("Context selection cancelled")?;
 
-        println!("  Context: {} tokens", selected_ctx);
+        // Parse the number from the start of the string
+        selected
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(8192)
+    };
+
+    // Apply context length to all downloaded quants
+    card.model.default_context_length = Some(selected_ctx);
+    for quant in card.quants.values_mut() {
+        quant.context_length = Some(selected_ctx);
     }
+
+    println!("  Context: {} tokens", selected_ctx);
 
     card.save(&card_path)?;
 
