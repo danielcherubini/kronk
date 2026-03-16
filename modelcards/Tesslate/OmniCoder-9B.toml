@@ -1,0 +1,51 @@
+[model]
+name = "OmniCoder-9B"
+source = "Tesslate/OmniCoder-9B-GGUF"
+default_context_length = 100000
+default_gpu_layers = 999 # sentinel: offload all layers to GPU
+
+# Recommended sampling from HuggingFace model card.
+# For agentic / tool-calling tasks, consider lower temperature (0.2-0.4).
+[sampling.chat]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+
+[sampling.coding]
+temperature = 0.4
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+
+[sampling.analysis]
+temperature = 0.3
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+
+[sampling.creative]
+temperature = 0.8
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+
+[quants.Q4_K_M]
+file = "omnicoder-9b-q4_k_m.gguf"
+size_bytes = 5_600_000_000
+context_length = 100000
+
+[quants.Q5_K_M]
+file = "omnicoder-9b-q5_k_m.gguf"
+size_bytes = 6_600_000_000
+context_length = 100000
+
+[quants.Q6_K]
+file = "omnicoder-9b-q6_k.gguf"
+size_bytes = 7_400_000_000
+context_length = 100000
+
+[quants.Q8_0]
+file = "omnicoder-9b-q8_0.gguf"
+size_bytes = 9_600_000_000
+context_length = 100000

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
-use std::process::Stdio;
 
 #[derive(Debug, Clone)]
 pub enum ProcessEvent {
@@ -11,9 +11,17 @@ pub enum ProcessEvent {
     Ready,
     Output(String),
     Crashed(String),
-    Restarting { attempt: u32, max: u32 },
+    Restarting {
+        attempt: u32,
+        max: u32,
+    },
     Stopped,
-    HealthCheck { alive: bool, healthy: bool, uptime_secs: u64, restarts: u32 },
+    HealthCheck {
+        alive: bool,
+        healthy: bool,
+        uptime_secs: u64,
+        restarts: u32,
+    },
 }
 
 pub struct ProcessSupervisor {
@@ -156,18 +164,16 @@ impl ProcessSupervisor {
                     tx.send(ProcessEvent::Stopped).ok();
                     return Ok(());
                 }
-                ExitReason::ProcessExited(status) => {
-                    match status {
-                        Ok(s) => {
-                            let msg = format!("Process exited with {}", s);
-                            tx.send(ProcessEvent::Crashed(msg)).ok();
-                        }
-                        Err(e) => {
-                            let msg = format!("Process error: {}", e);
-                            tx.send(ProcessEvent::Crashed(msg)).ok();
-                        }
+                ExitReason::ProcessExited(status) => match status {
+                    Ok(s) => {
+                        let msg = format!("Process exited with {}", s);
+                        tx.send(ProcessEvent::Crashed(msg)).ok();
                     }
-                }
+                    Err(e) => {
+                        let msg = format!("Process error: {}", e);
+                        tx.send(ProcessEvent::Crashed(msg)).ok();
+                    }
+                },
             }
 
             restart_count += 1;
@@ -180,7 +186,8 @@ impl ProcessSupervisor {
             tx.send(ProcessEvent::Restarting {
                 attempt: restart_count,
                 max: self.max_restarts,
-            }).ok();
+            })
+            .ok();
 
             tokio::time::sleep(Duration::from_millis(self.restart_delay_ms)).await;
         }

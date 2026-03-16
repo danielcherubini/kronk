@@ -2,7 +2,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use kronk_core::config::Config;
 use kronk_core::process::{ProcessEvent, ProcessSupervisor};
+use kronk_core::use_cases::SamplingParams;
+use std::collections::HashMap;
 use tokio::sync::mpsc;
+
+mod commands;
 
 #[derive(Parser, Debug)]
 #[command(name = "kronk")]
@@ -49,10 +53,99 @@ enum Commands {
     },
     /// Show status of all profiles
     Status,
+    /// Manage use-case presets for sampling parameters
+    UseCase {
+        #[command(subcommand)]
+        command: UseCaseCommands,
+    },
     /// View or edit configuration
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+    /// Manage models — pull, list, create profiles
+    Model {
+        #[command(subcommand)]
+        command: ModelCommands,
+    },
+}
+
+#[derive(Parser, Debug)]
+pub enum ModelCommands {
+    /// Pull a model from HuggingFace
+    Pull {
+        /// HuggingFace repo ID, e.g. "bartowski/OmniCoder-8B-GGUF"
+        repo: String,
+    },
+    /// List installed models
+    Ls,
+    /// Show running model processes
+    Ps,
+    /// Create a profile from an installed model
+    Create {
+        /// Profile name to create
+        name: String,
+        /// Model ID in "company/modelname" format
+        #[arg(long)]
+        model: String,
+        /// Quant to use (e.g. "Q4_K_M"). Interactive picker if omitted.
+        #[arg(long)]
+        quant: Option<String>,
+        /// Use case preset: coding, chat, analysis, creative
+        #[arg(long)]
+        use_case: Option<String>,
+        /// Backend to use. Interactive picker if omitted and multiple exist.
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Remove an installed model
+    Rm {
+        /// Model ID in "company/modelname" format
+        model: String,
+    },
+    /// Scan for untracked GGUF files and update model cards
+    Scan,
+}
+
+#[derive(Parser, Debug)]
+enum UseCaseCommands {
+    /// List all available use cases and their sampling params
+    List,
+    /// Set a profile's use case
+    Set {
+        /// Profile name
+        profile: String,
+        /// Use case name: coding, chat, analysis, creative, or a custom name
+        use_case: String,
+    },
+    /// Clear a profile's use case (remove sampling preset)
+    Clear {
+        /// Profile name
+        profile: String,
+    },
+    /// Create a custom use case with specific sampling params
+    Add {
+        /// Custom use case name
+        name: String,
+        #[arg(long)]
+        temp: Option<f64>,
+        #[arg(long)]
+        top_k: Option<u32>,
+        #[arg(long)]
+        top_p: Option<f64>,
+        #[arg(long)]
+        min_p: Option<f64>,
+        #[arg(long)]
+        presence_penalty: Option<f64>,
+        #[arg(long)]
+        frequency_penalty: Option<f64>,
+        #[arg(long)]
+        repeat_penalty: Option<f64>,
+    },
+    /// Remove a custom use case
+    Remove {
+        /// Custom use case name
+        name: String,
     },
 }
 
@@ -122,7 +215,9 @@ fn main() -> Result<()> {
             Commands::Add { name, command } => cmd_add(&config, &name, command, false),
             Commands::Update { name, command } => cmd_add(&config, &name, command, true),
             Commands::Status => cmd_status(&config).await,
+            Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
+            Commands::Model { command } => commands::model::run(&config, command).await,
         }
     })
 }
@@ -198,19 +293,20 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
     // Register the control handler
     let shutdown_sender = shutdown_tx.clone();
-    let event_handler = move |control_event| -> service_control_handler::ServiceControlHandlerResult {
-        match control_event {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                tracing::info!("Received stop/shutdown signal");
-                shutdown_sender.send(()).ok();
-                service_control_handler::ServiceControlHandlerResult::NoError
+    let event_handler =
+        move |control_event| -> service_control_handler::ServiceControlHandlerResult {
+            match control_event {
+                ServiceControl::Stop | ServiceControl::Shutdown => {
+                    tracing::info!("Received stop/shutdown signal");
+                    shutdown_sender.send(()).ok();
+                    service_control_handler::ServiceControlHandlerResult::NoError
+                }
+                ServiceControl::Interrogate => {
+                    service_control_handler::ServiceControlHandlerResult::NoError
+                }
+                _ => service_control_handler::ServiceControlHandlerResult::NotImplemented,
             }
-            ServiceControl::Interrogate => {
-                service_control_handler::ServiceControlHandlerResult::NoError
-            }
-            _ => service_control_handler::ServiceControlHandlerResult::NotImplemented,
-        }
-    };
+        };
 
     let status_handle = match service_control_handler::register(&service_name, event_handler) {
         Ok(h) => h,
@@ -260,7 +356,22 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         };
 
-        let args = config.build_args(prof, backend);
+        let card = if let Some(ref model_id) = prof.model {
+            config.models_dir().ok().and_then(|dir| {
+                kronk_core::models::ModelRegistry::new(dir)
+                    .find(model_id)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.card)
+            })
+        } else {
+            None
+        };
+        let mut args = backend.default_args.clone();
+        args.extend(prof.args.clone());
+        if let Some(sampling) = config.effective_sampling_with_card(prof, card.as_ref()) {
+            args.extend(sampling.to_args());
+        }
         let supervisor = ProcessSupervisor::new(
             backend.path.clone(),
             args,
@@ -291,7 +402,11 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         tracing::info!("Restarting backend ({}/{})", attempt, max)
                     }
                     ProcessEvent::Stopped => tracing::info!("Backend stopped"),
-                    ProcessEvent::HealthCheck { healthy, uptime_secs, .. } => {
+                    ProcessEvent::HealthCheck {
+                        healthy,
+                        uptime_secs,
+                        ..
+                    } => {
                         tracing::debug!("Health: healthy={}, uptime={}s", healthy, uptime_secs)
                     }
                 }
@@ -325,7 +440,22 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
 async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
     let (profile, backend) = config.resolve_profile(profile_name)?;
-    let args = config.build_args(profile, backend);
+
+    // Load model card if profile references a model
+    let card = if let Some(ref model_id) = profile.model {
+        let models_dir = config.models_dir()?;
+        let registry = kronk_core::models::ModelRegistry::new(models_dir);
+        registry.find(model_id)?.map(|m| m.card)
+    } else {
+        None
+    };
+
+    // Build args with 3-layer sampling merge
+    let mut args = backend.default_args.clone();
+    args.extend(profile.args.clone());
+    if let Some(sampling) = config.effective_sampling_with_card(profile, card.as_ref()) {
+        args.extend(sampling.to_args());
+    }
 
     println!("Oh yeah, it's all coming together.");
     println!();
@@ -355,9 +485,14 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
                 ProcessEvent::Output(line) => println!("[server] {}", line),
                 ProcessEvent::Crashed(msg) => eprintln!("[kronk] WRONG LEVER! {}", msg),
                 ProcessEvent::Restarting { attempt, max } => {
-                    println!("[kronk] Why do we even have that lever? Restarting ({}/{})", attempt, max)
+                    println!(
+                        "[kronk] Why do we even have that lever? Restarting ({}/{})",
+                        attempt, max
+                    )
                 }
-                ProcessEvent::Stopped => println!("[kronk] By all accounts, it doesn't make sense."),
+                ProcessEvent::Stopped => {
+                    println!("[kronk] By all accounts, it doesn't make sense.")
+                }
                 ProcessEvent::HealthCheck {
                     alive,
                     healthy,
@@ -385,12 +520,31 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
             #[cfg(target_os = "windows")]
             {
                 let display_name = format!("Kronk: {}", profile);
-                kronk_core::platform::windows::install_service(&service_name, &display_name, &profile)?;
+                kronk_core::platform::windows::install_service(
+                    &service_name,
+                    &display_name,
+                    &profile,
+                )?;
             }
 
             #[cfg(target_os = "linux")]
             {
-                let args = config.build_args(prof, backend);
+                let card = if let Some(ref model_id) = prof.model {
+                    config.models_dir().ok().and_then(|dir| {
+                        kronk_core::models::ModelRegistry::new(dir)
+                            .find(model_id)
+                            .ok()
+                            .flatten()
+                            .map(|m| m.card)
+                    })
+                } else {
+                    None
+                };
+                let mut args = backend.default_args.clone();
+                args.extend(prof.args.clone());
+                if let Some(sampling) = config.effective_sampling_with_card(prof, card.as_ref()) {
+                    args.extend(sampling.to_args());
+                }
                 kronk_core::platform::linux::install_service(&service_name, &backend.path, &args)?;
             }
 
@@ -437,7 +591,10 @@ fn service_start_inner(service_name: &str) -> Result<()> {
     kronk_core::platform::linux::start_service(service_name)?;
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+    {
+        let _ = service_name;
+        anyhow::bail!("Not supported on this platform");
+    }
 
     Ok(())
 }
@@ -450,7 +607,10 @@ fn service_stop_inner(service_name: &str) -> Result<()> {
     kronk_core::platform::linux::stop_service(service_name)?;
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+    {
+        let _ = service_name;
+        anyhow::bail!("Not supported on this platform");
+    }
 
     Ok(())
 }
@@ -518,7 +678,10 @@ async fn cmd_status(config: &Config) -> Result<()> {
 
 fn get_vram_usage() -> Option<(u64, u64)> {
     let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
         .ok()?;
 
@@ -588,7 +751,10 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
 
     // Check for duplicate profile
     if config.profiles.contains_key(name) && !overwrite {
-        anyhow::bail!("Profile '{}' already exists. Use `kronk update` to modify it.", name);
+        anyhow::bail!(
+            "Profile '{}' already exists. Use `kronk update` to modify it.",
+            name
+        );
     }
 
     config.profiles.insert(
@@ -596,6 +762,10 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
         ProfileConfig {
             backend: backend_key.clone(),
             args,
+            use_case: None,
+            sampling: None,
+            model: None,
+            quant: None,
         },
     );
 
@@ -632,4 +802,166 @@ fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
+    use kronk_core::use_cases::UseCase;
+
+    match command {
+        UseCaseCommands::List => {
+            println!("Available use cases:");
+            println!();
+            for (name, desc, uc) in UseCase::all() {
+                let params = uc.params();
+                println!("  {}:", name);
+                println!("    {}", desc);
+                println!(
+                    "    temp={:.1}  top-k={}  top-p={:.2}  min-p={:.2}  presence-penalty={:.1}",
+                    params.temperature.unwrap_or(0.0),
+                    params.top_k.unwrap_or(0),
+                    params.top_p.unwrap_or(0.0),
+                    params.min_p.unwrap_or(0.0),
+                    params.presence_penalty.unwrap_or(0.0),
+                );
+                println!();
+            }
+
+            // Show custom use cases from config
+            if let Some(custom) = &config.custom_use_cases {
+                if !custom.is_empty() {
+                    println!("Custom use cases:");
+                    println!();
+                    for (name, params) in custom {
+                        println!("  {}:", name);
+                        let args = params.to_args().join(" ");
+                        println!(
+                            "    {}",
+                            if args.is_empty() {
+                                "(default params)".to_string()
+                            } else {
+                                args
+                            }
+                        );
+                        println!();
+                    }
+                }
+            }
+
+            // Show which profiles use which use case
+            println!("Profile assignments:");
+            for (name, profile) in &config.profiles {
+                let uc_str = profile
+                    .use_case
+                    .as_ref()
+                    .map(|uc| uc.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                println!("  {} -> {}", name, uc_str);
+            }
+
+            Ok(())
+        }
+        UseCaseCommands::Set { profile, use_case } => {
+            let mut config = config.clone();
+            let prof = config
+                .profiles
+                .get_mut(&profile)
+                .with_context(|| format!("Profile '{}' not found", profile))?;
+
+            // Try built-in first
+            let uc = match use_case.as_str() {
+                "coding" => UseCase::Coding,
+                "chat" => UseCase::Chat,
+                "analysis" => UseCase::Analysis,
+                "creative" => UseCase::Creative,
+                name => {
+                    // Check if it's a known custom use case
+                    let is_custom = config
+                        .custom_use_cases
+                        .as_ref()
+                        .map(|m| m.contains_key(name))
+                        .unwrap_or(false);
+                    if !is_custom {
+                        anyhow::bail!(
+                            "Unknown use case '{}'. Use `kronk use-case list` to see available options, \
+                             or `kronk use-case add {}` to create a custom one.",
+                            name, name
+                        );
+                    }
+                    UseCase::Custom {
+                        name: name.to_string(),
+                    }
+                }
+            };
+
+            prof.use_case = Some(uc);
+            config.save()?;
+
+            println!("Oh yeah, it's all coming together.");
+            println!("  Profile '{}' now uses '{}' preset.", profile, use_case);
+
+            Ok(())
+        }
+        UseCaseCommands::Clear { profile } => {
+            let mut config = config.clone();
+            let prof = config
+                .profiles
+                .get_mut(&profile)
+                .with_context(|| format!("Profile '{}' not found", profile))?;
+
+            prof.use_case = None;
+            config.save()?;
+
+            println!("Use case cleared for profile '{}'.", profile);
+            Ok(())
+        }
+        UseCaseCommands::Add {
+            name,
+            temp,
+            top_k,
+            top_p,
+            min_p,
+            presence_penalty,
+            frequency_penalty,
+            repeat_penalty,
+        } => {
+            let mut config = config.clone();
+            let params = SamplingParams {
+                temperature: temp,
+                top_k,
+                top_p,
+                min_p,
+                presence_penalty,
+                frequency_penalty,
+                repeat_penalty,
+            };
+
+            if params.is_empty() {
+                anyhow::bail!("At least one sampling parameter is required. Example:\n  kronk use-case add my-preset --temp 0.4 --top-k 30");
+            }
+
+            let custom = config.custom_use_cases.get_or_insert_with(HashMap::new);
+            custom.insert(name.clone(), params);
+            config.save()?;
+
+            println!("Custom use case '{}' created.", name);
+            println!("Assign it: kronk use-case set <profile> {}", name);
+            Ok(())
+        }
+        UseCaseCommands::Remove { name } => {
+            let mut config = config.clone();
+            let removed = config
+                .custom_use_cases
+                .as_mut()
+                .and_then(|m| m.remove(&name))
+                .is_some();
+
+            if !removed {
+                anyhow::bail!("Custom use case '{}' not found", name);
+            }
+
+            config.save()?;
+            println!("Custom use case '{}' removed.", name);
+            Ok(())
+        }
+    }
 }

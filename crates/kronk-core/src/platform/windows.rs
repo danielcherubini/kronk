@@ -7,18 +7,12 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 /// Install kronk as a native Windows Service for the given profile.
 /// The service will run `kronk.exe service-run --profile <name>` when started.
-pub fn install_service(
-    service_name: &str,
-    display_name: &str,
-    profile: &str,
-) -> Result<()> {
+pub fn install_service(service_name: &str, display_name: &str, profile: &str) -> Result<()> {
     let exe_path = std::env::current_exe().context("Failed to get current exe path")?;
 
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CREATE_SERVICE,
-    )
-    .context("Failed to open Service Control Manager — run as Administrator")?;
+    let manager =
+        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
+            .context("Failed to open Service Control Manager — run as Administrator")?;
 
     // Remove existing service if present
     if let Ok(existing) = manager.open_service(service_name, ServiceAccess::ALL_ACCESS) {
@@ -51,7 +45,10 @@ pub fn install_service(
     };
 
     manager
-        .create_service(&service_info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
+        .create_service(
+            &service_info,
+            ServiceAccess::CHANGE_CONFIG | ServiceAccess::START,
+        )
         .context("Failed to create service — run as Administrator")?;
 
     // Add firewall rule for the server port
@@ -59,7 +56,8 @@ pub fn install_service(
 
     // Grant Interactive Users permission to start/stop the service
     // This allows the user to control the service without elevation
-    grant_user_control(service_name).ok();
+    grant_user_control(service_name)
+        .with_context(|| format!("Failed to set service permissions for '{}'", service_name))?;
 
     Ok(())
 }
@@ -82,7 +80,12 @@ fn grant_user_control(service_name: &str) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!("Failed to set service permissions: {}", stderr.trim());
+        anyhow::bail!(
+            "sc sdset {} failed (exit {}): {}",
+            service_name,
+            output.status,
+            stderr.trim()
+        );
     }
 
     Ok(())
@@ -94,15 +97,26 @@ pub fn add_firewall_rule(name: &str, port: u16) -> Result<()> {
 
     // Remove existing rule if present
     std::process::Command::new("netsh")
-        .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={}", rule_name),
+        ])
         .output()
         .ok();
 
     let status = std::process::Command::new("netsh")
         .args([
-            "advfirewall", "firewall", "add", "rule",
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
             &format!("name={}", rule_name),
-            "dir=in", "action=allow", "protocol=TCP",
+            "dir=in",
+            "action=allow",
+            "protocol=TCP",
             &format!("localport={}", port),
         ])
         .output()
@@ -117,14 +131,14 @@ pub fn add_firewall_rule(name: &str, port: u16) -> Result<()> {
 
 /// Start an installed service.
 pub fn start_service(service_name: &str) -> Result<()> {
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT,
-    )
-    .context("Failed to open Service Control Manager — run as Administrator")?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
-        .open_service(service_name, ServiceAccess::START | ServiceAccess::QUERY_STATUS)
+        .open_service(
+            service_name,
+            ServiceAccess::START | ServiceAccess::QUERY_STATUS,
+        )
         .with_context(|| format!("Service '{}' not found", service_name))?;
 
     let status = service.query_status()?;
@@ -141,14 +155,14 @@ pub fn start_service(service_name: &str) -> Result<()> {
 
 /// Stop a running service.
 pub fn stop_service(service_name: &str) -> Result<()> {
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT,
-    )
-    .context("Failed to open Service Control Manager — run as Administrator")?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
-        .open_service(service_name, ServiceAccess::STOP | ServiceAccess::QUERY_STATUS)
+        .open_service(
+            service_name,
+            ServiceAccess::STOP | ServiceAccess::QUERY_STATUS,
+        )
         .with_context(|| format!("Service '{}' not found", service_name))?;
 
     let status = service.query_status()?;
@@ -163,11 +177,8 @@ pub fn stop_service(service_name: &str) -> Result<()> {
 
 /// Remove an installed service.
 pub fn remove_service(service_name: &str) -> Result<()> {
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT,
-    )
-    .context("Failed to open Service Control Manager — run as Administrator")?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
         .open_service(service_name, ServiceAccess::STOP | ServiceAccess::DELETE)
@@ -189,7 +200,13 @@ pub fn remove_service(service_name: &str) -> Result<()> {
 pub fn remove_firewall_rule(name: &str) -> Result<()> {
     let rule_name = format!("Kronk: {}", name);
     std::process::Command::new("netsh")
-        .args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rule_name)])
+        .args([
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            &format!("name={}", rule_name),
+        ])
         .output()
         .context("Failed to run netsh")?;
     Ok(())
@@ -197,11 +214,8 @@ pub fn remove_firewall_rule(name: &str) -> Result<()> {
 
 /// Query the status of a service.
 pub fn query_service(service_name: &str) -> Result<String> {
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT,
-    )
-    .context("Failed to open Service Control Manager")?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .context("Failed to open Service Control Manager")?;
 
     match manager.open_service(service_name, ServiceAccess::QUERY_STATUS) {
         Ok(service) => {
