@@ -13,6 +13,10 @@ pub struct Config {
     pub supervisor: Supervisor,
     #[serde(default)]
     pub custom_use_cases: Option<HashMap<String, SamplingParams>>,
+    /// The directory this config was loaded from. Used to resolve models_dir
+    /// when running as a service (where %APPDATA% differs from the installing user).
+    #[serde(skip)]
+    pub loaded_from: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,18 +104,22 @@ impl Config {
 
         let config_path = config_dir.join("config.toml");
 
-        if config_path.exists() {
+        let mut config = if config_path.exists() {
             let contents =
                 fs::read_to_string(&config_path).context("Failed to read config file")?;
-            toml::from_str(&contents).context("Failed to parse config file")
+            let c: Config = toml::from_str(&contents).context("Failed to parse config file")?;
+            c
         } else {
             let default = Self::default();
             let toml_str =
                 toml::to_string_pretty(&default).context("Failed to serialize default config")?;
             fs::write(&config_path, &toml_str).context("Failed to write default config")?;
             tracing::info!("Created default config at {}", config_path.display());
-            Ok(default)
-        }
+            default
+        };
+
+        config.loaded_from = Some(config_dir.to_path_buf());
+        Ok(config)
     }
 
     pub fn resolve_profile(&self, name: &str) -> Result<(&ProfileConfig, &BackendConfig)> {
@@ -245,6 +253,8 @@ impl Config {
     pub fn models_dir(&self) -> Result<PathBuf> {
         if let Some(ref dir) = self.general.models_dir {
             Ok(PathBuf::from(dir))
+        } else if let Some(ref loaded) = self.loaded_from {
+            Ok(loaded.join("models"))
         } else {
             Ok(Self::base_dir()?.join("models"))
         }
@@ -322,6 +332,7 @@ impl Default for Config {
                 health_check_interval_ms: 5000,
             },
             custom_use_cases: None,
+            loaded_from: None,
         }
     }
 }
