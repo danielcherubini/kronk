@@ -141,15 +141,8 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         println!();
         println!("  Downloading {}...", gguf.filename);
 
-        let local_path = pull::download_gguf(repo_id, &gguf.filename, &model_dir).await?;
+        let result = pull::download_gguf(repo_id, &gguf.filename, &model_dir).await?;
 
-        let size_bytes = match std::fs::metadata(&local_path) {
-            Ok(meta) => Some(meta.len()),
-            Err(e) => {
-                tracing::warn!("Could not stat {}: {}", local_path.display(), e);
-                None
-            }
-        };
         let base_quant = gguf.quant.clone().unwrap_or_else(|| gguf.filename.clone());
         let quant_key = unique_quant_key(&card.quants, &base_quant, &gguf.filename);
 
@@ -157,12 +150,12 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
             quant_key,
             QuantInfo {
                 file: gguf.filename.clone(),
-                size_bytes,
+                size_bytes: Some(result.size_bytes),
                 context_length: None,
             },
         );
 
-        println!("  Downloaded: {}", local_path.display());
+        println!("  Downloaded: {}", result.path.display());
     }
 
     // Suggest context sizes based on VRAM and model size

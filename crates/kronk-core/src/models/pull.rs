@@ -83,14 +83,22 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
     )
 }
 
+/// Result of downloading a GGUF file.
+pub struct DownloadResult {
+    /// Local path to the file (in the model directory)
+    pub path: PathBuf,
+    /// File size in bytes (from the hf-hub cache, always accurate)
+    pub size_bytes: u64,
+}
+
 /// Download a specific GGUF file from a HuggingFace repo to the given model directory.
-/// Returns the local path to the downloaded file.
+/// Returns the local path and file size.
 /// Uses hf-hub's built-in caching + progress bar (indicatif).
 pub async fn download_gguf(
     repo_id: &str,
     filename: &str,
     dest_dir: &std::path::Path,
-) -> Result<PathBuf> {
+) -> Result<DownloadResult> {
     let api = hf_api().await?;
     let repo = api.model(repo_id.to_string());
 
@@ -100,6 +108,11 @@ pub async fn download_gguf(
         .await
         .with_context(|| format!("Failed to download '{}' from '{}'", filename, repo_id))?;
 
+    // Get file size from the cached file (always exists after successful download)
+    let size_bytes = std::fs::metadata(&cached_path)
+        .with_context(|| format!("Failed to stat cached file: {}", cached_path.display()))?
+        .len();
+
     std::fs::create_dir_all(dest_dir)
         .with_context(|| format!("Failed to create model directory: {}", dest_dir.display()))?;
 
@@ -107,19 +120,19 @@ pub async fn download_gguf(
 
     // Check if destination already exists with matching size (already downloaded)
     if dest_path.exists() {
-        if let (Ok(cached_meta), Ok(dest_meta)) = (
-            std::fs::metadata(&cached_path),
-            std::fs::metadata(&dest_path),
-        ) {
-            if cached_meta.len() == dest_meta.len() {
-                return Ok(dest_path);
+        if let Ok(dest_meta) = std::fs::metadata(&dest_path) {
+            if dest_meta.len() == size_bytes {
+                return Ok(DownloadResult {
+                    path: dest_path,
+                    size_bytes,
+                });
             }
         }
         // Size mismatch — remove stale file before re-linking
         std::fs::remove_file(&dest_path).ok();
     }
 
-    // Try symlink first (Windows), then hard link, then copy as fallback
+    // Try hard link first (same filesystem = instant, no extra space)
     let linked = std::fs::hard_link(&cached_path, &dest_path).is_ok();
 
     if !linked || !dest_path.exists() {
@@ -145,7 +158,10 @@ pub async fn download_gguf(
         );
     }
 
-    Ok(dest_path)
+    Ok(DownloadResult {
+        path: dest_path,
+        size_bytes,
+    })
 }
 
 const MODELCARDS_BASE_URL: &str =
