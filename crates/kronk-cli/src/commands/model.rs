@@ -80,7 +80,11 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     }
 
     let models_dir = config.models_dir()?;
-    let model_dir = models_dir.join(repo_id);
+    // Split repo_id into components so path separators are correct on Windows
+    // "Tesslate/OmniCoder-9B-GGUF" -> models_dir/Tesslate/OmniCoder-9B-GGUF
+    let model_dir = repo_id
+        .split('/')
+        .fold(models_dir.clone(), |acc, part| acc.join(part));
     std::fs::create_dir_all(&model_dir)
         .with_context(|| format!("Failed to create directory: {}", model_dir.display()))?;
 
@@ -139,7 +143,13 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
 
         let local_path = pull::download_gguf(repo_id, &gguf.filename, &model_dir).await?;
 
-        let size_bytes = std::fs::metadata(&local_path).map(|m| m.len()).ok();
+        let size_bytes = match std::fs::metadata(&local_path) {
+            Ok(meta) => Some(meta.len()),
+            Err(e) => {
+                tracing::warn!("Could not stat {}: {}", local_path.display(), e);
+                None
+            }
+        };
         let base_quant = gguf.quant.clone().unwrap_or_else(|| gguf.filename.clone());
         let quant_key = unique_quant_key(&card.quants, &base_quant, &gguf.filename);
 
