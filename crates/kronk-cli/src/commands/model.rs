@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use kronk_core::config::Config;
-use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
 use kronk_core::models::pull;
+use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
 
 use crate::ModelCommands;
 
@@ -10,9 +10,12 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         ModelCommands::Pull { repo } => cmd_pull(config, &repo).await,
         ModelCommands::Ls => cmd_ls(config),
         ModelCommands::Ps => cmd_ps(config).await,
-        ModelCommands::Create { name, model, quant, use_case } => {
-            cmd_create(config, &name, &model, quant, use_case).await
-        }
+        ModelCommands::Create {
+            name,
+            model,
+            quant,
+            use_case,
+        } => cmd_create(config, &name, &model, quant, use_case).await,
         ModelCommands::Rm { model } => cmd_rm(config, &model),
         ModelCommands::Scan => cmd_scan(config),
     }
@@ -37,13 +40,11 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         })
         .collect();
 
-    let selected = inquire::MultiSelect::new(
-        "Which quants do you want to download?",
-        options.clone(),
-    )
-    .with_help_message("Space to select, Enter to confirm")
-    .prompt()
-    .context("Interactive selection cancelled")?;
+    let selected =
+        inquire::MultiSelect::new("Which quants do you want to download?", options.clone())
+            .with_help_message("Space to select, Enter to confirm")
+            .prompt()
+            .context("Interactive selection cancelled")?;
 
     if selected.is_empty() {
         println!("No files selected. Nothing to do.");
@@ -103,7 +104,10 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("  Model card saved: {}", card_path.display());
     println!();
     println!("  Create a profile:");
-    println!("    kronk model create my-profile --model {} --use-case coding", repo_id);
+    println!(
+        "    kronk model create my-profile --model {} --use-case coding",
+        repo_id
+    );
 
     Ok(())
 }
@@ -138,14 +142,17 @@ fn cmd_ls(config: &Config) -> Result<()> {
             println!("    (no quants)");
         } else {
             for (qname, qinfo) in &model.card.quants {
-                let size_str = qinfo.size_bytes
+                let size_str = qinfo
+                    .size_bytes
                     .map(format_size)
                     .unwrap_or_else(|| "?".to_string());
                 println!("    {} -- {} ({})", qname, qinfo.file, size_str);
             }
         }
 
-        let linked_profiles: Vec<&str> = config.profiles.iter()
+        let linked_profiles: Vec<&str> = config
+            .profiles
+            .iter()
             .filter(|(_, p)| p.model.as_deref() == Some(&model.id))
             .map(|(name, _)| name.as_str())
             .collect();
@@ -153,7 +160,9 @@ fn cmd_ls(config: &Config) -> Result<()> {
             println!("    profiles: {}", linked_profiles.join(", "));
         }
 
-        let untracked = registry.untracked_ggufs(&model.dir, &model.card).unwrap_or_default();
+        let untracked = registry
+            .untracked_ggufs(&model.dir, &model.card)
+            .unwrap_or_default();
         if !untracked.is_empty() {
             println!("    untracked: {}", untracked.join(", "));
         }
@@ -169,7 +178,9 @@ async fn cmd_ps(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    let model_profiles: Vec<(&str, &kronk_core::config::ProfileConfig)> = config.profiles.iter()
+    let model_profiles: Vec<(&str, &kronk_core::config::ProfileConfig)> = config
+        .profiles
+        .iter()
         .filter(|(_, p)| p.model.is_some())
         .map(|(n, p)| (n.as_str(), p))
         .collect();
@@ -187,18 +198,29 @@ async fn cmd_ps(config: &Config) -> Result<()> {
     for (name, profile) in model_profiles {
         let model_id = profile.model.as_deref().unwrap_or("?");
         let quant = profile.quant.as_deref().unwrap_or("?");
-        let use_case = profile.use_case.as_ref()
+        let use_case = profile
+            .use_case
+            .as_ref()
             .map(|uc| uc.to_string())
             .unwrap_or_else(|| "none".to_string());
 
         let service_name = Config::service_name(name);
         let service_status = {
             #[cfg(target_os = "windows")]
-            { kronk_core::platform::windows::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            {
+                kronk_core::platform::windows::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
             #[cfg(target_os = "linux")]
-            { kronk_core::platform::linux::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            {
+                kronk_core::platform::linux::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            { let _ = &service_name; "N/A".to_string() }
+            {
+                let _ = &service_name;
+                "N/A".to_string()
+            }
         };
 
         let backend = config.backends.get(&profile.backend);
@@ -207,11 +229,16 @@ async fn cmd_ps(config: &Config) -> Result<()> {
                 Ok(resp) if resp.status().is_success() => "HEALTHY",
                 _ => "DOWN",
             }
-        } else { "N/A" };
+        } else {
+            "N/A"
+        };
 
         println!();
         println!("  {}  {} / {}", name, model_id, quant);
-        println!("    use-case: {}  service: {}  health: {}", use_case, service_status, health);
+        println!(
+            "    use-case: {}  service: {}  health: {}",
+            use_case, service_status, health
+        );
     }
 
     println!();
@@ -228,14 +255,23 @@ async fn cmd_create(
     let models_dir = config.models_dir()?;
     let registry = ModelRegistry::new(models_dir);
 
-    let installed = registry.find(model_id)?
-        .with_context(|| format!("Model '{}' not found. Run `kronk model ls` to see installed models.", model_id))?;
+    let installed = registry.find(model_id)?.with_context(|| {
+        format!(
+            "Model '{}' not found. Run `kronk model ls` to see installed models.",
+            model_id
+        )
+    })?;
 
     let quant_name = match quant {
         Some(q) => {
             if !installed.card.quants.contains_key(&q) {
-                let available: Vec<&str> = installed.card.quants.keys().map(|s| s.as_str()).collect();
-                anyhow::bail!("Quant '{}' not found. Available: {}", q, available.join(", "));
+                let available: Vec<&str> =
+                    installed.card.quants.keys().map(|s| s.as_str()).collect();
+                anyhow::bail!(
+                    "Quant '{}' not found. Available: {}",
+                    q,
+                    available.join(", ")
+                );
             }
             q
         }
@@ -262,19 +298,24 @@ async fn cmd_create(
                 "chat" => UseCase::Chat,
                 "analysis" => UseCase::Analysis,
                 "creative" => UseCase::Creative,
-                custom => UseCase::Custom { name: custom.to_string() },
+                custom => UseCase::Custom {
+                    name: custom.to_string(),
+                },
             };
             Some(parsed)
         }
         None => None,
     };
 
-    let gguf_path = registry.gguf_path(model_id, &quant_name)?
+    let gguf_path = registry
+        .gguf_path(model_id, &quant_name)?
         .with_context(|| format!("GGUF file for quant '{}' not found on disk", quant_name))?;
 
     let mut args = vec![
-        "--host".to_string(), "0.0.0.0".to_string(),
-        "-m".to_string(), gguf_path.to_string_lossy().to_string(),
+        "--host".to_string(),
+        "0.0.0.0".to_string(),
+        "-m".to_string(),
+        gguf_path.to_string_lossy().to_string(),
     ];
 
     if let Some(ctx) = installed.card.context_length_for(&quant_name) {
@@ -289,10 +330,17 @@ async fn cmd_create(
 
     let mut config = config.clone();
     if config.profiles.contains_key(name) {
-        anyhow::bail!("Profile '{}' already exists. Use `kronk update` or choose a different name.", name);
+        anyhow::bail!(
+            "Profile '{}' already exists. Use `kronk update` or choose a different name.",
+            name
+        );
     }
 
-    let backend_key = config.backends.keys().next().cloned()
+    let backend_key = config
+        .backends
+        .keys()
+        .next()
+        .cloned()
         .context("No backends configured. Add one first with `kronk add`.")?;
 
     config.profiles.insert(
@@ -329,10 +377,13 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
     let models_dir = config.models_dir()?;
     let registry = ModelRegistry::new(models_dir);
 
-    let model = registry.find(model_id)?
+    let model = registry
+        .find(model_id)?
         .with_context(|| format!("Model '{}' not found.", model_id))?;
 
-    let linked_profiles: Vec<&str> = config.profiles.iter()
+    let linked_profiles: Vec<&str> = config
+        .profiles
+        .iter()
         .filter(|(_, p)| p.model.as_deref() == Some(model_id))
         .map(|(name, _)| name.as_str())
         .collect();
@@ -340,7 +391,8 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
     if !linked_profiles.is_empty() {
         anyhow::bail!(
             "Cannot remove '{}': referenced by profiles: {}. Remove those first.",
-            model_id, linked_profiles.join(", ")
+            model_id,
+            linked_profiles.join(", ")
         );
     }
 
@@ -359,7 +411,11 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
 
     // Clean up empty parent dir
     if let Some(parent) = model.dir.parent() {
-        if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+        if parent
+            .read_dir()
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false)
+        {
             let _ = std::fs::remove_dir(parent);
         }
     }
@@ -379,18 +435,25 @@ fn cmd_scan(config: &Config) -> Result<()> {
     for model in &models {
         let untracked = registry.untracked_ggufs(&model.dir, &model.card)?;
         if !untracked.is_empty() {
-            println!("  {} -- found {} untracked GGUF file(s):", model.id, untracked.len());
+            println!(
+                "  {} -- found {} untracked GGUF file(s):",
+                model.id,
+                untracked.len()
+            );
             let mut card = model.card.clone();
             for filename in &untracked {
                 let quant = pull::infer_quant_from_filename(filename)
                     .unwrap_or_else(|| "unknown".to_string());
                 let size_bytes = model.dir.join(filename).metadata().map(|m| m.len()).ok();
                 println!("    + {} ({})", filename, quant);
-                card.quants.insert(quant, QuantInfo {
-                    file: filename.clone(),
-                    size_bytes,
-                    context_length: None,
-                });
+                card.quants.insert(
+                    quant,
+                    QuantInfo {
+                        file: filename.clone(),
+                        size_bytes,
+                        context_length: None,
+                    },
+                );
             }
             card.save(&model.dir.join("model.toml"))?;
             found_any = true;
@@ -401,14 +464,20 @@ fn cmd_scan(config: &Config) -> Result<()> {
     if models_dir.exists() {
         for company_entry in std::fs::read_dir(&models_dir)? {
             let company_entry = company_entry?;
-            if !company_entry.path().is_dir() { continue; }
+            if !company_entry.path().is_dir() {
+                continue;
+            }
             let company = company_entry.file_name().to_string_lossy().to_string();
 
             for model_entry in std::fs::read_dir(company_entry.path())? {
                 let model_entry = model_entry?;
                 let model_path = model_entry.path();
-                if !model_path.is_dir() { continue; }
-                if model_path.join("model.toml").exists() { continue; }
+                if !model_path.is_dir() {
+                    continue;
+                }
+                if model_path.join("model.toml").exists() {
+                    continue;
+                }
 
                 let gguf_files: Vec<String> = std::fs::read_dir(&model_path)?
                     .filter_map(|e| e.ok())
@@ -419,7 +488,11 @@ fn cmd_scan(config: &Config) -> Result<()> {
                 if !gguf_files.is_empty() {
                     let model_name = model_entry.file_name().to_string_lossy().to_string();
                     let model_id = format!("{}/{}", company, model_name);
-                    println!("  {} -- new model with {} GGUF file(s):", model_id, gguf_files.len());
+                    println!(
+                        "  {} -- new model with {} GGUF file(s):",
+                        model_id,
+                        gguf_files.len()
+                    );
 
                     let mut quants = std::collections::HashMap::new();
                     for filename in &gguf_files {
@@ -427,9 +500,14 @@ fn cmd_scan(config: &Config) -> Result<()> {
                             .unwrap_or_else(|| "unknown".to_string());
                         let size_bytes = model_path.join(filename).metadata().map(|m| m.len()).ok();
                         println!("    + {} ({})", filename, quant);
-                        quants.insert(quant, QuantInfo {
-                            file: filename.clone(), size_bytes, context_length: None,
-                        });
+                        quants.insert(
+                            quant,
+                            QuantInfo {
+                                file: filename.clone(),
+                                size_bytes,
+                                context_length: None,
+                            },
+                        );
                     }
 
                     let card = ModelCard {

@@ -1,6 +1,6 @@
 pub mod card;
-pub mod registry;
 pub mod pull;
+pub mod registry;
 
 pub use card::{ModelCard, ModelMeta, QuantInfo};
-pub use registry::{ModelRegistry, InstalledModel};
+pub use registry::{InstalledModel, ModelRegistry};

@@ -76,15 +76,10 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 
     // Ordered longest-first so "Q4_K_M" matches before "Q4_K"
     let quant_patterns = [
-        "IQ2_XXS", "IQ3_XXS",
-        "IQ1_S", "IQ1_M", "IQ2_XS", "IQ2_S", "IQ2_M",
-        "IQ3_XS", "IQ3_S", "IQ3_M", "IQ4_XS", "IQ4_NL",
-        "Q2_K_S", "Q3_K_S", "Q3_K_M", "Q3_K_L",
-        "Q4_K_S", "Q4_K_M", "Q4_K_L",
-        "Q5_K_S", "Q5_K_M", "Q5_K_L",
-        "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K",
-        "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q6_0", "Q8_0", "Q8_1",
-        "F16", "F32", "BF16",
+        "IQ2_XXS", "IQ3_XXS", "IQ1_S", "IQ1_M", "IQ2_XS", "IQ2_S", "IQ2_M", "IQ3_XS", "IQ3_S",
+        "IQ3_M", "IQ4_XS", "IQ4_NL", "Q2_K_S", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_K_S", "Q4_K_M",
+        "Q4_K_L", "Q5_K_S", "Q5_K_M", "Q5_K_L", "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K", "Q4_0",
+        "Q4_1", "Q5_0", "Q5_1", "Q6_0", "Q8_0", "Q8_1", "F16", "F32", "BF16",
     ];
 
     let stem_upper = stem.to_uppercase();

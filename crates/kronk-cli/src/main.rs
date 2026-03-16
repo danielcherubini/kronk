@@ -290,19 +290,20 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
     // Register the control handler
     let shutdown_sender = shutdown_tx.clone();
-    let event_handler = move |control_event| -> service_control_handler::ServiceControlHandlerResult {
-        match control_event {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                tracing::info!("Received stop/shutdown signal");
-                shutdown_sender.send(()).ok();
-                service_control_handler::ServiceControlHandlerResult::NoError
+    let event_handler =
+        move |control_event| -> service_control_handler::ServiceControlHandlerResult {
+            match control_event {
+                ServiceControl::Stop | ServiceControl::Shutdown => {
+                    tracing::info!("Received stop/shutdown signal");
+                    shutdown_sender.send(()).ok();
+                    service_control_handler::ServiceControlHandlerResult::NoError
+                }
+                ServiceControl::Interrogate => {
+                    service_control_handler::ServiceControlHandlerResult::NoError
+                }
+                _ => service_control_handler::ServiceControlHandlerResult::NotImplemented,
             }
-            ServiceControl::Interrogate => {
-                service_control_handler::ServiceControlHandlerResult::NoError
-            }
-            _ => service_control_handler::ServiceControlHandlerResult::NotImplemented,
-        }
-    };
+        };
 
     let status_handle = match service_control_handler::register(&service_name, event_handler) {
         Ok(h) => h,
@@ -398,7 +399,11 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         tracing::info!("Restarting backend ({}/{})", attempt, max)
                     }
                     ProcessEvent::Stopped => tracing::info!("Backend stopped"),
-                    ProcessEvent::HealthCheck { healthy, uptime_secs, .. } => {
+                    ProcessEvent::HealthCheck {
+                        healthy,
+                        uptime_secs,
+                        ..
+                    } => {
                         tracing::debug!("Health: healthy={}, uptime={}s", healthy, uptime_secs)
                     }
                 }
@@ -477,9 +482,14 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
                 ProcessEvent::Output(line) => println!("[server] {}", line),
                 ProcessEvent::Crashed(msg) => eprintln!("[kronk] WRONG LEVER! {}", msg),
                 ProcessEvent::Restarting { attempt, max } => {
-                    println!("[kronk] Why do we even have that lever? Restarting ({}/{})", attempt, max)
+                    println!(
+                        "[kronk] Why do we even have that lever? Restarting ({}/{})",
+                        attempt, max
+                    )
                 }
-                ProcessEvent::Stopped => println!("[kronk] By all accounts, it doesn't make sense."),
+                ProcessEvent::Stopped => {
+                    println!("[kronk] By all accounts, it doesn't make sense.")
+                }
                 ProcessEvent::HealthCheck {
                     alive,
                     healthy,
@@ -507,7 +517,11 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
             #[cfg(target_os = "windows")]
             {
                 let display_name = format!("Kronk: {}", profile);
-                kronk_core::platform::windows::install_service(&service_name, &display_name, &profile)?;
+                kronk_core::platform::windows::install_service(
+                    &service_name,
+                    &display_name,
+                    &profile,
+                )?;
             }
 
             #[cfg(target_os = "linux")]
@@ -574,7 +588,10 @@ fn service_start_inner(service_name: &str) -> Result<()> {
     kronk_core::platform::linux::start_service(service_name)?;
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+    {
+        let _ = service_name;
+        anyhow::bail!("Not supported on this platform");
+    }
 
     Ok(())
 }
@@ -587,7 +604,10 @@ fn service_stop_inner(service_name: &str) -> Result<()> {
     kronk_core::platform::linux::stop_service(service_name)?;
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    { let _ = service_name; anyhow::bail!("Not supported on this platform"); }
+    {
+        let _ = service_name;
+        anyhow::bail!("Not supported on this platform");
+    }
 
     Ok(())
 }
@@ -655,7 +675,10 @@ async fn cmd_status(config: &Config) -> Result<()> {
 
 fn get_vram_usage() -> Option<(u64, u64)> {
     let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
         .ok()?;
 
@@ -725,7 +748,10 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
 
     // Check for duplicate profile
     if config.profiles.contains_key(name) && !overwrite {
-        anyhow::bail!("Profile '{}' already exists. Use `kronk update` to modify it.", name);
+        anyhow::bail!(
+            "Profile '{}' already exists. Use `kronk update` to modify it.",
+            name
+        );
     }
 
     config.profiles.insert(
@@ -805,7 +831,14 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
                     for (name, params) in custom {
                         println!("  {}:", name);
                         let args = params.to_args().join(" ");
-                        println!("    {}", if args.is_empty() { "(default params)".to_string() } else { args });
+                        println!(
+                            "    {}",
+                            if args.is_empty() {
+                                "(default params)".to_string()
+                            } else {
+                                args
+                            }
+                        );
                         println!();
                     }
                 }
@@ -814,7 +847,9 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
             // Show which profiles use which use case
             println!("Profile assignments:");
             for (name, profile) in &config.profiles {
-                let uc_str = profile.use_case.as_ref()
+                let uc_str = profile
+                    .use_case
+                    .as_ref()
                     .map(|uc| uc.to_string())
                     .unwrap_or_else(|| "none".to_string());
                 println!("  {} -> {}", name, uc_str);
@@ -824,7 +859,9 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
         }
         UseCaseCommands::Set { profile, use_case } => {
             let mut config = config.clone();
-            let prof = config.profiles.get_mut(&profile)
+            let prof = config
+                .profiles
+                .get_mut(&profile)
                 .with_context(|| format!("Profile '{}' not found", profile))?;
 
             // Try built-in first
@@ -835,7 +872,8 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
                 "creative" => UseCase::Creative,
                 name => {
                     // Check if it's a known custom use case
-                    let is_custom = config.custom_use_cases
+                    let is_custom = config
+                        .custom_use_cases
                         .as_ref()
                         .map(|m| m.contains_key(name))
                         .unwrap_or(false);
@@ -846,7 +884,9 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
                             name, name
                         );
                     }
-                    UseCase::Custom { name: name.to_string() }
+                    UseCase::Custom {
+                        name: name.to_string(),
+                    }
                 }
             };
 
@@ -860,7 +900,9 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
         }
         UseCaseCommands::Clear { profile } => {
             let mut config = config.clone();
-            let prof = config.profiles.get_mut(&profile)
+            let prof = config
+                .profiles
+                .get_mut(&profile)
                 .with_context(|| format!("Profile '{}' not found", profile))?;
 
             prof.use_case = None;
@@ -904,7 +946,8 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
         }
         UseCaseCommands::Remove { name } => {
             let mut config = config.clone();
-            let removed = config.custom_use_cases
+            let removed = config
+                .custom_use_cases
                 .as_mut()
                 .and_then(|m| m.remove(&name))
                 .is_some();
