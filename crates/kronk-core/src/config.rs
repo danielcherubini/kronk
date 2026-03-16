@@ -57,10 +57,30 @@ pub struct Supervisor {
 }
 
 impl Config {
-    pub fn config_dir() -> Result<PathBuf> {
+    /// Base directory for all kronk data.
+    /// Windows: `%APPDATA%\kronk`
+    /// Linux: `~/.config/kronk`
+    pub fn base_dir() -> Result<PathBuf> {
         let proj = directories::ProjectDirs::from("", "", "kronk")
             .context("Failed to determine config directory")?;
-        Ok(proj.config_dir().to_path_buf())
+        // config_dir() on Windows = %APPDATA%\kronk\config, we want the parent
+        // On Linux config_dir() = ~/.config/kronk which is already the base
+        #[cfg(target_os = "windows")]
+        {
+            Ok(proj
+                .config_dir()
+                .parent()
+                .unwrap_or(proj.config_dir())
+                .to_path_buf())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(proj.config_dir().to_path_buf())
+        }
+    }
+
+    pub fn config_dir() -> Result<PathBuf> {
+        Self::base_dir()
     }
 
     pub fn config_path() -> Result<PathBuf> {
@@ -212,14 +232,14 @@ impl Config {
     }
 
     /// Resolve the models directory path.
-    /// Uses `general.models_dir` if set, otherwise defaults to `<config_dir>/models/`.
-    /// On Windows: `%APPDATA%/kronk/models/`
+    /// Uses `general.models_dir` if set, otherwise defaults to `<base_dir>/models/`.
+    /// On Windows: `%APPDATA%\kronk\models\`
     /// On Linux: `~/.config/kronk/models/`
     pub fn models_dir(&self) -> Result<PathBuf> {
         if let Some(ref dir) = self.general.models_dir {
             Ok(PathBuf::from(dir))
         } else {
-            Ok(Self::config_dir()?.join("models"))
+            Ok(Self::base_dir()?.join("models"))
         }
     }
 
