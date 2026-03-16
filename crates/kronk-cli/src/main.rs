@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use kronk_core::config::Config;
 use kronk_core::process::{ProcessEvent, ProcessSupervisor};
+use kronk_core::use_cases::SamplingParams;
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 #[derive(Parser, Debug)]
@@ -49,10 +51,57 @@ enum Commands {
     },
     /// Show status of all profiles
     Status,
+    /// Manage use-case presets for sampling parameters
+    UseCase {
+        #[command(subcommand)]
+        command: UseCaseCommands,
+    },
     /// View or edit configuration
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+}
+
+#[derive(Parser, Debug)]
+enum UseCaseCommands {
+    /// List all available use cases and their sampling params
+    List,
+    /// Set a profile's use case
+    Set {
+        /// Profile name
+        profile: String,
+        /// Use case name: coding, chat, analysis, creative, or a custom name
+        use_case: String,
+    },
+    /// Clear a profile's use case (remove sampling preset)
+    Clear {
+        /// Profile name
+        profile: String,
+    },
+    /// Create a custom use case with specific sampling params
+    Add {
+        /// Custom use case name
+        name: String,
+        #[arg(long)]
+        temp: Option<f64>,
+        #[arg(long)]
+        top_k: Option<u32>,
+        #[arg(long)]
+        top_p: Option<f64>,
+        #[arg(long)]
+        min_p: Option<f64>,
+        #[arg(long)]
+        presence_penalty: Option<f64>,
+        #[arg(long)]
+        frequency_penalty: Option<f64>,
+        #[arg(long)]
+        repeat_penalty: Option<f64>,
+    },
+    /// Remove a custom use case
+    Remove {
+        /// Custom use case name
+        name: String,
     },
 }
 
@@ -122,6 +171,7 @@ fn main() -> Result<()> {
             Commands::Add { name, command } => cmd_add(&config, &name, command, false),
             Commands::Update { name, command } => cmd_add(&config, &name, command, true),
             Commands::Status => cmd_status(&config).await,
+            Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
         }
     })
@@ -634,4 +684,149 @@ fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
+    use kronk_core::use_cases::UseCase;
+
+    match command {
+        UseCaseCommands::List => {
+            println!("Available use cases:");
+            println!();
+            for (name, desc, uc) in UseCase::all() {
+                let params = uc.params();
+                println!("  {}:", name);
+                println!("    {}", desc);
+                println!(
+                    "    temp={:.1}  top-k={}  top-p={:.2}  min-p={:.2}  presence-penalty={:.1}",
+                    params.temperature.unwrap_or(0.0),
+                    params.top_k.unwrap_or(0),
+                    params.top_p.unwrap_or(0.0),
+                    params.min_p.unwrap_or(0.0),
+                    params.presence_penalty.unwrap_or(0.0),
+                );
+                println!();
+            }
+
+            // Show custom use cases from config
+            if let Some(custom) = &config.custom_use_cases {
+                if !custom.is_empty() {
+                    println!("Custom use cases:");
+                    println!();
+                    for (name, params) in custom {
+                        println!("  {}:", name);
+                        let args = params.to_args().join(" ");
+                        println!("    {}", if args.is_empty() { "(default params)".to_string() } else { args });
+                        println!();
+                    }
+                }
+            }
+
+            // Show which profiles use which use case
+            println!("Profile assignments:");
+            for (name, profile) in &config.profiles {
+                let uc_str = profile.use_case.as_ref()
+                    .map(|uc| uc.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                println!("  {} -> {}", name, uc_str);
+            }
+
+            Ok(())
+        }
+        UseCaseCommands::Set { profile, use_case } => {
+            let mut config = config.clone();
+            let prof = config.profiles.get_mut(&profile)
+                .with_context(|| format!("Profile '{}' not found", profile))?;
+
+            // Try built-in first
+            let uc = match use_case.as_str() {
+                "coding" => UseCase::Coding,
+                "chat" => UseCase::Chat,
+                "analysis" => UseCase::Analysis,
+                "creative" => UseCase::Creative,
+                name => {
+                    // Check if it's a known custom use case
+                    let is_custom = config.custom_use_cases
+                        .as_ref()
+                        .map(|m| m.contains_key(name))
+                        .unwrap_or(false);
+                    if !is_custom {
+                        anyhow::bail!(
+                            "Unknown use case '{}'. Use `kronk use-case list` to see available options, \
+                             or `kronk use-case add {}` to create a custom one.",
+                            name, name
+                        );
+                    }
+                    UseCase::Custom { name: name.to_string() }
+                }
+            };
+
+            prof.use_case = Some(uc);
+            config.save()?;
+
+            println!("Oh yeah, it's all coming together.");
+            println!("  Profile '{}' now uses '{}' preset.", profile, use_case);
+
+            Ok(())
+        }
+        UseCaseCommands::Clear { profile } => {
+            let mut config = config.clone();
+            let prof = config.profiles.get_mut(&profile)
+                .with_context(|| format!("Profile '{}' not found", profile))?;
+
+            prof.use_case = None;
+            config.save()?;
+
+            println!("Use case cleared for profile '{}'.", profile);
+            Ok(())
+        }
+        UseCaseCommands::Add {
+            name,
+            temp,
+            top_k,
+            top_p,
+            min_p,
+            presence_penalty,
+            frequency_penalty,
+            repeat_penalty,
+        } => {
+            let mut config = config.clone();
+            let params = SamplingParams {
+                temperature: temp,
+                top_k,
+                top_p,
+                min_p,
+                presence_penalty,
+                frequency_penalty,
+                repeat_penalty,
+            };
+
+            if params.is_empty() {
+                anyhow::bail!("At least one sampling parameter is required. Example:\n  kronk use-case add my-preset --temp 0.4 --top-k 30");
+            }
+
+            let custom = config.custom_use_cases.get_or_insert_with(HashMap::new);
+            custom.insert(name.clone(), params);
+            config.save()?;
+
+            println!("Custom use case '{}' created.", name);
+            println!("Assign it: kronk use-case set <profile> {}", name);
+            Ok(())
+        }
+        UseCaseCommands::Remove { name } => {
+            let mut config = config.clone();
+            let removed = config.custom_use_cases
+                .as_mut()
+                .and_then(|m| m.remove(&name))
+                .is_some();
+
+            if !removed {
+                anyhow::bail!("Custom use case '{}' not found", name);
+            }
+
+            config.save()?;
+            println!("Custom use case '{}' removed.", name);
+            Ok(())
+        }
+    }
 }
