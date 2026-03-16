@@ -89,7 +89,14 @@ impl Config {
 
     pub fn load() -> Result<Self> {
         let config_dir = Self::config_dir()?;
-        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
+        Self::load_from(&config_dir)
+    }
+
+    /// Load config from an explicit directory path.
+    /// Used by the Windows service which runs as SYSTEM and needs
+    /// the installing user's config directory.
+    pub fn load_from(config_dir: &std::path::Path) -> Result<Self> {
+        fs::create_dir_all(config_dir).context("Failed to create config directory")?;
 
         let config_path = config_dir.join("config.toml");
 
