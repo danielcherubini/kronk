@@ -31,11 +31,6 @@ enum Commands {
         #[arg(short, long)]
         profile: String,
     },
-    /// Wrong lever! Stop a running service
-    Stop {
-        #[arg(short, long, default_value = "default")]
-        profile: String,
-    },
     /// Add a new profile from a raw command line
     Add {
         /// Profile name
@@ -126,7 +121,6 @@ fn main() -> Result<()> {
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
             Commands::Add { name, command } => cmd_add(&config, &name, command, false),
             Commands::Update { name, command } => cmd_add(&config, &name, command, true),
-            Commands::Stop { profile } => cmd_service(&config, ServiceCommands::Stop { profile }),
             Commands::Status => cmd_status(&config).await,
             Commands::Config { command } => cmd_config(&config, command),
         }
@@ -278,6 +272,13 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
         let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
 
+        // Create a tokio shutdown channel bridged from the std channel
+        let (shutdown_tx_tokio, shutdown_rx_tokio) = mpsc::channel::<()>(1);
+        tokio::task::spawn_blocking(move || {
+            let _ = shutdown_rx.recv();
+            let _ = shutdown_tx_tokio.blocking_send(());
+        });
+
         // Log events
         let logger = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -297,22 +298,12 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         });
 
-        // Run supervisor in background, wait for shutdown signal
-        let supervisor_handle = tokio::spawn(async move {
-            if let Err(e) = supervisor.run(tx).await {
-                tracing::error!("Supervisor error: {}", e);
-            }
-        });
-
-        // Wait for SCM stop signal (blocking recv on std channel, polled from async)
-        tokio::task::spawn_blocking(move || {
-            let _ = shutdown_rx.recv();
-        })
-        .await
-        .ok();
+        // Run supervisor — it will exit when shutdown signal is received
+        if let Err(e) = supervisor.run(tx, Some(shutdown_rx_tokio)).await {
+            tracing::error!("Supervisor error: {}", e);
+        }
 
         tracing::info!("Shutting down...");
-        supervisor_handle.abort();
         logger.abort();
     });
 
@@ -379,7 +370,7 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
         }
     });
 
-    supervisor.run(tx).await?;
+    supervisor.run(tx, None).await?;
     printer.abort();
     Ok(())
 }
@@ -410,9 +401,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
 
             println!("Oh right. The service. The service for {}.", profile);
             println!("  Installed. Auto-starts on boot.");
-
-            service_start_inner(&service_name)?;
-            println!("  Oh yeah, it's all coming together.");
+            println!("  Run `kronk service start` to start it now.");
         }
         ServiceCommands::Start { profile } => {
             let service_name = Config::service_name(&profile);

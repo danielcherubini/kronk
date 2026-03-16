@@ -44,7 +44,13 @@ impl ProcessSupervisor {
         }
     }
 
-    pub async fn run(&self, tx: mpsc::UnboundedSender<ProcessEvent>) -> Result<()> {
+    /// Run the supervisor. Listens for shutdown on `shutdown_rx`.
+    /// If `shutdown_rx` is None, listens for ctrl-c instead.
+    pub async fn run(
+        &self,
+        tx: mpsc::UnboundedSender<ProcessEvent>,
+        mut shutdown_rx: Option<mpsc::Receiver<()>>,
+    ) -> Result<()> {
         let mut restart_count: u32 = 0;
 
         loop {
@@ -52,6 +58,7 @@ impl ProcessSupervisor {
                 .args(&self.args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .with_context(|| format!("Failed to spawn: {}", self.exe_path))?;
 
@@ -93,10 +100,15 @@ impl ProcessSupervisor {
                 .build()
                 .unwrap_or_default();
 
-            let exit_status = loop {
+            enum ExitReason {
+                ProcessExited(std::io::Result<std::process::ExitStatus>),
+                Shutdown,
+            }
+
+            let exit_reason = loop {
                 tokio::select! {
                     status = child.wait() => {
-                        break status;
+                        break ExitReason::ProcessExited(status);
                     }
                     _ = health_interval.tick() => {
                         let alive = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
@@ -120,28 +132,41 @@ impl ProcessSupervisor {
                             restarts: restart_count,
                         }).ok();
                     }
-                    _ = tokio::signal::ctrl_c() => {
-                        tracing::info!("Received shutdown signal");
-                        child.kill().await.ok();
-                        tx.send(ProcessEvent::Stopped).ok();
-                        stdout_handle.abort();
-                        stderr_handle.abort();
-                        return Ok(());
+                    _ = async {
+                        match &mut shutdown_rx {
+                            Some(rx) => { rx.recv().await; },
+                            None => { tokio::signal::ctrl_c().await.ok(); },
+                        }
+                    } => {
+                        break ExitReason::Shutdown;
                     }
                 }
             };
 
+            // Clean up child and stream tasks
             stdout_handle.abort();
             stderr_handle.abort();
 
-            match exit_status {
-                Ok(status) => {
-                    let msg = format!("Process exited with {}", status);
-                    tx.send(ProcessEvent::Crashed(msg.clone())).ok();
+            match exit_reason {
+                ExitReason::Shutdown => {
+                    tracing::info!("Shutdown signal received, killing child process");
+                    child.kill().await.ok();
+                    // Wait for it to actually exit
+                    child.wait().await.ok();
+                    tx.send(ProcessEvent::Stopped).ok();
+                    return Ok(());
                 }
-                Err(e) => {
-                    let msg = format!("Process error: {}", e);
-                    tx.send(ProcessEvent::Crashed(msg)).ok();
+                ExitReason::ProcessExited(status) => {
+                    match status {
+                        Ok(s) => {
+                            let msg = format!("Process exited with {}", s);
+                            tx.send(ProcessEvent::Crashed(msg)).ok();
+                        }
+                        Err(e) => {
+                            let msg = format!("Process error: {}", e);
+                            tx.send(ProcessEvent::Crashed(msg)).ok();
+                        }
+                    }
                 }
             }
 

@@ -57,6 +57,34 @@ pub fn install_service(
     // Add firewall rule for the server port
     add_firewall_rule(service_name, 8080).ok();
 
+    // Grant Interactive Users permission to start/stop the service
+    // This allows the user to control the service without elevation
+    grant_user_control(service_name).ok();
+
+    Ok(())
+}
+
+/// Grant Interactive Users (IU) permission to start, stop, and query the service.
+/// This allows non-admin users to control the service after initial install.
+fn grant_user_control(service_name: &str) -> Result<()> {
+    // SDDL breakdown:
+    //   SY = Local System: full control
+    //   BA = Builtin Administrators: full control
+    //   IU = Interactive Users: start (RP), stop (WP), query status (LC), query config (LO), read (CR)
+    let sddl = format!(
+        "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;RPWPLCLOCR;;;IU)"
+    );
+
+    let output = std::process::Command::new("sc")
+        .args(["sdset", service_name, &sddl])
+        .output()
+        .context("Failed to run sc sdset")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!("Failed to set service permissions: {}", stderr.trim());
+    }
+
     Ok(())
 }
 
@@ -96,8 +124,13 @@ pub fn start_service(service_name: &str) -> Result<()> {
     .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
-        .open_service(service_name, ServiceAccess::START)
+        .open_service(service_name, ServiceAccess::START | ServiceAccess::QUERY_STATUS)
         .with_context(|| format!("Service '{}' not found", service_name))?;
+
+    let status = service.query_status()?;
+    if status.current_state == ServiceState::Running {
+        return Ok(());
+    }
 
     service
         .start::<String>(&[])
@@ -115,8 +148,13 @@ pub fn stop_service(service_name: &str) -> Result<()> {
     .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
-        .open_service(service_name, ServiceAccess::STOP)
+        .open_service(service_name, ServiceAccess::STOP | ServiceAccess::QUERY_STATUS)
         .with_context(|| format!("Service '{}' not found", service_name))?;
+
+    let status = service.query_status()?;
+    if status.current_state == ServiceState::Stopped {
+        return Ok(());
+    }
 
     service.stop().context("Failed to stop service")?;
 
