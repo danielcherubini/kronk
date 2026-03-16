@@ -34,6 +34,7 @@
 - [ ] **Multi-port support** — Per-profile port config, auto `--port` injection, per-port firewall rules ([plan](docs/superpowers/plans/2026-03-16-multi-port.md))
 - [ ] **Log viewer** — `kronk logs` with `--follow`, log rotation, ProcessSupervisor file output ([plan](docs/superpowers/plans/2026-03-16-log-viewer.md))
 - [ ] **Health check customization** — Per-profile health check URL, interval, timeout, retries ([plan](docs/superpowers/plans/2026-03-16-health-check-customization.md))
+- [ ] **Parallel downloads** — Multi-connection Range downloads for GGUF files via `hf-fetch-model` or custom chunked downloader (~3x speedup)
 - [ ] **Windows service polling** — Replace fixed sleeps with proper SCM status polling and backoff ([plan](docs/superpowers/plans/2026-03-16-windows-service-polling.md))
 - [ ] **Windows service SID ACL** — Use installer's SID instead of IU for service permissions ([plan](docs/superpowers/plans/2026-03-16-windows-service-sid.md))
 - [ ] **TUI Dashboard** — `kronk-tui` crate with ratatui. War Room view: live VRAM, tokens/sec, temperature, logs ([plan](docs/superpowers/plans/2026-03-16-tui-dashboard.md))
