@@ -23,3 +23,7 @@ anyhow = "1"
 directories = "5"
 sysinfo = "0.30"
 reqwest = { version = "0.12", default-features = false }
+hf-hub = { version = "0.5", default-features = false, features = ["tokio"] }
+inquire = "0.7"
+indicatif = "0.17"
+tempfile = "3"
