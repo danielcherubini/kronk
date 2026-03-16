@@ -119,12 +119,30 @@ pub async fn download_gguf(
         std::fs::remove_file(&dest_path).ok();
     }
 
-    // Try hard link first (same filesystem = instant, no extra space)
-    // Fall back to copy if hard link fails (cross-filesystem)
-    if std::fs::hard_link(&cached_path, &dest_path).is_err() {
+    // Try symlink first (Windows), then hard link, then copy as fallback
+    let linked = std::fs::hard_link(&cached_path, &dest_path).is_ok();
+
+    if !linked || !dest_path.exists() {
+        // Hard link failed or didn't produce a real file — fall back to copy
+        if dest_path.exists() {
+            std::fs::remove_file(&dest_path).ok();
+        }
         std::fs::copy(&cached_path, &dest_path).with_context(|| {
-            format!("Failed to copy downloaded file to {}", dest_path.display())
+            format!(
+                "Failed to copy downloaded file from {} to {}",
+                cached_path.display(),
+                dest_path.display()
+            )
         })?;
+    }
+
+    // Final sanity check
+    if !dest_path.exists() {
+        anyhow::bail!(
+            "Download completed but file not found at {}. Cache path: {}",
+            dest_path.display(),
+            cached_path.display()
+        );
     }
 
     Ok(dest_path)
