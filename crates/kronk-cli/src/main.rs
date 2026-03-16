@@ -94,6 +94,9 @@ pub enum ModelCommands {
         /// Use case preset: coding, chat, analysis, creative
         #[arg(long)]
         use_case: Option<String>,
+        /// Backend to use. Interactive picker if omitted and multiple exist.
+        #[arg(long)]
+        backend: Option<String>,
     },
     /// Remove an installed model
     Rm {

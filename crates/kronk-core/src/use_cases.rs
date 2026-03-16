@@ -104,6 +104,22 @@ impl UseCase {
     }
 }
 
+impl std::str::FromStr for UseCase {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().trim() {
+            "coding" => UseCase::Coding,
+            "chat" => UseCase::Chat,
+            "analysis" => UseCase::Analysis,
+            "creative" => UseCase::Creative,
+            other => UseCase::Custom {
+                name: other.to_string(),
+            },
+        })
+    }
+}
+
 impl fmt::Display for UseCase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

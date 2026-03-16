@@ -56,7 +56,8 @@ pub fn install_service(service_name: &str, display_name: &str, profile: &str) ->
 
     // Grant Interactive Users permission to start/stop the service
     // This allows the user to control the service without elevation
-    grant_user_control(service_name).ok();
+    grant_user_control(service_name)
+        .with_context(|| format!("Failed to set service permissions for '{}'", service_name))?;
 
     Ok(())
 }
@@ -79,7 +80,12 @@ fn grant_user_control(service_name: &str) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!("Failed to set service permissions: {}", stderr.trim());
+        anyhow::bail!(
+            "sc sdset {} failed (exit {}): {}",
+            service_name,
+            output.status,
+            stderr.trim()
+        );
     }
 
     Ok(())

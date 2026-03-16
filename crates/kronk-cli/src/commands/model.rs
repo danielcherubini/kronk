@@ -39,7 +39,8 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
             model,
             quant,
             use_case,
-        } => cmd_create(config, &name, &model, quant, use_case).await,
+            backend,
+        } => cmd_create(config, &name, &model, quant, use_case, backend).await,
         ModelCommands::Rm { model } => cmd_rm(config, &model),
         ModelCommands::Scan => cmd_scan(config),
     }
@@ -308,6 +309,7 @@ async fn cmd_create(
     model_id: &str,
     quant: Option<String>,
     use_case: Option<String>,
+    backend: Option<String>,
 ) -> Result<()> {
     let models_dir = config.models_dir()?;
     let registry = ModelRegistry::new(models_dir);
@@ -347,22 +349,8 @@ async fn cmd_create(
         }
     };
 
-    let resolved_use_case = match use_case {
-        Some(uc) => {
-            use kronk_core::use_cases::UseCase;
-            let parsed = match uc.as_str() {
-                "coding" => UseCase::Coding,
-                "chat" => UseCase::Chat,
-                "analysis" => UseCase::Analysis,
-                "creative" => UseCase::Creative,
-                custom => UseCase::Custom {
-                    name: custom.to_string(),
-                },
-            };
-            Some(parsed)
-        }
-        None => None,
-    };
+    let resolved_use_case: Option<kronk_core::use_cases::UseCase> =
+        use_case.map(|uc| uc.parse().unwrap());
 
     let gguf_path = registry
         .gguf_path(model_id, &quant_name)?
@@ -393,12 +381,29 @@ async fn cmd_create(
         );
     }
 
-    let backend_key = config
-        .backends
-        .keys()
-        .next()
-        .cloned()
-        .context("No backends configured. Add one first with `kronk add`.")?;
+    let backend_key = match backend {
+        Some(b) => {
+            if !config.backends.contains_key(&b) {
+                let available: Vec<&str> = config.backends.keys().map(|s| s.as_str()).collect();
+                anyhow::bail!(
+                    "Backend '{}' not found. Available: {}",
+                    b,
+                    available.join(", ")
+                );
+            }
+            b
+        }
+        None => {
+            let keys: Vec<String> = config.backends.keys().cloned().collect();
+            match keys.len() {
+                0 => anyhow::bail!("No backends configured. Add one first with `kronk add`."),
+                1 => keys.into_iter().next().unwrap(),
+                _ => inquire::Select::new("Select a backend:", keys)
+                    .prompt()
+                    .context("Backend selection cancelled")?,
+            }
+        }
+    };
 
     config.profiles.insert(
         name.to_string(),

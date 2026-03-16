@@ -2,6 +2,18 @@ use crate::models::card::ModelCard;
 use anyhow::{Context, Result};
 use hf_hub::api::tokio::Api;
 use std::path::PathBuf;
+use tokio::sync::OnceCell;
+
+static HF_API: OnceCell<Api> = OnceCell::const_new();
+
+/// Get or create the shared HuggingFace API client.
+async fn hf_api() -> Result<&'static Api> {
+    HF_API
+        .get_or_try_init(|| async {
+            Api::new().context("Failed to initialise HuggingFace API client")
+        })
+        .await
+}
 
 /// Information about a GGUF file in a HuggingFace repo.
 #[derive(Debug, Clone)]
@@ -19,7 +31,7 @@ pub struct RemoteGguf {
 /// Auto-resolves repos: if `repo_id` doesn't end with `-GGUF` and the initial
 /// fetch finds no GGUF files (or the repo doesn't exist), retries with `-GGUF` appended.
 pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)> {
-    let api = Api::new().context("Failed to initialise HuggingFace API client")?;
+    let api = hf_api().await?;
 
     // Try the repo_id as given first
     let candidates = if repo_id.to_uppercase().ends_with("-GGUF") {
@@ -65,7 +77,7 @@ pub async fn download_gguf(
     filename: &str,
     dest_dir: &std::path::Path,
 ) -> Result<PathBuf> {
-    let api = Api::new().context("Failed to initialise HuggingFace API client")?;
+    let api = hf_api().await?;
     let repo = api.model(repo_id.to_string());
 
     // hf-hub downloads to its own cache with built-in progress
