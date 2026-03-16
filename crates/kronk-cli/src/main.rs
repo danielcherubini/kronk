@@ -596,6 +596,8 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
         ProfileConfig {
             backend: backend_key.clone(),
             args,
+            use_case: None,
+            sampling: None,
         },
     );
 

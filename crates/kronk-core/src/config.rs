@@ -1,3 +1,4 @@
+use crate::use_cases::{SamplingParams, UseCase};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,6 +11,8 @@ pub struct Config {
     pub backends: HashMap<String, BackendConfig>,
     pub profiles: HashMap<String, ProfileConfig>,
     pub supervisor: Supervisor,
+    #[serde(default)]
+    pub custom_use_cases: Option<HashMap<String, SamplingParams>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +34,10 @@ pub struct ProfileConfig {
     pub backend: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub use_case: Option<UseCase>,
+    #[serde(default)]
+    pub sampling: Option<SamplingParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +98,35 @@ impl Config {
     pub fn build_args(&self, profile: &ProfileConfig, backend: &BackendConfig) -> Vec<String> {
         let mut args = backend.default_args.clone();
         args.extend(profile.args.clone());
+
+        // Append sampling params as CLI flags
+        if let Some(sampling) = self.effective_sampling(profile) {
+            args.extend(sampling.to_args());
+        }
+
         args
+    }
+
+    /// Resolve effective sampling for a profile, including custom use case lookup.
+    pub fn effective_sampling(&self, profile: &ProfileConfig) -> Option<SamplingParams> {
+        let base = match &profile.use_case {
+            Some(UseCase::Custom { name }) => {
+                // Look up custom use case in config
+                self.custom_use_cases
+                    .as_ref()
+                    .and_then(|m| m.get(name))
+                    .cloned()
+            }
+            Some(uc) => Some(uc.params()),
+            None => None,
+        };
+
+        match (base, &profile.sampling) {
+            (Some(base), Some(overrides)) => Some(base.merge(overrides)),
+            (Some(base), None) => Some(base),
+            (None, Some(sampling)) => Some(sampling.clone()),
+            (None, None) => None,
+        }
     }
 
     pub fn service_name(profile: &str) -> String {
@@ -100,8 +135,7 @@ impl Config {
 
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
-        let toml_str =
-            toml::to_string_pretty(self).context("Failed to serialize config")?;
+        let toml_str = toml::to_string_pretty(self).context("Failed to serialize config")?;
         fs::write(&config_path, &toml_str).context("Failed to write config")?;
         Ok(())
     }
@@ -125,15 +159,22 @@ impl Default for Config {
             ProfileConfig {
                 backend: "llama_cpp".to_string(),
                 args: vec![
-                    "--host", "0.0.0.0",
-                    "-m", "path/to/model.gguf",
-                    "-ngl", "999",
-                    "-fa", "1",
-                    "-c", "8192",
+                    "--host",
+                    "0.0.0.0",
+                    "-m",
+                    "path/to/model.gguf",
+                    "-ngl",
+                    "999",
+                    "-fa",
+                    "1",
+                    "-c",
+                    "8192",
                 ]
                 .into_iter()
                 .map(String::from)
                 .collect(),
+                use_case: Some(UseCase::Coding),
+                sampling: None,
             },
         );
 
@@ -149,6 +190,73 @@ impl Default for Config {
                 restart_delay_ms: 3000,
                 health_check_interval_ms: 5000,
             },
+            custom_use_cases: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::use_cases::{SamplingParams, UseCase};
+
+    #[test]
+    fn test_effective_sampling_use_case_only() {
+        let config = Config::default();
+        let profile = ProfileConfig {
+            backend: "test".to_string(),
+            args: vec![],
+            use_case: Some(UseCase::Coding),
+            sampling: None,
+        };
+        let params = config.effective_sampling(&profile).unwrap();
+        assert_eq!(params.temperature, Some(0.3));
+    }
+
+    #[test]
+    fn test_effective_sampling_override() {
+        let config = Config::default();
+        let profile = ProfileConfig {
+            backend: "test".to_string(),
+            args: vec![],
+            use_case: Some(UseCase::Coding),
+            sampling: Some(SamplingParams {
+                temperature: Some(0.5),
+                ..Default::default()
+            }),
+        };
+        let params = config.effective_sampling(&profile).unwrap();
+        assert_eq!(params.temperature, Some(0.5)); // override won
+        assert_eq!(params.top_k, Some(50)); // coding preset kept
+    }
+
+    #[test]
+    fn test_effective_sampling_none() {
+        let config = Config::default();
+        let profile = ProfileConfig {
+            backend: "test".to_string(),
+            args: vec![],
+            use_case: None,
+            sampling: None,
+        };
+        assert!(config.effective_sampling(&profile).is_none());
+    }
+
+    #[test]
+    fn test_build_args_includes_sampling() {
+        let config = Config::default();
+        let (profile, backend) = config.resolve_profile("default").unwrap();
+        let args = config.build_args(profile, backend);
+        // Default profile has UseCase::Coding, so should include --temp
+        assert!(args.contains(&"--temp".to_string()));
+    }
+
+    #[test]
+    fn test_config_toml_roundtrip_with_use_case() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let loaded: Config = toml::from_str(&toml_str).unwrap();
+        let profile = loaded.profiles.get("default").unwrap();
+        assert_eq!(profile.use_case, Some(UseCase::Coding));
     }
 }
