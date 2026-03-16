@@ -438,26 +438,14 @@ async fn cmd_create(
     let resolved_use_case: Option<kronk_core::use_cases::UseCase> =
         use_case.map(|uc| uc.parse().unwrap());
 
+    // Verify the GGUF file exists on disk
     let gguf_path = registry
         .gguf_path(model_id, &quant_name)?
         .with_context(|| format!("GGUF file for quant '{}' not found on disk", quant_name))?;
 
-    let mut args = vec![
-        "--host".to_string(),
-        "0.0.0.0".to_string(),
-        "-m".to_string(),
-        gguf_path.to_string_lossy().to_string(),
-    ];
-
-    if let Some(ctx) = installed.card.context_length_for(&quant_name) {
-        args.push("-c".to_string());
-        args.push(ctx.to_string());
-    }
-
-    if let Some(ngl) = installed.card.model.default_gpu_layers {
-        args.push("-ngl".to_string());
-        args.push(ngl.to_string());
-    }
+    // Only store host in profile args — model path, context, gpu layers
+    // are resolved at runtime from the model card via model/quant fields
+    let args = vec!["--host".to_string(), "0.0.0.0".to_string()];
 
     let mut config = config.clone();
     if config.profiles.contains_key(name) {

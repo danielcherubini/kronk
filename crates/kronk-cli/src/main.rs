@@ -356,22 +356,12 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         };
 
-        let card = if let Some(ref model_id) = prof.model {
-            config.models_dir().ok().and_then(|dir| {
-                kronk_core::models::ModelRegistry::new(dir)
-                    .find(model_id)
-                    .ok()
-                    .flatten()
-                    .map(|m| m.card)
-            })
-        } else {
-            None
-        };
-        let mut args = backend.default_args.clone();
-        args.extend(prof.args.clone());
-        if let Some(sampling) = config.effective_sampling_with_card(prof, card.as_ref()) {
-            args.extend(sampling.to_args());
-        }
+        let args = build_full_args(&config, prof, backend).unwrap_or_else(|e| {
+            tracing::warn!("Failed to build model args: {}", e);
+            let mut args = backend.default_args.clone();
+            args.extend(prof.args.clone());
+            args
+        });
         let supervisor = ProcessSupervisor::new(
             backend.path.clone(),
             args,
@@ -438,24 +428,63 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
 // ── CLI Commands ─────────────────────────────────────────────────────────
 
+/// Build the full argument list for a profile, resolving model card args at runtime.
+/// Merges: backend.default_args + profile.args + model card (-m, -c, -ngl) + sampling
+fn build_full_args(
+    config: &Config,
+    profile: &kronk_core::config::ProfileConfig,
+    backend: &kronk_core::config::BackendConfig,
+) -> Result<Vec<String>> {
+    let mut args = backend.default_args.clone();
+    args.extend(profile.args.clone());
+
+    // Inject model card args: -m, -c, -ngl
+    if let (Some(ref model_id), Some(ref quant_name)) = (&profile.model, &profile.quant) {
+        let models_dir = config.models_dir()?;
+        let registry = kronk_core::models::ModelRegistry::new(models_dir);
+        if let Some(installed) = registry.find(model_id)? {
+            if let Some(q) = installed.card.quants.get(quant_name) {
+                if !args.iter().any(|a| a == "-m" || a == "--model") {
+                    args.push("-m".to_string());
+                    args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
+                }
+            }
+            if let Some(ctx) = installed.card.context_length_for(quant_name) {
+                if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
+                    args.push("-c".to_string());
+                    args.push(ctx.to_string());
+                }
+            }
+            if let Some(ngl) = installed.card.model.default_gpu_layers {
+                if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
+                    args.push("-ngl".to_string());
+                    args.push(ngl.to_string());
+                }
+            }
+
+            // 3-layer sampling merge
+            if let Some(sampling) =
+                config.effective_sampling_with_card(profile, Some(&installed.card))
+            {
+                args.extend(sampling.to_args());
+            }
+
+            return Ok(args);
+        }
+    }
+
+    // No model card — just use profile sampling
+    if let Some(sampling) = config.effective_sampling_with_card(profile, None) {
+        args.extend(sampling.to_args());
+    }
+
+    Ok(args)
+}
+
 async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
     let (profile, backend) = config.resolve_profile(profile_name)?;
 
-    // Load model card if profile references a model
-    let card = if let Some(ref model_id) = profile.model {
-        let models_dir = config.models_dir()?;
-        let registry = kronk_core::models::ModelRegistry::new(models_dir);
-        registry.find(model_id)?.map(|m| m.card)
-    } else {
-        None
-    };
-
-    // Build args with 3-layer sampling merge
-    let mut args = backend.default_args.clone();
-    args.extend(profile.args.clone());
-    if let Some(sampling) = config.effective_sampling_with_card(profile, card.as_ref()) {
-        args.extend(sampling.to_args());
-    }
+    let args = build_full_args(config, profile, backend)?;
 
     println!("Oh yeah, it's all coming together.");
     println!();
@@ -529,22 +558,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let card = if let Some(ref model_id) = prof.model {
-                    config.models_dir().ok().and_then(|dir| {
-                        kronk_core::models::ModelRegistry::new(dir)
-                            .find(model_id)
-                            .ok()
-                            .flatten()
-                            .map(|m| m.card)
-                    })
-                } else {
-                    None
-                };
-                let mut args = backend.default_args.clone();
-                args.extend(prof.args.clone());
-                if let Some(sampling) = config.effective_sampling_with_card(prof, card.as_ref()) {
-                    args.extend(sampling.to_args());
-                }
+                let args = build_full_args(config, prof, backend)?;
                 kronk_core::platform::linux::install_service(&service_name, &backend.path, &args)?;
             }
 
