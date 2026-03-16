@@ -10,7 +10,7 @@ mod commands;
 
 #[derive(Parser, Debug)]
 #[command(name = "kronk")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Oh yeah, it's all coming together. -- Local AI Service Manager")]
 struct Args {
     #[command(subcommand)]
