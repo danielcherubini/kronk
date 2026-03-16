@@ -141,6 +141,6 @@ jobs:
           files: |
             windows/target/release/kronk.exe
             windows/dist/*.exe
-            linux/**/*kronk*
-            linux/**/*.deb
-            linux/**/*.rpm
+            linux/target/release/kronk
+            linux/target/debian/*.deb
+            linux/target/generate-rpm/*.rpm
