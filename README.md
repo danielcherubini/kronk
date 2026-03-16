@@ -1,225 +1,170 @@
 # KRONK
 
-> The Heavy-Lifting Henchman for Local AI
+> Oh yeah, it's all coming together.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/danielcherubini/kronk)
 
-A high-performance, Rust-native cross-platform Service Orchestrator for local AI binaries. KRONK provides a system-level management layer that allows you to run models as persistent services with a power-user TUI and optional GUI.
+A local AI service manager written in Rust. Kronk turns your `llama-server.exe` (or any LLM backend) into a proper, supervised system service with health checks, auto-restart, and easy configuration.
 
----
-
-## 🎯 Overview
-
-KRONK bridges the gap between raw local AI binaries (like `ik_llama`, `llama.cpp`) and a polished, production-ready experience. Think of it as bringing the "Ollama experience" to specialized Windows binaries with optimization flags.
-
-### What KRONK Does
-
-- **Service Wrapping**: Run `ik_llama.exe` as a persistent Windows Service that survives user logout
-- **Auto-Recovery**: Built-in process supervisor with exponential backoff restart logic
-- **Cross-Platform**: Linux (systemd) and Windows (SCM) service integration from day one
-- **Configurable Profiles**: TOML-based configuration for switching between "Speed" and "Precision" settings
-- **War Room Dashboard**: Real-time TUI showing VRAM usage, tokens/sec, and live logs
+No wrappers. No NSSM. No batch files. Just a native Windows Service or systemd unit.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-### Prerequisites
+### Install
 
-- Rust 1.75+ ([install](https://rustup.rs/))
-- A local AI binary (e.g., `ik_llama.exe`, `llama.cpp`)
-
-### Installation
+**Windows:** Download the installer from [Releases](https://github.com/danielcherubini/kronk/releases), or:
 
 ```bash
-# Clone and build
-git clone https://github.com/danielcherubini/kronk.git
-cd kronk
-cargo build --release
-
-# Run the mock backend for testing
-cargo run --bin kronk-mock -- --port 8080
-
-# Run with a backend profile
-cargo run --bin kronk -- run --backend mock
+cargo install --git https://github.com/danielcherubini/kronk kronk
 ```
 
-### Configuration
+**Linux (Debian/Ubuntu):**
+```bash
+sudo dpkg -i kronk_*.deb
+```
 
-KRONK auto-creates a config file at `~/.config/kronk/config.toml`:
+**Linux (Fedora/RHEL):**
+```bash
+sudo rpm -i kronk-*.rpm
+```
+
+### Add a profile from a command you already use
+
+```bash
+kronk add default llama-server.exe --host 0.0.0.0 -m model.gguf -ngl 999 -fa 1 -c 8192
+```
+
+Kronk figures out the backend from the binary path and saves everything to config.
+
+### Run it
+
+```bash
+# Foreground (with live output)
+kronk run
+
+# Install as a system service (run as admin / sudo)
+kronk service install
+```
+
+That's it. Kronk supervises the process, streams logs, checks health, and restarts on crash.
+
+---
+
+## CLI
+
+```
+kronk run [--profile name]           Run a profile in the foreground
+kronk stop [--profile name]          Stop a running service
+kronk status                         Show all profiles and health status
+kronk service install [--profile]    Install as a system service
+kronk service start [--profile]      Start an installed service
+kronk service stop [--profile]       Stop a running service
+kronk service remove [--profile]     Remove an installed service
+kronk add <name> <command...>        Create a profile from a raw command
+kronk update <name> <command...>     Update an existing profile
+kronk config show                    Print current config
+kronk config edit                    Open config in editor
+kronk config path                    Show config file location
+```
+
+---
+
+## Configuration
+
+Kronk auto-generates a config on first run:
+
+- **Windows:** `%APPDATA%\kronk\config\config.toml`
+- **Linux:** `~/.config/kronk/config.toml`
 
 ```toml
-[general]
-log_level = "info"
-data_dir = "~/.local/share/kronk"
+[backends.llama_cpp]
+path = "C:\\path\\to\\llama-server.exe"
+health_check_url = "http://localhost:8080/health"
 
-[backends.ik_llama]
-path = "C:\\path\\to\\ik_llama.exe"
-default_args = ["--CUDA_GRAPH_OPT=1", "-sm", "graph"]
-
-[profiles.speed]
-backend = "ik_llama"
-args = ["--quant=Q4_K_M", "-t", "8"]
-
-[profiles.precision]
-backend = "ik_llama"
-args = ["--quant=Q8_0", "-t", "4"]
+[profiles.default]
+backend = "llama_cpp"
+args = ["--host", "0.0.0.0", "-m", "model.gguf", "-ngl", "999", "-c", "8192"]
 
 [supervisor]
 restart_policy = "always"
 max_restarts = 10
-restart_delay_ms = 2000
+restart_delay_ms = 3000
 health_check_interval_ms = 5000
-hang_timeout_ms = 30000
 ```
+
+You can define multiple backends and profiles. Switch between them with `--profile`.
 
 ---
 
-## 📦 Project Structure
+## How It Works
+
+### Process Supervision
+
+Kronk spawns your LLM backend as a child process and watches it:
+
+- Streams stdout/stderr in real-time
+- Periodic HTTP health checks against your server
+- Auto-restart with configurable backoff on crash
+- Clean shutdown on ctrl-c or service stop
+
+### Service Integration
+
+- **Windows:** Native Service Control Manager via the `windows-service` crate. `kronk.exe` registers itself as a Windows Service — no NSSM or wrapper needed. Auto-starts on boot.
+- **Linux:** Generates and manages systemd user units. `kronk service install` creates the unit file, enables it, and starts the service.
+
+### Firewall (Windows)
+
+`kronk service install` automatically adds an inbound firewall rule for port 8080. `kronk service remove` cleans it up.
+
+---
+
+## Project Structure
 
 ```
 kronk/
 ├── crates/
-│   ├── kronk-core/      # Core library: config, process supervisor, platform abstraction
-│   ├── kronk-cli/       # CLI binary with clap commands
-│   └── kronk-mock/      # Testable mock LLM backend
-├── SPEC.md              # Technical specification
+│   ├── kronk-core/      # Config, process supervisor, platform abstraction
+│   ├── kronk-cli/       # CLI binary (clap)
+│   └── kronk-mock/      # Mock LLM backend for testing
+├── installer/           # Inno Setup script (Windows installer)
+├── .github/workflows/   # CI/CD release pipeline
+├── SPEC.md              # Original technical specification
+├── PLAN.md              # Development roadmap
 └── README.md
 ```
 
-### Crate Descriptions
-
-| Crate | Purpose |
-|-------|---------|
-| `kronk-core` | Shared library with config loading, process supervision, and platform traits |
-| `kronk-cli` | Command-line interface with subcommands for service management |
-| `kronk-mock` | Mock backend for testing and development |
-
 ---
 
-## 🛠️ CLI Commands
+## Building from Source
 
 ```bash
-# Run a profile
-kronk run --profile speed
-
-# Manage services
-kronk service install --profile speed
-kronk service start --profile speed
-kronk service stop --profile speed
-kronk service remove --profile speed
-
-# Check status
-kronk status
-
-# View/edit config
-kronk config show
-kronk config edit
-```
-
----
-
-## 🏗️ Architecture
-
-### Core Components
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        KRONK Orchestrator                     │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │   CLI Layer  │    │  Process     │    │   Platform   │  │
-│  │  (clap)      │◄──►│ Supervisor   │◄──►│  Abstraction │  │
-│  └──────────────┘    │ (tokio)      │    │  (systemd/   │  │
-│                      └──────────────┘    │   SCM)       │  │
-│                                         └──────────────┘  │
-│                          ┌────────────────────────┐       │
-│                          │   Config Management    │       │
-│                          │   (TOML + serde)       │       │
-│                          └────────────────────────┘       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Platform Support
-
-- **Linux**: systemd user unit files
-- **Windows**: Service Control Manager (SCM) via `windows-service` crate
-
----
-
-## 🎨 The "War Room" Experience
-
-KRONK is designed with a playful "Lever Lab" theme:
-
-- **CLI**: "Pull the lever!" motif (`kronk pull <model>`)
-- **TUI**: "War Room" dashboard with live VRAM/CPU visualization
-- **Future**: System tray integration with golden lever icon
-
----
-
-## 🔬 Under the Hood
-
-### Process Supervision
-
-The `ProcessSupervisor` uses tokio for non-blocking I/O and process management:
-
-- Spawns child processes with captured stdout/stderr
-- Health checks via periodic interval ticks
-- Auto-restart with exponential backoff
-- Event-driven architecture via `mpsc` channels
-
-### Configuration
-
-Config is loaded from `~/.config/kronk/config.toml` using `serde` and `toml`. Default config is auto-generated on first run.
-
----
-
-## 📚 Development
-
-### Building
-
-```bash
+git clone https://github.com/danielcherubini/kronk.git
+cd kronk
 cargo build --release
 ```
 
-### Testing
-
-```bash
-# Build and run mock backend
-cargo run --bin kronk-mock -- --port 8080 --crash-after 10
-
-# Test CLI
-cargo run --bin kronk -- run --backend mock
-```
-
-### Dependencies
-
-Key crates:
-- `tokio` - Async runtime and process management
-- `clap` - CLI parsing
-- `serde` / `toml` - Configuration
-- `sysinfo` - System metrics (VRAM, CPU)
-- `directories` - User directory discovery
+The binary is at `target/release/kronk.exe` (Windows) or `target/release/kronk` (Linux).
 
 ---
 
-## 🎯 Roadmap
+## Roadmap
 
-- [ ] **TUI Dashboard** (`kronk-tui` crate with ratatui)
-- [ ] **Real Backend Integration** (test with `ik_llama`)
-- [ ] **System Tray** (Windows tray icon integration)
-- [ ] **Tauri GUI** (Lightweight Windows frontend)
+See [PLAN.md](PLAN.md) for the full development plan.
+
+- [x] Native Windows Service (no NSSM)
+- [x] Linux systemd support
+- [x] Process supervision with health checks
+- [x] Profile management from CLI
+- [x] GitHub Actions CI/CD with Windows installer + .deb + .rpm
+- [ ] TUI Dashboard (ratatui)
+- [ ] System tray integration
+- [ ] Model download (`kronk pull`)
 
 ---
 
-## 📄 License
+## License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-Inspired by the simplicity and elegance of Ollama. Built in Rust for performance and safety.
