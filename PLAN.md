@@ -30,6 +30,7 @@
 
 ## Planned
 
+- [ ] **Model search** — `kronk model search <query>` to discover GGUF models from HuggingFace with download counts ([plan](docs/superpowers/plans/2026-03-16-model-search.md))
 - [ ] **Profile management** — `kronk profile` subcommand: ls, add, edit, rm with service safety checks ([plan](docs/superpowers/plans/2026-03-16-profile-management.md))
 - [ ] **Multi-port support** — Per-profile port config, auto `--port` injection, per-port firewall rules ([plan](docs/superpowers/plans/2026-03-16-multi-port.md))
 - [ ] **Log viewer** — `kronk logs` with `--follow`, log rotation, ProcessSupervisor file output ([plan](docs/superpowers/plans/2026-03-16-log-viewer.md))
