@@ -47,57 +47,6 @@ begin
   Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
 end;
 
-{ Calculate total size of a directory in bytes }
-function GetDirSize(const Dir: string): Int64;
-var
-  FindRec: TFindRec;
-  SubDir: string;
-begin
-  Result := 0;
-  if FindFirst(Dir + '\*', FindRec) then
-  begin
-    try
-      repeat
-        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
-        begin
-          SubDir := Dir + '\' + FindRec.Name;
-          if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
-            Result := Result + GetDirSize(SubDir)
-          else
-            Result := Result + FileSize64(SubDir);
-        end;
-      until not FindNext(FindRec);
-    finally
-      FindClose(FindRec);
-    end;
-  end;
-end;
-
-{ Update the estimated install size in the registry to include models directory }
-procedure UpdateInstallSize;
-var
-  DataDir: string;
-  ExeSize: Int64;
-  DataSize: Int64;
-  TotalKB: Cardinal;
-begin
-  DataDir := ExpandConstant('{userappdata}\kronk');
-  ExeSize := FileSize64(ExpandConstant('{app}\kronk.exe'));
-  DataSize := 0;
-  if DirExists(DataDir) then
-    DataSize := GetDirSize(DataDir);
-  TotalKB := Cardinal((ExeSize + DataSize) div 1024);
-  RegWriteDWordValue(HKEY_LOCAL_MACHINE,
-    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Kronk_is1',
-    'EstimatedSize', TotalKB);
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    UpdateInstallSize;
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   OrigPath: string;
@@ -121,7 +70,6 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
-    { Clean up PATH }
     AppDir := ExpandConstant('{app}');
     if RegQueryStringValue(HKEY_LOCAL_MACHINE,
       'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
