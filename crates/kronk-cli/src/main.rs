@@ -226,7 +226,7 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn service_dispatch() -> Result<()> {
-    // Extract profile name from args before SCM takes over
+    // Extract profile name and config-dir from args before SCM takes over
     let raw_args: Vec<String> = std::env::args().collect();
     let profile = raw_args
         .iter()
@@ -235,15 +235,24 @@ fn service_dispatch() -> Result<()> {
         .cloned()
         .unwrap_or_else(|| "default".to_string());
 
+    let config_dir = raw_args
+        .iter()
+        .position(|a| a == "--config-dir")
+        .and_then(|i| raw_args.get(i + 1))
+        .map(|s| std::path::PathBuf::from(s));
+
     let service_name = Config::service_name(&profile);
 
-    // Store profile in global so service_main can access it
+    // Store in globals so service_main can access them
     SERVICE_PROFILE
         .set(profile)
         .map_err(|_| anyhow::anyhow!("Failed to set service profile"))?;
     SERVICE_NAME
         .set(service_name.clone())
         .map_err(|_| anyhow::anyhow!("Failed to set service name"))?;
+    SERVICE_CONFIG_DIR
+        .set(config_dir)
+        .map_err(|_| anyhow::anyhow!("Failed to set service config dir"))?;
 
     windows_service::service_dispatcher::start(&service_name, ffi_service_main)
         .context("Failed to start service dispatcher — is this running as a Windows Service?")?;
@@ -258,6 +267,8 @@ use std::sync::OnceLock;
 static SERVICE_PROFILE: OnceLock<String> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static SERVICE_NAME: OnceLock<String> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static SERVICE_CONFIG_DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 windows_service::define_windows_service!(ffi_service_main, win_service_main);
@@ -272,11 +283,14 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
     let profile = SERVICE_PROFILE.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
+    let config_dir = SERVICE_CONFIG_DIR.get().and_then(|o| o.clone());
 
-    // Set up logging to file
-    let log_dir = directories::ProjectDirs::from("", "", "kronk")
-        .map(|p: directories::ProjectDirs| p.data_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // Set up logging to file — use config_dir if available, otherwise fall back
+    let log_dir = config_dir.clone().unwrap_or_else(|| {
+        directories::ProjectDirs::from("", "", "kronk")
+            .map(|p: directories::ProjectDirs| p.data_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    });
     let _ = std::fs::create_dir_all(&log_dir);
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
         .unwrap_or_else(|_| std::fs::File::create("kronk-service.log").unwrap());
@@ -287,6 +301,9 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
         .init();
 
     tracing::info!("Service starting for profile: {}", profile);
+    if let Some(ref dir) = config_dir {
+        tracing::info!("Config dir: {}", dir.display());
+    }
 
     // Create a shutdown channel
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
@@ -327,8 +344,12 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
         process_id: None,
     });
 
-    // Load config and run supervisor
-    let config = match Config::load() {
+    // Load config — use explicit config dir if provided (service runs as SYSTEM)
+    let config = match if let Some(ref dir) = config_dir {
+        Config::load_from(dir)
+    } else {
+        Config::load()
+    } {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to load config: {}", e);
@@ -549,10 +570,12 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
             #[cfg(target_os = "windows")]
             {
                 let display_name = format!("Kronk: {}", profile);
+                let config_dir = Config::base_dir()?;
                 kronk_core::platform::windows::install_service(
                     &service_name,
                     &display_name,
                     &profile,
+                    &config_dir,
                 )?;
             }
 
