@@ -2,8 +2,32 @@ use anyhow::{Context, Result};
 use kronk_core::config::Config;
 use kronk_core::models::pull;
 use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
+use std::collections::HashMap;
 
 use crate::ModelCommands;
+
+/// Generate a unique key for a quant entry, avoiding collisions in the map.
+/// If `base_key` is already taken, appends the filename stem as a suffix.
+fn unique_quant_key(quants: &HashMap<String, QuantInfo>, base_key: &str, filename: &str) -> String {
+    if !quants.contains_key(base_key) {
+        return base_key.to_string();
+    }
+    // Use filename without .gguf extension as a unique fallback
+    let stem = filename.strip_suffix(".gguf").unwrap_or(filename);
+    let candidate = format!("{}:{}", base_key, stem);
+    if !quants.contains_key(&candidate) {
+        return candidate;
+    }
+    // Numeric suffix as last resort
+    let mut i = 1;
+    loop {
+        let key = format!("{}-{}", base_key, i);
+        if !quants.contains_key(&key) {
+            return key;
+        }
+        i += 1;
+    }
+}
 
 pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
     match command {
@@ -68,8 +92,8 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                 default_context_length: Some(8192),
                 default_gpu_layers: Some(999),
             },
-            sampling: std::collections::HashMap::new(),
-            quants: std::collections::HashMap::new(),
+            sampling: HashMap::new(),
+            quants: HashMap::new(),
         }
     };
 
@@ -83,10 +107,11 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         let local_path = pull::download_gguf(repo_id, &gguf.filename, &model_dir).await?;
 
         let size_bytes = std::fs::metadata(&local_path).map(|m| m.len()).ok();
-        let quant_name = gguf.quant.clone().unwrap_or_else(|| gguf.filename.clone());
+        let base_quant = gguf.quant.clone().unwrap_or_else(|| gguf.filename.clone());
+        let quant_key = unique_quant_key(&card.quants, &base_quant, &gguf.filename);
 
         card.quants.insert(
-            quant_name.clone(),
+            quant_key,
             QuantInfo {
                 file: gguf.filename.clone(),
                 size_bytes,
@@ -442,12 +467,13 @@ fn cmd_scan(config: &Config) -> Result<()> {
             );
             let mut card = model.card.clone();
             for filename in &untracked {
-                let quant = pull::infer_quant_from_filename(filename)
+                let base_quant = pull::infer_quant_from_filename(filename)
                     .unwrap_or_else(|| "unknown".to_string());
+                let quant_key = unique_quant_key(&card.quants, &base_quant, filename);
                 let size_bytes = model.dir.join(filename).metadata().map(|m| m.len()).ok();
-                println!("    + {} ({})", filename, quant);
+                println!("    + {} ({})", filename, base_quant);
                 card.quants.insert(
-                    quant,
+                    quant_key,
                     QuantInfo {
                         file: filename.clone(),
                         size_bytes,
@@ -494,14 +520,15 @@ fn cmd_scan(config: &Config) -> Result<()> {
                         gguf_files.len()
                     );
 
-                    let mut quants = std::collections::HashMap::new();
+                    let mut quants = HashMap::new();
                     for filename in &gguf_files {
-                        let quant = pull::infer_quant_from_filename(filename)
+                        let base_quant = pull::infer_quant_from_filename(filename)
                             .unwrap_or_else(|| "unknown".to_string());
+                        let quant_key = unique_quant_key(&quants, &base_quant, filename);
                         let size_bytes = model_path.join(filename).metadata().map(|m| m.len()).ok();
-                        println!("    + {} ({})", filename, quant);
+                        println!("    + {} ({})", filename, base_quant);
                         quants.insert(
-                            quant,
+                            quant_key,
                             QuantInfo {
                                 file: filename.clone(),
                                 size_bytes,
@@ -517,7 +544,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                             default_context_length: Some(8192),
                             default_gpu_layers: Some(999),
                         },
-                        sampling: std::collections::HashMap::new(),
+                        sampling: HashMap::new(),
                         quants,
                     };
                     card.save(&model_path.join("model.toml"))?;

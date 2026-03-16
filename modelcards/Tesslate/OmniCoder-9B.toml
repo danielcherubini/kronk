@@ -2,7 +2,7 @@
 name = "OmniCoder-9B"
 source = "Tesslate/OmniCoder-9B-GGUF"
 default_context_length = 100000
-default_gpu_layers = 999
+default_gpu_layers = 999 # sentinel: offload all layers to GPU
 
 # Recommended sampling from HuggingFace model card.
 # For agentic / tool-calling tasks, consider lower temperature (0.2-0.4).

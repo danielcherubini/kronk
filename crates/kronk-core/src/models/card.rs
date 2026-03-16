@@ -160,15 +160,12 @@ context_length = 16384
     #[test]
     fn test_model_card_load_save() {
         let card: ModelCard = toml::from_str(sample_card_toml()).unwrap();
-        let dir = std::env::temp_dir().join("kronk_test_model_card");
-        let _ = std::fs::remove_dir_all(&dir);
-        let path = dir.join("model.toml");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("model.toml");
 
         super::save(&card, &path).unwrap();
         let loaded = super::load(&path).unwrap();
         assert_eq!(card, loaded);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

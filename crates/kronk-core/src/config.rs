@@ -107,9 +107,35 @@ impl Config {
         let mut args = backend.default_args.clone();
         args.extend(profile.args.clone());
 
-        // Append sampling params as CLI flags
+        // Append sampling params as CLI flags, filtering out any duplicates
+        // that may already be in profile.args
         if let Some(sampling) = self.effective_sampling(profile) {
-            args.extend(sampling.to_args());
+            let sampling_args = sampling.to_args();
+            let sampling_flags: std::collections::HashSet<&str> = sampling_args
+                .iter()
+                .filter(|a| a.starts_with("--"))
+                .map(|a| a.as_str())
+                .collect();
+
+            // Remove existing sampling flags and their values from args
+            if !sampling_flags.is_empty() {
+                let mut filtered = Vec::with_capacity(args.len());
+                let mut skip_next = false;
+                for arg in &args {
+                    if skip_next {
+                        skip_next = false;
+                        continue;
+                    }
+                    if sampling_flags.contains(arg.as_str()) {
+                        skip_next = true; // skip the flag and its following value
+                        continue;
+                    }
+                    filtered.push(arg.clone());
+                }
+                args = filtered;
+            }
+
+            args.extend(sampling_args);
         }
 
         args

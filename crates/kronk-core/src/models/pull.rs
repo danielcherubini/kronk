@@ -58,6 +58,20 @@ pub async fn download_gguf(
 
     let dest_path = dest_dir.join(filename);
 
+    // Check if destination already exists with matching size (already downloaded)
+    if dest_path.exists() {
+        if let (Ok(cached_meta), Ok(dest_meta)) = (
+            std::fs::metadata(&cached_path),
+            std::fs::metadata(&dest_path),
+        ) {
+            if cached_meta.len() == dest_meta.len() {
+                return Ok(dest_path);
+            }
+        }
+        // Size mismatch — remove stale file before re-linking
+        std::fs::remove_file(&dest_path).ok();
+    }
+
     // Try hard link first (same filesystem = instant, no extra space)
     // Fall back to copy if hard link fails (cross-filesystem)
     if std::fs::hard_link(&cached_path, &dest_path).is_err() {

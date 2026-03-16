@@ -12,7 +12,7 @@
 
 ## File Structure
 
-```
+```text
 kronk/
 ├── crates/
 │   └── kronk-tui/              # NEW: TUI dashboard crate
