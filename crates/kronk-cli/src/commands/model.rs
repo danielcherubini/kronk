@@ -59,7 +59,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     let mut card = if card_path.exists() {
         ModelCard::load(&card_path)?
     } else {
-        let name = repo_id.split('/').last().unwrap_or(repo_id).to_string();
+        let name = repo_id.rsplit('/').next().unwrap_or(repo_id).to_string();
         ModelCard {
             model: ModelMeta {
                 name,
@@ -139,7 +139,7 @@ fn cmd_ls(config: &Config) -> Result<()> {
         } else {
             for (qname, qinfo) in &model.card.quants {
                 let size_str = qinfo.size_bytes
-                    .map(|b| format_size(b))
+                    .map(format_size)
                     .unwrap_or_else(|| "?".to_string());
                 println!("    {} -- {} ({})", qname, qinfo.file, size_str);
             }

@@ -66,7 +66,7 @@ async fn main() {
         std::thread::spawn(move || {
             let mut socket = socket;
             let mut buf = [0u8; 4096];
-            socket.read(&mut buf).ok();
+            let _ = socket.read(&mut buf);
             
             let request = String::from_utf8_lossy(&buf);
             tracing::debug!("Request: {}", request.trim());
