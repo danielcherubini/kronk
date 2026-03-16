@@ -40,6 +40,8 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
         vec![repo_id.to_string(), format!("{}-GGUF", repo_id)]
     };
 
+    let mut last_error: Option<String> = None;
+
     for candidate in &candidates {
         let repo = api.model(candidate.clone());
         match repo.info().await {
@@ -61,12 +63,24 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
                     return Ok((candidate.clone(), ggufs));
                 }
                 // Repo exists but no GGUFs — try next candidate
+                last_error = Some(format!(
+                    "'{}' exists but contains no .gguf files",
+                    candidate
+                ));
             }
-            Err(_) => continue, // Repo not found — try next candidate
+            Err(e) => {
+                last_error = Some(format!("'{}': {}", candidate, e));
+                continue;
+            }
         }
     }
 
-    anyhow::bail!("No GGUF files found. Tried: {}", candidates.join(", "))
+    let detail = last_error.unwrap_or_else(|| "unknown error".to_string());
+    anyhow::bail!(
+        "No GGUF files found. Tried: {}\nLast error: {}",
+        candidates.join(", "),
+        detail
+    )
 }
 
 /// Download a specific GGUF file from a HuggingFace repo to the given model directory.
