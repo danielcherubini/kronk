@@ -181,7 +181,16 @@ impl Config {
     /// 2. Server's custom port if set
     /// 3. Fallback to http://localhost:{port}/health
     pub fn resolve_health_url(&self, server: &ServerConfig) -> Option<String> {
-        let backend = self.backends.get(&server.backend)?;
+        let backend = match self.backends.get(&server.backend) {
+            Some(b) => b,
+            None => {
+                tracing::warn!(
+                    "Backend '{}' not found when resolving health URL",
+                    server.backend
+                );
+                return None;
+            }
+        };
 
         // If backend has health_check_url, use it (and replace port if server.port is set)
         if let Some(ref backend_url) = backend.health_check_url {
