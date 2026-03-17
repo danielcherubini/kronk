@@ -23,15 +23,11 @@
 - [x] **Community model cards** — Curated sampling presets fetched from GitHub on pull (e.g. Tesslate/OmniCoder-9B)
 - [x] **3-layer sampling merge** — UseCase defaults → model card overrides → profile overrides, applied in all run/service paths
 - [x] **Model-linked profiles** — `kronk model create` builds profiles from model cards with `--backend`, `--quant`, `--use-case` flags
-
-## In Progress
-
-- [ ] **First public release** — v0.1.0 CI build running
+- [x] **First public release** — v0.1.0 CI build running
+- [x] **Model search** — `kronk model search <query>` to discover GGUF models from HuggingFace with download counts ([plan](docs/superpowers/plans/2026-03-16-model-search.md))
+- [x] **Profile management** — `kronk profile` subcommand: ls, add, edit, rm with service safety checks ([plan](docs/superpowers/plans/2026-03-16-profile-management.md))
 
 ## Planned
-
-- [ ] **Model search** — `kronk model search <query>` to discover GGUF models from HuggingFace with download counts ([plan](docs/superpowers/plans/2026-03-16-model-search.md))
-- [ ] **Profile management** — `kronk profile` subcommand: ls, add, edit, rm with service safety checks ([plan](docs/superpowers/plans/2026-03-16-profile-management.md))
 - [ ] **Multi-port support** — Per-profile port config, auto `--port` injection, per-port firewall rules ([plan](docs/superpowers/plans/2026-03-16-multi-port.md))
 - [ ] **Log viewer** — `kronk logs` with `--follow`, log rotation, ProcessSupervisor file output ([plan](docs/superpowers/plans/2026-03-16-log-viewer.md))
 - [ ] **Health check customization** — Per-profile health check URL, interval, timeout, retries ([plan](docs/superpowers/plans/2026-03-16-health-check-customization.md))

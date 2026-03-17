@@ -36,6 +36,7 @@ enum Commands {
         profile: String,
     },
     /// Add a new profile from a raw command line
+    #[command(hide = true)]
     Add {
         /// Profile name
         name: String,
@@ -44,12 +45,18 @@ enum Commands {
         command: Vec<String>,
     },
     /// Update an existing profile with a new command line
+    #[command(hide = true)]
     Update {
         /// Profile name
         name: String,
         /// The full command: binary path followed by all arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
+    },
+    /// Manage profiles — list, add, edit, remove
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommands,
     },
     /// Show status of all profiles
     Status,
@@ -105,6 +112,50 @@ pub enum ModelCommands {
     },
     /// Scan for untracked GGUF files and update model cards
     Scan,
+    /// Search HuggingFace for GGUF models
+    Search {
+        /// Search query (e.g. "llama", "coding", "mistral 7b")
+        query: String,
+        /// Sort by: downloads, likes, modified (default: downloads)
+        #[arg(long, default_value = "downloads")]
+        sort: String,
+        /// Maximum number of results (default: 20)
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: usize,
+        /// Immediately pull a selected result
+        #[arg(long)]
+        pull: bool,
+    },
+}
+
+#[derive(Parser, Debug)]
+pub enum ProfileCommands {
+    /// List all profiles with status
+    Ls,
+    /// Add a new profile from a raw command line
+    Add {
+        /// Profile name
+        name: String,
+        /// Backend command and arguments (e.g. llama-server -m model.gguf)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Edit an existing profile's command line
+    Edit {
+        /// Profile name
+        name: String,
+        /// New backend command and arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Remove a profile
+    Rm {
+        /// Profile name to remove
+        name: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -212,8 +263,13 @@ fn main() -> Result<()> {
             Commands::Run { profile } => cmd_run(&config, &profile).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
-            Commands::Add { name, command } => cmd_add(&config, &name, command, false),
-            Commands::Update { name, command } => cmd_add(&config, &name, command, true),
+            Commands::Add { name, command } => {
+                cmd_profile_add(&config, &name, command, false).await
+            }
+            Commands::Update { name, command } => {
+                cmd_profile_edit(&mut config.clone(), &name, command).await
+            }
+            Commands::Profile { command } => cmd_profile(&config, command).await,
             Commands::Status => cmd_status(&config).await,
             Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
@@ -713,7 +769,164 @@ async fn cmd_status(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {
+async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
+    match command {
+        ProfileCommands::Ls => cmd_profile_ls(config).await,
+        ProfileCommands::Add { name, command } => {
+            cmd_profile_add(config, &name, command, false).await
+        }
+        ProfileCommands::Edit { name, command } => {
+            if !config.profiles.contains_key(&name) {
+                anyhow::bail!(
+                    "Profile '{}' not found. Use `kronk profile add` to create it.",
+                    name
+                );
+            }
+            cmd_profile_edit(&mut config.clone(), &name, command).await
+        }
+        ProfileCommands::Rm { name, force } => cmd_profile_rm(config, &name, force),
+    }
+}
+
+async fn cmd_profile_ls(config: &Config) -> Result<()> {
+    if config.profiles.is_empty() {
+        println!("No profiles configured.");
+        println!();
+        println!("Add one:  kronk profile add <name> <command...>");
+        println!("Or pull:  kronk model pull <repo>");
+        return Ok(());
+    }
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_default();
+
+    println!("Profiles:");
+    println!("{}", "-".repeat(60));
+
+    for (name, profile) in &config.profiles {
+        let backend = config.backends.get(&profile.backend);
+        let use_case = profile
+            .use_case
+            .as_ref()
+            .map(|uc| uc.to_string())
+            .unwrap_or_else(|| "none".to_string());
+
+        let service_name = Config::service_name(name);
+        let service_status = {
+            #[cfg(target_os = "windows")]
+            {
+                kronk_core::platform::windows::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
+            #[cfg(target_os = "linux")]
+            {
+                kronk_core::platform::linux::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+            {
+                let _ = &service_name;
+                "N/A".to_string()
+            }
+        };
+
+        let health = if let Some(url) = backend.and_then(|b| b.health_check_url.as_ref()) {
+            match http_client.get(url).send().await {
+                Ok(resp) if resp.status().is_success() => "HEALTHY",
+                _ => "DOWN",
+            }
+        } else {
+            "N/A"
+        };
+
+        println!();
+        println!("  {}  (backend: {})", name, profile.backend);
+        println!(
+            "    use-case: {}  service: {}  health: {}",
+            use_case, service_status, health
+        );
+
+        if let Some(ref model) = profile.model {
+            let quant = profile.quant.as_deref().unwrap_or("?");
+            println!("    model: {} / {}", model, quant);
+        }
+
+        if !profile.args.is_empty() {
+            let args_str = profile.args.join(" ");
+            if args_str.len() > 80 {
+                let chars: Vec<char> = args_str.chars().take(77).collect();
+                println!("    args: {}...", chars.iter().collect::<String>());
+            } else {
+                println!("    args: {}", args_str);
+            }
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
+    if !config.profiles.contains_key(name) {
+        anyhow::bail!("Profile '{}' not found.", name);
+    }
+
+    // Check if a service is installed for this profile
+    let service_name = Config::service_name(name);
+    let service_installed = {
+        #[cfg(target_os = "windows")]
+        {
+            kronk_core::platform::windows::query_service(&service_name)
+                .map(|s| s != "NOT_INSTALLED")
+                .unwrap_or(true)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            kronk_core::platform::linux::query_service(&service_name)
+                .map(|s| s != "NOT_INSTALLED")
+                .unwrap_or(true)
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = &service_name;
+            false
+        }
+    };
+
+    if service_installed {
+        anyhow::bail!(
+            "Profile '{}' has an installed service '{}'. Remove it first with: kronk service remove --profile {}",
+            name, service_name, name
+        );
+    }
+
+    if !force {
+        let confirm = inquire::Confirm::new(&format!("Remove profile '{}'?", name))
+            .with_default(false)
+            .prompt()
+            .context("Confirmation cancelled")?;
+        if !confirm {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let mut config = config.clone();
+    config.profiles.remove(name);
+    config.save()?;
+
+    println!("Profile '{}' removed.", name);
+    Ok(())
+}
+
+async fn cmd_profile_add(
+    config: &Config,
+    name: &str,
+    command: Vec<String>,
+    overwrite: bool,
+) -> Result<()> {
     use kronk_core::config::{BackendConfig, ProfileConfig};
 
     if command.is_empty() {
@@ -781,6 +994,77 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
             quant: None,
         },
     );
+
+    config.save()?;
+
+    println!("Oh yeah, it's all coming together.");
+    println!();
+    println!("  Profile:  {}", name);
+    println!("  Backend:  {} ({})", backend_key, exe_str);
+    println!();
+    println!("Run it:     kronk run --profile {}", name);
+    println!("Install it: kronk service install --profile {}", name);
+
+    Ok(())
+}
+
+async fn cmd_profile_edit(config: &mut Config, name: &str, command: Vec<String>) -> Result<()> {
+    use kronk_core::config::BackendConfig;
+
+    if command.is_empty() {
+        anyhow::bail!("No command provided");
+    }
+
+    let exe_path = &command[0];
+    let args: Vec<String> = command[1..].to_vec();
+
+    // Resolve the exe to an absolute path
+    let exe_abs = std::path::Path::new(exe_path);
+    let exe_resolved = if exe_abs.is_absolute() {
+        exe_abs.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(exe_abs)
+    };
+    let exe_str = exe_resolved.to_string_lossy().to_string();
+
+    // Check if this backend path exists
+    let backend_name = config
+        .backends
+        .iter()
+        .find(|(_, b)| b.path == exe_str)
+        .map(|(k, _)| k.clone());
+
+    let backend_key = match backend_name {
+        Some(k) => k,
+        None => {
+            // Derive a backend name from the exe filename
+            let stem = exe_resolved
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "backend".to_string())
+                .replace('-', "_");
+
+            config.backends.insert(
+                stem.clone(),
+                BackendConfig {
+                    path: exe_str.clone(),
+                    default_args: vec![],
+                    health_check_url: Some("http://localhost:8080/health".to_string()),
+                },
+            );
+            stem
+        }
+    };
+
+    // Load config, update only the command string for the existing profile
+    let mut config = config.clone();
+    let profile = config
+        .profiles
+        .get_mut(name)
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", name))?;
+
+    profile.backend = backend_key.clone();
+    profile.args = args;
 
     config.save()?;
 
