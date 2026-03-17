@@ -417,7 +417,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let profile = SERVICE_PROFILE.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
     let config_dir = SERVICE_CONFIG_DIR.get().and_then(|o| o.clone());
-    let ctx = SERVICE_CTX.get().cloned();
+    let ctx = SERVICE_CTX.get().and_then(|o| *o);
 
     // Set up logging to file — use config_dir if available, otherwise fall back
     let log_dir = config_dir.clone().unwrap_or_else(|| {
@@ -613,7 +613,10 @@ fn build_full_args(
             // Context size: CLI override > model card
             let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
             if let Some(ctx) = ctx {
-                args::inject_context_size(&mut args, ctx);
+                if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
+                    args.push("-c".to_string());
+                    args.push(ctx.to_string());
+                }
             }
             if let Some(ngl) = installed.card.model.default_gpu_layers {
                 if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
