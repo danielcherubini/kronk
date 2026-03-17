@@ -39,6 +39,22 @@ kronk add default llama-server.exe --host 0.0.0.0 -m model.gguf -ngl 999 -fa 1 -
 
 Kronk figures out the backend from the binary path and saves everything to config.
 
+### Pull a model from HuggingFace
+
+```bash
+kronk model pull bartowski/OmniCoder-8B-GGUF
+```
+
+Kronk downloads all available quants, detects your GPU VRAM, and suggests optimal context sizes.
+
+### Create a profile from an installed model
+
+```bash
+kronk model create my-profile --model bartowski/OmniCoder-8B-GGUF --use-case coding
+```
+
+Kronk auto-configures the profile with the selected quant and use-case preset.
+
 ### Run it
 
 ```bash
@@ -70,6 +86,12 @@ kronk service stop [--profile]       Stop a running service
 kronk service remove [--profile]     Remove an installed service
 kronk add <name> <command...>        Create a profile from a raw command
 kronk update <name> <command...>     Update an existing profile
+kronk model pull <repo>              Pull GGUF models from HuggingFace
+kronk model ls                       List installed models
+kronk model create <name>            Create a profile from an installed model
+kronk model rm <model>                Remove an installed model
+kronk model scan                     Scan for untracked GGUF files
+kronk model search <query>           Search HuggingFace for GGUF models
 kronk config show                    Print current config
 kronk config edit                    Open config in editor
 kronk config path                    Show config file location
@@ -93,6 +115,19 @@ health_check_url = "http://localhost:8080/health"
 backend = "llama_cpp"
 args = ["--host", "0.0.0.0", "-m", "model.gguf", "-ngl", "999", "-c", "8192"]
 
+[profiles.model-profile]
+backend = "llama_cpp"
+model = "bartowski/OmniCoder-8B-GGUF"
+quant = "Q4_K_M"
+use-case = "coding"
+
+[models.bartowski/OmniCoder-8B-GGUF]
+dir = "~/.config/kronk/models/bartowski/OmniCoder-8B-GGUF"
+[[models.bartowski/OmniCoder-8B-GGUF.quants]]
+name = "Q4_K_M"
+file = "OmniCoder-8B-Q4_K_M.gguf"
+context = 8192
+
 [supervisor]
 restart_policy = "always"
 max_restarts = 10
@@ -101,6 +136,8 @@ health_check_interval_ms = 5000
 ```
 
 You can define multiple backends and profiles. Switch between them with `--profile`.
+
+Model cards are stored in `~/.config/kronk/models/<repo>/<model>/model.toml` and contain quant info, context settings, and sampling presets.
 
 ---
 
@@ -165,10 +202,10 @@ See [PLAN.md](PLAN.md) for the full development plan.
 - [x] VRAM monitoring in status output
 - [x] User-level service control (no admin after install)
 - [x] Profile management from CLI
+- [x] Model management (pull, search, create profiles)
 - [x] GitHub Actions CI/CD with Windows installer + .deb + .rpm
 - [ ] TUI Dashboard (ratatui)
 - [ ] System tray integration
-- [ ] Model download (`kronk pull`)
 
 ---
 
