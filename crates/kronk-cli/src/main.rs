@@ -285,9 +285,7 @@ fn main() -> Result<()> {
             Commands::Run { name, ctx } => cmd_run(&config, &name, ctx).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { server, ctx } => cmd_run(&config, &server, ctx).await,
-            Commands::Add { name, command } => {
-                cmd_server_add(&config, &name, command, false).await
-            }
+            Commands::Add { name, command } => cmd_server_add(&config, &name, command, false).await,
             Commands::Update { name, command } => {
                 cmd_server_edit(&mut config.clone(), &name, command).await
             }
@@ -1314,10 +1312,7 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
 
             // Show additional custom profiles from disk
             for (name, params) in &disk_profiles {
-                if !Profile::all()
-                    .iter()
-                    .any(|(n, _, _)| *n == name.as_str())
-                {
+                if !Profile::all().iter().any(|(n, _, _)| *n == name.as_str()) {
                     println!("  {} (custom from profiles.d/):", name);
                     let args = params.to_args().join(" ");
                     println!(
@@ -1458,7 +1453,8 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                 anyhow::bail!(
                     "Cannot create custom profile '{}': it shadows a built-in profile. \
                      Edit profiles.d/{}.toml instead to customize it.",
-                    name, name
+                    name,
+                    name
                 );
             }
 
@@ -1486,9 +1482,9 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
             let referencing: Vec<&str> = config
                 .servers
                 .iter()
-                .filter(|(_, s)| {
-                    matches!(&s.profile, Some(Profile::Custom { name: n }) if n == &name)
-                })
+                .filter(
+                    |(_, s)| matches!(&s.profile, Some(Profile::Custom { name: n }) if n == &name),
+                )
                 .map(|(k, _)| k.as_str())
                 .collect();
             if !referencing.is_empty() {
