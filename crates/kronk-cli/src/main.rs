@@ -282,7 +282,7 @@ fn main() -> Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-match args.command {
+        match args.command {
             Commands::Run { profile, ctx } => cmd_run(&config, &profile, ctx).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { profile, ctx } => cmd_run(&config, &profile, ctx).await,
@@ -1356,7 +1356,5 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
-
