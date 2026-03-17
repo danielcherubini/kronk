@@ -498,6 +498,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             args.extend(prof.args.clone());
             args
         });
+        let log_dir = config.logs_dir().ok().expect("Failed to get logs directory");
         let supervisor = ProcessSupervisor::new(
             backend.path.clone(),
             args,
@@ -506,7 +507,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             config.supervisor.restart_delay_ms,
             config.supervisor.health_check_interval_ms,
         )
-        .with_log_dir(config.logs_dir().ok());
+        .with_log_dir(log_dir);
 
         let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
 
