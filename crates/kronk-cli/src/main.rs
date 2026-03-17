@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+mod args;
 mod commands;
 
 #[derive(Parser, Debug)]
@@ -577,25 +578,6 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
 /// Replace or inject `-c <value>` in the argument list.
 /// Removes any existing `-c` / `--ctx-size` and appends the new value.
-fn inject_context_size(args: &mut Vec<String>, ctx: u32) {
-    let mut filtered = Vec::with_capacity(args.len());
-    let mut skip_next = false;
-    for arg in args.iter() {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if arg == "-c" || arg == "--ctx-size" {
-            skip_next = true;
-            continue;
-        }
-        filtered.push(arg.clone());
-    }
-    *args = filtered;
-    args.push("-c".to_string());
-    args.push(ctx.to_string());
-}
-
 /// Build the full argument list for a profile, resolving model card args at runtime.
 /// Merges: backend.default_args + profile.args + model card (-m, -c, -ngl) + sampling
 fn build_full_args(
@@ -621,7 +603,7 @@ fn build_full_args(
             // Context size: CLI override > model card
             let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
             if let Some(ctx) = ctx {
-                inject_context_size(&mut args, ctx);
+                args::inject_context_size(&mut args, ctx);
             }
             if let Some(ngl) = installed.card.model.default_gpu_layers {
                 if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
@@ -643,7 +625,7 @@ fn build_full_args(
 
     // No model card — still apply ctx override if given
     if let Some(ctx) = ctx_override {
-        inject_context_size(&mut args, ctx);
+        args::inject_context_size(&mut args, ctx);
     }
 
     // No model card — just use profile sampling
@@ -1373,3 +1355,8 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests;
+

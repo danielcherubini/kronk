@@ -8,27 +8,32 @@ pub fn inject_context_size(args: &mut Vec<String>, ctx: u32) {
 
     match first_idx {
         Some(idx) => {
-            // Collect indices of all subsequent -c / --ctx-size flags
-            let mut indices = Vec::new();
-            for (i, arg) in args.iter().enumerate() {
-                if i <= idx {
-                    continue;
-                }
-                if arg == "-c" || arg == "--ctx-size" {
-                    indices.push(i);
+            // Collect indices of all -c / --ctx-size flags and their values (pairs)
+            // We need to track both flag and value indices
+            let mut to_remove = Vec::new();
+            let mut i = idx;
+            while i < args.len() {
+                if args[i] == "-c" || args[i] == "--ctx-size" {
+                    // Remove the flag
+                    to_remove.push(i);
+                    i += 1;
+                    // Remove the value if it exists
+                    if i < args.len() {
+                        to_remove.push(i);
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
                 }
             }
 
-            // Remove all subsequent -c / --ctx-size flags and their values (from end to start)
-            for i in indices.into_iter().rev() {
+            // Remove from end to start to maintain correct indices
+            for i in to_remove.into_iter().rev() {
                 args.remove(i);
-                if i < args.len() {
-                    args.remove(i);
-                }
             }
 
-            // Replace the flag at first_idx with -c and the new value
-            args[idx] = "-c".to_string();
+            // Insert new flag and value at the original position
+            args.insert(idx, "-c".to_string());
             args.insert(idx + 1, ctx.to_string());
         }
         None => {
