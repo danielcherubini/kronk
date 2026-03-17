@@ -263,8 +263,8 @@ fn main() -> Result<()> {
             Commands::Run { profile } => cmd_run(&config, &profile).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
-            Commands::Add { name, command } => cmd_add(&config, &name, command, false),
-            Commands::Update { name, command } => cmd_add(&config, &name, command, true),
+            Commands::Add { name, command } => cmd_profile_add(&config, &name, command, false).await,
+            Commands::Update { name, command } => cmd_profile_edit(&mut config.clone(), &name, command).await,
             Commands::Profile { command } => cmd_profile(&config, command).await,
             Commands::Status => cmd_status(&config).await,
             Commands::UseCase { command } => cmd_use_case(&config, command),
@@ -768,7 +768,7 @@ async fn cmd_status(config: &Config) -> Result<()> {
 async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     match command {
         ProfileCommands::Ls => cmd_profile_ls(config).await,
-        ProfileCommands::Add { name, command } => cmd_add(config, &name, command, false),
+        ProfileCommands::Add { name, command } => cmd_profile_add(config, &name, command, false).await,
         ProfileCommands::Edit { name, command } => {
             if !config.profiles.contains_key(&name) {
                 anyhow::bail!(
@@ -776,7 +776,7 @@ async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                     name
                 );
             }
-            cmd_add(config, &name, command, true)
+            cmd_profile_edit(&mut config.clone(), &name, command).await
         }
         ProfileCommands::Rm { name, force } => cmd_profile_rm(config, &name, force),
     }
@@ -874,13 +874,13 @@ fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
         {
             kronk_core::platform::windows::query_service(&service_name)
                 .map(|s| s != "NOT_INSTALLED")
-                .unwrap_or(false)
+                .unwrap_or(true)
         }
         #[cfg(target_os = "linux")]
         {
             kronk_core::platform::linux::query_service(&service_name)
                 .map(|s| s != "NOT_INSTALLED")
-                .unwrap_or(false)
+                .unwrap_or(true)
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
@@ -915,7 +915,7 @@ fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {
+async fn cmd_profile_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {
     use kronk_core::config::{BackendConfig, ProfileConfig};
 
     if command.is_empty() {
@@ -996,6 +996,78 @@ fn cmd_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -
 
     Ok(())
 }
+
+async fn cmd_profile_edit(config: &mut Config, name: &str, command: Vec<String>) -> Result<()> {
+    use kronk_core::config::BackendConfig;
+
+    if command.is_empty() {
+        anyhow::bail!("No command provided");
+    }
+
+    let exe_path = &command[0];
+    let args: Vec<String> = command[1..].to_vec();
+
+    // Resolve the exe to an absolute path
+    let exe_abs = std::path::Path::new(exe_path);
+    let exe_resolved = if exe_abs.is_absolute() {
+        exe_abs.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(exe_abs)
+    };
+    let exe_str = exe_resolved.to_string_lossy().to_string();
+
+    // Check if this backend path exists
+    let backend_name = config
+        .backends
+        .iter()
+        .find(|(_, b)| b.path == exe_str)
+        .map(|(k, _)| k.clone());
+
+    let backend_key = match backend_name {
+        Some(k) => k,
+        None => {
+            // Derive a backend name from the exe filename
+            let stem = exe_resolved
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "backend".to_string())
+                .replace('-', "_");
+
+            config.backends.insert(
+                stem.clone(),
+                BackendConfig {
+                    path: exe_str.clone(),
+                    default_args: vec![],
+                    health_check_url: Some("http://localhost:8080/health".to_string()),
+                },
+            );
+            stem
+        }
+    };
+
+    // Load config, update only the command string for the existing profile
+    let mut config = config.clone();
+    let profile = config.profiles.get_mut(name).ok_or_else(|| {
+        anyhow::anyhow!("Profile '{}' not found", name)
+    })?;
+
+    profile.backend = backend_key.clone();
+    profile.args = args;
+
+    config.save()?;
+
+    println!("Oh yeah, it's all coming together.");
+    println!();
+    println!("  Profile:  {}", name);
+    println!("  Backend:  {} ({})", backend_key, exe_str);
+    println!();
+    println!("Run it:     kronk run --profile {}", name);
+    println!("Install it: kronk service install --profile {}", name);
+
+    Ok(())
+}
+
+
 
 fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
     match command {

@@ -89,7 +89,7 @@ fn urlencoding(s: &str) -> String {
         .map(|&b| match b {
             0x20 => "+".to_string(),
             b if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' => {
-                (b as char).to_string()
+                std::str::from_utf8(&[b]).unwrap().to_string()
             }
             b => format!("%{:02X}", b),
         })
@@ -105,6 +105,8 @@ mod tests {
         assert_eq!(urlencoding("hello world"), "hello+world");
         assert_eq!(urlencoding("foo&bar=baz"), "foo%26bar%3Dbaz");
         assert_eq!(urlencoding("café"), "caf%C3%A9");
+        // Test UTF-8 multi-byte characters
+        assert_eq!(urlencoding("中文"), "%E4%B8%AD%E6%96%87");
     }
 
     // Network test — run with: cargo test -p kronk-core -- search --ignored
@@ -117,5 +119,14 @@ mod tests {
             results[0].model_id.to_lowercase().contains("llama")
                 || results[0].tags.iter().any(|t| t == "gguf")
         );
+    }
+
+    #[test]
+    fn test_urlencoding_utf8() {
+        // Test that UTF-8 bytes are preserved correctly
+        assert_eq!(urlencoding("café"), "caf%C3%A9");
+        assert_eq!(urlencoding("中文"), "%E4%B8%AD%E6%96%87");
+        assert_eq!(urlencoding("日本語"), "%E6%97%A5%E6%9C%AC%E8%AA%9E");
+        assert_eq!(urlencoding("café 中文"), "caf%C3%A9+%E4%B8%AD%E6%96%87");
     }
 }
