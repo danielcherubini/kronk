@@ -105,6 +105,20 @@ pub enum ModelCommands {
     },
     /// Scan for untracked GGUF files and update model cards
     Scan,
+    /// Search HuggingFace for GGUF models
+    Search {
+        /// Search query (e.g. "llama", "coding", "mistral 7b")
+        query: String,
+        /// Sort by: downloads, likes, modified (default: downloads)
+        #[arg(long, default_value = "downloads")]
+        sort: String,
+        /// Maximum number of results (default: 20)
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: usize,
+        /// Immediately pull a selected result
+        #[arg(long)]
+        pull: bool,
+    },
 }
 
 #[derive(Parser, Debug)]

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use kronk_core::config::Config;
 use kronk_core::models::pull;
 use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
+use kronk_core::models::search::{self, SortBy};
 use std::collections::HashMap;
 
 use crate::ModelCommands;
@@ -43,6 +44,12 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         } => cmd_create(config, &name, &model, quant, use_case, backend).await,
         ModelCommands::Rm { model } => cmd_rm(config, &model),
         ModelCommands::Scan => cmd_scan(config),
+        ModelCommands::Search {
+            query,
+            sort,
+            limit,
+            pull,
+        } => cmd_search(config, &query, &sort, limit, pull).await,
     }
 }
 
@@ -687,5 +694,77 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} GB", bytes as f64 / GB as f64)
     } else {
         format!("{:.0} MB", bytes as f64 / MB as f64)
+    }
+}
+
+async fn cmd_search(
+    config: &Config,
+    query: &str,
+    sort: &str,
+    limit: usize,
+    pull: bool,
+) -> Result<()> {
+    let sort_by = match sort {
+        "likes" => SortBy::Likes,
+        "modified" => SortBy::Modified,
+        _ => SortBy::Downloads,
+    };
+
+    println!("  Searching HuggingFace for GGUF models: \"{}\"...", query);
+    println!();
+
+    let results = search::search_models(query, sort_by, limit).await?;
+
+    if results.is_empty() {
+        println!("  No GGUF models found for \"{}\".", query);
+        return Ok(());
+    }
+
+    // Display results as a formatted table
+    println!(
+        "  {:<50} {:>12} {:>8}",
+        "MODEL", "DOWNLOADS", "LIKES"
+    );
+    println!("  {}", "-".repeat(74));
+
+    for (_i, result) in results.iter().enumerate() {
+        let id = if result.model_id.len() > 48 {
+            format!("{}...", &result.model_id[..45])
+        } else {
+            result.model_id.clone()
+        };
+        println!(
+            "  {:<50} {:>12} {:>8}",
+            id,
+            format_downloads(result.downloads),
+            result.likes,
+        );
+    }
+
+    println!();
+
+    if pull {
+        // Let user pick a result to pull
+        let options: Vec<String> = results.iter().map(|r| r.model_id.clone()).collect();
+        let selected = inquire::Select::new("Pull which model?", options)
+            .prompt()
+            .context("Selection cancelled")?;
+
+        // Delegate to cmd_pull
+        cmd_pull(config, &selected).await?;
+    } else {
+        println!("  Pull one:  kronk model pull <model-id>");
+    }
+
+    Ok(())
+}
+
+fn format_downloads(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
     }
 }
