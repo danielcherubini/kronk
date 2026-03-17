@@ -502,6 +502,7 @@ async fn cmd_create(
             model: Some(model_id.to_string()),
             quant: Some(quant_name.clone()),
             port: None,
+            health_check: None,
         },
     );
 

@@ -37,6 +37,22 @@ pub struct BackendConfig {
     pub health_check_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HealthCheck {
+    /// Health check endpoint URL. Overrides backend's health_check_url.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Polling interval in milliseconds. Overrides supervisor.health_check_interval_ms.
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+    /// HTTP timeout in milliseconds per health check request (default: 3000).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Number of consecutive failures before declaring unhealthy (default: 1).
+    #[serde(default)]
+    pub retries: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileConfig {
     pub backend: String,
@@ -55,6 +71,9 @@ pub struct ProfileConfig {
     /// Custom port for this profile (None = backend default)
     #[serde(default)]
     pub port: Option<u16>,
+    /// Per-profile health check overrides.
+    #[serde(default)]
+    pub health_check: Option<HealthCheck>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +179,26 @@ impl Config {
 
         // No custom port, use backend's URL as-is
         Some(backend_url.clone())
+    }
+
+    /// Resolve the effective health check config for a profile.
+    /// Merges: profile.health_check → backend.health_check_url → supervisor defaults.
+    pub fn resolve_health_check(&self, profile: &ProfileConfig) -> HealthCheck {
+        let backend = self.backends.get(&profile.backend);
+        let profile_hc = profile.health_check.as_ref();
+
+        HealthCheck {
+            url: profile_hc
+                .and_then(|h| h.url.clone())
+                .or_else(|| backend.and_then(|b| b.health_check_url.clone())),
+            interval_ms: Some(
+                profile_hc
+                    .and_then(|h| h.interval_ms)
+                    .unwrap_or(self.supervisor.health_check_interval_ms),
+            ),
+            timeout_ms: Some(profile_hc.and_then(|h| h.timeout_ms).unwrap_or(3000)),
+            retries: Some(profile_hc.and_then(|h| h.retries).unwrap_or(1)),
+        }
     }
 
     pub fn build_args(&self, profile: &ProfileConfig, backend: &BackendConfig) -> Vec<String> {
@@ -354,6 +393,7 @@ impl Default for Config {
                 model: None,
                 quant: None,
                 port: None,
+                health_check: None,
             },
         );
 
@@ -393,6 +433,7 @@ mod tests {
             model: None,
             quant: None,
             port: None,
+            health_check: None,
         };
         let params = config.effective_sampling(&profile).unwrap();
         assert_eq!(params.temperature, Some(0.3));
@@ -412,6 +453,7 @@ mod tests {
             model: None,
             quant: None,
             port: None,
+            health_check: None,
         };
         let params = config.effective_sampling(&profile).unwrap();
         assert_eq!(params.temperature, Some(0.5)); // override won
@@ -429,6 +471,7 @@ mod tests {
             model: None,
             quant: None,
             port: None,
+            health_check: None,
         };
         assert!(config.effective_sampling(&profile).is_none());
     }
@@ -461,6 +504,7 @@ mod tests {
             model: Some("bartowski/OmniCoder".to_string()),
             quant: Some("Q4_K_M".to_string()),
             port: None,
+            health_check: None,
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();
         let loaded: ProfileConfig = toml::from_str(&toml_str).unwrap();
@@ -517,6 +561,7 @@ args = ["--host", "0.0.0.0"]
             model: Some("test/model".to_string()),
             quant: None,
             port: None,
+            health_check: None,
         };
 
         // 3-layer merge: UseCase::Coding (temp=0.3) -> model card (temp=0.2, top_k=40) -> profile (top_p=0.85)
@@ -543,9 +588,68 @@ args = ["--host", "0.0.0.0"]
             model: None,
             quant: None,
             port: None,
+            health_check: None,
         };
         let params = config.effective_sampling_with_card(&profile, None).unwrap();
         assert_eq!(params.temperature, Some(0.5)); // profile override
         assert_eq!(params.top_k, Some(50)); // from UseCase::Coding
+    }
+
+    #[test]
+    fn test_health_check_roundtrip() {
+        let toml_str = r#"
+backend = "llama_cpp"
+args = []
+
+[health_check]
+url = "http://localhost:9090/health"
+interval_ms = 3000
+timeout_ms = 5000
+retries = 3
+"#;
+        let profile: ProfileConfig = toml::from_str(toml_str).unwrap();
+        let hc = profile.health_check.unwrap();
+        assert_eq!(hc.url, Some("http://localhost:9090/health".to_string()));
+        assert_eq!(hc.interval_ms, Some(3000));
+        assert_eq!(hc.timeout_ms, Some(5000));
+        assert_eq!(hc.retries, Some(3));
+    }
+
+    #[test]
+    fn test_profile_without_health_check_still_works() {
+        let toml_str = r#"
+backend = "llama_cpp"
+args = []
+"#;
+        let profile: ProfileConfig = toml::from_str(toml_str).unwrap();
+        assert!(profile.health_check.is_none());
+    }
+
+    #[test]
+    fn test_resolve_health_check_defaults() {
+        let config = Config::default();
+        let profile = config.profiles.get("default").unwrap();
+        let hc = config.resolve_health_check(profile);
+        assert_eq!(hc.url, Some("http://localhost:8080/health".to_string()));
+        assert_eq!(hc.interval_ms, Some(5000)); // from supervisor default
+        assert_eq!(hc.timeout_ms, Some(3000));
+        assert_eq!(hc.retries, Some(1));
+    }
+
+    #[test]
+    fn test_resolve_health_check_profile_override() {
+        let config = Config::default();
+        let mut profile = config.profiles.get("default").unwrap().clone();
+        profile.health_check = Some(HealthCheck {
+            url: Some("http://localhost:9090/health".to_string()),
+            interval_ms: Some(3000),
+            timeout_ms: Some(5000),
+            retries: Some(3),
+        });
+        let hc = config.resolve_health_check(&profile);
+        assert_eq!(hc.url, Some("http://localhost:9090/health".to_string()));
+        assert_eq!(hc.interval_ms, Some(3000));
+        assert_eq!(hc.timeout_ms, Some(5000));
+        assert_eq!(hc.retries, Some(3));
     }
 }

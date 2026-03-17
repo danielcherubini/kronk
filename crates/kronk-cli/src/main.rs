@@ -499,13 +499,13 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             args
         });
         let log_dir = config.logs_dir().ok().expect("Failed to get logs directory");
+        let health_check = config.resolve_health_check(&prof);
         let supervisor = ProcessSupervisor::new(
             backend.path.clone(),
             args,
-            backend.health_check_url.clone(),
+            health_check,
             config.supervisor.max_restarts,
             config.supervisor.restart_delay_ms,
-            config.supervisor.health_check_interval_ms,
         )
         .with_log_dir(log_dir);
 
@@ -633,13 +633,13 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
     }
     println!();
 
+    let health_check = config.resolve_health_check(&profile);
     let supervisor = ProcessSupervisor::new(
         backend.path.clone(),
         args,
-        backend.health_check_url.clone(),
+        health_check,
         config.supervisor.max_restarts,
         config.supervisor.restart_delay_ms,
-        config.supervisor.health_check_interval_ms,
     );
 
     let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
@@ -1064,6 +1064,7 @@ async fn cmd_profile_add(
             model: None,
             quant: None,
             port: None,
+            health_check: None,
         },
     );
 

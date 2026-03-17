@@ -2,11 +2,13 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::interval;
 
+use crate::config::HealthCheck;
 use crate::logging;
 
 #[derive(Debug, Clone)]
@@ -31,10 +33,9 @@ pub enum ProcessEvent {
 pub struct ProcessSupervisor {
     exe_path: String,
     args: Vec<String>,
-    health_url: Option<String>,
+    health_check: HealthCheck,
     max_restarts: u32,
     restart_delay_ms: u64,
-    health_check_interval_ms: u64,
     log_dir: Option<std::path::PathBuf>,
 }
 
@@ -42,18 +43,16 @@ impl ProcessSupervisor {
     pub fn new(
         exe_path: String,
         args: Vec<String>,
-        health_url: Option<String>,
+        health_check: HealthCheck,
         max_restarts: u32,
         restart_delay_ms: u64,
-        health_check_interval_ms: u64,
     ) -> Self {
         Self {
             exe_path,
             args,
-            health_url,
+            health_check,
             max_restarts,
             restart_delay_ms,
-            health_check_interval_ms,
             log_dir: None,
         }
     }
@@ -131,10 +130,11 @@ impl ProcessSupervisor {
 
             // Health check loop
             let mut health_interval =
-                interval(Duration::from_millis(self.health_check_interval_ms));
+                interval(Duration::from_millis(self.health_check.interval_ms.unwrap_or(5000)));
             let mut server_ready = false;
+            let timeout = Duration::from_millis(self.health_check.timeout_ms.unwrap_or(3000));
             let http_client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(3))
+                .timeout(timeout)
                 .build()
                 .unwrap_or_default();
 
@@ -150,7 +150,7 @@ impl ProcessSupervisor {
                     }
                     _ = health_interval.tick() => {
                         let alive = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
-                        let healthy = if let Some(url) = &self.health_url {
+                        let healthy = if let Some(url) = &self.health_check.url {
                             http_client.get(url).send().await
                                 .map(|r| r.status().is_success())
                                 .unwrap_or(false)
