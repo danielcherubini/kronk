@@ -363,6 +363,12 @@ fn service_dispatch() -> Result<()> {
         .and_then(|i| raw_args.get(i + 1))
         .map(|s| std::path::PathBuf::from(s));
 
+    let ctx = raw_args
+        .iter()
+        .position(|a| a == "--ctx")
+        .and_then(|i| raw_args.get(i + 1))
+        .and_then(|s| s.parse().ok());
+
     let service_name = Config::service_name(&profile);
 
     // Store in globals so service_main can access them
@@ -375,6 +381,9 @@ fn service_dispatch() -> Result<()> {
     SERVICE_CONFIG_DIR
         .set(config_dir)
         .map_err(|_| anyhow::anyhow!("Failed to set service config dir"))?;
+    SERVICE_CTX
+        .set(ctx)
+        .map_err(|_| anyhow::anyhow!("Failed to set service ctx"))?;
 
     windows_service::service_dispatcher::start(&service_name, ffi_service_main)
         .context("Failed to start service dispatcher — is this running as a Windows Service?")?;
@@ -391,6 +400,8 @@ static SERVICE_PROFILE: OnceLock<String> = OnceLock::new();
 static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static SERVICE_CONFIG_DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static SERVICE_CTX: OnceLock<Option<u32>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 windows_service::define_windows_service!(ffi_service_main, win_service_main);
@@ -406,6 +417,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let profile = SERVICE_PROFILE.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
     let config_dir = SERVICE_CONFIG_DIR.get().and_then(|o| o.clone());
+    let ctx = SERVICE_CTX.get().cloned();
 
     // Set up logging to file — use config_dir if available, otherwise fall back
     let log_dir = config_dir.clone().unwrap_or_else(|| {
@@ -499,7 +511,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         };
 
-        let args = build_full_args(&config, prof, backend, None).unwrap_or_else(|e| {
+        let args = build_full_args(&config, prof, backend, ctx).unwrap_or_else(|e| {
             tracing::warn!("Failed to build model args: {}", e);
             let mut args = backend.default_args.clone();
             args.extend(prof.args.clone());
