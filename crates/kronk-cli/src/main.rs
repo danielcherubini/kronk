@@ -1,9 +1,14 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use kronk_core::config::Config;
+use kronk_core::logging;
 use kronk_core::process::{ProcessEvent, ProcessSupervisor};
 use kronk_core::use_cases::SamplingParams;
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::interval;
 
 mod commands;
 
@@ -285,7 +290,11 @@ fn main() -> Result<()> {
             Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
             Commands::Model { command } => commands::model::run(&config, command).await,
-            Commands::Logs { profile, follow, lines } => cmd_logs(&config, &profile, follow, lines).await,
+            Commands::Logs {
+                profile,
+                follow,
+                lines,
+            } => cmd_logs(&config, &profile, follow, lines).await,
         }
     })
 }

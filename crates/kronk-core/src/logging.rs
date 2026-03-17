@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
@@ -71,7 +70,7 @@ pub fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
     let file =
         File::open(path).with_context(|| format!("Failed to open log file: {}", path.display()))?;
     let reader = BufReader::new(file);
-    let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let all_lines: Vec<String> = reader.lines().collect::<Result<Vec<String>, _>>()?;
 
     if all_lines.len() <= n {
         Ok(all_lines)
@@ -83,6 +82,7 @@ pub fn tail_lines(path: &Path, n: usize) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_log_path() {
