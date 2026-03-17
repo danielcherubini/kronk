@@ -36,6 +36,7 @@ enum Commands {
         profile: String,
     },
     /// Add a new profile from a raw command line
+    #[command(hide = true)]
     Add {
         /// Profile name
         name: String,
@@ -44,12 +45,18 @@ enum Commands {
         command: Vec<String>,
     },
     /// Update an existing profile with a new command line
+    #[command(hide = true)]
     Update {
         /// Profile name
         name: String,
         /// The full command: binary path followed by all arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
+    },
+    /// Manage profiles — list, add, edit, remove
+    Profile {
+        #[command(subcommand)]
+        command: ProfileCommands,
     },
     /// Show status of all profiles
     Status,
@@ -118,6 +125,36 @@ pub enum ModelCommands {
         /// Immediately pull a selected result
         #[arg(long)]
         pull: bool,
+    },
+}
+
+#[derive(Parser, Debug)]
+pub enum ProfileCommands {
+    /// List all profiles with status
+    Ls,
+    /// Add a new profile from a raw command line
+    Add {
+        /// Profile name
+        name: String,
+        /// Backend command and arguments (e.g. llama-server -m model.gguf)
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Edit an existing profile's command line
+    Edit {
+        /// Profile name
+        name: String,
+        /// New backend command and arguments
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Remove a profile
+    Rm {
+        /// Profile name to remove
+        name: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -228,6 +265,7 @@ fn main() -> Result<()> {
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
             Commands::Add { name, command } => cmd_add(&config, &name, command, false),
             Commands::Update { name, command } => cmd_add(&config, &name, command, true),
+            Commands::Profile { command } => cmd_profile(&config, command).await,
             Commands::Status => cmd_status(&config).await,
             Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
@@ -724,6 +762,124 @@ async fn cmd_status(config: &Config) -> Result<()> {
     }
 
     println!();
+    Ok(())
+}
+
+async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
+    match command {
+        ProfileCommands::Ls => cmd_profile_ls(config).await,
+        ProfileCommands::Add { name, command } => cmd_add(config, &name, command, false),
+        ProfileCommands::Edit { name, command } => cmd_add(config, &name, command, true),
+        ProfileCommands::Rm { name, force } => cmd_profile_rm(config, &name, force),
+    }
+}
+
+async fn cmd_profile_ls(config: &Config) -> Result<()> {
+    if config.profiles.is_empty() {
+        println!("No profiles configured.");
+        println!();
+        println!("Add one:  kronk profile add <name> <command...>");
+        println!("Or pull:  kronk model pull <repo>");
+        return Ok(());
+    }
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .unwrap_or_default();
+
+    println!("Profiles:");
+    println!("{}", "-".repeat(60));
+
+    for (name, profile) in &config.profiles {
+        let backend = config.backends.get(&profile.backend);
+        let use_case = profile.use_case.as_ref()
+            .map(|uc| uc.to_string())
+            .unwrap_or_else(|| "none".to_string());
+
+        let service_name = Config::service_name(name);
+        let service_status = {
+            #[cfg(target_os = "windows")]
+            { kronk_core::platform::windows::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            #[cfg(target_os = "linux")]
+            { kronk_core::platform::linux::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+            { let _ = &service_name; "N/A".to_string() }
+        };
+
+        let health = if let Some(url) = backend.and_then(|b| b.health_check_url.as_ref()) {
+            match http_client.get(url).send().await {
+                Ok(resp) if resp.status().is_success() => "HEALTHY",
+                _ => "DOWN",
+            }
+        } else { "N/A" };
+
+        println!();
+        println!("  {}  (backend: {})", name, profile.backend);
+        println!("    use-case: {}  service: {}  health: {}", use_case, service_status, health);
+
+        if let Some(ref model) = profile.model {
+            let quant = profile.quant.as_deref().unwrap_or("?");
+            println!("    model: {} / {}", model, quant);
+        }
+
+        if !profile.args.is_empty() {
+            let args_str = profile.args.join(" ");
+            if args_str.len() > 80 {
+                println!("    args: {}...", &args_str[..77]);
+            } else {
+                println!("    args: {}", args_str);
+            }
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
+    if !config.profiles.contains_key(name) {
+        anyhow::bail!("Profile '{}' not found.", name);
+    }
+
+    // Check if a service is installed for this profile
+    let service_name = Config::service_name(name);
+    let service_installed = {
+        #[cfg(target_os = "windows")]
+        { kronk_core::platform::windows::query_service(&service_name)
+            .map(|s| s != "NOT_INSTALLED")
+            .unwrap_or(false) }
+        #[cfg(target_os = "linux")]
+        { kronk_core::platform::linux::query_service(&service_name)
+            .map(|s| s != "NOT_INSTALLED")
+            .unwrap_or(false) }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        { let _ = &service_name; false }
+    };
+
+    if service_installed {
+        anyhow::bail!(
+            "Profile '{}' has an installed service '{}'. Remove it first with: kronk service remove --profile {}",
+            name, service_name, name
+        );
+    }
+
+    if !force {
+        let confirm = inquire::Confirm::new(&format!("Remove profile '{}'?", name))
+            .with_default(false)
+            .prompt()
+            .context("Confirmation cancelled")?;
+        if !confirm {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let mut config = config.clone();
+    config.profiles.remove(name);
+    config.save()?;
+
+    println!("Profile '{}' removed.", name);
     Ok(())
 }
 
