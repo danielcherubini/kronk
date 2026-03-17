@@ -4,7 +4,7 @@
 
 **Goal:** Rename `profile` → `server`, `use_case` → `profile` across the entire codebase, restructure config directories to use `profiles.d/` for sampling presets and `configs.d/` for model cards, add an `enabled` flag to servers, and make `kronk run` require a positional server name. This is groundwork for future multi-server support.
 
-**Architecture:** Three-phase refactor: (1) rename all types, fields, CLI commands and config keys, (2) restructure directories — move hardcoded sampling presets into `profiles.d/*.toml` and model cards into `configs.d/<company>-<model>.toml`, (3) add `enabled` flag to servers and update service commands to operate on all enabled servers when no name argument is given.
+**Architecture:** Three-phase refactor: (1) rename all types, fields, CLI commands and config keys, (2) restructure directories — move hardcoded sampling presets into `profiles.d/*.toml` and model cards into `configs.d/<company>--<model>.toml`, (3) add `enabled` flag to servers and update service commands to operate on all enabled servers when no name argument is given.
 
 **Tech Stack:** Rust, clap (derive), serde, toml, tokio
 
@@ -512,7 +512,7 @@ git commit -m "refactor: rename CLI commands profile → server, use-case → pr
 ## Task 4: Move model cards to `configs.d/`
 
 Model cards currently live at `~/.config/kronk/models/<company>/<model>/model.toml`.
-Move the canonical location to `~/.config/kronk/configs.d/<company>-<model>.toml`.
+Move the canonical location to `~/.config/kronk/configs.d/<company>--<model>.toml`.
 GGUF files remain in `models/<company>/<model>/`.
 
 **Files:**
@@ -567,9 +567,12 @@ pub fn scan(&self) -> Result<Vec<InstalledModel>> {
         if !path.extension().map_or(false, |e| e == "toml") {
             continue;
         }
-        // Filename: "company-modelname.toml" → id: "company/modelname"
+        // Filename: "company--modelname.toml" → id: "company/modelname"
         let stem = path.file_stem().unwrap().to_string_lossy();
-        let id = stem.replacen('-', "/", 1); // first dash becomes /
+        let id = match stem.find("--") {
+            Some(pos) => format!("{}/{}", &stem[..pos], &stem[pos + 2..]),
+            None => continue,
+        };
         let model_dir = self.models_dir.join(&id);
 
         match ModelCard::load(&path) {
@@ -624,7 +627,7 @@ to:
 ```rust
 let configs_dir = config.configs_dir()?;
 std::fs::create_dir_all(&configs_dir)?;
-let card_filename = format!("{}.toml", model_id.replace('/', "-"));
+let card_filename = format!("{}.toml", model_id.replace('/', "--"));
 let card_path = configs_dir.join(&card_filename);
 ```
 
@@ -692,8 +695,9 @@ fn create_test_model(base: &Path, company: &str, model: &str) -> ModelCard {
     std::fs::create_dir_all(&configs_dir).unwrap();
 
     let card = ModelCard { /* ... */ };
-    let card_filename = format!("{}-{}.toml", company, model);
+    let card_filename = format!("{}--{}.toml", company, model);
     card.save(&configs_dir.join(&card_filename)).unwrap();
+    // GGUF file still goes in models dir
     std::fs::write(model_dir.join(format!("{}-Q4_K_M.gguf", model)), b"fake").unwrap();
     card
 }
@@ -709,7 +713,7 @@ cargo build --workspace && cargo test --workspace
 
 ```bash
 git add -A
-git commit -m "refactor: move model cards to configs.d/<company>-<model>.toml"
+git commit -m "refactor: move model cards to configs.d/<company>--<model>.toml"
 ```
 
 ---
@@ -1066,7 +1070,7 @@ git commit -m "chore: verify community model card compatibility with new layout"
 2. **CLI commands:** `kronk profile` → `kronk server`, `kronk use-case` → `kronk profile`
 3. **CLI flags:** `kronk run --profile x` → `kronk run <name>` (positional, required)
 4. **Service commands:** `--profile` flag → positional `<name>` (optional, defaults to all enabled)
-5. **Model cards:** moved from `models/<company>/<model>/model.toml` → `configs.d/<company>-<model>.toml`
+5. **Model cards:** moved from `models/<company>/<model>/model.toml` → `configs.d/<company>--<model>.toml`
 6. **New field:** `enabled = true` on servers (defaults to true for backward compat via `#[serde(default = "default_enabled")]`)
 7. **New directory:** `profiles.d/` with editable sampling preset TOML files
 

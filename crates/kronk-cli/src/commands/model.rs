@@ -470,7 +470,7 @@ async fn cmd_create(
     let mut config = config.clone();
     if config.servers.contains_key(name) {
         anyhow::bail!(
-            "Server '{}' already exists. Use `kronk update` or choose a different name.",
+            "Server '{}' already exists. Use `kronk server edit` or choose a different name.",
             name
         );
     }

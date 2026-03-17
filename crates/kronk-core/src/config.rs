@@ -255,11 +255,17 @@ impl Config {
     pub fn effective_sampling(&self, server: &ServerConfig) -> Option<SamplingParams> {
         let base = match &server.profile {
             Some(Profile::Custom { name }) => {
-                // Look up custom profile in config
+                // Look up custom profile in config, then profiles.d/
                 self.custom_profiles
                     .as_ref()
                     .and_then(|m| m.get(name))
                     .cloned()
+                    .or_else(|| {
+                        self.profiles_dir()
+                            .ok()
+                            .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                            .and_then(|map| map.get(name).cloned())
+                    })
             }
             Some(profile) => {
                 // Try profiles.d/ first, fall back to built-in
@@ -296,7 +302,13 @@ impl Config {
                 .custom_profiles
                 .as_ref()
                 .and_then(|m| m.get(name))
-                .cloned(),
+                .cloned()
+                .or_else(|| {
+                    self.profiles_dir()
+                        .ok()
+                        .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                        .and_then(|map| map.get(name).cloned())
+                }),
             Some(profile) => {
                 // Try profiles.d/ first, fall back to built-in
                 let from_disk = self
