@@ -194,7 +194,7 @@ The binary is at `target/release/kronk.exe` (Windows) or `target/release/kronk` 
 
 ## Roadmap
 
-See [PLAN.md](PLAN.md) for the full development plan.
+See [TODO.md](TODO.md) for the full development plan.
 
 - [x] Native Windows Service (no NSSM)
 - [x] Linux systemd support
