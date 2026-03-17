@@ -129,8 +129,9 @@ impl ProcessSupervisor {
             });
 
             // Health check loop
-            let mut health_interval =
-                interval(Duration::from_millis(self.health_check.interval_ms.unwrap_or(5000)));
+            let mut health_interval = interval(Duration::from_millis(
+                self.health_check.interval_ms.unwrap_or(5000),
+            ));
             let mut server_ready = false;
             let timeout = Duration::from_millis(self.health_check.timeout_ms.unwrap_or(3000));
             let http_client = reqwest::Client::builder()

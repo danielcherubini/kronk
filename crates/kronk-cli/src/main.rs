@@ -498,7 +498,10 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             args.extend(prof.args.clone());
             args
         });
-        let log_dir = config.logs_dir().ok().expect("Failed to get logs directory");
+        let log_dir = config
+            .logs_dir()
+            .ok()
+            .expect("Failed to get logs directory");
         let health_check = config.resolve_health_check(&prof);
         let supervisor = ProcessSupervisor::new(
             backend.path.clone(),
@@ -628,7 +631,7 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
     println!();
     println!("  Profile:  {}", profile_name);
     println!("  Backend:  {}", backend.path);
-    let health_check = config.resolve_health_check(&profile);
+    let health_check = config.resolve_health_check(profile);
     if let Some(ref url) = health_check.url {
         println!("  Health:   {}", url);
     }
