@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "kronk"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-mock"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "tokio",
  "tracing",
