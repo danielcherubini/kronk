@@ -4,7 +4,12 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Manage systemd user services on Linux.
-pub fn install_service(service_name: &str, exe_path: &str, args: &[String]) -> Result<()> {
+pub fn install_service(
+    service_name: &str,
+    exe_path: &str,
+    args: &[String],
+    _port: u16,
+) -> Result<()> {
     let config_dir = systemd_user_dir()?;
     fs::create_dir_all(&config_dir).context("Failed to create systemd user dir")?;
 

@@ -14,6 +14,7 @@ pub fn install_service(
     display_name: &str,
     profile: &str,
     config_dir: &std::path::Path,
+    port: u16,
 ) -> Result<()> {
     let exe_path = std::env::current_exe().context("Failed to get current exe path")?;
 
@@ -60,8 +61,8 @@ pub fn install_service(
         )
         .context("Failed to create service — run as Administrator")?;
 
-    // Add firewall rule for the server port
-    add_firewall_rule(service_name, 8080).ok();
+    // Add firewall rule for the profile's port
+    add_firewall_rule(service_name, port).ok();
 
     // Grant Interactive Users permission to start/stop the service
     // This allows the user to control the service without elevation

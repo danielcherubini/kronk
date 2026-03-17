@@ -679,7 +679,6 @@ async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
 fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
     match command {
         ServiceCommands::Install { profile } => {
-            #[allow(unused_variables)]
             let (prof, backend) = config.resolve_profile(&profile)?;
             let service_name = Config::service_name(&profile);
 
@@ -687,18 +686,21 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
             {
                 let display_name = format!("Kronk: {}", profile);
                 let config_dir = Config::base_dir()?;
+                let port = prof.port.unwrap_or(8080);
                 kronk_core::platform::windows::install_service(
                     &service_name,
                     &display_name,
                     &profile,
                     &config_dir,
+                    port,
                 )?;
             }
 
             #[cfg(target_os = "linux")]
             {
                 let args = build_full_args(config, prof, backend)?;
-                kronk_core::platform::linux::install_service(&service_name, &backend.path, &args)?;
+                let port = prof.port.unwrap_or(8080);
+                kronk_core::platform::linux::install_service(&service_name, &backend.path, &args, port)?;
             }
 
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -778,8 +780,8 @@ async fn cmd_status(config: &Config) -> Result<()> {
         .unwrap_or_default();
 
     for (name, profile) in &config.profiles {
-        let backend = config.backends.get(&profile.backend);
-        let backend_path = backend.map(|b| b.path.as_str()).unwrap_or("???");
+        let _backend = config.backends.get(&profile.backend);
+        let backend_path = _backend.map(|b| b.path.as_str()).unwrap_or("???");
 
         // Check service status
         let service_name = Config::service_name(name);
@@ -801,8 +803,9 @@ async fn cmd_status(config: &Config) -> Result<()> {
             }
         };
 
-        // Check health endpoint
-        let health = if let Some(url) = backend.and_then(|b| b.health_check_url.as_ref()) {
+        // Check health endpoint using profile's resolved URL
+        let health_url = config.resolve_health_url(profile);
+        let health = if let Some(url) = health_url {
             match http_client.get(url).send().await {
                 Ok(resp) if resp.status().is_success() => "HEALTHY".to_string(),
                 Ok(resp) => format!("HTTP {}", resp.status()),
@@ -892,7 +895,9 @@ async fn cmd_profile_ls(config: &Config) -> Result<()> {
             }
         };
 
-        let health = if let Some(url) = backend.and_then(|b| b.health_check_url.as_ref()) {
+        // Use profile's resolved health URL
+        let health_url = config.resolve_health_url(profile);
+        let health = if let Some(url) = health_url {
             match http_client.get(url).send().await {
                 Ok(resp) if resp.status().is_success() => "HEALTHY",
                 _ => "DOWN",
@@ -1052,6 +1057,7 @@ async fn cmd_profile_add(
             sampling: None,
             model: None,
             quant: None,
+            port: None,
         },
     );
 

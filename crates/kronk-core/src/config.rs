@@ -52,6 +52,9 @@ pub struct ProfileConfig {
     /// Which quant to use from the model card (e.g. "Q4_K_M").
     #[serde(default)]
     pub quant: Option<String>,
+    /// Custom port for this profile (None = backend default)
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +141,25 @@ impl Config {
         })?;
 
         Ok((profile, backend))
+    }
+
+    /// Resolve the health check URL for a profile, taking into account:
+    /// 1. Backend's health_check_url if set
+    /// 2. Profile's custom port if set
+    /// 3. Fallback to http://localhost:{port}/health
+    pub fn resolve_health_url(&self, profile: &ProfileConfig) -> Option<String> {
+        let backend = self.backends.get(&profile.backend)?;
+        let backend_url = backend.health_check_url.as_ref()?;
+
+        // If profile has a custom port, replace it in the URL
+        if let Some(port) = profile.port {
+            let mut url = url::Url::parse(backend_url).ok()?;
+            url.set_port(Some(port)).ok()?;
+            return Some(url.to_string());
+        }
+
+        // No custom port, use backend's URL as-is
+        Some(backend_url.clone())
     }
 
     pub fn build_args(&self, profile: &ProfileConfig, backend: &BackendConfig) -> Vec<String> {
@@ -331,6 +353,7 @@ impl Default for Config {
                 sampling: None,
                 model: None,
                 quant: None,
+                port: None,
             },
         );
 
@@ -369,6 +392,7 @@ mod tests {
             sampling: None,
             model: None,
             quant: None,
+            port: None,
         };
         let params = config.effective_sampling(&profile).unwrap();
         assert_eq!(params.temperature, Some(0.3));
@@ -387,6 +411,7 @@ mod tests {
             }),
             model: None,
             quant: None,
+            port: None,
         };
         let params = config.effective_sampling(&profile).unwrap();
         assert_eq!(params.temperature, Some(0.5)); // override won
@@ -403,6 +428,7 @@ mod tests {
             sampling: None,
             model: None,
             quant: None,
+            port: None,
         };
         assert!(config.effective_sampling(&profile).is_none());
     }
@@ -434,6 +460,7 @@ mod tests {
             sampling: None,
             model: Some("bartowski/OmniCoder".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            port: None,
         };
         let toml_str = toml::to_string_pretty(&profile).unwrap();
         let loaded: ProfileConfig = toml::from_str(&toml_str).unwrap();
@@ -489,6 +516,7 @@ args = ["--host", "0.0.0.0"]
             }),
             model: Some("test/model".to_string()),
             quant: None,
+            port: None,
         };
 
         // 3-layer merge: UseCase::Coding (temp=0.3) -> model card (temp=0.2, top_k=40) -> profile (top_p=0.85)
@@ -514,6 +542,7 @@ args = ["--host", "0.0.0.0"]
             }),
             model: None,
             quant: None,
+            port: None,
         };
         let params = config.effective_sampling_with_card(&profile, None).unwrap();
         assert_eq!(params.temperature, Some(0.5)); // profile override
