@@ -1245,10 +1245,18 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
 
     match command {
         ProfileCommands::List => {
+            // Load profiles from disk
+            let profiles_dir = config.profiles_dir()?;
+            let disk_profiles =
+                kronk_core::profiles::load_profiles_d(&profiles_dir).unwrap_or_default();
+
             println!("Available profiles:");
             println!();
-            for (name, desc, uc) in Profile::all() {
-                let params = uc.params();
+            for (name, desc, profile) in Profile::all() {
+                let params = disk_profiles
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| profile.params());
                 println!("  {}:", name);
                 println!("    {}", desc);
                 println!(
@@ -1259,13 +1267,36 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                     params.min_p.unwrap_or(0.0),
                     params.presence_penalty.unwrap_or(0.0),
                 );
+                if disk_profiles.contains_key(name) {
+                    println!("    (loaded from profiles.d/{}.toml)", name);
+                }
                 println!();
+            }
+
+            // Show additional custom profiles from disk
+            for (name, params) in &disk_profiles {
+                if !Profile::all()
+                    .iter()
+                    .any(|(n, _, _)| *n == name.as_str())
+                {
+                    println!("  {} (custom from profiles.d/):", name);
+                    let args = params.to_args().join(" ");
+                    println!(
+                        "    {}",
+                        if args.is_empty() {
+                            "(default params)".to_string()
+                        } else {
+                            args
+                        }
+                    );
+                    println!();
+                }
             }
 
             // Show custom profiles from config
             if let Some(custom) = &config.custom_profiles {
                 if !custom.is_empty() {
-                    println!("Custom profiles:");
+                    println!("Custom profiles (from config):");
                     println!();
                     for (name, params) in custom {
                         println!("  {}:", name);

@@ -194,6 +194,63 @@ impl SamplingParams {
     }
 }
 
+/// A profile definition loaded from profiles.d/<name>.toml
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileDef {
+    pub sampling: SamplingParams,
+}
+
+/// Load all profile definitions from the profiles.d directory.
+pub fn load_profiles_d(
+    dir: &std::path::Path,
+) -> anyhow::Result<std::collections::HashMap<String, SamplingParams>> {
+    let mut profiles = std::collections::HashMap::new();
+    if !dir.exists() {
+        return Ok(profiles);
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().map_or(false, |e| e == "toml") {
+            let name = path.file_stem().unwrap().to_string_lossy().to_string();
+            let contents = std::fs::read_to_string(&path)?;
+            match toml::from_str::<ProfileDef>(&contents) {
+                Ok(def) => {
+                    profiles.insert(name, def.sampling);
+                }
+                Err(e) => {
+                    tracing::warn!("Skipping malformed profile {}: {}", path.display(), e);
+                }
+            }
+        }
+    }
+    Ok(profiles)
+}
+
+/// Generate default profile TOML files in the given directory.
+/// Does NOT overwrite existing files.
+pub fn generate_default_profiles(dir: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (name, _desc, profile) in Profile::all() {
+        let path = dir.join(format!("{}.toml", name));
+        if !path.exists() {
+            let def = ProfileDef {
+                sampling: profile.params(),
+            };
+            let toml_str = toml::to_string_pretty(&def)?;
+            let comment = match name {
+                "coding" => "# Sampling profile for code generation and agentic tasks.\n# Low temperature for deterministic, focused output.\n\n",
+                "chat" => "# Sampling profile for conversational use.\n# Balanced temperature for natural responses.\n\n",
+                "analysis" => "# Sampling profile for data analysis and reasoning.\n# Low temperature with focused sampling.\n\n",
+                "creative" => "# Sampling profile for creative writing and brainstorming.\n# High temperature for diverse, exploratory output.\n\n",
+                _ => "",
+            };
+            std::fs::write(&path, format!("{}{}", comment, toml_str))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +313,52 @@ mod tests {
         assert_eq!(json, "\"coding\"");
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Profile::Coding);
+    }
+
+    #[test]
+    fn test_load_profiles_d_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profiles = super::load_profiles_d(tmp.path()).unwrap();
+        assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn test_load_profiles_d_nonexistent() {
+        let profiles = super::load_profiles_d(std::path::Path::new(
+            "/tmp/nonexistent_kronk_profiles_d_test",
+        ))
+        .unwrap();
+        assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn test_generate_and_load_default_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        super::generate_default_profiles(tmp.path()).unwrap();
+
+        let profiles = super::load_profiles_d(tmp.path()).unwrap();
+        assert!(profiles.contains_key("coding"));
+        assert!(profiles.contains_key("chat"));
+        assert!(profiles.contains_key("analysis"));
+        assert!(profiles.contains_key("creative"));
+
+        let coding = &profiles["coding"];
+        assert_eq!(coding.temperature, Some(0.3));
+    }
+
+    #[test]
+    fn test_generate_does_not_overwrite_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        super::generate_default_profiles(tmp.path()).unwrap();
+
+        // Modify coding.toml
+        let coding_path = tmp.path().join("coding.toml");
+        std::fs::write(&coding_path, "[sampling]\ntemperature = 0.1\n").unwrap();
+
+        // Re-generate should not overwrite
+        super::generate_default_profiles(tmp.path()).unwrap();
+
+        let profiles = super::load_profiles_d(tmp.path()).unwrap();
+        assert_eq!(profiles["coding"].temperature, Some(0.1));
     }
 }
