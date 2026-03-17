@@ -129,11 +129,11 @@ impl ProcessSupervisor {
             });
 
             // Health check loop
-            let mut health_interval = interval(Duration::from_millis(
-                self.health_check.interval_ms.unwrap_or(5000),
-            ));
+            let interval_ms = self.health_check.interval_ms.unwrap_or(5000).max(1);
+            let timeout_ms = self.health_check.timeout_ms.unwrap_or(3000).max(1);
+            let mut health_interval = interval(Duration::from_millis(interval_ms));
             let mut server_ready = false;
-            let timeout = Duration::from_millis(self.health_check.timeout_ms.unwrap_or(3000));
+            let timeout = Duration::from_millis(timeout_ms);
             let http_client = reqwest::Client::builder()
                 .timeout(timeout)
                 .build()
@@ -151,7 +151,9 @@ impl ProcessSupervisor {
                     }
                     _ = health_interval.tick() => {
                         let alive = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
-                        let healthy = if let Some(url) = &self.health_check.url {
+                        let healthy = if !alive {
+                            false
+                        } else if let Some(url) = &self.health_check.url {
                             http_client.get(url).send().await
                                 .map(|r| r.status().is_success())
                                 .unwrap_or(false)
