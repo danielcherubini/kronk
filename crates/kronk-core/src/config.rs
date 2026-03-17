@@ -182,17 +182,24 @@ impl Config {
     /// 3. Fallback to http://localhost:{port}/health
     pub fn resolve_health_url(&self, server: &ServerConfig) -> Option<String> {
         let backend = self.backends.get(&server.backend)?;
-        let backend_url = backend.health_check_url.as_ref()?;
 
-        // If server has a custom port, replace it in the URL
-        if let Some(port) = server.port {
-            let mut url = url::Url::parse(backend_url).ok()?;
-            url.set_port(Some(port)).ok()?;
-            return Some(url.to_string());
+        // If backend has health_check_url, use it (and replace port if server.port is set)
+        if let Some(ref backend_url) = backend.health_check_url {
+            if let Some(port) = server.port {
+                let mut url = url::Url::parse(backend_url).ok()?;
+                url.set_port(Some(port)).ok()?;
+                return Some(url.to_string());
+            }
+            return Some(backend_url.clone());
         }
 
-        // No custom port, use backend's URL as-is
-        Some(backend_url.clone())
+        // backend.health_check_url is None, try server.port fallback
+        if let Some(port) = server.port {
+            return Some(format!("http://localhost:{}/health", port));
+        }
+
+        // Neither backend.health_check_url nor server.port present
+        None
     }
 
     /// Resolve the effective health check config for a server.
@@ -253,31 +260,7 @@ impl Config {
 
     /// Resolve effective sampling for a server, including custom profile lookup.
     pub fn effective_sampling(&self, server: &ServerConfig) -> Option<SamplingParams> {
-        let base = match &server.profile {
-            Some(Profile::Custom { name }) => {
-                // Look up custom profile in config, then profiles.d/
-                self.custom_profiles
-                    .as_ref()
-                    .and_then(|m| m.get(name))
-                    .cloned()
-                    .or_else(|| {
-                        self.profiles_dir()
-                            .ok()
-                            .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
-                            .and_then(|map| map.get(name).cloned())
-                    })
-            }
-            Some(profile) => {
-                // Try profiles.d/ first, fall back to built-in
-                let from_disk = self
-                    .profiles_dir()
-                    .ok()
-                    .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
-                    .and_then(|map| map.get(&profile.to_string()).cloned());
-                Some(from_disk.unwrap_or_else(|| profile.params()))
-            }
-            None => None,
-        };
+        let base = Self::resolve_profile_params(self, &server.profile);
 
         match (base, &server.sampling) {
             (Some(base), Some(overrides)) => Some(base.merge(overrides)),
@@ -297,29 +280,7 @@ impl Config {
         card: Option<&crate::models::card::ModelCard>,
     ) -> Option<SamplingParams> {
         // Layer 1: Profile base params
-        let base = match &server.profile {
-            Some(Profile::Custom { name }) => self
-                .custom_profiles
-                .as_ref()
-                .and_then(|m| m.get(name))
-                .cloned()
-                .or_else(|| {
-                    self.profiles_dir()
-                        .ok()
-                        .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
-                        .and_then(|map| map.get(name).cloned())
-                }),
-            Some(profile) => {
-                // Try profiles.d/ first, fall back to built-in
-                let from_disk = self
-                    .profiles_dir()
-                    .ok()
-                    .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
-                    .and_then(|map| map.get(&profile.to_string()).cloned());
-                Some(from_disk.unwrap_or_else(|| profile.params()))
-            }
-            None => None,
-        };
+        let base = Self::resolve_profile_params(self, &server.profile);
 
         // Layer 2: Model card sampling overrides for this profile
         let profile_name = server.profile.as_ref().map(|p| p.to_string());
@@ -414,6 +375,44 @@ impl Config {
         fs::write(&config_path, &toml_str).context("Failed to write config")?;
         Ok(())
     }
+
+    /// Shared helper to resolve profile params from custom_profiles, profiles.d/, or built-in.
+    /// Returns Option<SamplingParams> by checking:
+    /// 1. self.custom_profiles for the profile name
+    /// 2. profiles.d/ via crate::profiles::load_profiles_d
+    /// 3. Profile::params() for built-in profiles
+    fn resolve_profile_params(
+        config: &Config,
+        profile: &Option<crate::profiles::Profile>,
+    ) -> Option<crate::profiles::SamplingParams> {
+        match profile {
+            Some(crate::profiles::Profile::Custom { name }) => {
+                // Look up custom profile in config, then profiles.d/
+                config
+                    .custom_profiles
+                    .as_ref()
+                    .and_then(|m| m.get(name))
+                    .cloned()
+                    .or_else(|| {
+                        config
+                            .profiles_dir()
+                            .ok()
+                            .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                            .and_then(|map| map.get(name).cloned())
+                    })
+            }
+            Some(profile) => {
+                // Try profiles.d/ first, fall back to built-in
+                let from_disk = config
+                    .profiles_dir()
+                    .ok()
+                    .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                    .and_then(|map| map.get(&profile.to_string()).cloned());
+                from_disk.or_else(|| Some(profile.params()))
+            }
+            None => None,
+        }
+    }
 }
 
 /// Migrate model cards from the old `models/<company>/<model>/model.toml` layout
@@ -440,8 +439,20 @@ pub fn migrate_model_cards_to_configs_d(config: &Config) -> Result<()> {
                 let model_name = model_entry.file_name().to_string_lossy().to_string();
                 let new_filename = format!("{}--{}.toml", company, model_name);
                 let new_path = configs_dir.join(&new_filename);
-                // Skip if already migrated
+                // Skip if already migrated - but clean up legacy file instead of leaving it behind
                 if new_path.exists() {
+                    let old_path = &old_card;
+                    if let Err(e) = std::fs::remove_file(old_path) {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            // Already removed, continue
+                        } else {
+                            tracing::warn!(
+                                "Failed to remove legacy model.toml {}: {}",
+                                old_path.display(),
+                                e
+                            );
+                        }
+                    }
                     continue;
                 }
                 std::fs::create_dir_all(&configs_dir)?;
