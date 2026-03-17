@@ -771,7 +771,10 @@ async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
         ProfileCommands::Add { name, command } => cmd_add(config, &name, command, false),
         ProfileCommands::Edit { name, command } => {
             if !config.profiles.contains_key(&name) {
-                anyhow::bail!("Profile '{}' not found. Use `kronk profile add` to create it.", name);
+                anyhow::bail!(
+                    "Profile '{}' not found. Use `kronk profile add` to create it.",
+                    name
+                );
             }
             cmd_add(config, &name, command, true)
         }
@@ -798,18 +801,29 @@ async fn cmd_profile_ls(config: &Config) -> Result<()> {
 
     for (name, profile) in &config.profiles {
         let backend = config.backends.get(&profile.backend);
-        let use_case = profile.use_case.as_ref()
+        let use_case = profile
+            .use_case
+            .as_ref()
             .map(|uc| uc.to_string())
             .unwrap_or_else(|| "none".to_string());
 
         let service_name = Config::service_name(name);
         let service_status = {
             #[cfg(target_os = "windows")]
-            { kronk_core::platform::windows::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            {
+                kronk_core::platform::windows::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
             #[cfg(target_os = "linux")]
-            { kronk_core::platform::linux::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string()) }
+            {
+                kronk_core::platform::linux::query_service(&service_name)
+                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+            }
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            { let _ = &service_name; "N/A".to_string() }
+            {
+                let _ = &service_name;
+                "N/A".to_string()
+            }
         };
 
         let health = if let Some(url) = backend.and_then(|b| b.health_check_url.as_ref()) {
@@ -817,11 +831,16 @@ async fn cmd_profile_ls(config: &Config) -> Result<()> {
                 Ok(resp) if resp.status().is_success() => "HEALTHY",
                 _ => "DOWN",
             }
-        } else { "N/A" };
+        } else {
+            "N/A"
+        };
 
         println!();
         println!("  {}  (backend: {})", name, profile.backend);
-        println!("    use-case: {}  service: {}  health: {}", use_case, service_status, health);
+        println!(
+            "    use-case: {}  service: {}  health: {}",
+            use_case, service_status, health
+        );
 
         if let Some(ref model) = profile.model {
             let quant = profile.quant.as_deref().unwrap_or("?");
@@ -852,15 +871,22 @@ fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     let service_name = Config::service_name(name);
     let service_installed = {
         #[cfg(target_os = "windows")]
-        { kronk_core::platform::windows::query_service(&service_name)
-            .map(|s| s != "NOT_INSTALLED")
-            .unwrap_or(false) }
+        {
+            kronk_core::platform::windows::query_service(&service_name)
+                .map(|s| s != "NOT_INSTALLED")
+                .unwrap_or(false)
+        }
         #[cfg(target_os = "linux")]
-        { kronk_core::platform::linux::query_service(&service_name)
-            .map(|s| s != "NOT_INSTALLED")
-            .unwrap_or(false) }
+        {
+            kronk_core::platform::linux::query_service(&service_name)
+                .map(|s| s != "NOT_INSTALLED")
+                .unwrap_or(false)
+        }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        { let _ = &service_name; false }
+        {
+            let _ = &service_name;
+            false
+        }
     };
 
     if service_installed {

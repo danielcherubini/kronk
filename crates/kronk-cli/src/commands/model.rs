@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use kronk_core::config::Config;
 use kronk_core::models::pull;
-use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
 use kronk_core::models::search::{self, SortBy};
+use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
 use std::collections::HashMap;
 
 use crate::ModelCommands;
@@ -721,10 +721,7 @@ async fn cmd_search(
     }
 
     // Display results as a formatted table
-    println!(
-        "  {:<50} {:>12} {:>8}",
-        "MODEL", "DOWNLOADS", "LIKES"
-    );
+    println!("  {:<50} {:>12} {:>8}", "MODEL", "DOWNLOADS", "LIKES");
     println!("  {}", "-".repeat(74));
 
     for result in &results {

@@ -45,11 +45,7 @@ impl SortBy {
 }
 
 /// Search HuggingFace for GGUF models matching the query.
-pub async fn search_models(
-    query: &str,
-    sort: SortBy,
-    limit: usize,
-) -> Result<Vec<SearchResult>> {
+pub async fn search_models(query: &str, sort: SortBy, limit: usize) -> Result<Vec<SearchResult>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -72,10 +68,7 @@ pub async fn search_models(
         .with_context(|| format!("Failed to search HuggingFace for '{}'", query))?;
 
     if !resp.status().is_success() {
-        anyhow::bail!(
-            "HuggingFace search failed with status {}",
-            resp.status()
-        );
+        anyhow::bail!("HuggingFace search failed with status {}", resp.status());
     }
 
     let results: Vec<SearchResult> = resp
@@ -116,7 +109,9 @@ mod tests {
     async fn test_search_gguf_models() {
         let results = search_models("llama", SortBy::Downloads, 5).await.unwrap();
         assert!(!results.is_empty());
-        assert!(results[0].model_id.to_lowercase().contains("llama")
-            || results[0].tags.iter().any(|t| t == "gguf"));
+        assert!(
+            results[0].model_id.to_lowercase().contains("llama")
+                || results[0].tags.iter().any(|t| t == "gguf")
+        );
     }
 }
