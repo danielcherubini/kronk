@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+mod args;
 mod commands;
 
 #[derive(Parser, Debug)]
@@ -27,6 +28,9 @@ enum Commands {
     Run {
         #[arg(short, long, default_value = "default")]
         profile: String,
+        /// Override context size (e.g. 8192, 16384). Takes priority over model card value.
+        #[arg(long)]
+        ctx: Option<u32>,
     },
     /// Manage Windows services
     Service {
@@ -38,6 +42,9 @@ enum Commands {
     ServiceRun {
         #[arg(short, long)]
         profile: String,
+        /// Override context size (e.g. 8192, 16384). Takes priority over model card value.
+        #[arg(long)]
+        ctx: Option<u32>,
     },
     /// Add a new profile from a raw command line
     #[command(hide = true)]
@@ -276,9 +283,9 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         match args.command {
-            Commands::Run { profile } => cmd_run(&config, &profile).await,
+            Commands::Run { profile, ctx } => cmd_run(&config, &profile, ctx).await,
             Commands::Service { command } => cmd_service(&config, command),
-            Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
+            Commands::ServiceRun { profile, ctx } => cmd_run(&config, &profile, ctx).await,
             Commands::Add { name, command } => {
                 cmd_profile_add(&config, &name, command, false).await
             }
@@ -356,6 +363,12 @@ fn service_dispatch() -> Result<()> {
         .and_then(|i| raw_args.get(i + 1))
         .map(|s| std::path::PathBuf::from(s));
 
+    let ctx = raw_args
+        .iter()
+        .position(|a| a == "--ctx")
+        .and_then(|i| raw_args.get(i + 1))
+        .and_then(|s| s.parse().ok());
+
     let service_name = Config::service_name(&profile);
 
     // Store in globals so service_main can access them
@@ -368,6 +381,9 @@ fn service_dispatch() -> Result<()> {
     SERVICE_CONFIG_DIR
         .set(config_dir)
         .map_err(|_| anyhow::anyhow!("Failed to set service config dir"))?;
+    SERVICE_CTX
+        .set(ctx)
+        .map_err(|_| anyhow::anyhow!("Failed to set service ctx"))?;
 
     windows_service::service_dispatcher::start(&service_name, ffi_service_main)
         .context("Failed to start service dispatcher — is this running as a Windows Service?")?;
@@ -384,6 +400,8 @@ static SERVICE_PROFILE: OnceLock<String> = OnceLock::new();
 static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static SERVICE_CONFIG_DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static SERVICE_CTX: OnceLock<Option<u32>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 windows_service::define_windows_service!(ffi_service_main, win_service_main);
@@ -399,6 +417,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let profile = SERVICE_PROFILE.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
     let config_dir = SERVICE_CONFIG_DIR.get().and_then(|o| o.clone());
+    let ctx = SERVICE_CTX.get().and_then(|o| *o);
 
     // Set up logging to file — use config_dir if available, otherwise fall back
     let log_dir = config_dir.clone().unwrap_or_else(|| {
@@ -492,7 +511,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         };
 
-        let args = build_full_args(&config, prof, backend).unwrap_or_else(|e| {
+        let args = build_full_args(&config, prof, backend, ctx).unwrap_or_else(|e| {
             tracing::warn!("Failed to build model args: {}", e);
             let mut args = backend.default_args.clone();
             args.extend(prof.args.clone());
@@ -575,6 +594,7 @@ fn build_full_args(
     config: &Config,
     profile: &kronk_core::config::ProfileConfig,
     backend: &kronk_core::config::BackendConfig,
+    ctx_override: Option<u32>,
 ) -> Result<Vec<String>> {
     let mut args = backend.default_args.clone();
     args.extend(profile.args.clone());
@@ -590,7 +610,9 @@ fn build_full_args(
                     args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
                 }
             }
-            if let Some(ctx) = installed.card.context_length_for(quant_name) {
+            // Context size: CLI override > model card
+            let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
+            if let Some(ctx) = ctx {
                 if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
                     args.push("-c".to_string());
                     args.push(ctx.to_string());
@@ -614,6 +636,11 @@ fn build_full_args(
         }
     }
 
+    // No model card — still apply ctx override if given
+    if let Some(ctx) = ctx_override {
+        args::inject_context_size(&mut args, ctx);
+    }
+
     // No model card — just use profile sampling
     if let Some(sampling) = config.effective_sampling_with_card(profile, None) {
         args.extend(sampling.to_args());
@@ -622,15 +649,18 @@ fn build_full_args(
     Ok(args)
 }
 
-async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
+async fn cmd_run(config: &Config, profile_name: &str, ctx_override: Option<u32>) -> Result<()> {
     let (profile, backend) = config.resolve_profile(profile_name)?;
 
-    let args = build_full_args(config, profile, backend)?;
+    let args = build_full_args(config, profile, backend, ctx_override)?;
 
     println!("Oh yeah, it's all coming together.");
     println!();
     println!("  Profile:  {}", profile_name);
     println!("  Backend:  {}", backend.path);
+    if let Some(ctx) = ctx_override {
+        println!("  Context:  {}", ctx);
+    }
     let health_check = config.resolve_health_check(profile);
     if let Some(ref url) = health_check.url {
         println!("  Health:   {}", url);
@@ -702,7 +732,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let args = build_full_args(config, prof, backend)?;
+                let args = build_full_args(config, prof, backend, None)?;
                 let port = prof.port.unwrap_or(8080);
                 kronk_core::platform::linux::install_service(
                     &service_name,
@@ -1338,3 +1368,6 @@ fn cmd_use_case(config: &Config, command: UseCaseCommands) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
