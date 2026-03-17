@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
+use std::sync::{Arc, Mutex};
+
+use crate::logging;
 
 #[derive(Debug, Clone)]
 pub enum ProcessEvent {
@@ -31,6 +35,7 @@ pub struct ProcessSupervisor {
     max_restarts: u32,
     restart_delay_ms: u64,
     health_check_interval_ms: u64,
+    log_dir: Option<std::path::PathBuf>,
 }
 
 impl ProcessSupervisor {
@@ -49,7 +54,13 @@ impl ProcessSupervisor {
             max_restarts,
             restart_delay_ms,
             health_check_interval_ms,
+            log_dir: None,
         }
+    }
+
+    pub fn with_log_dir(mut self, log_dir: std::path::PathBuf) -> Self {
+        self.log_dir = Some(log_dir);
+        self
     }
 
     /// Run the supervisor. Listens for shutdown on `shutdown_rx`.
@@ -73,15 +84,30 @@ impl ProcessSupervisor {
             let start_time = std::time::Instant::now();
             tx.send(ProcessEvent::Started).ok();
 
+            // Open log file if log_dir is set
+            let log_file = if let Some(ref log_dir) = self.log_dir {
+                if let Ok(f) = logging::open_log(log_dir, "default") {
+                    Some(Arc::new(Mutex::new(f)))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Stream stdout
             let stdout = child.stdout.take();
             let tx_out = tx.clone();
+            let log_file_out = log_file.clone();
             let stdout_handle = tokio::spawn(async move {
                 if let Some(stdout) = stdout {
                     let reader = BufReader::new(stdout);
                     let mut lines = reader.lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        tx_out.send(ProcessEvent::Output(line)).ok();
+                        tx_out.send(ProcessEvent::Output(line.clone())).ok();
+                        if let Some(ref f) = log_file_out {
+                            let _ = f.lock().unwrap().write_all((line + "\n").as_bytes());
+                        }
                     }
                 }
             });
@@ -89,12 +115,16 @@ impl ProcessSupervisor {
             // Stream stderr
             let stderr = child.stderr.take();
             let tx_err = tx.clone();
+            let log_file_err = log_file.clone();
             let stderr_handle = tokio::spawn(async move {
                 if let Some(stderr) = stderr {
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        tx_err.send(ProcessEvent::Output(line)).ok();
+                        tx_err.send(ProcessEvent::Output(line.clone())).ok();
+                        if let Some(ref f) = log_file_err {
+                            let _ = f.lock().unwrap().write_all((line + "\n").as_bytes());
+                        }
                     }
                 }
             });
