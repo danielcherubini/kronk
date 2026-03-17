@@ -27,6 +27,9 @@ enum Commands {
     Run {
         #[arg(short, long, default_value = "default")]
         profile: String,
+        /// Override context size (e.g. 8192, 16384). Takes priority over model card value.
+        #[arg(long)]
+        ctx: Option<u32>,
     },
     /// Manage Windows services
     Service {
@@ -38,6 +41,9 @@ enum Commands {
     ServiceRun {
         #[arg(short, long)]
         profile: String,
+        /// Override context size (e.g. 8192, 16384). Takes priority over model card value.
+        #[arg(long)]
+        ctx: Option<u32>,
     },
     /// Add a new profile from a raw command line
     #[command(hide = true)]
@@ -275,10 +281,10 @@ fn main() -> Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        match args.command {
-            Commands::Run { profile } => cmd_run(&config, &profile).await,
+match args.command {
+            Commands::Run { profile, ctx } => cmd_run(&config, &profile, ctx).await,
             Commands::Service { command } => cmd_service(&config, command),
-            Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
+            Commands::ServiceRun { profile, ctx } => cmd_run(&config, &profile, ctx).await,
             Commands::Add { name, command } => {
                 cmd_profile_add(&config, &name, command, false).await
             }
@@ -492,7 +498,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         };
 
-        let args = build_full_args(&config, prof, backend).unwrap_or_else(|e| {
+        let args = build_full_args(&config, prof, backend, None).unwrap_or_else(|e| {
             tracing::warn!("Failed to build model args: {}", e);
             let mut args = backend.default_args.clone();
             args.extend(prof.args.clone());
@@ -575,6 +581,7 @@ fn build_full_args(
     config: &Config,
     profile: &kronk_core::config::ProfileConfig,
     backend: &kronk_core::config::BackendConfig,
+    ctx_override: Option<u32>,
 ) -> Result<Vec<String>> {
     let mut args = backend.default_args.clone();
     args.extend(profile.args.clone());
@@ -590,11 +597,26 @@ fn build_full_args(
                     args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
                 }
             }
-            if let Some(ctx) = installed.card.context_length_for(quant_name) {
-                if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
-                    args.push("-c".to_string());
-                    args.push(ctx.to_string());
+            // Context size: CLI override > model card
+            let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
+            if let Some(ctx) = ctx {
+                // Remove any existing -c / --ctx-size from args before injecting
+                let mut filtered = Vec::with_capacity(args.len());
+                let mut skip_next = false;
+                for arg in &args {
+                    if skip_next {
+                        skip_next = false;
+                        continue;
+                    }
+                    if arg == "-c" || arg == "--ctx-size" {
+                        skip_next = true;
+                        continue;
+                    }
+                    filtered.push(arg.clone());
                 }
+                args = filtered;
+                args.push("-c".to_string());
+                args.push(ctx.to_string());
             }
             if let Some(ngl) = installed.card.model.default_gpu_layers {
                 if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
@@ -614,6 +636,27 @@ fn build_full_args(
         }
     }
 
+    // No model card — still apply ctx override if given
+    if let Some(ctx) = ctx_override {
+        // Remove any existing -c / --ctx-size from args
+        let mut filtered = Vec::with_capacity(args.len());
+        let mut skip_next = false;
+        for arg in &args {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if arg == "-c" || arg == "--ctx-size" {
+                skip_next = true;
+                continue;
+            }
+            filtered.push(arg.clone());
+        }
+        args = filtered;
+        args.push("-c".to_string());
+        args.push(ctx.to_string());
+    }
+
     // No model card — just use profile sampling
     if let Some(sampling) = config.effective_sampling_with_card(profile, None) {
         args.extend(sampling.to_args());
@@ -622,15 +665,18 @@ fn build_full_args(
     Ok(args)
 }
 
-async fn cmd_run(config: &Config, profile_name: &str) -> Result<()> {
+async fn cmd_run(config: &Config, profile_name: &str, ctx_override: Option<u32>) -> Result<()> {
     let (profile, backend) = config.resolve_profile(profile_name)?;
 
-    let args = build_full_args(config, profile, backend)?;
+    let args = build_full_args(config, profile, backend, ctx_override)?;
 
     println!("Oh yeah, it's all coming together.");
     println!();
     println!("  Profile:  {}", profile_name);
     println!("  Backend:  {}", backend.path);
+    if let Some(ctx) = ctx_override {
+        println!("  Context:  {}", ctx);
+    }
     let health_check = config.resolve_health_check(profile);
     if let Some(ref url) = health_check.url {
         println!("  Health:   {}", url);
@@ -702,7 +748,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let args = build_full_args(config, prof, backend)?;
+                let args = build_full_args(config, prof, backend, None)?;
                 let port = prof.port.unwrap_or(8080);
                 kronk_core::platform::linux::install_service(
                     &service_name,
