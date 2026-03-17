@@ -1,13 +1,24 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/danielcherubini/kronk/main/icon.png" alt="Kronk" height="96" />
+
 # KRONK
 
 > Oh yeah, it's all coming together.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
+[![Crates.io](https://img.shields.io/crates/v/kronk.svg)](https://crates.io/crates/kronk)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/danielcherubini/kronk/ci.yml?label=CI&style=flat-square)](https://github.com/danielcherubini/kronk/actions)
+
+</div>
 
 A local AI service manager written in Rust. Kronk turns your `llama-server.exe` (or any LLM backend) into a proper, supervised system service with health checks, auto-restart, and easy configuration.
 
 No wrappers. No NSSM. No batch files. Just a native Windows Service or systemd unit. After a one-time admin install, start and stop services as a regular user.
+
+> [!TIP]
+> Get up and running in minutes with `kronk add default llama-server.exe --host 0.0.0.0 -m model.gguf -ngl 999`
 
 ---
 
@@ -22,11 +33,13 @@ cargo install --git https://github.com/danielcherubini/kronk kronk
 ```
 
 **Linux (Debian/Ubuntu):**
+
 ```bash
 sudo dpkg -i kronk_*.deb
 ```
 
 **Linux (Fedora/RHEL):**
+
 ```bash
 sudo rpm -i kronk-*.rpm
 ```
@@ -73,28 +86,35 @@ kronk status
 
 Kronk supervises the process, streams logs, checks health, and restarts on crash.
 
+> [!NOTE]
+> After installing the service, you can run `kronk run` in the foreground to monitor logs and debug issues.
+
 ---
 
 ## CLI
 
 ```
 kronk run [--profile name]           Run a profile in the foreground
-kronk status                         Show all profiles, health, and VRAM usage
-kronk service install [--profile]    Install as a system service
+kronk status                         Show status of all profiles
+kronk service install [--profile]    Install as a Windows service
 kronk service start [--profile]      Start an installed service
 kronk service stop [--profile]       Stop a running service
 kronk service remove [--profile]     Remove an installed service
-kronk add <name> <command...>        Create a profile from a raw command
-kronk update <name> <command...>     Update an existing profile
-kronk model pull <repo>              Pull GGUF models from HuggingFace
+kronk profile ls                     List all profiles with status
+kronk profile add <name> <cmd...>    Add a new profile from a raw command
+kronk profile edit <name>            Edit an existing profile
+kronk profile rm <name>              Remove a profile
+kronk model pull <repo>              Pull a model from HuggingFace
 kronk model ls                       List installed models
+kronk model ps                       Show running model processes
 kronk model create <name>            Create a profile from an installed model
-kronk model rm <model>                Remove an installed model
+kronk model rm <model>               Remove an installed model
 kronk model scan                     Scan for untracked GGUF files
 kronk model search <query>           Search HuggingFace for GGUF models
-kronk config show                    Print current config
-kronk config edit                    Open config in editor
-kronk config path                    Show config file location
+kronk config show                    Print the current configuration
+kronk config edit                    Open config file in editor
+kronk config path                    Show the config file path
+kronk logs [--profile name]          View backend logs (follow with -f)
 ```
 
 ---
@@ -163,7 +183,7 @@ Kronk spawns your LLM backend as a child process and watches it:
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
 kronk/
@@ -172,6 +192,8 @@ kronk/
 │   ├── kronk-cli/       # CLI binary (clap)
 │   └── kronk-mock/      # Mock LLM backend for testing
 ├── installer/           # Inno Setup script (Windows installer)
+├── docs/
+│   └── superpowers/     # Development documentation
 ├── .github/workflows/   # CI/CD release pipeline
 ├── SPEC.md              # Original technical specification
 ├── PLAN.md              # Development roadmap
@@ -194,7 +216,39 @@ The binary is at `target/release/kronk.exe` (Windows) or `target/release/kronk` 
 
 ## Roadmap
 
-See [TODO.md](TODO.md) for the full development plan.
+See [TODO.md](TODO.md) for the full development plan:
+
+- **Multi-port support** — Per-profile port config, auto `--port` injection
+- **Log viewer** — `kronk logs` with `--follow`, log rotation
+- **Health check customization** — Per-profile health check URL, interval, timeout
+- **Parallel downloads** — Multi-connection Range downloads for GGUF files
+- **Windows service polling** — Replace fixed sleeps with proper SCM status polling
+- **TUI Dashboard** — `kronk-tui` crate with ratatui
+- **System tray** — Windows tray icon for quick service toggle
+- **Tauri GUI** — Lightweight desktop frontend for non-CLI users
+
+---
+
+## Development
+
+Kronk is built with modern Rust and follows these core crates:
+
+- **kronk-core** — Core logic, process supervision, config management, platform abstractions
+- **kronk-cli** — Command-line interface with clap, user prompts with inquire
+- **kronk-mock** — Mock backend for testing and development
+
+### Dependencies
+
+Key dependencies include:
+
+- `tokio` — Async runtime with process management
+- `clap` — CLI parsing
+- `serde` / `toml` — Configuration serialization
+- `tracing` — Structured logging
+- `reqwest` / `hf-hub` — HTTP client and HuggingFace integration
+- `sysinfo` — System resource monitoring
+- `indicatif` — Progress bars for downloads
+- `directories` — Platform-specific config paths
 
 ---
 
