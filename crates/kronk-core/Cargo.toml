@@ -16,6 +16,7 @@ reqwest.workspace = true
 hf-hub.workspace = true
 futures-util.workspace = true
 indicatif.workspace = true
+url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

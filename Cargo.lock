@@ -1043,6 +1043,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "url",
  "windows-service",
 ]
 
