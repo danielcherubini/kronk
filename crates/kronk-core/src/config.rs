@@ -143,6 +143,15 @@ impl Config {
                 toml::to_string_pretty(&default).context("Failed to serialize default config")?;
             fs::write(&config_path, &toml_str).context("Failed to write default config")?;
             tracing::info!("Created default config at {}", config_path.display());
+
+            // Generate default profile TOML files
+            let profiles_dir = config_dir.join("profiles.d");
+            if !profiles_dir.exists() {
+                if let Err(e) = crate::profiles::generate_default_profiles(&profiles_dir) {
+                    tracing::warn!("Failed to generate default profiles: {}", e);
+                }
+            }
+
             default
         };
 
@@ -252,7 +261,15 @@ impl Config {
                     .and_then(|m| m.get(name))
                     .cloned()
             }
-            Some(uc) => Some(uc.params()),
+            Some(profile) => {
+                // Try profiles.d/ first, fall back to built-in
+                let from_disk = self
+                    .profiles_dir()
+                    .ok()
+                    .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                    .and_then(|map| map.get(&profile.to_string()).cloned());
+                Some(from_disk.unwrap_or_else(|| profile.params()))
+            }
             None => None,
         };
 
@@ -280,7 +297,15 @@ impl Config {
                 .as_ref()
                 .and_then(|m| m.get(name))
                 .cloned(),
-            Some(uc) => Some(uc.params()),
+            Some(profile) => {
+                // Try profiles.d/ first, fall back to built-in
+                let from_disk = self
+                    .profiles_dir()
+                    .ok()
+                    .and_then(|dir| crate::profiles::load_profiles_d(&dir).ok())
+                    .and_then(|map| map.get(&profile.to_string()).cloned());
+                Some(from_disk.unwrap_or_else(|| profile.params()))
+            }
             None => None,
         };
 
@@ -310,6 +335,16 @@ impl Config {
 
     pub fn service_name(profile: &str) -> String {
         format!("kronk-{}", profile)
+    }
+
+    /// Resolve the profiles.d directory for sampling presets.
+    /// `<base_dir>/profiles.d/`
+    pub fn profiles_dir(&self) -> Result<PathBuf> {
+        if let Some(ref loaded) = self.loaded_from {
+            Ok(loaded.join("profiles.d"))
+        } else {
+            Ok(Self::base_dir()?.join("profiles.d"))
+        }
     }
 
     /// Resolve the configs.d directory for model cards.
