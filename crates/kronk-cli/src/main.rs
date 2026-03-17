@@ -263,8 +263,12 @@ fn main() -> Result<()> {
             Commands::Run { profile } => cmd_run(&config, &profile).await,
             Commands::Service { command } => cmd_service(&config, command),
             Commands::ServiceRun { profile } => cmd_run(&config, &profile).await,
-            Commands::Add { name, command } => cmd_profile_add(&config, &name, command, false).await,
-            Commands::Update { name, command } => cmd_profile_edit(&mut config.clone(), &name, command).await,
+            Commands::Add { name, command } => {
+                cmd_profile_add(&config, &name, command, false).await
+            }
+            Commands::Update { name, command } => {
+                cmd_profile_edit(&mut config.clone(), &name, command).await
+            }
             Commands::Profile { command } => cmd_profile(&config, command).await,
             Commands::Status => cmd_status(&config).await,
             Commands::UseCase { command } => cmd_use_case(&config, command),
@@ -768,7 +772,9 @@ async fn cmd_status(config: &Config) -> Result<()> {
 async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     match command {
         ProfileCommands::Ls => cmd_profile_ls(config).await,
-        ProfileCommands::Add { name, command } => cmd_profile_add(config, &name, command, false).await,
+        ProfileCommands::Add { name, command } => {
+            cmd_profile_add(config, &name, command, false).await
+        }
         ProfileCommands::Edit { name, command } => {
             if !config.profiles.contains_key(&name) {
                 anyhow::bail!(
@@ -915,7 +921,12 @@ fn cmd_profile_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_profile_add(config: &Config, name: &str, command: Vec<String>, overwrite: bool) -> Result<()> {
+async fn cmd_profile_add(
+    config: &Config,
+    name: &str,
+    command: Vec<String>,
+    overwrite: bool,
+) -> Result<()> {
     use kronk_core::config::{BackendConfig, ProfileConfig};
 
     if command.is_empty() {
@@ -1047,9 +1058,10 @@ async fn cmd_profile_edit(config: &mut Config, name: &str, command: Vec<String>)
 
     // Load config, update only the command string for the existing profile
     let mut config = config.clone();
-    let profile = config.profiles.get_mut(name).ok_or_else(|| {
-        anyhow::anyhow!("Profile '{}' not found", name)
-    })?;
+    let profile = config
+        .profiles
+        .get_mut(name)
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", name))?;
 
     profile.backend = backend_key.clone();
     profile.args = args;
@@ -1066,8 +1078,6 @@ async fn cmd_profile_edit(config: &mut Config, name: &str, command: Vec<String>)
 
     Ok(())
 }
-
-
 
 fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
     match command {
