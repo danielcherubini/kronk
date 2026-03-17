@@ -358,10 +358,10 @@ async fn cmd_ps(config: &Config) -> Result<()> {
     for (name, srv) in model_servers {
         let model_id = srv.model.as_deref().unwrap_or("?");
         let quant = srv.quant.as_deref().unwrap_or("?");
-        let use_case = srv
+        let profile_name = srv
             .profile
             .as_ref()
-            .map(|uc| uc.to_string())
+            .map(|p| p.to_string())
             .unwrap_or_else(|| "none".to_string());
 
         let service_name = Config::service_name(name);
@@ -398,7 +398,7 @@ async fn cmd_ps(config: &Config) -> Result<()> {
         println!("  {}  {} / {}", name, model_id, quant);
         println!(
             "    profile: {}  service: {}  health: {}",
-            use_case, service_status, health
+            profile_name, service_status, health
         );
     }
 
@@ -453,8 +453,8 @@ async fn cmd_create(
         }
     };
 
-    let resolved_use_case: Option<kronk_core::profiles::Profile> =
-        profile.map(|uc| uc.parse().unwrap());
+    let resolved_profile: Option<kronk_core::profiles::Profile> =
+        profile.map(|p| p.parse().unwrap());
 
     // Verify the GGUF file exists on disk
     let gguf_path = registry
@@ -502,7 +502,7 @@ async fn cmd_create(
         kronk_core::config::ServerConfig {
             backend: backend_key.clone(),
             args,
-            profile: resolved_use_case,
+            profile: resolved_profile,
             sampling: None,
             model: Some(model_id.to_string()),
             quant: Some(quant_name.clone()),
@@ -520,8 +520,8 @@ async fn cmd_create(
     println!("  Model:     {}", model_id);
     println!("  Quant:     {}", quant_name);
     println!("  GGUF:      {}", gguf_path.display());
-    if let Some(uc) = &config.servers[name].profile {
-        println!("  Profile:   {}", uc);
+    if let Some(p) = &config.servers[name].profile {
+        println!("  Profile:   {}", p);
     }
     println!();
     println!("Run it:      kronk run {}", name);

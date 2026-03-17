@@ -34,7 +34,7 @@ pub enum Profile {
 }
 
 impl Profile {
-    /// Return the preset sampling params for this use case.
+    /// Return the preset sampling params for this profile.
     pub fn params(&self) -> SamplingParams {
         match self {
             Profile::Coding => SamplingParams {
@@ -77,7 +77,7 @@ impl Profile {
         }
     }
 
-    /// List all built-in use cases with descriptions.
+    /// List all built-in profiles with descriptions.
     pub fn all() -> Vec<(&'static str, &'static str, Profile)> {
         vec![
             (
@@ -134,7 +134,7 @@ impl fmt::Display for Profile {
 
 impl SamplingParams {
     /// Merge two SamplingParams. Values in `overrides` take precedence.
-    /// Used for: use_case.params().merge(profile.sampling) → effective params.
+    /// Used for: profile.params().merge(server.sampling) → effective params.
     pub fn merge(&self, overrides: &SamplingParams) -> SamplingParams {
         SamplingParams {
             temperature: overrides.temperature.or(self.temperature),
@@ -301,13 +301,13 @@ mod tests {
     }
 
     #[test]
-    fn test_use_case_display() {
+    fn test_profile_display() {
         assert_eq!(Profile::Coding.to_string(), "coding");
         assert_eq!(Profile::Creative.to_string(), "creative");
     }
 
     #[test]
-    fn test_use_case_serde_roundtrip() {
+    fn test_profile_serde_roundtrip() {
         let uc = Profile::Coding;
         let json = serde_json::to_string(&uc).unwrap();
         assert_eq!(json, "\"coding\"");

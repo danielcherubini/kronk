@@ -5,14 +5,14 @@ use windows_service::service::{
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
-/// Install kronk as a native Windows Service for the given profile.
-/// The service will run `kronk.exe service-run --profile <name> --config-dir <path>` when started.
+/// Install kronk as a native Windows Service for the given server.
+/// The service will run `kronk.exe service-run --server <name> --config-dir <path>` when started.
 /// The config-dir is captured at install time from the installing user's environment,
 /// so the service (running as SYSTEM) can find the correct config and models.
 pub fn install_service(
     service_name: &str,
     display_name: &str,
-    profile: &str,
+    server_name: &str,
     config_dir: &std::path::Path,
     port: u16,
 ) -> Result<()> {
@@ -44,8 +44,8 @@ pub fn install_service(
         executable_path: exe_path,
         launch_arguments: vec![
             OsString::from("service-run"),
-            OsString::from("--profile"),
-            OsString::from(profile),
+            OsString::from("--server"),
+            OsString::from(server_name),
             OsString::from("--config-dir"),
             OsString::from(config_dir),
         ],

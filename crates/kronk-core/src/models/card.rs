@@ -8,8 +8,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelCard {
     pub model: ModelMeta,
-    /// Per-use-case sampling overrides specific to this model.
-    /// Keys are use case names: "coding", "chat", "analysis", "creative", or custom names.
+    /// Per-profile sampling overrides specific to this model.
+    /// Keys are profile names: "coding", "chat", "analysis", "creative", or custom names.
     #[serde(default)]
     pub sampling: HashMap<String, SamplingParams>,
     /// Available quantisations. Keys are quant names like "Q4_K_M", "Q8_0".
@@ -78,9 +78,9 @@ impl ModelCard {
             .or(self.model.default_context_length)
     }
 
-    /// Get model-specific sampling overrides for a given use case name.
-    pub fn sampling_for(&self, use_case_name: &str) -> Option<&SamplingParams> {
-        self.sampling.get(use_case_name)
+    /// Get model-specific sampling overrides for a given profile name.
+    pub fn sampling_for(&self, profile_name: &str) -> Option<&SamplingParams> {
+        self.sampling.get(profile_name)
     }
 }
 

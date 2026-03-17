@@ -310,17 +310,17 @@ impl Config {
         };
 
         // Layer 2: Model card sampling overrides for this profile
-        let profile_name = server.profile.as_ref().map(|uc| uc.to_string());
+        let profile_name = server.profile.as_ref().map(|p| p.to_string());
         let with_model = match (base, card, profile_name) {
-            (Some(base), Some(card), Some(ref uc_name)) => {
-                if let Some(model_sampling) = card.sampling_for(uc_name) {
+            (Some(base), Some(card), Some(ref pname)) => {
+                if let Some(model_sampling) = card.sampling_for(pname) {
                     Some(base.merge(model_sampling))
                 } else {
                     Some(base)
                 }
             }
             (Some(base), _, _) => Some(base),
-            (None, Some(card), Some(ref uc_name)) => card.sampling_for(uc_name).cloned(),
+            (None, Some(card), Some(ref pname)) => card.sampling_for(pname).cloned(),
             (None, _, _) => None,
         };
 
@@ -333,8 +333,8 @@ impl Config {
         }
     }
 
-    pub fn service_name(profile: &str) -> String {
-        format!("kronk-{}", profile)
+    pub fn service_name(server_name: &str) -> String {
+        format!("kronk-{}", server_name)
     }
 
     /// Resolve the profiles.d directory for sampling presets.
@@ -510,7 +510,7 @@ mod tests {
     use crate::profiles::{Profile, SamplingParams};
 
     #[test]
-    fn test_effective_sampling_use_case_only() {
+    fn test_effective_sampling_profile_only() {
         let config = Config::default();
         let server = ServerConfig {
             backend: "test".to_string(),
@@ -576,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_toml_roundtrip_with_use_case() {
+    fn test_config_toml_roundtrip_with_profile() {
         let config = Config::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let loaded: Config = toml::from_str(&toml_str).unwrap();
@@ -660,7 +660,7 @@ args = ["--host", "0.0.0.0"]
         let params = config
             .effective_sampling_with_card(&server, Some(&card))
             .unwrap();
-        assert_eq!(params.temperature, Some(0.2)); // model card override won over use case default
+        assert_eq!(params.temperature, Some(0.2)); // model card override won over profile default
         assert_eq!(params.top_k, Some(40)); // model card override
         assert_eq!(params.top_p, Some(0.85)); // server override won over everything
         assert_eq!(params.min_p, Some(0.05)); // from Profile::Coding base (not overridden)

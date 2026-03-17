@@ -941,10 +941,10 @@ async fn cmd_server_ls(config: &Config) -> Result<()> {
 
     for (name, srv) in &config.servers {
         let _backend = config.backends.get(&srv.backend);
-        let profile = srv
+        let profile_name = srv
             .profile
             .as_ref()
-            .map(|uc| uc.to_string())
+            .map(|p| p.to_string())
             .unwrap_or_else(|| "none".to_string());
 
         let service_name = Config::service_name(name);
@@ -981,7 +981,7 @@ async fn cmd_server_ls(config: &Config) -> Result<()> {
         println!("  {}  (backend: {})", name, srv.backend);
         println!(
             "    profile: {}  service: {}  health: {}",
-            profile, service_status, health
+            profile_name, service_status, health
         );
 
         if let Some(ref model) = srv.model {
@@ -1317,37 +1317,44 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
             // Show which servers use which profile
             println!("Server assignments:");
             for (name, srv) in &config.servers {
-                let uc_str = srv
+                let profile_str = srv
                     .profile
                     .as_ref()
-                    .map(|uc| uc.to_string())
+                    .map(|p| p.to_string())
                     .unwrap_or_else(|| "none".to_string());
-                println!("  {} -> {}", name, uc_str);
+                println!("  {} -> {}", name, profile_str);
             }
 
             Ok(())
         }
         ProfileCommands::Set { server, profile } => {
             let mut config = config.clone();
-            let srv = config
-                .servers
-                .get_mut(&server)
-                .with_context(|| format!("Server '{}' not found", server))?;
 
-            // Try built-in first
-            let uc = match profile.as_str() {
+            // Validate server exists
+            if !config.servers.contains_key(&server) {
+                anyhow::bail!("Server '{}' not found", server);
+            }
+
+            // Resolve profile name before mutable borrow
+            let resolved = match profile.as_str() {
                 "coding" => Profile::Coding,
                 "chat" => Profile::Chat,
                 "analysis" => Profile::Analysis,
                 "creative" => Profile::Creative,
                 name => {
-                    // Check if it's a known custom profile
-                    let is_custom = config
+                    // Check config custom_profiles and profiles.d/
+                    let is_custom_config = config
                         .custom_profiles
                         .as_ref()
                         .map(|m| m.contains_key(name))
                         .unwrap_or(false);
-                    if !is_custom {
+                    let is_custom_disk = config
+                        .profiles_dir()
+                        .ok()
+                        .and_then(|dir| kronk_core::profiles::load_profiles_d(&dir).ok())
+                        .map(|m| m.contains_key(name))
+                        .unwrap_or(false);
+                    if !is_custom_config && !is_custom_disk {
                         anyhow::bail!(
                             "Unknown profile '{}'. Use `kronk profile list` to see available options, \
                              or `kronk profile add {}` to create a custom one.",
@@ -1360,7 +1367,7 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                 }
             };
 
-            srv.profile = Some(uc);
+            config.servers.get_mut(&server).unwrap().profile = Some(resolved);
             config.save()?;
 
             println!("Oh yeah, it's all coming together.");
