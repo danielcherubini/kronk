@@ -601,7 +601,8 @@ fn build_full_args(
     // Inject model card args: -m, -c, -ngl
     if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
         let models_dir = config.models_dir()?;
-        let registry = kronk_core::models::ModelRegistry::new(models_dir);
+        let configs_dir = config.configs_dir()?;
+        let registry = kronk_core::models::ModelRegistry::new(models_dir, configs_dir);
         if let Some(installed) = registry.find(model_id)? {
             if let Some(q) = installed.card.quants.get(quant_name) {
                 if !args.iter().any(|a| a == "-m" || a == "--model") {
