@@ -727,9 +727,10 @@ async fn cmd_search(
     );
     println!("  {}", "-".repeat(74));
 
-    for (_i, result) in results.iter().enumerate() {
+    for result in &results {
         let id = if result.model_id.len() > 48 {
-            format!("{}...", &result.model_id[..45])
+            let chars: Vec<char> = result.model_id.chars().take(45).collect();
+            format!("{}...", chars.iter().collect::<String>())
         } else {
             result.model_id.clone()
         };

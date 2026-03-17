@@ -86,13 +86,18 @@ pub async fn search_models(
     Ok(results)
 }
 
-/// Simple URL encoding for the search query.
+/// URL encode a string for use in a query parameter.
+/// Uses percent-encoding for all non-alphanumeric characters except
+/// the ones that are safe in query strings: - _ . ~
 fn urlencoding(s: &str) -> String {
-    s.replace(' ', "+")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('?', "%3F")
-        .replace('#', "%23")
+    s.chars()
+        .map(|c| match c {
+            ' ' => "+".to_string(),
+            '-' | '_' | '.' | '~' => c.to_string(),
+            c if c.is_alphanumeric() => c.to_string(),
+            c => format!("%{:02X}", c as u32),
+        })
+        .collect()
 }
 
 #[cfg(test)]

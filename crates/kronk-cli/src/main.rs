@@ -137,7 +137,7 @@ pub enum ProfileCommands {
         /// Profile name
         name: String,
         /// Backend command and arguments (e.g. llama-server -m model.gguf)
-        #[arg(trailing_var_arg = true, required = true)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
     },
     /// Edit an existing profile's command line
@@ -145,7 +145,7 @@ pub enum ProfileCommands {
         /// Profile name
         name: String,
         /// New backend command and arguments
-        #[arg(trailing_var_arg = true, required = true)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         command: Vec<String>,
     },
     /// Remove a profile
@@ -769,7 +769,12 @@ async fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     match command {
         ProfileCommands::Ls => cmd_profile_ls(config).await,
         ProfileCommands::Add { name, command } => cmd_add(config, &name, command, false),
-        ProfileCommands::Edit { name, command } => cmd_add(config, &name, command, true),
+        ProfileCommands::Edit { name, command } => {
+            if !config.profiles.contains_key(&name) {
+                anyhow::bail!("Profile '{}' not found. Use `kronk profile add` to create it.", name);
+            }
+            cmd_add(config, &name, command, true)
+        }
         ProfileCommands::Rm { name, force } => cmd_profile_rm(config, &name, force),
     }
 }
@@ -826,7 +831,8 @@ async fn cmd_profile_ls(config: &Config) -> Result<()> {
         if !profile.args.is_empty() {
             let args_str = profile.args.join(" ");
             if args_str.len() > 80 {
-                println!("    args: {}...", &args_str[..77]);
+                let chars: Vec<char> = args_str.chars().take(77).collect();
+                println!("    args: {}...", chars.iter().collect::<String>());
             } else {
                 println!("    args: {}", args_str);
             }
