@@ -4,7 +4,6 @@ use kronk_core::config::Config;
 use kronk_core::process::{ProcessEvent, ProcessSupervisor};
 use kronk_core::use_cases::SamplingParams;
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 
 mod commands;
 
@@ -74,6 +73,18 @@ enum Commands {
     Model {
         #[command(subcommand)]
         command: ModelCommands,
+    },
+    /// View backend logs for a profile
+    Logs {
+        /// Profile name (default: "default")
+        #[arg(short, long, default_value = "default")]
+        profile: String,
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines to show (default: 50)
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
     },
 }
 
@@ -274,8 +285,47 @@ fn main() -> Result<()> {
             Commands::UseCase { command } => cmd_use_case(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
             Commands::Model { command } => commands::model::run(&config, command).await,
+            Commands::Logs { profile, follow, lines } => cmd_logs(&config, &profile, follow, lines).await,
         }
     })
+}
+
+async fn cmd_logs(config: &Config, profile: &str, follow: bool, lines: usize) -> Result<()> {
+    let logs_dir = config.logs_dir()?;
+    let log_path = logging::log_path(&logs_dir, profile);
+
+    if !log_path.exists() {
+        println!("No logs found for profile '{}'.", profile);
+        println!();
+        println!("Logs are created when running as a service.");
+        println!("For foreground: kronk run --profile {}", profile);
+        return Ok(());
+    }
+
+    // Print last N lines
+    let tail = logging::tail_lines(&log_path, lines)?;
+    for line in &tail {
+        println!("{}", line);
+    }
+
+    if follow {
+        // Poll for new content
+        let mut file = std::fs::File::open(&log_path)?;
+        file.seek(SeekFrom::End(0))?;
+        let mut reader = BufReader::new(file);
+        let mut tick = interval(Duration::from_millis(250));
+
+        loop {
+            tick.tick().await;
+            let mut line = String::new();
+            while reader.read_line(&mut line)? > 0 {
+                print!("{}", line);
+                line.clear();
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── Windows Service Dispatch ─────────────────────────────────────────────
