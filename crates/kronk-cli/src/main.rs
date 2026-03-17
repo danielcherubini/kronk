@@ -446,7 +446,8 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             config.supervisor.max_restarts,
             config.supervisor.restart_delay_ms,
             config.supervisor.health_check_interval_ms,
-        );
+        )
+        .with_log_dir(config.logs_dir().ok());
 
         let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
 
