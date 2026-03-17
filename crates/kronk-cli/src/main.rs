@@ -700,7 +700,12 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
             {
                 let args = build_full_args(config, prof, backend)?;
                 let port = prof.port.unwrap_or(8080);
-                kronk_core::platform::linux::install_service(&service_name, &backend.path, &args, port)?;
+                kronk_core::platform::linux::install_service(
+                    &service_name,
+                    &backend.path,
+                    &args,
+                    port,
+                )?;
             }
 
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -869,7 +874,7 @@ async fn cmd_profile_ls(config: &Config) -> Result<()> {
     println!("{}", "-".repeat(60));
 
     for (name, profile) in &config.profiles {
-        let backend = config.backends.get(&profile.backend);
+        let _backend = config.backends.get(&profile.backend);
         let use_case = profile
             .use_case
             .as_ref()
