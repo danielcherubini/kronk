@@ -147,6 +147,7 @@ impl Config {
         };
 
         config.loaded_from = Some(config_dir.to_path_buf());
+        migrate_model_cards_to_configs_d(&config)?;
         Ok(config)
     }
 
@@ -311,6 +312,16 @@ impl Config {
         format!("kronk-{}", profile)
     }
 
+    /// Resolve the configs.d directory for model cards.
+    /// `<base_dir>/configs.d/`
+    pub fn configs_dir(&self) -> Result<PathBuf> {
+        if let Some(ref loaded) = self.loaded_from {
+            Ok(loaded.join("configs.d"))
+        } else {
+            Ok(Self::base_dir()?.join("configs.d"))
+        }
+    }
+
     /// Resolve the models directory path.
     /// Uses `general.models_dir` if set, otherwise defaults to `<base_dir>/models/`.
     /// On Windows: `%APPDATA%\kronk\models\`
@@ -356,6 +367,44 @@ impl Config {
         fs::write(&config_path, &toml_str).context("Failed to write config")?;
         Ok(())
     }
+}
+
+/// Migrate model cards from the old `models/<company>/<model>/model.toml` layout
+/// to the new `configs.d/<company>-<model>.toml` layout.
+/// This is a one-time migration: if `configs.d/` already exists, it's a no-op.
+pub fn migrate_model_cards_to_configs_d(config: &Config) -> Result<()> {
+    let configs_dir = config.configs_dir()?;
+    if configs_dir.exists() {
+        return Ok(()); // already migrated
+    }
+    let models_dir = config.models_dir()?;
+    if !models_dir.exists() {
+        return Ok(());
+    }
+    let mut migrated = false;
+    for company_entry in std::fs::read_dir(&models_dir)? {
+        let company_entry = company_entry?;
+        if !company_entry.path().is_dir() {
+            continue;
+        }
+        let company = company_entry.file_name().to_string_lossy().to_string();
+        for model_entry in std::fs::read_dir(company_entry.path())? {
+            let model_entry = model_entry?;
+            let old_card = model_entry.path().join("model.toml");
+            if old_card.exists() {
+                let model_name = model_entry.file_name().to_string_lossy().to_string();
+                let new_filename = format!("{}-{}.toml", company, model_name);
+                std::fs::create_dir_all(&configs_dir)?;
+                std::fs::copy(&old_card, configs_dir.join(&new_filename))?;
+                std::fs::remove_file(&old_card)?;
+                migrated = true;
+            }
+        }
+    }
+    if migrated {
+        tracing::info!("Migrated model cards to {}", configs_dir.display());
+    }
+    Ok(())
 }
 
 impl Default for Config {

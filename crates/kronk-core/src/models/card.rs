@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A model card describing a model and its available quantisations.
-/// Lives at `~/.kronk/models/{company}/{modelname}/model.toml`.
+/// Lives at `~/.config/kronk/configs.d/<company>-<model>.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelCard {
     pub model: ModelMeta,

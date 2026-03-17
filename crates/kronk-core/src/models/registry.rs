@@ -5,22 +5,28 @@ use std::path::{Path, PathBuf};
 /// An installed model: its location and parsed card.
 #[derive(Debug, Clone)]
 pub struct InstalledModel {
-    /// Directory containing the model files and model.toml
+    /// Directory containing the GGUF model files
     pub dir: PathBuf,
     /// Parsed model card
     pub card: ModelCard,
-    /// Identifier in "company/modelname" format, derived from directory structure
+    /// Identifier in "company/modelname" format, derived from config filename
     pub id: String,
+    /// Path to the model card TOML file in configs.d/
+    pub card_path: PathBuf,
 }
 
 /// Scans and manages the local model directory.
 pub struct ModelRegistry {
     models_dir: PathBuf,
+    configs_dir: PathBuf,
 }
 
 impl ModelRegistry {
-    pub fn new(models_dir: PathBuf) -> Self {
-        Self { models_dir }
+    pub fn new(models_dir: PathBuf, configs_dir: PathBuf) -> Self {
+        Self {
+            models_dir,
+            configs_dir,
+        }
     }
 
     /// Get the base models directory path.
@@ -28,54 +34,50 @@ impl ModelRegistry {
         &self.models_dir
     }
 
-    /// Scan the models directory and return all installed models.
-    /// Looks for `model.toml` files at `{models_dir}/{company}/{modelname}/model.toml`.
+    /// Get the configs.d directory path.
+    pub fn configs_dir(&self) -> &Path {
+        &self.configs_dir
+    }
+
+    /// Scan the configs.d directory and return all installed models.
+    /// Reads `configs.d/<company>-<model>.toml` files.
     pub fn scan(&self) -> Result<Vec<InstalledModel>> {
         let mut models = Vec::new();
 
-        if !self.models_dir.exists() {
+        if !self.configs_dir.exists() {
             return Ok(models);
         }
 
-        for company_entry in std::fs::read_dir(&self.models_dir).with_context(|| {
+        for entry in std::fs::read_dir(&self.configs_dir).with_context(|| {
             format!(
-                "Failed to read models directory: {}",
-                self.models_dir.display()
+                "Failed to read configs directory: {}",
+                self.configs_dir.display()
             )
         })? {
-            let company_entry = company_entry?;
-            let company_path = company_entry.path();
-            if !company_path.is_dir() {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.extension().map_or(false, |e| e == "toml") {
                 continue;
             }
-            let company_name = company_entry.file_name().to_string_lossy().to_string();
+            let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+            // "company-modelname.toml" → id "company/modelname"
+            let id = match stem.find('-') {
+                Some(pos) => format!("{}/{}", &stem[..pos], &stem[pos + 1..]),
+                None => continue, // skip files without a dash
+            };
+            let model_dir = self.models_dir.join(&id);
 
-            for model_entry in std::fs::read_dir(&company_path)? {
-                let model_entry = model_entry?;
-                let model_path = model_entry.path();
-                if !model_path.is_dir() {
-                    continue;
+            match ModelCard::load(&path) {
+                Ok(card) => {
+                    models.push(InstalledModel {
+                        dir: model_dir,
+                        card,
+                        id,
+                        card_path: path,
+                    });
                 }
-                let model_name = model_entry.file_name().to_string_lossy().to_string();
-
-                let card_path = model_path.join("model.toml");
-                if card_path.exists() {
-                    match ModelCard::load(&card_path) {
-                        Ok(card) => {
-                            models.push(InstalledModel {
-                                dir: model_path,
-                                card,
-                                id: format!("{}/{}", company_name, model_name),
-                            });
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Skipping malformed model card at {}: {}",
-                                card_path.display(),
-                                e
-                            );
-                        }
-                    }
+                Err(e) => {
+                    tracing::warn!("Skipping malformed model card at {}: {}", path.display(), e);
                 }
             }
         }
@@ -129,13 +131,19 @@ mod tests {
 
     fn setup_test_dir() -> (tempfile::TempDir, ModelRegistry) {
         let tmp = tempfile::tempdir().unwrap();
-        let registry = ModelRegistry::new(tmp.path().to_path_buf());
+        let models = tmp.path().join("models");
+        let configs = tmp.path().join("configs.d");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::create_dir_all(&configs).unwrap();
+        let registry = ModelRegistry::new(models, configs);
         (tmp, registry)
     }
 
     fn create_test_model(base: &Path, company: &str, model: &str) -> ModelCard {
-        let model_dir = base.join(company).join(model);
+        let model_dir = base.join("models").join(company).join(model);
+        let configs_dir = base.join("configs.d");
         std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::create_dir_all(&configs_dir).unwrap();
 
         let card = ModelCard {
             model: ModelMeta {
@@ -158,7 +166,9 @@ mod tests {
                 q
             },
         };
-        card.save(&model_dir.join("model.toml")).unwrap();
+        let card_filename = format!("{}-{}.toml", company, model);
+        card.save(&configs_dir.join(&card_filename)).unwrap();
+        // GGUF file still goes in models dir
         std::fs::write(model_dir.join(format!("{}-Q4_K_M.gguf", model)), b"fake").unwrap();
         card
     }
@@ -172,7 +182,10 @@ mod tests {
 
     #[test]
     fn test_scan_nonexistent_dir() {
-        let registry = ModelRegistry::new(PathBuf::from("/tmp/kronk_nonexistent_test_dir"));
+        let registry = ModelRegistry::new(
+            PathBuf::from("/tmp/kronk_nonexistent_test_dir/models"),
+            PathBuf::from("/tmp/kronk_nonexistent_test_dir/configs.d"),
+        );
         let models = registry.scan().unwrap();
         assert!(models.is_empty());
     }
@@ -218,7 +231,11 @@ mod tests {
     fn test_untracked_ggufs() {
         let (tmp, registry) = setup_test_dir();
         let card = create_test_model(tmp.path(), "bartowski", "OmniCoder");
-        let model_dir = tmp.path().join("bartowski").join("OmniCoder");
+        let model_dir = tmp
+            .path()
+            .join("models")
+            .join("bartowski")
+            .join("OmniCoder");
 
         std::fs::write(model_dir.join("OmniCoder-Q8_0.gguf"), b"fake").unwrap();
 

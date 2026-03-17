@@ -104,7 +104,10 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     std::fs::create_dir_all(&model_dir)
         .with_context(|| format!("Failed to create directory: {}", model_dir.display()))?;
 
-    let card_path = model_dir.join("model.toml");
+    let configs_dir = config.configs_dir()?;
+    std::fs::create_dir_all(&configs_dir)?;
+    let card_filename = format!("{}.toml", model_id.replace('/', "-"));
+    let card_path = configs_dir.join(&card_filename);
     let mut card = if card_path.exists() {
         ModelCard::load(&card_path)?
     } else {
@@ -270,7 +273,8 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
 
 fn cmd_ls(config: &Config) -> Result<()> {
     let models_dir = config.models_dir()?;
-    let registry = ModelRegistry::new(models_dir);
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir, configs_dir);
     let models = registry.scan()?;
 
     if models.is_empty() {
@@ -411,7 +415,8 @@ async fn cmd_create(
     backend: Option<String>,
 ) -> Result<()> {
     let models_dir = config.models_dir()?;
-    let registry = ModelRegistry::new(models_dir);
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir, configs_dir);
 
     let installed = registry.find(model_id)?.with_context(|| {
         format!(
@@ -527,7 +532,8 @@ async fn cmd_create(
 
 fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
     let models_dir = config.models_dir()?;
-    let registry = ModelRegistry::new(models_dir);
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir, configs_dir);
 
     let model = registry
         .find(model_id)?
@@ -572,13 +578,19 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         }
     }
 
+    // Also remove the config card from configs.d/
+    if model.card_path.exists() {
+        std::fs::remove_file(&model.card_path)?;
+    }
+
     println!("No touchy! Model '{}' removed.", model_id);
     Ok(())
 }
 
 fn cmd_scan(config: &Config) -> Result<()> {
     let models_dir = config.models_dir()?;
-    let registry = ModelRegistry::new(models_dir.clone());
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir.clone(), configs_dir.clone());
     let models = registry.scan()?;
 
     let mut found_any = false;
@@ -608,12 +620,15 @@ fn cmd_scan(config: &Config) -> Result<()> {
                     },
                 );
             }
-            card.save(&model.dir.join("model.toml"))?;
+            card.save(&model.card_path)?;
             found_any = true;
         }
     }
 
-    // Scan for directories with GGUFs but no model.toml
+    // Scan for directories with GGUFs but no model card in configs.d/
+    let known_ids: std::collections::HashSet<String> =
+        models.iter().map(|m| m.id.clone()).collect();
+
     if models_dir.exists() {
         for company_entry in std::fs::read_dir(&models_dir)? {
             let company_entry = company_entry?;
@@ -628,7 +643,12 @@ fn cmd_scan(config: &Config) -> Result<()> {
                 if !model_path.is_dir() {
                     continue;
                 }
-                if model_path.join("model.toml").exists() {
+
+                let model_name = model_entry.file_name().to_string_lossy().to_string();
+                let model_id = format!("{}/{}", company, model_name);
+
+                // Skip if already tracked in configs.d/
+                if known_ids.contains(&model_id) {
                     continue;
                 }
 
@@ -639,8 +659,6 @@ fn cmd_scan(config: &Config) -> Result<()> {
                     .collect();
 
                 if !gguf_files.is_empty() {
-                    let model_name = model_entry.file_name().to_string_lossy().to_string();
-                    let model_id = format!("{}/{}", company, model_name);
                     println!(
                         "  {} -- new model with {} GGUF file(s):",
                         model_id,
@@ -667,14 +685,16 @@ fn cmd_scan(config: &Config) -> Result<()> {
                     let card = ModelCard {
                         model: ModelMeta {
                             name: model_name,
-                            source: model_id,
+                            source: model_id.clone(),
                             default_context_length: Some(8192),
                             default_gpu_layers: Some(999),
                         },
                         sampling: HashMap::new(),
                         quants,
                     };
-                    card.save(&model_path.join("model.toml"))?;
+                    std::fs::create_dir_all(&configs_dir)?;
+                    let card_filename = format!("{}.toml", model_id.replace('/', "-"));
+                    card.save(&configs_dir.join(&card_filename))?;
                     found_any = true;
                 }
             }
