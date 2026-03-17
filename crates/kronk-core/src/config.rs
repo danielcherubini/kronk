@@ -417,13 +417,11 @@ impl Config {
 }
 
 /// Migrate model cards from the old `models/<company>/<model>/model.toml` layout
-/// to the new `configs.d/<company>-<model>.toml` layout.
-/// This is a one-time migration: if `configs.d/` already exists, it's a no-op.
+/// to the new `configs.d/<company>--<model>.toml` layout.
+/// Scans for any remaining legacy `model.toml` files and migrates them,
+/// skipping any that already have a corresponding card in `configs.d/`.
 pub fn migrate_model_cards_to_configs_d(config: &Config) -> Result<()> {
     let configs_dir = config.configs_dir()?;
-    if configs_dir.exists() {
-        return Ok(()); // already migrated
-    }
     let models_dir = config.models_dir()?;
     if !models_dir.exists() {
         return Ok(());
@@ -441,8 +439,13 @@ pub fn migrate_model_cards_to_configs_d(config: &Config) -> Result<()> {
             if old_card.exists() {
                 let model_name = model_entry.file_name().to_string_lossy().to_string();
                 let new_filename = format!("{}--{}.toml", company, model_name);
+                let new_path = configs_dir.join(&new_filename);
+                // Skip if already migrated
+                if new_path.exists() {
+                    continue;
+                }
                 std::fs::create_dir_all(&configs_dir)?;
-                std::fs::copy(&old_card, configs_dir.join(&new_filename))?;
+                std::fs::copy(&old_card, &new_path)?;
                 std::fs::remove_file(&old_card)?;
                 migrated = true;
             }
