@@ -153,12 +153,45 @@ async fn cmd_install(
         .prompt()?;
 
         match gpu_choice {
-            "NVIDIA (CUDA)" => Some(gpu::GpuType::Cuda {
-                version: "latest".to_string(),
-            }),
-            "AMD (ROCm)" => Some(gpu::GpuType::RocM {
-                version: "latest".to_string(),
-            }),
+            "NVIDIA (CUDA)" => {
+                // Ask for CUDA version for prebuilt binary selection
+                let cuda_ver_choice = inquire::Select::new(
+                    "Which CUDA version do you have?",
+                    vec![
+                        "CUDA 11.x (default: 11.1)",
+                        "CUDA 12.x (default: 12.4)",
+                        "CUDA 13.x (default: 13.1)",
+                    ],
+                )
+                .prompt()?;
+
+                Some(gpu::GpuType::Cuda {
+                    version: match cuda_ver_choice {
+                        "CUDA 11.x (default: 11.1)" => "11.1".to_string(),
+                        "CUDA 12.x (default: 12.4)" => "12.4".to_string(),
+                        "CUDA 13.x (default: 13.1)" => "13.1".to_string(),
+                        _ => unreachable!(),
+                    },
+                })
+            }
+            "AMD (ROCm)" => {
+                let rocm_ver_choice = inquire::Select::new(
+                    "Which ROCm version do you have?",
+                    vec![
+                        "ROCm 5.x (default: 5.7)",
+                        "ROCm 6.x (default: 6.1)",
+                    ],
+                )
+                .prompt()?;
+
+                Some(gpu::GpuType::RocM {
+                    version: match rocm_ver_choice {
+                        "ROCm 5.x (default: 5.7)" => "5.7".to_string(),
+                        "ROCm 6.x (default: 6.1)" => "6.1".to_string(),
+                        _ => unreachable!(),
+                    },
+                })
+            }
             "Intel / AMD (Vulkan)" => Some(gpu::GpuType::Vulkan),
             "Apple Silicon (Metal)" => Some(gpu::GpuType::Metal),
             _ => None,
@@ -359,8 +392,12 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
         if remove_files {
             if let Some(parent) = backend.path.parent() {
                 // Safety: only remove if it's under our managed backends dir
-                let managed = backends_dir()?;
-                if parent.starts_with(&managed) {
+                // Canonicalize both paths to prevent symlink/.. bypass attacks
+                let canonical_parent = std::fs::canonicalize(parent)
+                    .map_err(|_e| anyhow::anyhow!("Failed to canonicalize path {:?}", parent))?;
+                let managed = std::fs::canonicalize(backends_dir()?)
+                    .map_err(|_e| anyhow::anyhow!("Failed to canonicalize backends directory"))?;
+                if canonical_parent.starts_with(&managed) {
                     std::fs::remove_dir_all(parent)?;
                     println!("Files removed.");
                 } else {
