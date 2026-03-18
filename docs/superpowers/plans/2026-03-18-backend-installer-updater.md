@@ -51,7 +51,7 @@
 
 ### New Files to Create
 
-```
+```text
 crates/kronk-core/src/
   backends/
     mod.rs              # Backend management module exports
@@ -66,7 +66,7 @@ crates/kronk-cli/src/
 
 ### Files to Modify
 
-```
+```text
 crates/kronk-core/src/
   lib.rs              # Export new backends module
   gpu.rs              # Extend with GPU type detection, system capabilities

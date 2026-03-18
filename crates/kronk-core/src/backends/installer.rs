@@ -55,7 +55,18 @@ pub fn get_prebuilt_url(
                 }
                 // Windows
                 ("windows", "x86_64", Some(GpuType::Cuda { ref version })) => {
-                    let cuda_ver = if version.starts_with("13") { "13.1" } else { "12.4" };
+                    let cuda_ver = match version.as_str() {
+                        "11" | "11.0" | "11.1" | "11.2" | "11.3" | "11.4" | "11.5" | "11.6" | "11.7" | "11.8" | "11.9" => "11.1",
+                        "12" | "12.0" | "12.1" | "12.2" | "12.3" | "12.4" | "12.5" | "12.6" => "12.4",
+                        "13" | "13.0" | "13.1" | "13.2" | "13.3" | "13.4" | "13.5" | "13.6" | "13.7" => "13.1",
+                        _ => {
+                            return Err(anyhow!(
+                                "Unsupported CUDA version '{}'. Supported: 11.x, 12.x, 13.x.\n\
+                                 llama.cpp pre-built binaries only ship with CUDA 11.1, 12.4, and 13.1.",
+                                version
+                            ));
+                        }
+                    };
                     format!("llama-{}-bin-win-cuda-{}-x64.zip", tag, cuda_ver)
                 }
                 ("windows", "x86_64", Some(GpuType::Vulkan)) => {
@@ -159,26 +170,31 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(entries) = std::fs::read_dir(dest) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Ok(meta) = path.metadata() {
-                            let mode = meta.permissions().mode();
-                            // If file has no execute bit, check if it's a binary
-                            if mode & 0o111 == 0 {
-                                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                    if name.starts_with("llama-") {
-                                        let mut perms = meta.permissions();
-                                        perms.set_mode(0o755);
-                                        let _ = std::fs::set_permissions(&path, perms);
+            // Recursively find and chmod all llama-* binaries
+            fn chmod_recursively(path: &Path) {
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let entry_path = entry.path();
+                        if entry_path.is_file() {
+                            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                                if name.starts_with("llama-") {
+                                    if let Ok(meta) = entry_path.metadata() {
+                                        let mode = meta.permissions().mode();
+                                        if mode & 0o111 == 0 {
+                                            let mut perms = meta.permissions();
+                                            perms.set_mode(0o755);
+                                            let _ = std::fs::set_permissions(&entry_path, perms);
+                                        }
                                     }
                                 }
                             }
+                        } else if entry_path.is_dir() {
+                            chmod_recursively(&entry_path);
                         }
                     }
                 }
             }
+            chmod_recursively(dest);
         }
     } else if filename.ends_with(".zip") {
         let file = std::fs::File::open(archive)?;
@@ -364,7 +380,20 @@ async fn install_from_source(
         .await?;
 
     if !clone_result.success() {
-        // If --branch fails (e.g. "main" for ik_llama), try without branch
+        // Only allow fallback to HEAD for "main" or "latest" (tags may not exist)
+        if version != "main" && version != "latest" {
+            return Err(anyhow!(
+                "Tag/branch '{}' not found. Only 'main' or 'latest' are allowed for fallback.\n\
+                 Use an explicit version tag (e.g., 'b8407') or specify --build to build from source.",
+                version
+            ));
+        }
+
+        // Fallback: clone without branch tag
+        tracing::warn!(
+            "Tag/branch '{}' not found, cloning HEAD as fallback",
+            version
+        );
         println!("Tag/branch '{}' not found, cloning HEAD...", version);
         let status = tokio::process::Command::new("git")
             .args(["clone", "--depth", "1", git_url, &source_dir.to_string_lossy()])
