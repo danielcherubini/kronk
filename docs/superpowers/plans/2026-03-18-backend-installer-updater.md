@@ -1043,7 +1043,7 @@ async fn install_from_source(
 
 Add under `[dependencies]`:
 ```toml
-zip = "0.6"
+zip = "6.0"
 flate2 = "1.0"
 tar = "0.4"
 ```
@@ -1767,7 +1767,7 @@ Backends are stored in `~/.config/kronk/backends/` (Linux) or `%APPDATA%\kronk\b
 - [ ] **Step 2: Add backend commands to the CLI reference table**
 
 Add to the CLI table in README.md:
-```
+```bash
 kronk backend install <type>                       Install a backend (llama_cpp, ik_llama)
 kronk backend list                                 List installed backends
 kronk backend update <name>                        Update a backend to latest

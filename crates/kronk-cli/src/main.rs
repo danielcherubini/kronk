@@ -87,14 +87,14 @@ enum Commands {
         #[command(subcommand)]
         command: ModelCommands,
     },
-/// Manage backends — install, update, list, remove
+    /// Manage backends — install, update, list, remove
     Backend {
         #[command(subcommand)]
         command: BackendSubcommand,
     },
-    /// View backend logs for a server
+    /// View server logs
     Logs {
-        /// Server name (required)
+        /// Server name
         name: String,
         /// Follow log output (like tail -f)
         #[arg(short, long)]
@@ -300,12 +300,10 @@ fn main() -> Result<()> {
             Commands::Profile { command } => cmd_profile(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
             Commands::Model { command } => commands::model::run(&config, command).await,
-            Commands::Backend { command } => commands::backend::run(&config, BackendArgs { command }).await,
-            Commands::Logs {
-                name,
-                follow,
-                lines,
-            } => cmd_logs(&config, &name, follow, lines).await,
+Commands::Backend { command } => {
+                 commands::backend::run(&config, BackendArgs { command }).await
+             }
+            Commands::Logs { name, follow, lines } => cmd_logs(&config, &name, follow, lines).await,
         }
     })
 }

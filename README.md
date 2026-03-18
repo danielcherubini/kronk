@@ -157,7 +157,6 @@ The installer auto-detects your GPU and offers GPU-accelerated builds:
 - **CPU** — Fallback when no GPU is available
 
 ---
-
 ---
 
 ## Configuration
