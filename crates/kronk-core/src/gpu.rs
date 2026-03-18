@@ -18,10 +18,9 @@ pub struct GpuCapability {
 }
 
 #[derive(Debug, Clone)]
-pub struct SystemCapabilities {
+pub struct BuildPrerequisites {
     pub os: String,
     pub arch: String,
-    pub gpu: Option<GpuCapability>,
     pub cmake_available: bool,
     pub compiler_available: bool,
     pub git_available: bool,
@@ -53,339 +52,9 @@ impl VramInfo {
     }
 }
 
-/// Detect GPU type and capabilities.
-///
-/// Checks nvidia-smi first (CUDA), then ROCm (AMD), then Vulkan (Intel/AMD),
-/// then Metal (macOS), then falls back.
-/// CUDA version is read from nvidia-smi header output (does NOT require nvcc).
-pub fn detect_gpu() -> Option<GpuCapability> {
-    if let Some(cuda) = detect_cuda_gpu() {
-        return Some(cuda);
-    }
-    if let Some(rocm) = detect_rocm() {
-        return Some(rocm);
-    }
-    if let Some(vulkan) = detect_vulkan_gpu() {
-        return Some(vulkan);
-    }
-    if let Some(metal) = detect_metal_gpu() {
-        return Some(metal);
-    }
-    None
-}
-
-fn detect_cuda_gpu() -> Option<GpuCapability> {
-    // Get device name and VRAM
-    let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = stdout.trim().split(", ").collect();
-    if parts.len() < 2 {
-        return None;
-    }
-
-    let device_name = parts[0].trim().to_string();
-    let vram_str = parts[1].trim().replace(" MiB", "");
-    let vram_mb: u64 = vram_str.parse().ok()?;
-
-    // Get CUDA version from nvidia-smi header (NOT nvcc -- users often
-    // have the driver but not the CUDA toolkit installed).
-    let version = detect_cuda_version_from_smi().unwrap_or_else(|| "unknown".to_string());
-
-    Some(GpuCapability {
-        gpu_type: GpuType::Cuda { version },
-        device_name,
-        vram_mb,
-    })
-}
-
-/// Parse CUDA version from `nvidia-smi` header output.
-/// The header contains a line like: "CUDA Version: 12.4"
-fn detect_cuda_version_from_smi() -> Option<String> {
-    let output = std::process::Command::new("nvidia-smi").output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Look for "CUDA Version: X.Y" in the table header
-    for line in stdout.lines() {
-        if let Some(idx) = line.find("CUDA Version:") {
-            let after = &line[idx + "CUDA Version:".len()..];
-            let version = after.trim().split_whitespace().next()?;
-            return Some(version.to_string());
-        }
-    }
-    None
-}
-
-/// Detect ROCm GPU (AMD).
-/// Uses `rocminfo` to detect ROCm and parse version from header.
-/// For multi-GPU systems, returns the first GPU's info.
-fn detect_rocm() -> Option<GpuCapability> {
-    // Check if rocminfo is available
-    let output = std::process::Command::new("rocminfo").output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-
-    // Extract ROCm version from header (e.g., "ROCm Version: 6.1.2")
-    let version = lines
-        .iter()
-        .find(|line| line.contains("ROCm Version:"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|part| part.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    // Parse device info from rocminfo output
-    // Look for "Name" and "Total Amount of Memory" in the device table
-    // Require "gfx" to match GPU agent (not CPU)
-    // For multi-GPU systems, return the first GPU's info
-    let mut devices: Vec<(String, u64)> = Vec::new();
-
-    let mut in_device_block = false;
-    let mut device_lines: Vec<&str> = Vec::new();
-
-    for line in &lines {
-        let trimmed = line.trim();
-
-        // Start of a new device block
-        if trimmed.starts_with("Device:") || trimmed.starts_with("  Device:") {
-            // Start new block
-            in_device_block = true;
-            device_lines.clear();
-        } else if in_device_block {
-            device_lines.push(line);
-
-            // End of device block (next section starts)
-            if trimmed.starts_with("Properties:")
-                || trimmed.starts_with("  Properties:")
-                || trimmed.starts_with("Compute:")
-                || trimmed.starts_with("  Compute:")
-                || trimmed.starts_with("Graphics:")
-                || trimmed.starts_with("  Graphics:")
-                || trimmed.starts_with("PCIE:")
-                || trimmed.starts_with("  PCIE:")
-                || trimmed.starts_with("Clocks:")
-                || trimmed.starts_with("  Clocks:")
-                || trimmed.starts_with("Memory:")
-                || trimmed.starts_with("  Memory:")
-                || trimmed.starts_with("Temperature:")
-                || trimmed.starts_with("  Temperature:")
-                || trimmed.starts_with("Power:")
-                || trimmed.starts_with("  Power:")
-                || trimmed.starts_with("Utilization:")
-                || trimmed.starts_with("  Utilization:")
-                || trimmed.starts_with("Driver:")
-                || trimmed.starts_with("  Driver:")
-                || trimmed.starts_with("UUID:")
-                || trimmed.starts_with("  UUID:")
-                || trimmed.starts_with("Serial:")
-                || trimmed.starts_with("  Serial:")
-                || trimmed.starts_with("Vendor:")
-                || trimmed.starts_with("  Vendor:")
-                || trimmed.starts_with("Device:")
-                || trimmed.starts_with("  Device:")
-            {
-                in_device_block = false;
-
-                // Parse device name and VRAM from collected lines
-                if let (Some(name), Some(vram)) = (
-                    device_lines
-                        .iter()
-                        .find(|line| line.contains("Name") && line.contains("gfx"))
-                        .and_then(|line| line.split(':').nth(1))
-                        .map(|part| part.trim().to_string()),
-                    device_lines
-                        .iter()
-                        .find(|line| line.contains("Total Amount of Memory"))
-                        .and_then(|line| line.split(':').nth(1))
-                        .and_then(|s| s.trim().strip_suffix(" MiB"))
-                        .and_then(|s| s.parse::<u64>().ok()),
-                ) {
-                    devices.push((name, vram));
-                }
-            }
-        }
-    }
-
-    // Return first device found
-    devices.first().map(|(name, vram)| GpuCapability {
-        gpu_type: GpuType::RocM {
-            version: version.clone(),
-        },
-        device_name: name.clone(),
-        vram_mb: *vram,
-    })
-}
-
-/// Detect Vulkan GPU (Intel/AMD on Linux, NVIDIA without CUDA).
-///
-/// Two-pass approach:
-/// 1. `vulkaninfo --summary` for device name (skips software renderers like llvmpipe)
-/// 2. `vulkaninfo` (full) for VRAM from memoryHeaps with MEMORY_HEAP_DEVICE_LOCAL_BIT
-fn detect_vulkan_gpu() -> Option<GpuCapability> {
-    // Pass 1: get device name from --summary (lightweight)
-    let summary = std::process::Command::new("vulkaninfo")
-        .args(["--summary"])
-        .output()
-        .ok()?;
-
-    if !summary.status.success() {
-        return None;
-    }
-
-    let summary_out = String::from_utf8_lossy(&summary.stdout);
-
-    // Find the first real GPU device name (skip software renderers like llvmpipe)
-    let device_name = summary_out
-        .lines()
-        .filter(|line| line.contains("deviceName"))
-        .filter_map(|line| line.split('=').nth(1).map(|s| s.trim().to_string()))
-        .find(|name| !name.to_lowercase().contains("llvmpipe"))?;
-
-    // Pass 2: get VRAM from full vulkaninfo output
-    let full = std::process::Command::new("vulkaninfo").output().ok()?;
-
-    if !full.status.success() {
-        // If full output fails, return what we have with 0 VRAM
-        return Some(GpuCapability {
-            gpu_type: GpuType::Vulkan,
-            device_name,
-            vram_mb: 0,
-        });
-    }
-
-    let full_out = String::from_utf8_lossy(&full.stdout);
-    let vram_mb = parse_vulkan_device_local_heap(&full_out).unwrap_or(0);
-
-    Some(GpuCapability {
-        gpu_type: GpuType::Vulkan,
-        device_name,
-        vram_mb,
-    })
-}
-
-/// Parse VRAM from vulkaninfo full output by finding the first memoryHeap
-/// with `MEMORY_HEAP_DEVICE_LOCAL_BIT` flag. Returns size in MiB.
-///
-/// Expected format:
-/// ```text
-/// memoryHeaps[1]:
-///     size   = 14037184512 (0x344ae7000) (13.07 GiB)
-///     ...
-///     flags: count = 1
-///         MEMORY_HEAP_DEVICE_LOCAL_BIT
-/// ```
-fn parse_vulkan_device_local_heap(output: &str) -> Option<u64> {
-    let lines: Vec<&str> = output.lines().collect();
-
-    // Walk through looking for memoryHeaps entries; track the most recent
-    // heap's size, and return it when we see DEVICE_LOCAL_BIT.
-    let mut current_heap_size_bytes: Option<u64> = None;
-
-    for line in &lines {
-        let trimmed = line.trim();
-
-        // Match "size   = 14037184512 (...)" inside a memoryHeaps block
-        if trimmed.starts_with("size") && trimmed.contains('=') {
-            if let Some(val_str) = trimmed.split('=').nth(1) {
-                // Take the first token (the decimal number) before any parens
-                let size_str = val_str.trim().split_whitespace().next().unwrap_or("0");
-                current_heap_size_bytes = size_str.parse::<u64>().ok();
-            }
-        }
-
-        // When we see the DEVICE_LOCAL flag, the preceding size was the right heap
-        if trimmed == "MEMORY_HEAP_DEVICE_LOCAL_BIT" {
-            if let Some(bytes) = current_heap_size_bytes {
-                return Some(bytes / (1024 * 1024)); // bytes -> MiB
-            }
-        }
-
-        // Reset on new heap entry to avoid stale data
-        if trimmed.starts_with("memoryHeaps[") {
-            current_heap_size_bytes = None;
-        }
-    }
-
-    None
-}
-
-/// Detect Metal GPU (Apple Silicon on macOS).
-/// Uses `system_profiler` to detect Metal-capable GPUs.
-#[cfg(target_os = "macos")]
-fn detect_metal_gpu() -> Option<GpuCapability> {
-    // Check if system_profiler is available
-    let output = std::process::Command::new("system_profiler")
-        .args(["SPDisplaysDataType"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Parse device info from system_profiler output
-    // Look for "Chip" and "Memory"
-    let device_name = stdout
-        .lines()
-        .find(|line| line.contains("Chip"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|part| part.trim().to_string())?;
-
-    // Parse memory (look for "Memory" or "VRAM")
-    // Handle "16 GB (Unified)", "16 GB", "16 MB", or just "Unified"
-    let vram_str = stdout
-        .lines()
-        .find(|line| line.contains("Memory"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|s| s.trim())
-        .and_then(|s| {
-            // Strip "(Unified)" suffix if present
-            let s = s.strip_suffix(" (Unified)").unwrap_or(s);
-            // Handle "16 GB" or "16 MB"
-            if let Some(stripped) = s.strip_suffix(" GB") {
-                stripped.parse::<u64>().ok().map(|gb| gb * 1024) // GB -> MB
-            } else if let Some(stripped) = s.strip_suffix(" MB") {
-                stripped.parse::<u64>().ok()
-            } else {
-                None
-            }
-        })?;
-
-    Some(GpuCapability {
-        gpu_type: GpuType::Metal,
-        device_name,
-        vram_mb: vram_str,
-    })
-}
-
-/// Detect Metal GPU (Apple Silicon on macOS).
-/// Uses `system_profiler` to detect Metal-capable GPUs.
-#[cfg(not(target_os = "macos"))]
-fn detect_metal_gpu() -> Option<GpuCapability> {
-    None
-}
-
-pub fn detect_system_capabilities() -> SystemCapabilities {
+pub fn detect_build_prerequisites() -> BuildPrerequisites {
     let os = std::env::consts::OS.to_string();
     let arch = std::env::consts::ARCH.to_string();
-    let gpu = detect_gpu();
 
     let cmake_available = std::process::Command::new("cmake")
         .arg("--version")
@@ -430,10 +99,9 @@ pub fn detect_system_capabilities() -> SystemCapabilities {
         }
     };
 
-    SystemCapabilities {
+    BuildPrerequisites {
         os,
         arch,
-        gpu,
         cmake_available,
         compiler_available,
         git_available,
@@ -610,17 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_system_capabilities() {
-        let caps = detect_system_capabilities();
+    fn test_detect_build_prerequisites() {
+        let caps = detect_build_prerequisites();
         assert!(!caps.os.is_empty());
         assert!(!caps.arch.is_empty());
-    }
-
-    #[test]
-    fn test_gpu_type_display() {
-        let cuda = GpuType::Cuda {
-            version: "12.4".to_string(),
-        };
-        assert!(format!("{:?}", cuda).contains("12.4"));
+        // No gpu field — that's the point
     }
 }
