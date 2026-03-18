@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 use super::installer::{install_backend, InstallOptions};
 use super::registry::{BackendInfo, BackendRegistry, BackendType};
