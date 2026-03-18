@@ -143,17 +143,17 @@ impl Config {
                 toml::to_string_pretty(&default).context("Failed to serialize default config")?;
             fs::write(&config_path, &toml_str).context("Failed to write default config")?;
             tracing::info!("Created default config at {}", config_path.display());
-
-            // Generate default profile TOML files
-            let profiles_dir = config_dir.join("profiles.d");
-            if !profiles_dir.exists() {
-                if let Err(e) = crate::profiles::generate_default_profiles(&profiles_dir) {
-                    tracing::warn!("Failed to generate default profiles: {}", e);
-                }
-            }
-
             default
         };
+
+        // Ensure default profile TOML files exist (covers both fresh installs
+        // and upgrades from versions that predate profiles.d/).
+        let profiles_dir = config_dir.join("profiles.d");
+        if !profiles_dir.exists() {
+            if let Err(e) = crate::profiles::generate_default_profiles(&profiles_dir) {
+                tracing::warn!("Failed to generate default profiles: {}", e);
+            }
+        }
 
         config.loaded_from = Some(config_dir.to_path_buf());
         migrate_model_cards_to_configs_d(&config)?;
