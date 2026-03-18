@@ -142,6 +142,9 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
         pb.set_position(downloaded);
     }
 
+    // Flush to ensure all data is written to disk before returning
+    file.flush().await?;
+
     pb.finish_with_message("Download complete");
     Ok(())
 }
@@ -206,6 +209,11 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
+
+            // Reject symlinks (CVE-2025-29787: symlink-based path traversal)
+            if entry.is_symlink() {
+                return Err(anyhow!("Symlinks not allowed in archive: {}", entry.name()));
+            }
 
             // Sanitize path to prevent CVE-2025-29787 (path traversal via symlinks)
             let entry_name = entry.name();
