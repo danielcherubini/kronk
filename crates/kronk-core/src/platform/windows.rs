@@ -256,6 +256,9 @@ pub fn start_service(service_name: &str) -> Result<()> {
         .start::<String>(&[])
         .context("Failed to start service")?;
 
+    wait_for_state(&service, ServiceState::Running, Duration::from_secs(30))
+        .with_context(|| format!("Service '{}' did not start in time", service_name))?;
+
     Ok(())
 }
 
@@ -277,6 +280,9 @@ pub fn stop_service(service_name: &str) -> Result<()> {
     }
 
     service.stop().context("Failed to stop service")?;
+
+    wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
+        .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
 
     Ok(())
 }
