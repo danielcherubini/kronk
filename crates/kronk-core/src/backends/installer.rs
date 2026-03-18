@@ -221,7 +221,7 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
             let outpath = dest.join(&entry_name);
 
-            if entry_name.as_path().ends_with("/") {
+            if entry.is_dir() {
                 std::fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(p) = outpath.parent() {
@@ -585,7 +585,7 @@ async fn install_from_source(
                     let entry_path = entry.path();
                     if entry_path.is_file() {
                         if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                            if name.ends_with(".so") {
+                            if name.ends_with(".so") || name.ends_with(".dylib") {
                                 let dest_path = dest.join(name);
                                 if !dest_path.exists() {
                                     if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
