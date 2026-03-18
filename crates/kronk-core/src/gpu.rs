@@ -129,6 +129,7 @@ fn detect_cuda_version_from_smi() -> Option<String> {
 
 /// Detect ROCm GPU (AMD).
 /// Uses `rocminfo` to detect ROCm and parse version from header.
+/// For multi-GPU systems, returns the first GPU's info.
 fn detect_rocm() -> Option<GpuCapability> {
     // Check if rocminfo is available
     let output = std::process::Command::new("rocminfo").output().ok()?;
@@ -138,34 +139,100 @@ fn detect_rocm() -> Option<GpuCapability> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Parse device info from rocminfo output
-    // Look for "Name" and "Total Amount of Memory" in the device table
-    // Require "gfx" to match GPU agent (not CPU)
-    let device_name = stdout
-        .lines()
-        .find(|line| line.contains("Name") && line.contains("gfx"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|part| part.trim().to_string())?;
-
-    // Parse memory (look for "Total Amount of Memory")
-    let vram_str = stdout
-        .lines()
-        .find(|line| line.contains("Total Amount of Memory"))
-        .and_then(|line| line.split(':').nth(1))
-        .and_then(|s| s.trim().strip_suffix(" MiB"))
-        .and_then(|s| s.parse::<u64>().ok())?;
+    let lines: Vec<&str> = stdout.lines().collect();
 
     // Extract ROCm version from header (e.g., "ROCm Version: 6.1.2")
-    let version = stdout
-        .lines()
+    let version = lines
+        .iter()
         .find(|line| line.contains("ROCm Version:"))
         .and_then(|line| line.split(':').nth(1))
         .map(|part| part.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
+    // Parse device info from rocminfo output
+    // Look for "Name" and "Total Amount of Memory" in the device table
+    // Require "gfx" to match GPU agent (not CPU)
+    // For multi-GPU systems, pair matching Name/VRAM lines from the same device block
+    let device_name: Option<String> = None;
+    let vram_str: Option<u64> = None;
+
+    let mut in_device_block = false;
+    let mut device_lines: Vec<&str> = Vec::new();
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        // Start of a new device block
+        if trimmed.starts_with("Device:") || trimmed.starts_with("  Device:") {
+            // Save previous device if we have both name and VRAM
+            if let (Some(ref n), Some(ref v)) = (&device_name, &vram_str) {
+                return Some(GpuCapability {
+                    gpu_type: GpuType::RocM {
+                        version: version.clone(),
+                    },
+                    device_name: n.clone(),
+                    vram_mb: *v,
+                });
+            }
+            // Start new block
+            in_device_block = true;
+            device_lines.clear();
+        } else if in_device_block {
+            device_lines.push(line);
+
+            // End of device block (next section starts)
+            if trimmed.starts_with("Properties:")
+                || trimmed.starts_with("  Properties:")
+                || trimmed.starts_with("Compute:")
+                || trimmed.starts_with("  Compute:")
+                || trimmed.starts_with("Graphics:")
+                || trimmed.starts_with("  Graphics:")
+                || trimmed.starts_with("PCIE:")
+                || trimmed.starts_with("  PCIE:")
+                || trimmed.starts_with("Clocks:")
+                || trimmed.starts_with("  Clocks:")
+                || trimmed.starts_with("Memory:")
+                || trimmed.starts_with("  Memory:")
+                || trimmed.starts_with("Temperature:")
+                || trimmed.starts_with("  Temperature:")
+                || trimmed.starts_with("Power:")
+                || trimmed.starts_with("  Power:")
+                || trimmed.starts_with("Utilization:")
+                || trimmed.starts_with("  Utilization:")
+                || trimmed.starts_with("Driver:")
+                || trimmed.starts_with("  Driver:")
+                || trimmed.starts_with("UUID:")
+                || trimmed.starts_with("  UUID:")
+                || trimmed.starts_with("Serial:")
+                || trimmed.starts_with("  Serial:")
+                || trimmed.starts_with("Vendor:")
+                || trimmed.starts_with("  Vendor:")
+                || trimmed.starts_with("Device:")
+                || trimmed.starts_with("  Device:")
+            {
+                in_device_block = false;
+            }
+        }
+    }
+
+    // Parse from collected device lines
+    let device_name = device_lines
+        .iter()
+        .find(|line| line.contains("Name") && line.contains("gfx"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|part| part.trim().to_string())?;
+
+    let vram_str = device_lines
+        .iter()
+        .find(|line| line.contains("Total Amount of Memory"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|s| s.trim().strip_suffix(" MiB"))
+        .and_then(|s| s.parse::<u64>().ok())?;
+
     Some(GpuCapability {
-        gpu_type: GpuType::RocM { version },
+        gpu_type: GpuType::RocM {
+            version: version.clone(),
+        },
         device_name,
         vram_mb: vram_str,
     })

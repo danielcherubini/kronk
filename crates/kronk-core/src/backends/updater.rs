@@ -100,16 +100,28 @@ pub async fn update_backend(
 ) -> Result<()> {
     // Clone source before install_backend moves options
     let source = options.source.clone();
+    // Clone backend_type before install_backend moves options
+    let backend_type = options.backend_type.clone();
 
     // Install the new version
     let new_binary_path = install_backend(options).await?;
+
+    // Resolve "latest" to actual tag before storing in registry
+    let resolved_version = if latest_version.to_lowercase() == "latest" {
+        // Fetch the actual latest tag
+        let actual_latest = check_latest_version(&backend_type).await?;
+        tracing::info!("Resolved 'latest' to actual tag: {}", actual_latest);
+        actual_latest
+    } else {
+        latest_version
+    };
 
     // Update registry with the known version and source (no re-fetch to avoid TOCTOU race)
     let _backend_info = registry
         .get(backend_name)
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
-    registry.update_version(backend_name, latest_version, new_binary_path, Some(source))?;
+    registry.update_version(backend_name, resolved_version, new_binary_path, Some(source))?;
 
     println!("Update complete!");
     Ok(())
