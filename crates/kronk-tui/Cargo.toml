@@ -1,0 +1,11 @@
+[package]
+name = "kronk-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kronk-core = { path = "../kronk-core" }
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
