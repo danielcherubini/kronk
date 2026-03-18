@@ -183,7 +183,10 @@ async fn download_parallel(
 
     // Build temp file paths
     let tmp_dir = dest.parent().unwrap_or(Path::new("."));
-    let dest_filename = dest.file_name().unwrap().to_string_lossy();
+    let dest_filename = dest
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Destination path has no file name: {:?}", dest))?
+        .to_string_lossy();
     let tmp_paths: Vec<PathBuf> = (0..num_connections)
         .map(|i| tmp_dir.join(format!(".{}.part{}", dest_filename, i)))
         .collect();
@@ -332,7 +335,7 @@ async fn download_chunk_with_retry(
                         chunk_index, chunk_downloaded, expected_size, attempt, MAX_RETRIES
                     );
                 });
-                pb.inc(0u64.wrapping_sub(chunk_downloaded));
+                pb.dec(chunk_downloaded);
                 tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
                 continue;
             }
