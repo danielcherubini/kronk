@@ -7,6 +7,7 @@ pub enum GpuType {
     Metal,
     RocM { version: String },
     CpuOnly,
+    Custom,
 }
 
 #[derive(Debug, Clone)]
@@ -54,11 +55,14 @@ impl VramInfo {
 
 /// Detect GPU type and capabilities.
 ///
-/// Checks nvidia-smi first (CUDA), then falls back.
+/// Checks nvidia-smi first (CUDA), then ROCm (AMD), then falls back.
 /// CUDA version is read from nvidia-smi header output (does NOT require nvcc).
 pub fn detect_gpu() -> Option<GpuCapability> {
     if let Some(cuda) = detect_cuda_gpu() {
         return Some(cuda);
+    }
+    if let Some(rocm) = detect_rocm() {
+        return Some(rocm);
     }
     // Future: detect Vulkan via vulkaninfo, Metal via system_profiler
     None
@@ -115,6 +119,55 @@ fn detect_cuda_version_from_smi() -> Option<String> {
         }
     }
     None
+}
+
+/// Detect ROCm GPU (AMD).
+/// Uses `rocminfo` to detect ROCm and parse version from header.
+fn detect_rocm() -> Option<GpuCapability> {
+    // Check if rocminfo is available
+    let output = std::process::Command::new("rocminfo")
+        .args(["--help"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse device info from rocminfo output
+    // Look for "Name" and "Total Amount of Memory" in the device table
+    let device_name = stdout
+        .lines()
+        .find(|line| line.contains("Name"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|part| part.trim().strip_prefix(' '))
+        .map(|s| s.to_string())?;
+
+    // Parse memory (look for "Total Amount of Memory")
+    let vram_str = stdout
+        .lines()
+        .find(|line| line.contains("Total Amount of Memory"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|part| part.trim().strip_prefix(' '))
+        .and_then(|s| s.strip_suffix(" MiB"))
+        .and_then(|s| s.parse::<u64>().ok())?;
+
+    // Extract ROCm version from header (e.g., "ROCm Version: 6.1.2")
+    let version = stdout
+        .lines()
+        .find(|line| line.contains("ROCm Version:"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|part| part.trim().strip_prefix(' '))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    Some(GpuCapability {
+        gpu_type: GpuType::RocM { version },
+        device_name,
+        vram_mb: vram_str,
+    })
 }
 
 pub fn detect_system_capabilities() -> SystemCapabilities {

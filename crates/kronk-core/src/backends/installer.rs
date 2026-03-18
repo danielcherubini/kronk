@@ -70,6 +70,9 @@ pub fn get_prebuilt_url(
                 ("windows", "aarch64", _) => {
                     format!("llama-{}-bin-win-cpu-arm64.zip", tag)
                 }
+                ("windows", _, Some(GpuType::Custom)) => {
+                    format!("llama-{}-bin-win-cuda-{}-x64.zip", tag, "12.4")
+                }
                 // macOS
                 ("macos", "aarch64", _) => {
                     format!("llama-{}-bin-macos-arm64.tar.gz", tag)
@@ -189,9 +192,17 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            let outpath = dest.join(entry.name());
+            
+            // Sanitize path to prevent CVE-2025-29787 (path traversal via symlinks)
+            let entry_name = entry.name();
+            let sanitized = entry_name.replace('\\', "/");
+            if sanitized.contains("..") || sanitized.starts_with('/') || sanitized.is_empty() {
+                return Err(anyhow!("Malicious path in archive: {}", entry_name));
+            }
+            
+            let outpath = dest.join(&sanitized);
 
-            if entry.name().ends_with('/') {
+            if entry_name.ends_with('/') {
                 std::fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(p) = outpath.parent() {
@@ -278,7 +289,10 @@ async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<Pat
     println!("Downloading from: {}", url);
 
     let download_dir = tempfile::tempdir()?;
-    let archive_name = url.split('/').last().unwrap();
+    let archive_name = url
+        .split('/')
+        .last()
+        .ok_or_else(|| anyhow!("Invalid download URL: {}", url))?;
     let archive_path = download_dir.path().join(archive_name);
 
     download_file(&url, &archive_path).await?;
@@ -373,6 +387,7 @@ async fn install_from_source(
                 cmake_args.push("-DGGML_HIPBLAS=ON".to_string());
             }
             GpuType::CpuOnly => {}
+            GpuType::Custom => {}
         }
     }
 

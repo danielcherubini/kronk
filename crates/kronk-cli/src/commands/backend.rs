@@ -249,10 +249,23 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         return Ok(());
     }
 
-    let target_dir = backend_info.path.parent().unwrap().to_path_buf();
+    let target_dir = backend_info
+        .path
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid backend path: {}", backend_info.path.display()))?
+        .to_path_buf();
 
-    let source = BackendSource::Prebuilt {
-        version: update_check.latest_version.clone(),
+    // Determine source based on backend type
+    // ik_llama has no pre-built binaries, so it must be built from source
+    let source = match backend_info.backend_type {
+        BackendType::IkLlama => BackendSource::SourceCode {
+            version: update_check.latest_version.clone(),
+            git_url: "https://github.com/ikawrakow/ik_llama.cpp.git".to_string(),
+        },
+        BackendType::LlamaCpp => BackendSource::Prebuilt {
+            version: update_check.latest_version.clone(),
+        },
+        BackendType::Custom => return Err(anyhow!("Cannot update custom backends")),
     };
 
     let options = InstallOptions {
@@ -262,7 +275,7 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         gpu_type: backend_info.gpu_type.clone(),
     };
 
-    update_backend(&mut registry, name, options).await?;
+    update_backend(&mut registry, name, options, update_check.latest_version).await?;
 
     Ok(())
 }

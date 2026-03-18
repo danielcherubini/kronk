@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::gpu::GpuType;
 
@@ -10,6 +11,32 @@ pub enum BackendType {
     LlamaCpp,
     IkLlama,
     Custom,
+}
+
+impl std::fmt::Display for BackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendType::LlamaCpp => write!(f, "llama_cpp"),
+            BackendType::IkLlama => write!(f, "ik_llama"),
+            BackendType::Custom => write!(f, "custom"),
+        }
+    }
+}
+
+impl FromStr for BackendType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "llama_cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
+            "ik_llama" | "ik-llama" | "ikllama" => Ok(BackendType::IkLlama),
+            "custom" => Ok(BackendType::Custom),
+            _ => Err(format!(
+                "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, custom",
+                s
+            )),
+        }
+    }
 }
 
 /// Metadata for an installed backend.

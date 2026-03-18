@@ -5,6 +5,11 @@ use serde::Deserialize;
 use super::installer::{install_backend, InstallOptions};
 use super::registry::{BackendInfo, BackendRegistry, BackendType};
 
+/// Check for GitHub token for authenticated API requests (5000 req/hour vs 60 unauth)
+fn github_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN").ok()
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -23,36 +28,40 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
         .user_agent("kronk-backend-manager")
         .build()?;
 
+    let token = github_token();
+    let url = match backend {
+        BackendType::LlamaCpp => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
+        BackendType::IkLlama => "https://api.github.com/repos/ikawrakow/ik_llama.cpp/releases?per_page=1",
+        BackendType::Custom => return Err(anyhow!("Cannot check updates for custom backends")),
+    };
+
+    let response = client
+        .get(url)
+        .header("Authorization", token.as_deref().unwrap_or(""))
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch from {}", url))?;
+
+    if !response.status().is_success() {
+        // Check for rate limiting
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(anyhow!(
+                "GitHub API request failed with 403 Forbidden. \
+                 This may be due to rate limiting (60 requests/hour for unauthenticated requests). \
+                 Set GITHUB_TOKEN environment variable for increased rate limits (5000 requests/hour)."
+            ));
+        }
+        return Err(anyhow!("GitHub API request failed: {}", response.status()));
+    }
+
     match backend {
         BackendType::LlamaCpp => {
-            let url = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
-            let response = client
-                .get(url)
-                .send()
-                .await
-                .with_context(|| "Failed to fetch latest llama.cpp release")?;
-
-            if !response.status().is_success() {
-                return Err(anyhow!("GitHub API request failed: {}", response.status()));
-            }
-
             let release: GithubRelease = response.json().await?;
             Ok(release.tag_name)
         }
         BackendType::IkLlama => {
             // ik_llama only has pre-releases, so /releases/latest returns 404.
             // Fetch all releases and pick the first (most recent).
-            let url = "https://api.github.com/repos/ikawrakow/ik_llama.cpp/releases?per_page=1";
-            let response = client
-                .get(url)
-                .send()
-                .await
-                .with_context(|| "Failed to fetch ik_llama releases")?;
-
-            if !response.status().is_success() {
-                return Err(anyhow!("GitHub API request failed: {}", response.status()));
-            }
-
             let releases: Vec<GithubRelease> = response.json().await?;
             releases
                 .first()
@@ -85,19 +94,17 @@ pub async fn update_backend(
     registry: &mut BackendRegistry,
     backend_name: &str,
     options: InstallOptions,
+    latest_version: String,
 ) -> Result<()> {
     // Install the new version
     let new_binary_path = install_backend(options).await?;
 
-    // Fetch the latest version tag (we need it for the registry)
-    let backend_info = registry
+    // Update registry with the known version (no re-fetch to avoid TOCTOU race)
+    let _backend_info = registry
         .get(backend_name)
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
-    let latest = check_latest_version(&backend_info.backend_type).await?;
-
-    // Update registry in one call
-    registry.update_version(backend_name, latest, new_binary_path)?;
+    registry.update_version(backend_name, latest_version, new_binary_path)?;
 
     println!("Update complete!");
     Ok(())
