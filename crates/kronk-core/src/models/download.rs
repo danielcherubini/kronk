@@ -21,8 +21,31 @@ fn build_client() -> Result<Client> {
 /// Download a file using parallel HTTP Range requests.
 /// Falls back to single-stream if Range is not supported.
 /// Skips download if the destination already exists with matching size.
-pub async fn download_chunked(url: &str, dest: &Path, connections: usize) -> Result<u64> {
+pub async fn download_chunked(
+    url: &str,
+    dest: &Path,
+    connections: usize,
+    auth_header: Option<&str>,
+) -> Result<u64> {
     let client = build_client()?;
+
+    // Apply auth header if provided, otherwise use hf-hub's default token
+    let client = if let Some(header) = auth_header {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(header)
+                .unwrap_or(reqwest::header::HeaderValue::from_static("Bearer ")),
+        );
+        Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(30))
+            .default_headers(headers)
+            .build()
+            .context("Failed to create HTTP client with auth header")?
+    } else {
+        client
+    };
 
     // HEAD request to get Content-Length and check Range support
     let head = client
@@ -47,7 +70,7 @@ pub async fn download_chunked(url: &str, dest: &Path, connections: usize) -> Res
     let accept_ranges = head
         .headers()
         .get("accept-ranges")
-        .and_then(|v| v.to_str().ok())
+        .and_then(|v: &reqwest::header::HeaderValue| v.to_str().ok())
         .unwrap_or("none");
 
     let use_chunked = accept_ranges != "none" && total_size > MIN_CHUNK_SIZE;
@@ -68,9 +91,18 @@ pub async fn download_chunked(url: &str, dest: &Path, connections: usize) -> Res
     );
 
     let result = if num_connections == 1 {
-        download_single(&client, url, dest, &pb).await
+        download_single(&client, url, dest, auth_header, &pb).await
     } else {
-        download_parallel(&client, url, dest, total_size, num_connections, &pb).await
+        download_parallel(
+            &client,
+            url,
+            dest,
+            total_size,
+            num_connections,
+            auth_header,
+            &pb,
+        )
+        .await
     };
 
     match result {
@@ -85,7 +117,13 @@ pub async fn download_chunked(url: &str, dest: &Path, connections: usize) -> Res
     }
 }
 
-async fn download_single(client: &Client, url: &str, dest: &Path, pb: &ProgressBar) -> Result<()> {
+async fn download_single(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    auth_header: Option<&str>,
+    pb: &ProgressBar,
+) -> Result<()> {
     let mut attempt = 0u32;
     let mut downloaded: u64 = 0;
 
@@ -93,6 +131,9 @@ async fn download_single(client: &Client, url: &str, dest: &Path, pb: &ProgressB
         attempt += 1;
 
         let mut request = client.get(url);
+        if let Some(header) = auth_header {
+            request = request.header("Authorization", header);
+        }
         if downloaded > 0 {
             request = request.header("Range", format!("bytes={}-", downloaded));
         }
@@ -115,10 +156,25 @@ async fn download_single(client: &Client, url: &str, dest: &Path, pb: &ProgressB
         // Validate status code
         let status = resp.status().as_u16();
         if downloaded > 0 && status != 206 {
-            anyhow::bail!(
-                "Expected 206 Partial Content for resumed download, got {}",
-                status
-            );
+            // Only bail immediately for permanent mismatch (un-ranged 200)
+            if status == 200 {
+                anyhow::bail!(
+                    "Expected 206 Partial Content for resumed download, got {}",
+                    status
+                );
+            }
+            // Retry transient errors (429/5xx)
+            if attempt <= MAX_RETRIES {
+                pb.suspend(|| {
+                    println!(
+                        "  Server returned {}, retrying ({}/{})...",
+                        status, attempt, MAX_RETRIES
+                    );
+                });
+                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
+                continue;
+            }
+            anyhow::bail!("Download failed with status {}", status);
         }
         if downloaded == 0 && !resp.status().is_success() {
             if attempt <= MAX_RETRIES {
@@ -160,8 +216,22 @@ async fn download_single(client: &Client, url: &str, dest: &Path, pb: &ProgressB
                 }
                 Ok(None) => break,
                 Err(_e) => {
-                    stream_failed = true;
-                    break;
+                    if attempt <= MAX_RETRIES {
+                        pb.suspend(|| {
+                            println!(
+                                "  Stream interrupted at {:.1} MiB (attempt {}/{}), retrying... ({})",
+                                downloaded as f64 / 1_048_576.0,
+                                attempt,
+                                MAX_RETRIES,
+                                _e
+                            );
+                        });
+                        // Rollback progress before retry
+                        pb.set_position(downloaded.saturating_sub(downloaded));
+                        stream_failed = true;
+                        break;
+                    }
+                    return Err(_e.into());
                 }
             }
         }
@@ -186,6 +256,7 @@ async fn download_parallel(
     dest: &Path,
     total_size: u64,
     num_connections: usize,
+    auth_header: Option<&str>,
     pb: &ProgressBar,
 ) -> Result<()> {
     let chunk_size = total_size / num_connections as u64;
@@ -215,9 +286,20 @@ async fn download_parallel(
         let url = url.to_string();
         let tmp_path = tmp_path.clone();
         let pb = pb.clone();
+        let auth_header = auth_header.map(|h| h.to_string());
 
         let handle = tokio::spawn(async move {
-            download_chunk_with_retry(&client, &url, &tmp_path, start, end, i, &pb).await?;
+            download_chunk_with_retry(
+                &client,
+                &url,
+                &tmp_path,
+                start,
+                end,
+                i,
+                &pb,
+                auth_header.as_deref(),
+            )
+            .await?;
             Ok::<PathBuf, anyhow::Error>(tmp_path)
         });
 
@@ -263,6 +345,7 @@ async fn download_parallel(
 }
 
 /// Download a single chunk with retry and exponential backoff.
+#[allow(clippy::too_many_arguments)]
 async fn download_chunk_with_retry(
     client: &Client,
     url: &str,
@@ -271,6 +354,7 @@ async fn download_chunk_with_retry(
     end: u64,
     chunk_index: usize,
     pb: &ProgressBar,
+    auth_header: Option<&str>,
 ) -> Result<()> {
     let expected_size = end - start + 1;
     let mut attempt = 0u32;
@@ -279,7 +363,11 @@ async fn download_chunk_with_retry(
         attempt += 1;
 
         let range = format!("bytes={}-{}", start, end);
-        let resp = match client.get(url).header("Range", &range).send().await {
+        let mut request = client.get(url).header("Range", &range);
+        if let Some(header) = auth_header {
+            request = request.header("Authorization", header);
+        }
+        let resp = match request.send().await {
             Ok(r) => r,
             Err(e) if attempt <= MAX_RETRIES => {
                 pb.suspend(|| {
@@ -390,7 +478,7 @@ mod tests {
 
         // Use a small known file from HuggingFace (a config.json)
         let url = "https://huggingface.co/gpt2/resolve/main/config.json";
-        let size = download_chunked(url, &dest, 1).await.unwrap();
+        let size = download_chunked(url, &dest, 1, None).await.unwrap();
 
         assert!(dest.exists());
         assert!(size > 0);
@@ -405,7 +493,7 @@ mod tests {
 
         // Use a larger file to test parallel downloads
         let url = "https://huggingface.co/gpt2/resolve/main/merges.txt";
-        let size = download_chunked(url, &dest, 4).await.unwrap();
+        let size = download_chunked(url, &dest, 4, None).await.unwrap();
 
         assert!(dest.exists());
         assert!(size > 0);
@@ -421,9 +509,9 @@ mod tests {
         let url = "https://huggingface.co/gpt2/resolve/main/config.json";
 
         // Download once
-        let size1 = download_chunked(url, &dest, 1).await.unwrap();
+        let size1 = download_chunked(url, &dest, 1, None).await.unwrap();
         // Download again — should skip
-        let size2 = download_chunked(url, &dest, 1).await.unwrap();
+        let size2 = download_chunked(url, &dest, 1, None).await.unwrap();
 
         assert_eq!(size1, size2);
     }
