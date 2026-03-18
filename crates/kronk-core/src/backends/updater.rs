@@ -121,7 +121,12 @@ pub async fn update_backend(
         .get(backend_name)
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
-    registry.update_version(backend_name, resolved_version, new_binary_path, Some(source))?;
+    registry.update_version(
+        backend_name,
+        resolved_version,
+        new_binary_path,
+        Some(source),
+    )?;
 
     println!("Update complete!");
     Ok(())

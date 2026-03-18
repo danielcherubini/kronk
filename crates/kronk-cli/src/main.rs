@@ -297,11 +297,17 @@ fn main() -> Result<()> {
             }
             Commands::Server { command } => cmd_server(&config, command).await,
             Commands::Status => cmd_status(&config).await,
-Commands::Profile { command } => cmd_profile(&config, command),
+            Commands::Profile { command } => cmd_profile(&config, command),
             Commands::Config { command } => cmd_config(&config, command),
             Commands::Model { command } => commands::model::run(&config, command).await,
-            Commands::Backend { command } => commands::backend::run(&config, BackendArgs { command }).await,
-            Commands::Logs { name, follow, lines } => cmd_logs(&config, &name, follow, lines).await,
+            Commands::Backend { command } => {
+                commands::backend::run(&config, BackendArgs { command }).await
+            }
+            Commands::Logs {
+                name,
+                follow,
+                lines,
+            } => cmd_logs(&config, &name, follow, lines).await,
         }
     })
 }
