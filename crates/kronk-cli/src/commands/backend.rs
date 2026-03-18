@@ -55,9 +55,12 @@ pub enum BackendSubcommand {
 
 pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
     match cmd.command {
-        BackendSubcommand::Install { backend_type, version, build, name } => {
-            cmd_install(config, &backend_type, version, build, name).await
-        }
+        BackendSubcommand::Install {
+            backend_type,
+            version,
+            build,
+            name,
+        } => cmd_install(config, &backend_type, version, build, name).await,
         BackendSubcommand::Update { name } => cmd_update(config, &name).await,
         BackendSubcommand::List => cmd_list(config).await,
         BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
@@ -69,7 +72,10 @@ fn parse_backend_type(s: &str) -> Result<BackendType> {
     match s.to_lowercase().as_str() {
         "llama_cpp" | "llama.cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
         "ik_llama" | "ik-llama" | "ikllama" | "ik_llama.cpp" => Ok(BackendType::IkLlama),
-        _ => Err(anyhow!("Unknown backend type '{}'. Supported: llama_cpp, ik_llama", s)),
+        _ => Err(anyhow!(
+            "Unknown backend type '{}'. Supported: llama_cpp, ik_llama",
+            s
+        )),
     }
 }
 
@@ -103,9 +109,30 @@ async fn cmd_install(
     println!("Checking system...");
     let caps = gpu::detect_build_prerequisites();
     println!("  OS:       {} {}", caps.os, caps.arch);
-    println!("  Git:      {}", if caps.git_available { "found" } else { "not found" });
-    println!("  CMake:    {}", if caps.cmake_available { "found" } else { "not found" });
-    println!("  Compiler: {}", if caps.compiler_available { "found" } else { "not found" });
+    println!(
+        "  Git:      {}",
+        if caps.git_available {
+            "found"
+        } else {
+            "not found"
+        }
+    );
+    println!(
+        "  CMake:    {}",
+        if caps.cmake_available {
+            "found"
+        } else {
+            "not found"
+        }
+    );
+    println!(
+        "  Compiler: {}",
+        if caps.compiler_available {
+            "found"
+        } else {
+            "not found"
+        }
+    );
     println!();
 
     // Fetch latest version if not specified
@@ -131,7 +158,10 @@ async fn cmd_install(
         _ => {
             let choice = inquire::Select::new(
                 "Installation method:",
-                vec!["Download pre-built binary (faster)", "Build from source (hardware-optimized)"],
+                vec![
+                    "Download pre-built binary (faster)",
+                    "Build from source (hardware-optimized)",
+                ],
             )
             .prompt()?;
             choice.starts_with("Build")
@@ -177,10 +207,7 @@ async fn cmd_install(
             "AMD (ROCm)" => {
                 let rocm_ver_choice = inquire::Select::new(
                     "Which ROCm version do you have?",
-                    vec![
-                        "ROCm 5.x (default: 5.7)",
-                        "ROCm 6.x (default: 6.1)",
-                    ],
+                    vec!["ROCm 5.x (default: 5.7)", "ROCm 6.x (default: 6.1)"],
                 )
                 .prompt()?;
 
@@ -256,7 +283,10 @@ async fn cmd_install(
     println!("  Name:   {}", backend_name);
     println!("  Binary: {}", binary_path.display());
     println!("\nTo use this backend:");
-    println!("  kronk server add my-server {} --host 0.0.0.0 -m model.gguf -ngl 999", binary_path.display());
+    println!(
+        "  kronk server add my-server {} --host 0.0.0.0 -m model.gguf -ngl 999",
+        binary_path.display()
+    );
 
     Ok(())
 }
@@ -266,14 +296,22 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
 
     let backend_info = registry
         .get(name)
-        .ok_or_else(|| anyhow!("Backend '{}' not found. Run `kronk backend list` to see installed backends.", name))?
+        .ok_or_else(|| {
+            anyhow!(
+                "Backend '{}' not found. Run `kronk backend list` to see installed backends.",
+                name
+            )
+        })?
         .clone();
 
     println!("Checking for updates to '{}'...", name);
     let update_check = check_updates(&backend_info).await?;
 
     if !update_check.update_available {
-        println!("'{}' is already up to date ({})", name, backend_info.version);
+        println!(
+            "'{}' is already up to date ({})",
+            name, backend_info.version
+        );
         return Ok(());
     }
 
@@ -299,12 +337,16 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
     // Preserve the original installation method, but update the version
     let source = match backend_info.source.clone() {
         Some(source) => match source {
-            BackendSource::Prebuilt { version: _ } => {
-                BackendSource::Prebuilt { version: update_check.latest_version.clone() }
-            }
-            BackendSource::SourceCode { version: _, git_url } => {
-                BackendSource::SourceCode { version: update_check.latest_version.clone(), git_url }
-            }
+            BackendSource::Prebuilt { version: _ } => BackendSource::Prebuilt {
+                version: update_check.latest_version.clone(),
+            },
+            BackendSource::SourceCode {
+                version: _,
+                git_url,
+            } => BackendSource::SourceCode {
+                version: update_check.latest_version.clone(),
+                git_url,
+            },
         },
         None => {
             // Fallback for existing backends without source info
@@ -375,7 +417,7 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
         .with_default(false)
         .prompt()?;
 
-if !confirm {
+    if !confirm {
         println!("Cancelled.");
         return Ok(());
     }
@@ -390,58 +432,58 @@ if !confirm {
             if let Some(parent) = backend.path.parent() {
                 // Safety: only remove if it's under our managed backends dir
                 // Canonicalize both paths to prevent symlink/.. bypass attacks
-                let canonical_parent = match std::fs::canonicalize(parent) {
-                    Ok(path) => path,
-                    Err(_) => {
-                        // Parent directory may not exist (e.g., user manually deleted it)
-                        // In this case, skip removal since there's nothing to remove
-                        println!("Skipping file removal: parent directory does not exist.");
-                        return Ok(());
-                    }
-                };
-                let managed = match std::fs::canonicalize(backends_dir()?) {
-                    Ok(path) => path,
-                    Err(_) => {
-                        // Backends directory may not exist (e.g., user manually deleted it)
-                        println!("Skipping file removal: backends directory does not exist.");
-                        return Ok(());
-                    }
-                };
-                if canonical_parent.starts_with(&managed) {
-                    // On Windows, remove_dir_all fails if a process is using the directory
-                    #[cfg(windows)]
-                    {
-                        use std::io::ErrorKind;
-                        match std::fs::remove_dir_all(parent) {
-                            Ok(_) => {
-                                println!("Files removed.");
-                            }
-                            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                                println!("Skipping file removal: backend server may still be running.");
-                                println!("Run 'kronk server stop' first, then try again.");
-                                return Err(anyhow!("Failed to remove backend directory: {}", e));
-                            }
-                            Err(e) => {
-                                println!("Skipping file removal: {}", e);
-                                return Err(anyhow!("Failed to remove backend directory: {}", e));
+                let canonical_parent_opt = std::fs::canonicalize(parent).ok();
+                let managed_opt = std::fs::canonicalize(backends_dir()?).ok();
+
+                if let (Some(canonical_parent), Some(managed)) = (canonical_parent_opt, managed_opt)
+                {
+                    if canonical_parent.starts_with(&managed) {
+                        // On Windows, remove_dir_all fails if a process is using the directory
+                        #[cfg(windows)]
+                        {
+                            use std::io::ErrorKind;
+                            match std::fs::remove_dir_all(parent) {
+                                Ok(_) => {
+                                    println!("Files removed.");
+                                }
+                                Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                                    println!("Skipping file removal: backend server may still be running.");
+                                    println!("Run 'kronk server stop' first, then try again.");
+                                    return Err(anyhow!(
+                                        "Failed to remove backend directory: {}",
+                                        e
+                                    ));
+                                }
+                                Err(e) => {
+                                    println!("Skipping file removal: {}", e);
+                                    return Err(anyhow!(
+                                        "Failed to remove backend directory: {}",
+                                        e
+                                    ));
+                                }
                             }
                         }
-                    }
-                    // On Unix, remove_dir_all will fail if directory is in use
-                    #[cfg(not(windows))]
-                    {
-                        match std::fs::remove_dir_all(parent) {
-                            Ok(_) => {
-                                println!("Files removed.");
-                            }
-                            Err(e) => {
-                                println!("Skipping file removal: {}", e);
-                                return Err(anyhow!("Failed to remove backend directory: {}", e));
+                        // On Unix, remove_dir_all will fail if directory is in use
+                        #[cfg(not(windows))]
+                        {
+                            match std::fs::remove_dir_all(parent) {
+                                Ok(_) => {
+                                    println!("Files removed.");
+                                }
+                                Err(e) => {
+                                    println!("Skipping file removal: {}", e);
+                                    return Err(anyhow!(
+                                        "Failed to remove backend directory: {}",
+                                        e
+                                    ));
+                                }
                             }
                         }
+                    } else {
+                        println!("Skipping file removal: path is outside managed directory.");
                     }
                 } else {
-                    println!("Skipping file removal: path is outside managed directory.");
+                    println!("Skipping file removal: directory does not exist.");
                 }
             }
         }

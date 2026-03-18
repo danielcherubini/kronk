@@ -211,7 +211,8 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
             // Use zip crate's built-in path validation to prevent Zip Slip
             // entry.enclosed_name() returns None if path escapes the destination
-            let entry_name = entry.enclosed_name()
+            let entry_name = entry
+                .enclosed_name()
                 .ok_or_else(|| anyhow!("Invalid path in archive: {}", entry.name()))?;
 
             // Reject symlinks (CVE-2025-29787: symlink-based path traversal)
@@ -335,7 +336,7 @@ async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<Pat
     let download_dir = tempfile::tempdir()?;
     let archive_name = url
         .split('/')
-        .last()
+        .next_back()
         .ok_or_else(|| anyhow!("Invalid download URL: {}", url))?;
     let archive_path = download_dir.path().join(archive_name);
 
@@ -418,7 +419,7 @@ async fn install_from_source(
                         .iter()
                         .filter(|l| !l.contains("^{}"))
                         .filter(|l| !l.is_empty())
-                        .map(|l| *l)
+                        .copied()
                         .collect();
                     if let Some(tag_line) = tag_lines.first() {
                         // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
@@ -577,7 +578,7 @@ async fn install_from_source(
     #[cfg(unix)]
     {
         use std::path::Path;
-        
+
         // Find all .so files in build directory and copy them to target
         fn copy_shared_libs(src: &Path, dest: &Path) {
             if let Ok(entries) = std::fs::read_dir(src) {
@@ -589,7 +590,11 @@ async fn install_from_source(
                                 let dest_path = dest.join(name);
                                 if !dest_path.exists() {
                                     if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                        tracing::warn!("Failed to copy shared library {}: {}", name, e);
+                                        tracing::warn!(
+                                            "Failed to copy shared library {}: {}",
+                                            name,
+                                            e
+                                        );
                                     }
                                 }
                             }
