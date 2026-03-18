@@ -124,17 +124,21 @@ impl BackendRegistry {
         &mut self,
         name: &str,
         new_version: String,
-        new_path: PathBuf,
+        new_binary_path: PathBuf,
+        new_source: Option<BackendSource>,
     ) -> Result<()> {
-        let backend = self
-            .data
-            .backends
-            .get_mut(name)
-            .ok_or_else(|| anyhow!("Backend '{}' not found", name))?;
-        backend.version = new_version;
-        backend.path = new_path;
-        self.save()?;
-        Ok(())
+        if let Some(info) = self.data.backends.get_mut(name) {
+            info.version = new_version;
+            info.path = new_binary_path;
+            info.installed_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            info.source = new_source;
+        } else {
+            return Err(anyhow!("Backend '{}' not found", name));
+        }
+        self.save()
     }
 }
 

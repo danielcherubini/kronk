@@ -98,15 +98,18 @@ pub async fn update_backend(
     options: InstallOptions,
     latest_version: String,
 ) -> Result<()> {
+    // Clone source before install_backend moves options
+    let source = options.source.clone();
+
     // Install the new version
     let new_binary_path = install_backend(options).await?;
 
-    // Update registry with the known version (no re-fetch to avoid TOCTOU race)
+    // Update registry with the known version and source (no re-fetch to avoid TOCTOU race)
     let _backend_info = registry
         .get(backend_name)
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
-    registry.update_version(backend_name, latest_version, new_binary_path)?;
+    registry.update_version(backend_name, latest_version, new_binary_path, Some(source))?;
 
     println!("Update complete!");
     Ok(())

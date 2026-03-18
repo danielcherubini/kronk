@@ -266,23 +266,30 @@ pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
     }
 }
 
+/// Prepare the target directory for installation.
+///
+/// If `allow_overwrite` is false and the directory exists, returns an error.
+/// If `allow_overwrite` is true, removes existing contents and recreates the directory.
+fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()> {
+    if target_dir.exists() {
+        if !allow_overwrite {
+            return Err(anyhow!(
+                "Backend directory already exists at: {}\n\
+                 Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
+                target_dir.display()
+            ));
+        }
+        // Overwrite: clean and recreate
+        std::fs::remove_dir_all(target_dir)?;
+        std::fs::create_dir_all(target_dir)?;
+    }
+    Ok(())
+}
+
 async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<PathBuf> {
     tracing::info!("Installing pre-built binary for {:?} version {}", options.backend_type, version);
 
-    // Check if target directory already exists
-    if options.target_dir.exists() && !options.allow_overwrite {
-        return Err(anyhow!(
-            "Backend directory already exists at: {}\n\
-             Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
-            options.target_dir.display()
-        ));
-    }
-
-    // If overwriting, clean the directory first
-    if options.target_dir.exists() {
-        std::fs::remove_dir_all(&options.target_dir)?;
-        std::fs::create_dir_all(&options.target_dir)?;
-    }
+    prepare_target_dir(&options.target_dir, options.allow_overwrite)?;
 
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -320,20 +327,7 @@ async fn install_from_source(
 ) -> Result<PathBuf> {
     tracing::info!("Building from source: {} version {}", git_url, version);
 
-    // Check if target directory already exists
-    if options.target_dir.exists() && !options.allow_overwrite {
-        return Err(anyhow!(
-            "Backend directory already exists at: {}\n\
-             Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
-            options.target_dir.display()
-        ));
-    }
-
-    // If overwriting, clean the directory first
-    if options.target_dir.exists() {
-        std::fs::remove_dir_all(&options.target_dir)?;
-        std::fs::create_dir_all(&options.target_dir)?;
-    }
+    prepare_target_dir(&options.target_dir, options.allow_overwrite)?;
 
     // Check prerequisites
     let caps = crate::gpu::detect_system_capabilities();

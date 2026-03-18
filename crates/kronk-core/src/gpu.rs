@@ -171,45 +171,96 @@ fn detect_rocm() -> Option<GpuCapability> {
 }
 
 /// Detect Vulkan GPU (Intel/AMD on Linux, NVIDIA without CUDA).
-/// Uses `vulkaninfo --summary` to detect Vulkan-capable GPUs.
+///
+/// Two-pass approach:
+/// 1. `vulkaninfo --summary` for device name (skips software renderers like llvmpipe)
+/// 2. `vulkaninfo` (full) for VRAM from memoryHeaps with MEMORY_HEAP_DEVICE_LOCAL_BIT
 fn detect_vulkan_gpu() -> Option<GpuCapability> {
-    // Check if vulkaninfo is available
-    let output = std::process::Command::new("vulkaninfo")
+    // Pass 1: get device name from --summary (lightweight)
+    let summary = std::process::Command::new("vulkaninfo")
         .args(["--summary"])
         .output()
         .ok()?;
 
-    if !output.status.success() {
+    if !summary.status.success() {
         return None;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary_out = String::from_utf8_lossy(&summary.stdout);
 
-    // Parse device info from vulkaninfo output
-    // Look for "Name" and "Memory Heap" or "Total Memory"
-    let device_name = stdout
+    // Find the first real GPU device name (skip software renderers like llvmpipe)
+    let device_name = summary_out
         .lines()
-        .find(|line| line.contains("Name"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|part| part.trim().to_string())?;
+        .filter(|line| line.contains("deviceName"))
+        .filter_map(|line| line.split('=').nth(1).map(|s| s.trim().to_string()))
+        .find(|name| !name.to_lowercase().contains("llvmpipe"))?;
 
-    // Parse memory (look for various memory indicators)
-    let vram_str = stdout
-        .lines()
-        .find(|line| line.contains("Total Memory"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|s| s.trim())
-        .and_then(|s| {
-            s.strip_suffix(" MiB")
-                .or_else(|| s.strip_suffix(" GB"))
-                .and_then(|s| s.parse::<u64>().ok())
-        })?;
+    // Pass 2: get VRAM from full vulkaninfo output
+    let full = std::process::Command::new("vulkaninfo").output().ok()?;
+
+    if !full.status.success() {
+        // If full output fails, return what we have with 0 VRAM
+        return Some(GpuCapability {
+            gpu_type: GpuType::Vulkan,
+            device_name,
+            vram_mb: 0,
+        });
+    }
+
+    let full_out = String::from_utf8_lossy(&full.stdout);
+    let vram_mb = parse_vulkan_device_local_heap(&full_out).unwrap_or(0);
 
     Some(GpuCapability {
         gpu_type: GpuType::Vulkan,
         device_name,
-        vram_mb: vram_str,
+        vram_mb,
     })
+}
+
+/// Parse VRAM from vulkaninfo full output by finding the first memoryHeap
+/// with `MEMORY_HEAP_DEVICE_LOCAL_BIT` flag. Returns size in MiB.
+///
+/// Expected format:
+/// ```text
+/// memoryHeaps[1]:
+///     size   = 14037184512 (0x344ae7000) (13.07 GiB)
+///     ...
+///     flags: count = 1
+///         MEMORY_HEAP_DEVICE_LOCAL_BIT
+/// ```
+fn parse_vulkan_device_local_heap(output: &str) -> Option<u64> {
+    let lines: Vec<&str> = output.lines().collect();
+
+    // Walk through looking for memoryHeaps entries; track the most recent
+    // heap's size, and return it when we see DEVICE_LOCAL_BIT.
+    let mut current_heap_size_bytes: Option<u64> = None;
+
+    for line in &lines {
+        let trimmed = line.trim();
+
+        // Match "size   = 14037184512 (...)" inside a memoryHeaps block
+        if trimmed.starts_with("size") && trimmed.contains('=') {
+            if let Some(val_str) = trimmed.split('=').nth(1) {
+                // Take the first token (the decimal number) before any parens
+                let size_str = val_str.trim().split_whitespace().next().unwrap_or("0");
+                current_heap_size_bytes = size_str.parse::<u64>().ok();
+            }
+        }
+
+        // When we see the DEVICE_LOCAL flag, the preceding size was the right heap
+        if trimmed == "MEMORY_HEAP_DEVICE_LOCAL_BIT" {
+            if let Some(bytes) = current_heap_size_bytes {
+                return Some(bytes / (1024 * 1024)); // bytes -> MiB
+            }
+        }
+
+        // Reset on new heap entry to avoid stale data
+        if trimmed.starts_with("memoryHeaps[") {
+            current_heap_size_bytes = None;
+        }
+    }
+
+    None
 }
 
 /// Detect Metal GPU (Apple Silicon on macOS).
