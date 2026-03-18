@@ -1,6 +1,4 @@
-#![allow(unused_imports)]
 use anyhow::{anyhow, Context, Result};
-use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
@@ -431,7 +429,7 @@ async fn install_from_source(
                         .filter(|l| !l.is_empty())
                         .map(|l| *l)
                         .collect();
-                    if let Some(tag_line) = tag_lines.iter().find(|l| !l.is_empty()) {
+                    if let Some(tag_line) = tag_lines.first() {
                         // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
                         let ref_field: &str =
                             tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
