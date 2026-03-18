@@ -147,14 +147,23 @@ async fn download_single(client: &Client, url: &str, dest: &Path, pb: &ProgressB
         };
 
         let mut stream = resp.bytes_stream();
-        let stream_failed = false;
+        let mut stream_failed = false;
 
-        while let Ok(Some(chunk)) = stream.try_next().await {
-            file.write_all(&chunk)
-                .await
-                .with_context(|| format!("Failed to write to {}", dest.display()))?;
-            downloaded += chunk.len() as u64;
-            pb.set_position(downloaded);
+        loop {
+            match stream.try_next().await {
+                Ok(Some(chunk)) => {
+                    file.write_all(&chunk)
+                        .await
+                        .with_context(|| format!("Failed to write to {}", dest.display()))?;
+                    downloaded += chunk.len() as u64;
+                    pb.set_position(downloaded);
+                }
+                Ok(None) => break,
+                Err(_e) => {
+                    stream_failed = true;
+                    break;
+                }
+            }
         }
 
         file.flush().await?;
@@ -311,12 +320,21 @@ async fn download_chunk_with_retry(
         let mut stream = resp.bytes_stream();
         let mut file = tokio::fs::File::create(tmp_path).await?;
         let mut chunk_downloaded: u64 = 0;
-        let stream_failed = false;
+        let mut stream_failed = false;
 
-        while let Ok(Some(chunk)) = stream.try_next().await {
-            file.write_all(&chunk).await?;
-            chunk_downloaded += chunk.len() as u64;
-            pb.inc(chunk.len() as u64);
+        loop {
+            match stream.try_next().await {
+                Ok(Some(chunk)) => {
+                    file.write_all(&chunk).await?;
+                    chunk_downloaded += chunk.len() as u64;
+                    pb.inc(chunk.len() as u64);
+                }
+                Ok(None) => break,
+                Err(_e) => {
+                    stream_failed = true;
+                    break;
+                }
+            }
         }
 
         file.flush().await?;
