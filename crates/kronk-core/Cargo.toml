@@ -17,6 +17,10 @@ hf-hub.workspace = true
 futures-util.workspace = true
 indicatif.workspace = true
 url.workspace = true
+zip = "0.6"
+flate2 = "1.0"
+tar = "0.4"
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
