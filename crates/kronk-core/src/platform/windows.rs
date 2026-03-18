@@ -80,7 +80,20 @@ pub fn install_service(
                     }
                     std::thread::sleep(Duration::from_millis(250));
                 }
-                Err(_) => break, // Service gone — proceed
+                Err(e) => {
+                    // Check if this is the service-not-found error
+                    use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
+                    if let Some(windows_error) =
+                        e.downcast_ref::<windows::Win32::Foundation::BOOLERROR>()
+                    {
+                        if *windows_error == ERROR_SERVICE_DOES_NOT_EXIST {
+                            break; // Service gone — proceed
+                        }
+                    }
+                    // For other errors, log and retry to distinguish transient from real failures
+                    tracing::warn!("Error checking service deletion status: {}", e);
+                    std::thread::sleep(Duration::from_millis(250));
+                }
             }
         }
     }
@@ -154,19 +167,14 @@ fn get_current_user_sid() -> Result<String> {
 /// Resolves the current user's SID and applies it via `sc sdset`, so only the
 /// installer (plus SYSTEM and Administrators) can control the service.
 fn grant_user_control(service_name: &str) -> Result<()> {
-    let user_sid = match get_current_user_sid() {
-        Ok(sid) => {
-            tracing::info!("Granting service control to user SID: {}", sid);
-            sid
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Could not resolve current user SID ({}), falling back to Interactive Users (IU)",
-                e
-            );
-            "IU".to_string()
-        }
-    };
+    let user_sid = get_current_user_sid().with_context(|| {
+        format!(
+            "Failed to resolve current user SID for service '{}'",
+            service_name
+        )
+    })?;
+
+    tracing::info!("Granting service control to user SID: {}", user_sid);
 
     // SDDL breakdown:
     //   SY  = Local System: full control
@@ -302,9 +310,27 @@ pub fn remove_service(service_name: &str) -> Result<()> {
     // Stop if running, then wait for it to actually stop
     let status = service.query_status()?;
     if status.current_state != ServiceState::Stopped {
-        let _ = service.stop();
-        wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
-            .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
+        match service.stop() {
+            Ok(()) => {
+                // Successfully initiated stop, now wait for it to complete
+                wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
+                    .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
+            }
+            Err(e) => {
+                // If already in StopPending, wait for it to complete
+                let stop_status = service.query_status()?;
+                if stop_status.current_state == ServiceState::StopPending {
+                    wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
+                        .with_context(|| {
+                            format!("Service '{}' did not stop in time", service_name)
+                        })?;
+                } else {
+                    // Propagate the stop error
+                    return Err(e)
+                        .with_context(|| format!("Failed to stop service '{}'", service_name));
+                }
+            }
+        }
     }
 
     service.delete().context("Failed to delete service")?;
