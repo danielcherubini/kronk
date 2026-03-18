@@ -210,12 +210,7 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
             // Sanitize path to prevent CVE-2025-29787 (path traversal via symlinks)
             let entry_name = entry.name();
             let sanitized = entry_name.replace('\\', "/");
-            if sanitized.contains("..")
-                || sanitized.starts_with('/')
-                || sanitized.is_empty()
-                || sanitized.starts_with("//")
-                || sanitized.starts_with("\\\\")
-            {
+            if sanitized.contains("..") || sanitized.starts_with('/') || sanitized.is_empty() {
                 return Err(anyhow!("Malicious path in archive: {}", entry_name));
             }
             // Reject Windows absolute paths with drive letters (e.g., "C:/...")
@@ -311,8 +306,9 @@ fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()> {
         }
         // Overwrite: clean and recreate
         std::fs::remove_dir_all(target_dir)?;
-        std::fs::create_dir_all(target_dir)?;
     }
+    // Always create the directory (fresh install or update)
+    std::fs::create_dir_all(target_dir)?;
     Ok(())
 }
 
