@@ -207,6 +207,18 @@ impl BackendRegistry {
         self.save()
     }
 
+    #[cfg(test)]
+    pub fn add_unchecked(&mut self, backend: BackendInfo) {
+        self.data.backends.insert(backend.name.clone(), backend);
+        self.save_unchecked().unwrap();
+    }
+
+    #[cfg(test)]
+    pub fn remove_unchecked(&mut self, name: &str) {
+        self.data.backends.remove(name);
+        self.save_unchecked().unwrap();
+    }
+
     pub fn get(&self, name: &str) -> Option<&BackendInfo> {
         self.data.backends.get(name)
     }
@@ -239,12 +251,12 @@ impl BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_registry_add_and_list() {
-        let base_dir = Config::base_dir().unwrap();
-        let registry_path = base_dir.join("test_registry.toml");
-        std::fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let registry_path = temp_dir.path().join("test_registry.toml");
         let mut registry = BackendRegistry::load_unchecked(&registry_path).unwrap();
 
         let now = std::time::SystemTime::now()
@@ -252,21 +264,17 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        registry
-            .add(BackendInfo {
-                name: "llama_cpp".to_string(),
-                backend_type: BackendType::LlamaCpp,
+        registry.add_unchecked(BackendInfo {
+            name: "llama_cpp".to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: "b8407".to_string(),
+            path: "/path/to/llama-server".into(),
+            installed_at: now,
+            gpu_type: None,
+            source: Some(BackendSource::Prebuilt {
                 version: "b8407".to_string(),
-                path: "/path/to/llama-server".into(),
-                installed_at: now,
-                gpu_type: None,
-                source: Some(BackendSource::Prebuilt {
-                    version: "b8407".to_string(),
-                }),
-            })
-            .unwrap();
-
-        registry.save_unchecked().unwrap();
+            }),
+        });
 
         let backends = registry.list();
         assert_eq!(backends.len(), 1);
@@ -275,10 +283,8 @@ mod tests {
 
     #[test]
     fn test_registry_remove() {
-        let base_dir = Config::base_dir().unwrap();
-        let registry_path = base_dir.join("test_registry_remove.toml");
-        // Create parent directory so canonicalize can work
-        std::fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let registry_path = temp_dir.path().join("test_registry_remove.toml");
         let mut registry = BackendRegistry::load_unchecked(&registry_path).unwrap();
 
         let now = std::time::SystemTime::now()
@@ -286,30 +292,24 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        registry
-            .add(BackendInfo {
-                name: "llama_cpp".to_string(),
-                backend_type: BackendType::LlamaCpp,
-                version: "b8407".to_string(),
-                path: "/path/to/llama-server".into(),
-                installed_at: now,
-                gpu_type: None,
-                source: None,
-            })
-            .unwrap();
+        registry.add_unchecked(BackendInfo {
+            name: "llama_cpp".to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: "b8407".to_string(),
+            path: "/path/to/llama-server".into(),
+            installed_at: now,
+            gpu_type: None,
+            source: None,
+        });
 
-        registry.save_unchecked().unwrap();
-
-        registry.remove("llama_cpp").unwrap();
+        registry.remove_unchecked("llama_cpp");
         assert_eq!(registry.list().len(), 0);
     }
 
     #[test]
     fn test_registry_roundtrip_serialization() {
-        let base_dir = Config::base_dir().unwrap();
-        let registry_path = base_dir.join("test_registry_roundtrip.toml");
-        // Create parent directory so canonicalize can work
-        std::fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let registry_path = temp_dir.path().join("test_registry_roundtrip.toml");
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -319,20 +319,17 @@ mod tests {
         // Write
         {
             let mut registry = BackendRegistry::load_unchecked(&registry_path).unwrap();
-            registry
-                .add(BackendInfo {
-                    name: "test".to_string(),
-                    backend_type: BackendType::LlamaCpp,
-                    version: "b1234".to_string(),
-                    path: "/tmp/test".into(),
-                    installed_at: now,
-                    gpu_type: Some(crate::gpu::GpuType::Cuda {
-                        version: "12.4".to_string(),
-                    }),
-                    source: None,
-                })
-                .unwrap();
-            registry.save_unchecked().unwrap();
+            registry.add_unchecked(BackendInfo {
+                name: "test".to_string(),
+                backend_type: BackendType::LlamaCpp,
+                version: "b1234".to_string(),
+                path: "/tmp/test".into(),
+                installed_at: now,
+                gpu_type: Some(crate::gpu::GpuType::Cuda {
+                    version: "12.4".to_string(),
+                }),
+                source: None,
+            });
         }
 
         // Read back

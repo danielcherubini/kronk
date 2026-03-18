@@ -106,6 +106,7 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
     let client = Client::builder()
         .user_agent("kronk-backend-manager")
         .timeout(Duration::from_secs(300))
+        .connect_timeout(Duration::from_secs(30))
         .build()?;
 
     let response = client
@@ -423,7 +424,14 @@ async fn install_from_source(
                 Ok(output) if output.status.success() => {
                     let stdout_str = String::from_utf8_lossy(&output.stdout);
                     let lines: Vec<&str> = stdout_str.lines().collect();
-                    if let Some(tag_line) = lines.iter().find(|l| !l.is_empty()) {
+                    // Filter out peeled refs (refs/tags/xxx^{}) which can interleave unpredictably
+                    let tag_lines: Vec<&str> = lines
+                        .iter()
+                        .filter(|l| !l.contains("^{}"))
+                        .filter(|l| !l.is_empty())
+                        .map(|l| *l)
+                        .collect();
+                    if let Some(tag_line) = tag_lines.iter().find(|l| !l.is_empty()) {
                         // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
                         let ref_field: &str =
                             tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
