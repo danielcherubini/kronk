@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
-use flate2::read::GzDecoder;
+use flate2::read::GzDecoder; // Used in extract_archive
 
 use crate::gpu::GpuType;
 use super::registry::BackendType;
