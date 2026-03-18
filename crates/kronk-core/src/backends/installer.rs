@@ -139,6 +139,8 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
 ///
 /// Uses pure-Rust crates for extraction (flate2 + tar for .tar.gz, zip for .zip).
 /// No external commands are required -- this works on any platform without tar in PATH.
+//#[allow(unused_imports)]
+#[allow(unused_imports)]
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dest)?;
 
