@@ -37,7 +37,7 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
 
     let mut request = client.get(url);
     if let Some(t) = token.as_deref() {
-        request = request.header("Authorization", t);
+        request = request.header("Authorization", format!("Bearer {}", t));
     }
     let response = request
         .send()

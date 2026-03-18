@@ -55,7 +55,8 @@ impl VramInfo {
 
 /// Detect GPU type and capabilities.
 ///
-/// Checks nvidia-smi first (CUDA), then ROCm (AMD), then falls back.
+/// Checks nvidia-smi first (CUDA), then ROCm (AMD), then Vulkan (Intel/AMD),
+/// then Metal (macOS), then falls back.
 /// CUDA version is read from nvidia-smi header output (does NOT require nvcc).
 pub fn detect_gpu() -> Option<GpuCapability> {
     if let Some(cuda) = detect_cuda_gpu() {
@@ -64,7 +65,12 @@ pub fn detect_gpu() -> Option<GpuCapability> {
     if let Some(rocm) = detect_rocm() {
         return Some(rocm);
     }
-    // Future: detect Vulkan via vulkaninfo, Metal via system_profiler
+    if let Some(vulkan) = detect_vulkan_gpu() {
+        return Some(vulkan);
+    }
+    if let Some(metal) = detect_metal_gpu() {
+        return Some(metal);
+    }
     None
 }
 
@@ -139,15 +145,13 @@ fn detect_rocm() -> Option<GpuCapability> {
         .lines()
         .find(|line| line.contains("Name"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|part| part.trim().strip_prefix(' '))
-        .map(|s| s.to_string())?;
+        .map(|part| part.trim().to_string())?;
 
     // Parse memory (look for "Total Amount of Memory")
     let vram_str = stdout
         .lines()
         .find(|line| line.contains("Total Amount of Memory"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|part| part.trim().strip_prefix(' '))
         .and_then(|s| s.strip_suffix(" MiB"))
         .and_then(|s| s.parse::<u64>().ok())?;
 
@@ -156,8 +160,7 @@ fn detect_rocm() -> Option<GpuCapability> {
         .lines()
         .find(|line| line.contains("ROCm Version:"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|part| part.trim().strip_prefix(' '))
-        .map(|s| s.to_string())
+        .map(|part| part.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
     Some(GpuCapability {
@@ -165,6 +168,91 @@ fn detect_rocm() -> Option<GpuCapability> {
         device_name,
         vram_mb: vram_str,
     })
+}
+
+/// Detect Vulkan GPU (Intel/AMD on Linux, NVIDIA without CUDA).
+/// Uses `vulkaninfo` to detect Vulkan-capable GPUs.
+fn detect_vulkan_gpu() -> Option<GpuCapability> {
+    // Check if vulkaninfo is available
+    let output = std::process::Command::new("vulkaninfo")
+        .args(["--device"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse device info from vulkaninfo output
+    // Look for "Name" and "Memory Heap" or "Total Memory"
+    let device_name = stdout
+        .lines()
+        .find(|line| line.contains("Name"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|part| part.trim().to_string())?;
+
+    // Parse memory (look for various memory indicators)
+    let vram_str = stdout
+        .lines()
+        .find(|line| line.contains("Total Memory"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|s| s.strip_suffix(" MiB"))
+        .and_then(|s| s.strip_suffix(" GB"))
+        .and_then(|s| s.parse::<u64>().ok())?;
+
+    Some(GpuCapability {
+        gpu_type: GpuType::Vulkan,
+        device_name,
+        vram_mb: vram_str,
+    })
+}
+
+/// Detect Metal GPU (Apple Silicon on macOS).
+/// Uses `system_profiler` to detect Metal-capable GPUs.
+#[cfg(target_os = "macos")]
+fn detect_metal_gpu() -> Option<GpuCapability> {
+    // Check if system_profiler is available
+    let output = std::process::Command::new("system_profiler")
+        .args(["SPDisplaysDataType"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse device info from system_profiler output
+    // Look for "Chip" and "Memory"
+    let device_name = stdout
+        .lines()
+        .find(|line| line.contains("Chip"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|part| part.trim().to_string())?;
+
+    // Parse memory (look for "Memory" or "VRAM")
+    let vram_str = stdout
+        .lines()
+        .find(|line| line.contains("Memory"))
+        .and_then(|line| line.split(':').nth(1))
+        .and_then(|s| s.strip_suffix(" MB"))
+        .and_then(|s| s.parse::<u64>().ok())?;
+
+    Some(GpuCapability {
+        gpu_type: GpuType::Metal,
+        device_name,
+        vram_mb: vram_str,
+    })
+}
+
+/// Detect Metal GPU (Apple Silicon on macOS).
+/// Uses `system_profiler` to detect Metal-capable GPUs.
+#[cfg(not(target_os = "macos"))]
+fn detect_metal_gpu() -> Option<GpuCapability> {
+    None
 }
 
 pub fn detect_system_capabilities() -> SystemCapabilities {

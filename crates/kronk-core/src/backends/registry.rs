@@ -52,12 +52,24 @@ pub struct BackendInfo {
     pub installed_at: i64,
     #[serde(default)]
     pub gpu_type: Option<GpuType>,
+    #[serde(default)]
+    pub source: Option<BackendSource>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RegistryData {
     #[serde(default)]
     backends: HashMap<String, BackendInfo>,
+}
+
+/// Source of a backend installation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "source", content = "content")]
+pub enum BackendSource {
+    /// Pre-built binary with version tag
+    Prebuilt { version: String },
+    /// Source code with git URL and version
+    SourceCode { version: String, git_url: String },
 }
 
 pub struct BackendRegistry {
@@ -150,6 +162,9 @@ mod tests {
                 path: "/path/to/llama-server".into(),
                 installed_at: now,
                 gpu_type: None,
+                source: Some(BackendSource::Prebuilt {
+                    version: "b8407".to_string(),
+                }),
             })
             .unwrap();
 
@@ -177,6 +192,7 @@ mod tests {
                 path: "/path/to/llama-server".into(),
                 installed_at: now,
                 gpu_type: None,
+                source: None,
             })
             .unwrap();
 
@@ -207,6 +223,7 @@ mod tests {
                     gpu_type: Some(crate::gpu::GpuType::Cuda {
                         version: "12.4".to_string(),
                     }),
+                    source: None,
                 })
                 .unwrap();
         }

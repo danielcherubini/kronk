@@ -8,13 +8,7 @@ use tokio::io::AsyncWriteExt;
 use flate2::read::GzDecoder;
 
 use crate::gpu::GpuType;
-use super::registry::BackendType;
-
-#[derive(Debug, Clone)]
-pub enum BackendSource {
-    Prebuilt { version: String },
-    SourceCode { version: String, git_url: String },
-}
+use super::registry::{BackendSource, BackendType};
 
 #[derive(Debug, Clone)]
 pub struct InstallOptions {
@@ -22,6 +16,9 @@ pub struct InstallOptions {
     pub source: BackendSource,
     pub target_dir: PathBuf,
     pub gpu_type: Option<GpuType>,
+    /// When true, skip the target directory existence check.
+    /// Used by the update path where the directory already exists.
+    pub allow_overwrite: bool,
 }
 
 /// Construct the GitHub release download URL for a pre-built binary.
@@ -272,6 +269,15 @@ pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
 async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<PathBuf> {
     tracing::info!("Installing pre-built binary for {:?} version {}", options.backend_type, version);
 
+    // Check if target directory already exists
+    if options.target_dir.exists() {
+        return Err(anyhow!(
+            "Backend directory already exists at: {}\n\
+             Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
+            options.target_dir.display()
+        ));
+    }
+
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
 
@@ -307,6 +313,15 @@ async fn install_from_source(
     git_url: &str,
 ) -> Result<PathBuf> {
     tracing::info!("Building from source: {} version {}", git_url, version);
+
+    // Check if target directory already exists
+    if options.target_dir.exists() {
+        return Err(anyhow!(
+            "Backend directory already exists at: {}\n\
+             Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
+            options.target_dir.display()
+        ));
+    }
 
     // Check prerequisites
     let caps = crate::gpu::detect_system_capabilities();

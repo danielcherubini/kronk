@@ -191,7 +191,7 @@ async fn cmd_install(
 
     let options = InstallOptions {
         backend_type: backend_type.clone(),
-        source,
+        source: source.clone(),
         target_dir,
         gpu_type: gpu_type.clone(),
     };
@@ -209,6 +209,7 @@ async fn cmd_install(
         path: binary_path.clone(),
         installed_at: current_unix_timestamp(),
         gpu_type,
+        source: Some(source),
     })?;
 
     println!("\nInstallation complete!");
@@ -255,17 +256,22 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("Invalid backend path: {}", backend_info.path.display()))?
         .to_path_buf();
 
-    // Determine source based on backend type
-    // ik_llama has no pre-built binaries, so it must be built from source
-    let source = match backend_info.backend_type {
-        BackendType::IkLlama => BackendSource::SourceCode {
-            version: update_check.latest_version.clone(),
-            git_url: "https://github.com/ikawrakow/ik_llama.cpp.git".to_string(),
-        },
-        BackendType::LlamaCpp => BackendSource::Prebuilt {
-            version: update_check.latest_version.clone(),
-        },
-        BackendType::Custom => return Err(anyhow!("Cannot update custom backends")),
+    // Preserve the original installation method
+    let source = match backend_info.source.clone() {
+        Some(source) => source,
+        None => {
+            // Fallback for existing backends without source info
+            match backend_info.backend_type {
+                BackendType::IkLlama => BackendSource::SourceCode {
+                    version: update_check.latest_version.clone(),
+                    git_url: "https://github.com/ikawrakow/ik_llama.cpp.git".to_string(),
+                },
+                BackendType::LlamaCpp => BackendSource::Prebuilt {
+                    version: update_check.latest_version.clone(),
+                },
+                BackendType::Custom => return Err(anyhow!("Cannot update custom backends")),
+            }
+        }
     };
 
     let options = InstallOptions {
