@@ -154,10 +154,10 @@ async fn cmd_install(
 
         match gpu_choice {
             "NVIDIA (CUDA)" => Some(gpu::GpuType::Cuda {
-                version: "auto".to_string(),
+                version: "latest".to_string(),
             }),
             "AMD (ROCm)" => Some(gpu::GpuType::RocM {
-                version: "auto".to_string(),
+                version: "latest".to_string(),
             }),
             "Intel / AMD (Vulkan)" => Some(gpu::GpuType::Vulkan),
             "Apple Silicon (Metal)" => Some(gpu::GpuType::Metal),

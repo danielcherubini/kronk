@@ -91,7 +91,7 @@ impl BackendRegistry {
                     .with_context(|| {
                         format!("Failed to canonicalize parent directory {:?}", parent)
                     })?
-                    .join(path)
+                    .join(path.file_name().unwrap_or_default())
             } else {
                 return Err(anyhow!("Registry path {:?} has no parent directory", path));
             }
@@ -141,7 +141,7 @@ impl BackendRegistry {
                     .with_context(|| {
                         format!("Failed to canonicalize parent directory {:?}", parent)
                     })?
-                    .join(&self.path)
+                    .join(self.path.file_name().unwrap_or_default())
             } else {
                 return Err(anyhow!(
                     "Registry path {:?} has no parent directory",
