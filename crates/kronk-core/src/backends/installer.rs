@@ -387,7 +387,7 @@ async fn install_from_source(
 
     if !clone_result.success() {
         // For "latest", try to resolve the most recent tag first
-        let _fallback_requested = false;
+        let _cloned_from_tag = false;
         if version == "latest" {
             // Attempt to find the latest tag
             let tags_output = tokio::process::Command::new("git")
@@ -395,27 +395,25 @@ async fn install_from_source(
                 .output()
                 .await;
 
-match tags_output {
-                    Ok(output) if output.status.success() => {
-                        let stdout_str = String::from_utf8_lossy(&output.stdout);
-                        let lines: Vec<&str> = stdout_str.lines().collect();
-                        if let Some(tag_line) = lines.iter().find(|l| !l.is_empty()) {
-                            // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
-                            let ref_field: &str = tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
-                            let tag_name: &str = ref_field.trim_start_matches("refs/tags/").trim_end_matches("^{}");
-                            println!("Resolving 'latest' to tag: {}", tag_name);
-                            let tag_clone = tokio::process::Command::new("git")
-                                .args(["clone", "--depth", "1", "--branch", tag_name, git_url, &source_dir.to_string_lossy()])
-                                .status()
-                                .await?;
-                            if tag_clone.success() {
-                                // Tag clone succeeded, skip fallback and return source_dir
-                                return Ok(source_dir);
-                            }
+            match tags_output {
+                Ok(output) if output.status.success() => {
+                    let stdout_str = String::from_utf8_lossy(&output.stdout);
+                    let lines: Vec<&str> = stdout_str.lines().collect();
+                    if let Some(tag_line) = lines.iter().find(|l| !l.is_empty()) {
+                        // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
+                        let ref_field: &str = tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
+                        let tag_name: &str = ref_field.trim_start_matches("refs/tags/").trim_end_matches("^{}");
+                        println!("Resolving 'latest' to tag: {}", tag_name);
+                        let tag_clone = tokio::process::Command::new("git")
+                            .args(["clone", "--depth", "1", "--branch", tag_name, git_url, &source_dir.to_string_lossy()])
+                            .status()
+                            .await?;
+if tag_clone.success() {
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
+            }
         }
 
         // Only allow fallback to HEAD for "main" or "latest" (tags may not exist)
@@ -442,9 +440,6 @@ match tags_output {
             return Err(anyhow!("Failed to clone repository from {}", git_url));
         }
     }
-
-    // Configure CMake
-    println!("Configuring CMake...");
     let build_output = build_dir.path().join("build");
     std::fs::create_dir_all(&build_output)?;
 

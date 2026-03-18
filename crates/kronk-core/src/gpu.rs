@@ -296,20 +296,16 @@ fn detect_metal_gpu() -> Option<GpuCapability> {
         .and_then(|line| line.split(':').nth(1))
         .map(|s| s.trim())
         .and_then(|s| {
-            // Handle "16 GB (Unified)" or "16 GB"
+            // Strip "(Unified)" suffix if present
+            let s = s.strip_suffix(" (Unified)").unwrap_or(s);
+            // Handle "16 GB" or "16 MB"
             if let Some(stripped) = s.strip_suffix(" GB") {
                 stripped.parse::<u64>().ok().map(|gb| gb * 1024) // GB -> MB
+            } else if let Some(stripped) = s.strip_suffix(" MB") {
+                stripped.parse::<u64>().ok()
+            } else {
+                None
             }
-            // Handle "16 MB"
-            .or_else(|| s.strip_suffix(" MB").and_then(|mb| mb.parse::<u64>().ok()))
-            // Handle just "Unified" (no value)
-            .or_else(|| {
-                if s.eq_ignore_ascii_case("Unified") {
-                    None // Return None to propagate up
-                } else {
-                    None
-                }
-            })
         })?;
 
     Some(GpuCapability {
