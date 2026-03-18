@@ -163,10 +163,6 @@ fn detect_rocm() -> Option<GpuCapability> {
 
         // Start of a new device block
         if trimmed.starts_with("Device:") || trimmed.starts_with("  Device:") {
-            // Process previous device if we have complete data
-            if let Some((name, vram)) = devices.pop() {
-                devices.push((name, vram));
-            }
             // Start new block
             in_device_block = true;
             device_lines.clear();
