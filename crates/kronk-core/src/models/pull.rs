@@ -93,18 +93,13 @@ pub struct DownloadResult {
 
 /// Download a specific GGUF file from a HuggingFace repo to the given model directory.
 /// Returns the local path and file size.
-/// Downloads directly via reqwest with timeouts and retry (bypasses hf-hub's downloader).
+/// Downloads directly via reqwest with parallel chunked downloads (bypasses hf-hub's downloader).
 pub async fn download_gguf(
     repo_id: &str,
     filename: &str,
     dest_dir: &std::path::Path,
 ) -> Result<DownloadResult> {
-    use futures_util::StreamExt;
-    use indicatif::{ProgressBar, ProgressStyle};
-    use std::io::Write;
-    use std::time::Duration;
-
-    // Ensure the full directory path exists (sync — confirmed works on Windows)
+    // Ensure the full directory path exists
     let dest_path = dest_dir.join(filename);
     if let Some(parent) = dest_path.parent() {
         std::fs::create_dir_all(parent)
@@ -115,217 +110,16 @@ pub async fn download_gguf(
         repo_id, filename
     );
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .read_timeout(Duration::from_secs(30))
-        .build()
-        .context("Failed to create HTTP client")?;
-
-    // Try HEAD to get file size for skip-if-exists check
-    let head_size = client
-        .head(&url)
-        .send()
-        .await
-        .ok()
-        .and_then(|r| r.content_length());
-
-    // Check if already downloaded with matching size
-    if let Some(total) = head_size {
-        if dest_path.exists() {
-            if let Ok(meta) = std::fs::metadata(&dest_path) {
-                if meta.len() == total {
-                    return Ok(DownloadResult {
-                        path: dest_path,
-                        size_bytes: total,
-                    });
-                }
-            }
-            // Size mismatch — re-download
-            std::fs::remove_file(&dest_path).ok();
-        }
-    }
-
-    // Download with progress bar and retry
-    const MAX_RETRIES: u32 = 3;
-    let mut attempt = 0;
-    let mut downloaded: u64 = 0;
-    let mut total_size: u64 = 0;
-    let mut pb: Option<ProgressBar> = None;
-
-    loop {
-        attempt += 1;
-
-        // Resume from where we left off
-        let mut request = client.get(&url);
-        if downloaded > 0 {
-            request = request.header("Range", format!("bytes={}-", downloaded));
-        }
-
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) if attempt <= MAX_RETRIES => {
-                println!(
-                    "  Download stalled (attempt {}/{}), retrying... ({})",
-                    attempt, MAX_RETRIES, e
-                );
-                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
-                continue;
-            }
-            Err(e) => {
-                if let Some(ref p) = pb {
-                    p.finish_and_clear();
-                }
-                return Err(e).with_context(|| {
-                    format!(
-                        "Failed to download '{}' after {} attempts",
-                        filename, attempt
-                    )
-                });
-            }
-        };
-
-        if !response.status().is_success() && response.status().as_u16() != 206 {
-            if attempt <= MAX_RETRIES {
-                println!(
-                    "  Server returned {}, retrying ({}/{})...",
-                    response.status(),
-                    attempt,
-                    MAX_RETRIES
-                );
-                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
-                continue;
-            }
-            if let Some(ref p) = pb {
-                p.finish_and_clear();
-            }
-            anyhow::bail!(
-                "Download failed with status {} after {} attempts",
-                response.status(),
-                attempt
-            );
-        }
-
-        // Create progress bar from GET response Content-Length (available after redirect)
-        if pb.is_none() {
-            if let Some(content_len) = response.content_length() {
-                total_size = content_len + downloaded; // account for resumed bytes
-                let p = ProgressBar::new(total_size);
-                p.set_style(
-                    ProgressStyle::default_bar()
-                        .template("{msg} [{elapsed_precise}] [{bar:40}] {bytes}/{total_bytes} ({bytes_per_sec})")
-                        .unwrap_or_else(|_| ProgressStyle::default_bar())
-                        .progress_chars("=>-"),
-                );
-                p.set_message(filename.to_string());
-                p.set_position(downloaded);
-                pb = Some(p);
-            } else {
-                // No Content-Length at all — use a bytes counter
-                let p = ProgressBar::new_spinner();
-                p.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("{msg} [{elapsed_precise}] {bytes} ({bytes_per_sec})")
-                        .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-                );
-                p.set_message(filename.to_string());
-                pb = Some(p);
-            }
-        }
-
-        // Open file for append (resume) or create — use sync I/O for Windows compat
-        let mut file = if downloaded > 0 {
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&dest_path)
-                .with_context(|| format!("Failed to open {} for append", dest_path.display()))?
-        } else {
-            std::fs::File::create(&dest_path)
-                .with_context(|| format!("Failed to create {}", dest_path.display()))?
-        };
-
-        let mut stream = response.bytes_stream();
-        let mut stream_failed = false;
-
-        while let Some(chunk_result) = stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    file.write_all(&chunk)
-                        .with_context(|| format!("Failed to write to {}", dest_path.display()))?;
-                    downloaded += chunk.len() as u64;
-                    if let Some(ref p) = pb {
-                        p.set_position(downloaded);
-                    }
-                }
-                Err(e) if attempt <= MAX_RETRIES => {
-                    if let Some(ref p) = pb {
-                        p.suspend(|| {
-                            println!(
-                                "  Stream interrupted at {:.1} MiB (attempt {}/{}), resuming... ({})",
-                                downloaded as f64 / 1_048_576.0,
-                                attempt,
-                                MAX_RETRIES,
-                                e
-                            );
-                        });
-                    }
-                    stream_failed = true;
-                    break;
-                }
-                Err(e) => {
-                    if let Some(ref p) = pb {
-                        p.finish_and_clear();
-                    }
-                    return Err(e.into());
-                }
-            }
-        }
-
-        file.flush().ok();
-        drop(file);
-
-        if stream_failed {
-            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
-            continue;
-        }
-
-        // Stream ended cleanly — check if download is complete
-        if total_size == 0 || downloaded >= total_size {
-            break;
-        }
-        // Unexpected short read — retry
-        if attempt <= MAX_RETRIES {
-            if let Some(ref p) = pb {
-                p.suspend(|| {
-                    println!(
-                        "  Short read ({:.1}/{:.1} MiB), retrying ({}/{})...",
-                        downloaded as f64 / 1_048_576.0,
-                        total_size as f64 / 1_048_576.0,
-                        attempt,
-                        MAX_RETRIES
-                    );
-                });
-            }
-            tokio::time::sleep(Duration::from_secs(2u64.pow(attempt - 1))).await;
-            continue;
-        }
-        anyhow::bail!(
-            "Download incomplete: got {} of {} bytes",
-            downloaded,
-            total_size
-        );
-    }
-
-    if let Some(ref p) = pb {
-        p.finish_and_clear();
-    }
-
-    let final_size = std::fs::metadata(&dest_path)
-        .map(|m| m.len())
-        .unwrap_or(downloaded);
+    // Use chunked parallel download (includes skip-if-exists check)
+    let size_bytes = crate::models::download::download_chunked(
+        &url, &dest_path, 8, // connections
+    )
+    .await
+    .with_context(|| format!("Failed to download '{}' from '{}'", filename, repo_id))?;
 
     Ok(DownloadResult {
         path: dest_path,
-        size_bytes: final_size,
+        size_bytes,
     })
 }
 

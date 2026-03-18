@@ -1,4 +1,5 @@
 pub mod card;
+pub mod download;
 pub mod pull;
 pub mod registry;
 pub mod search;
