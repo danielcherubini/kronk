@@ -1,3 +1,31 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GpuType {
+    Cuda { version: String },
+    Vulkan,
+    Metal,
+    RocM { version: String },
+    CpuOnly,
+}
+
+#[derive(Debug, Clone)]
+pub struct GpuCapability {
+    pub gpu_type: GpuType,
+    pub device_name: String,
+    pub vram_mb: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SystemCapabilities {
+    pub os: String,
+    pub arch: String,
+    pub gpu: Option<GpuCapability>,
+    pub cmake_available: bool,
+    pub compiler_available: bool,
+    pub git_available: bool,
+}
+
 /// VRAM usage in MiB.
 #[derive(Debug, Clone)]
 pub struct VramInfo {
@@ -21,6 +49,129 @@ impl VramInfo {
     /// Total VRAM in bytes
     pub fn total_bytes(&self) -> u64 {
         self.total_mib * 1024 * 1024
+    }
+}
+
+/// Detect GPU type and capabilities.
+///
+/// Checks nvidia-smi first (CUDA), then falls back.
+/// CUDA version is read from nvidia-smi header output (does NOT require nvcc).
+pub fn detect_gpu() -> Option<GpuCapability> {
+    if let Some(cuda) = detect_cuda_gpu() {
+        return Some(cuda);
+    }
+    // Future: detect Vulkan via vulkaninfo, Metal via system_profiler
+    None
+}
+
+fn detect_cuda_gpu() -> Option<GpuCapability> {
+    // Get device name and VRAM
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = stdout.trim().split(", ").collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let device_name = parts[0].trim().to_string();
+    let vram_str = parts[1].trim().replace(" MiB", "");
+    let vram_mb: u64 = vram_str.parse().ok()?;
+
+    // Get CUDA version from nvidia-smi header (NOT nvcc -- users often
+    // have the driver but not the CUDA toolkit installed).
+    let version = detect_cuda_version_from_smi().unwrap_or_else(|| "unknown".to_string());
+
+    Some(GpuCapability {
+        gpu_type: GpuType::Cuda { version },
+        device_name,
+        vram_mb,
+    })
+}
+
+/// Parse CUDA version from `nvidia-smi` header output.
+/// The header contains a line like: "CUDA Version: 12.4"
+fn detect_cuda_version_from_smi() -> Option<String> {
+    let output = std::process::Command::new("nvidia-smi").output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Look for "CUDA Version: X.Y" in the table header
+    for line in stdout.lines() {
+        if let Some(idx) = line.find("CUDA Version:") {
+            let after = &line[idx + "CUDA Version:".len()..];
+            let version = after.trim().split_whitespace().next()?;
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
+pub fn detect_system_capabilities() -> SystemCapabilities {
+    let os = std::env::consts::OS.to_string();
+    let arch = std::env::consts::ARCH.to_string();
+    let gpu = detect_gpu();
+
+    let cmake_available = std::process::Command::new("cmake")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let git_available = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let compiler_available = {
+        #[cfg(target_os = "windows")]
+        {
+            // Try MSVC (cl.exe) first, then MinGW (g++)
+            std::process::Command::new("cl.exe")
+                .arg("/?")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+                || std::process::Command::new("g++")
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Try g++ first (C++ compiler needed for llama.cpp), then c++
+            std::process::Command::new("g++")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+                || std::process::Command::new("c++")
+                    .arg("--version")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+        }
+    };
+
+    SystemCapabilities {
+        os,
+        arch,
+        gpu,
+        cmake_available,
+        compiler_available,
+        git_available,
     }
 }
 
@@ -191,5 +342,20 @@ mod tests {
         // 24 GiB - 5.3 GiB model - 0.5 GiB overhead = ~18 GiB for KV
         // 8K = ~512 MiB, 16K = ~1GiB, 32K = ~2GiB — all should fit
         assert!(fitting.len() >= 4);
+    }
+
+    #[test]
+    fn test_detect_system_capabilities() {
+        let caps = detect_system_capabilities();
+        assert!(!caps.os.is_empty());
+        assert!(!caps.arch.is_empty());
+    }
+
+    #[test]
+    fn test_gpu_type_display() {
+        let cuda = GpuType::Cuda {
+            version: "12.4".to_string(),
+        };
+        assert!(format!("{:?}", cuda).contains("12.4"));
     }
 }
