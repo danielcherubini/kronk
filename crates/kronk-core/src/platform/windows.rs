@@ -1,9 +1,40 @@
 use anyhow::{Context, Result};
 use std::ffi::OsString;
+use std::time::{Duration, Instant};
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+
+/// Poll a service until it reaches the desired state, or timeout.
+/// Uses exponential backoff starting at 100ms, capped at 2s per poll.
+fn wait_for_state(
+    service: &windows_service::service::Service,
+    desired: ServiceState,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    let mut interval = Duration::from_millis(100);
+    let max_interval = Duration::from_secs(2);
+
+    loop {
+        let status = service
+            .query_status()
+            .context("Failed to query service status while waiting")?;
+        if status.current_state == desired {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            anyhow::bail!(
+                "Timed out waiting for service to reach {:?} (current: {:?})",
+                desired,
+                status.current_state,
+            );
+        }
+        std::thread::sleep(interval);
+        interval = (interval * 2).min(max_interval);
+    }
+}
 
 /// Install kronk as a native Windows Service for the given server.
 /// The service will run `kronk.exe service-run --server <name> --config-dir <path>` when started.
@@ -27,12 +58,31 @@ pub fn install_service(
         let status = existing.query_status()?;
         if status.current_state != ServiceState::Stopped {
             existing.stop()?;
-            // Wait briefly for stop
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            wait_for_state(&existing, ServiceState::Stopped, Duration::from_secs(30))
+                .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
         }
         existing.delete()?;
-        // Brief wait for SCM to process deletion
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Drop the handle so SCM can finalize deletion
+        drop(existing);
+
+        // Wait for SCM to fully process the deletion by retrying open
+        let delete_start = Instant::now();
+        let delete_timeout = Duration::from_secs(10);
+        loop {
+            match manager.open_service(service_name, ServiceAccess::QUERY_STATUS) {
+                Ok(_) => {
+                    // Service still exists — SCM hasn't finalized yet
+                    if delete_start.elapsed() > delete_timeout {
+                        anyhow::bail!(
+                            "Timed out waiting for SCM to delete service '{}'",
+                            service_name
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                Err(_) => break, // Service gone — proceed
+            }
+        }
     }
 
     let service_info = ServiceInfo {
@@ -191,12 +241,19 @@ pub fn remove_service(service_name: &str) -> Result<()> {
         .context("Failed to open Service Control Manager — run as Administrator")?;
 
     let service = manager
-        .open_service(service_name, ServiceAccess::STOP | ServiceAccess::DELETE)
+        .open_service(
+            service_name,
+            ServiceAccess::STOP | ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS,
+        )
         .with_context(|| format!("Service '{}' not found", service_name))?;
 
-    // Try to stop first
-    let _ = service.stop();
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    // Stop if running, then wait for it to actually stop
+    let status = service.query_status()?;
+    if status.current_state != ServiceState::Stopped {
+        let _ = service.stop();
+        wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
+            .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
+    }
 
     service.delete().context("Failed to delete service")?;
 
