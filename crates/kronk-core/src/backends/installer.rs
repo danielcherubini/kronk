@@ -380,6 +380,35 @@ async fn install_from_source(
         .await?;
 
     if !clone_result.success() {
+        // For "latest", try to resolve the most recent tag first
+        let _fallback_requested = false;
+        if version == "latest" {
+            // Attempt to find the latest tag
+            let tags_output = tokio::process::Command::new("git")
+                .args(["ls-remote", "--tags", "--sort=-v:refname", git_url])
+                .output()
+                .await;
+
+match tags_output {
+                    Ok(output) if output.status.success() => {
+                        let stdout_str = String::from_utf8_lossy(&output.stdout);
+                        let lines: Vec<&str> = stdout_str.lines().collect();
+                        if let Some(tag_line) = lines.iter().find(|l| !l.is_empty()) {
+                            let tag_name: &str = tag_line.split('\t').next().unwrap_or("unknown");
+                            println!("Resolving 'latest' to tag: {}", tag_name);
+                            let tag_clone = tokio::process::Command::new("git")
+                                .args(["clone", "--depth", "1", "--branch", tag_name, git_url, &source_dir.to_string_lossy()])
+                                .status()
+                                .await?;
+                            if tag_clone.success() {
+                                return Ok(source_dir);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+        }
+
         // Only allow fallback to HEAD for "main" or "latest" (tags may not exist)
         if version != "main" && version != "latest" {
             return Err(anyhow!(
@@ -391,7 +420,7 @@ async fn install_from_source(
 
         // Fallback: clone without branch tag
         tracing::warn!(
-            "Tag/branch '{}' not found, cloning HEAD as fallback",
+            "Tag/branch '{}' not found, cloning HEAD as fallback. Use an explicit version tag or --build flag.",
             version
         );
         println!("Tag/branch '{}' not found, cloning HEAD...", version);

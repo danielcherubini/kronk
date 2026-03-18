@@ -141,9 +141,10 @@ fn detect_rocm() -> Option<GpuCapability> {
 
     // Parse device info from rocminfo output
     // Look for "Name" and "Total Amount of Memory" in the device table
+    // Require "gfx" to match GPU agent (not CPU)
     let device_name = stdout
         .lines()
-        .find(|line| line.contains("Name"))
+        .find(|line| line.contains("Name") && line.contains("gfx"))
         .and_then(|line| line.split(':').nth(1))
         .map(|part| part.trim().to_string())?;
 
@@ -288,12 +289,28 @@ fn detect_metal_gpu() -> Option<GpuCapability> {
         .map(|part| part.trim().to_string())?;
 
     // Parse memory (look for "Memory" or "VRAM")
+    // Handle "16 GB (Unified)", "16 GB", "16 MB", or just "Unified"
     let vram_str = stdout
         .lines()
         .find(|line| line.contains("Memory"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|s| s.strip_suffix(" MB"))
-        .and_then(|s| s.parse::<u64>().ok())?;
+        .map(|s| s.trim())
+        .and_then(|s| {
+            // Handle "16 GB (Unified)" or "16 GB"
+            if let Some(stripped) = s.strip_suffix(" GB") {
+                stripped.parse::<u64>().ok().map(|gb| gb * 1024) // GB -> MB
+            }
+            // Handle "16 MB"
+            .or_else(|| s.strip_suffix(" MB").and_then(|mb| mb.parse::<u64>().ok()))
+            // Handle just "Unified" (no value)
+            .or_else(|| {
+                if s.eq_ignore_ascii_case("Unified") {
+                    None // Return None to propagate up
+                } else {
+                    None
+                }
+            })
+        })?;
 
     Some(GpuCapability {
         gpu_type: GpuType::Metal,
