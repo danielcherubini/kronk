@@ -375,13 +375,10 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
         .with_default(false)
         .prompt()?;
 
-    if !confirm {
+if !confirm {
         println!("Cancelled.");
         return Ok(());
     }
-
-    // Remove from registry first
-    registry.remove(name)?;
 
     // Optionally remove files
     if backend.path.exists() {
@@ -416,22 +413,31 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
                     {
                         use std::io::ErrorKind;
                         match std::fs::remove_dir_all(parent) {
-                            Ok(_) => println!("Files removed."),
+                            Ok(_) => {
+                                println!("Files removed.");
+                            }
                             Err(e) if e.kind() == ErrorKind::PermissionDenied => {
                                 println!("Skipping file removal: backend server may still be running.");
+                                println!("Run 'kronk server stop' first, then try again.");
+                                return Err(anyhow!("Failed to remove backend directory: {}", e));
                             }
                             Err(e) => {
                                 println!("Skipping file removal: {}", e);
+                                return Err(anyhow!("Failed to remove backend directory: {}", e));
                             }
                         }
                     }
                     // On Unix, remove_dir_all will fail if directory is in use
                     #[cfg(not(windows))]
                     {
-                        if let Err(e) = std::fs::remove_dir_all(parent) {
-                            println!("Skipping file removal: {}", e);
-                        } else {
-                            println!("Files removed.");
+                        match std::fs::remove_dir_all(parent) {
+                            Ok(_) => {
+                                println!("Files removed.");
+                            }
+                            Err(e) => {
+                                println!("Skipping file removal: {}", e);
+                                return Err(anyhow!("Failed to remove backend directory: {}", e));
+                            }
                         }
                     }
                 } else {
@@ -440,6 +446,9 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
             }
         }
     }
+
+    // Remove from registry only after successful file deletion
+    registry.remove(name)?;
 
     println!("Backend '{}' removed.", name);
     Ok(())
