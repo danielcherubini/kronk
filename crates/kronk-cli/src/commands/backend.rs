@@ -194,6 +194,7 @@ async fn cmd_install(
         source: source.clone(),
         target_dir,
         gpu_type: gpu_type.clone(),
+        allow_overwrite: false,
     };
 
     // Install
@@ -256,9 +257,16 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("Invalid backend path: {}", backend_info.path.display()))?
         .to_path_buf();
 
-    // Preserve the original installation method
+    // Preserve the original installation method, but update the version
     let source = match backend_info.source.clone() {
-        Some(source) => source,
+        Some(source) => match source {
+            BackendSource::Prebuilt { version: _ } => {
+                BackendSource::Prebuilt { version: update_check.latest_version.clone() }
+            }
+            BackendSource::SourceCode { version: _, git_url } => {
+                BackendSource::SourceCode { version: update_check.latest_version.clone(), git_url }
+            }
+        },
         None => {
             // Fallback for existing backends without source info
             match backend_info.backend_type {
@@ -279,6 +287,7 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         source,
         target_dir,
         gpu_type: backend_info.gpu_type.clone(),
+        allow_overwrite: true,
     };
 
     update_backend(&mut registry, name, options, update_check.latest_version).await?;

@@ -1,3 +1,4 @@
 /target
 /dist
 *.log
+VP_VULKANINFO_*.json

@@ -270,12 +270,18 @@ async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<Pat
     tracing::info!("Installing pre-built binary for {:?} version {}", options.backend_type, version);
 
     // Check if target directory already exists
-    if options.target_dir.exists() {
+    if options.target_dir.exists() && !options.allow_overwrite {
         return Err(anyhow!(
             "Backend directory already exists at: {}\n\
              Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
             options.target_dir.display()
         ));
+    }
+
+    // If overwriting, clean the directory first
+    if options.target_dir.exists() {
+        std::fs::remove_dir_all(&options.target_dir)?;
+        std::fs::create_dir_all(&options.target_dir)?;
     }
 
     let os = std::env::consts::OS;
@@ -315,12 +321,18 @@ async fn install_from_source(
     tracing::info!("Building from source: {} version {}", git_url, version);
 
     // Check if target directory already exists
-    if options.target_dir.exists() {
+    if options.target_dir.exists() && !options.allow_overwrite {
         return Err(anyhow!(
             "Backend directory already exists at: {}\n\
              Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
             options.target_dir.display()
         ));
+    }
+
+    // If overwriting, clean the directory first
+    if options.target_dir.exists() {
+        std::fs::remove_dir_all(&options.target_dir)?;
+        std::fs::create_dir_all(&options.target_dir)?;
     }
 
     // Check prerequisites

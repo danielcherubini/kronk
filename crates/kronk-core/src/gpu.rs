@@ -152,7 +152,7 @@ fn detect_rocm() -> Option<GpuCapability> {
         .lines()
         .find(|line| line.contains("Total Amount of Memory"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|s| s.strip_suffix(" MiB"))
+        .and_then(|s| s.trim().strip_suffix(" MiB"))
         .and_then(|s| s.parse::<u64>().ok())?;
 
     // Extract ROCm version from header (e.g., "ROCm Version: 6.1.2")
@@ -171,11 +171,11 @@ fn detect_rocm() -> Option<GpuCapability> {
 }
 
 /// Detect Vulkan GPU (Intel/AMD on Linux, NVIDIA without CUDA).
-/// Uses `vulkaninfo` to detect Vulkan-capable GPUs.
+/// Uses `vulkaninfo --summary` to detect Vulkan-capable GPUs.
 fn detect_vulkan_gpu() -> Option<GpuCapability> {
     // Check if vulkaninfo is available
     let output = std::process::Command::new("vulkaninfo")
-        .args(["--device"])
+        .args(["--summary"])
         .output()
         .ok()?;
 
@@ -198,9 +198,12 @@ fn detect_vulkan_gpu() -> Option<GpuCapability> {
         .lines()
         .find(|line| line.contains("Total Memory"))
         .and_then(|line| line.split(':').nth(1))
-        .and_then(|s| s.strip_suffix(" MiB"))
-        .and_then(|s| s.strip_suffix(" GB"))
-        .and_then(|s| s.parse::<u64>().ok())?;
+        .map(|s| s.trim())
+        .and_then(|s| {
+            s.strip_suffix(" MiB")
+                .or_else(|| s.strip_suffix(" GB"))
+                .and_then(|s| s.parse::<u64>().ok())
+        })?;
 
     Some(GpuCapability {
         gpu_type: GpuType::Vulkan,
