@@ -31,7 +31,9 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
     let token = github_token();
     let url = match backend {
         BackendType::LlamaCpp => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
-        BackendType::IkLlama => "https://api.github.com/repos/ikawrakow/ik_llama.cpp/releases?per_page=1",
+        BackendType::IkLlama => {
+            "https://api.github.com/repos/ikawrakow/ik_llama.cpp/releases?per_page=1"
+        }
         BackendType::Custom => return Err(anyhow!("Cannot check updates for custom backends")),
     };
 

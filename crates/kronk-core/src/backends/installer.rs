@@ -1,15 +1,15 @@
 #![allow(unused_imports)]
 use anyhow::{anyhow, Context, Result};
+use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use flate2::read::GzDecoder;
 
-use crate::gpu::GpuType;
 use super::registry::{BackendSource, BackendType};
+use crate::gpu::GpuType;
 
 #[derive(Debug, Clone)]
 pub struct InstallOptions {
@@ -155,7 +155,8 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dest)?;
 
-    let filename = archive.file_name()
+    let filename = archive
+        .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow!("Invalid archive path"))?;
 
@@ -164,7 +165,8 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
             .with_context(|| format!("Failed to open archive {:?}", archive))?;
         let gz = flate2::read::GzDecoder::new(tar_file);
         let mut tar_archive = tar::Archive::new(gz);
-        tar_archive.unpack(dest)
+        tar_archive
+            .unpack(dest)
             .with_context(|| "Failed to extract tar.gz archive")?;
 
         // Set executable permissions on extracted files (tar crate preserves
@@ -204,18 +206,26 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            
+
             // Sanitize path to prevent CVE-2025-29787 (path traversal via symlinks)
             let entry_name = entry.name();
             let sanitized = entry_name.replace('\\', "/");
-            if sanitized.contains("..") || sanitized.starts_with('/') || sanitized.is_empty() || sanitized.starts_with("//") || sanitized.starts_with("\\\\") {
+            if sanitized.contains("..")
+                || sanitized.starts_with('/')
+                || sanitized.is_empty()
+                || sanitized.starts_with("//")
+                || sanitized.starts_with("\\\\")
+            {
                 return Err(anyhow!("Malicious path in archive: {}", entry_name));
             }
             // Reject Windows absolute paths with drive letters (e.g., "C:/...")
-            if sanitized.len() >= 3 && sanitized.chars().nth(1) == Some(':') && sanitized.chars().nth(2) == Some('/') {
+            if sanitized.len() >= 3
+                && sanitized.chars().nth(1) == Some(':')
+                && sanitized.chars().nth(2) == Some('/')
+            {
                 return Err(anyhow!("Windows absolute path not allowed: {}", entry_name));
             }
-            
+
             let outpath = dest.join(&sanitized);
 
             if entry_name.ends_with('/') {
@@ -279,9 +289,7 @@ fn find_backend_binary(dir: &Path) -> Result<PathBuf> {
 pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
     let source = options.source.clone();
     match source {
-        BackendSource::Prebuilt { version } => {
-            install_prebuilt(&options, &version).await
-        }
+        BackendSource::Prebuilt { version } => install_prebuilt(&options, &version).await,
         BackendSource::SourceCode { version, git_url } => {
             install_from_source(&options, &version, &git_url).await
         }
@@ -309,7 +317,11 @@ fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()> {
 }
 
 async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<PathBuf> {
-    tracing::info!("Installing pre-built binary for {:?} version {}", options.backend_type, version);
+    tracing::info!(
+        "Installing pre-built binary for {:?} version {}",
+        options.backend_type,
+        version
+    );
 
     prepare_target_dir(&options.target_dir, options.allow_overwrite)?;
 
@@ -381,13 +393,21 @@ async fn install_from_source(
     // Clone repository
     println!("Cloning repository (shallow)...");
     let clone_result = tokio::process::Command::new("git")
-        .args(["clone", "--depth", "1", "--branch", version, git_url, &source_dir.to_string_lossy()])
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            version,
+            git_url,
+            &source_dir.to_string_lossy(),
+        ])
         .status()
         .await?;
 
     if !clone_result.success() {
         // For "latest", try to resolve the most recent tag first
-        let _cloned_from_tag = false;
+        let mut cloned_from_tag = false;
         if version == "latest" {
             // Attempt to find the latest tag
             let tags_output = tokio::process::Command::new("git")
@@ -401,14 +421,26 @@ async fn install_from_source(
                     let lines: Vec<&str> = stdout_str.lines().collect();
                     if let Some(tag_line) = lines.iter().find(|l| !l.is_empty()) {
                         // Parse ref field (second tab-separated value), strip "refs/tags/" prefix and trailing "^{}"
-                        let ref_field: &str = tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
-                        let tag_name: &str = ref_field.trim_start_matches("refs/tags/").trim_end_matches("^{}");
+                        let ref_field: &str =
+                            tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
+                        let tag_name: &str = ref_field
+                            .trim_start_matches("refs/tags/")
+                            .trim_end_matches("^{}");
                         println!("Resolving 'latest' to tag: {}", tag_name);
                         let tag_clone = tokio::process::Command::new("git")
-                            .args(["clone", "--depth", "1", "--branch", tag_name, git_url, &source_dir.to_string_lossy()])
+                            .args([
+                                "clone",
+                                "--depth",
+                                "1",
+                                "--branch",
+                                tag_name,
+                                git_url,
+                                &source_dir.to_string_lossy(),
+                            ])
                             .status()
                             .await?;
-if tag_clone.success() {
+                        if tag_clone.success() {
+                            cloned_from_tag = true;
                         }
                     }
                 }
@@ -425,19 +457,30 @@ if tag_clone.success() {
             ));
         }
 
-        // Fallback: clone without branch tag
-        tracing::warn!(
-            "Tag/branch '{}' not found, cloning HEAD as fallback. Use an explicit version tag or --build flag.",
-            version
-        );
-        println!("Tag/branch '{}' not found, cloning HEAD...", version);
-        let status = tokio::process::Command::new("git")
-            .args(["clone", "--depth", "1", git_url, &source_dir.to_string_lossy()])
-            .status()
-            .await?;
+        // Skip fallback if we successfully cloned from a tag
+        if cloned_from_tag {
+            // Already cloned from tag, skip fallback
+        } else {
+            // Fallback: clone without branch tag
+            tracing::warn!(
+                "Tag/branch '{}' not found, cloning HEAD as fallback. Use an explicit version tag or --build flag.",
+                version
+            );
+            println!("Tag/branch '{}' not found, cloning HEAD...", version);
+            let status = tokio::process::Command::new("git")
+                .args([
+                    "clone",
+                    "--depth",
+                    "1",
+                    git_url,
+                    &source_dir.to_string_lossy(),
+                ])
+                .status()
+                .await?;
 
-        if !status.success() {
-            return Err(anyhow!("Failed to clone repository from {}", git_url));
+            if !status.success() {
+                return Err(anyhow!("Failed to clone repository from {}", git_url));
+            }
         }
     }
     let build_output = build_dir.path().join("build");
@@ -477,7 +520,9 @@ if tag_clone.success() {
         .await?;
 
     if !status.success() {
-        return Err(anyhow!("CMake configuration failed. Check that all build dependencies are installed."));
+        return Err(anyhow!(
+            "CMake configuration failed. Check that all build dependencies are installed."
+        ));
     }
 
     // Build
@@ -485,7 +530,10 @@ if tag_clone.success() {
         .map(|n| n.get())
         .unwrap_or(4);
 
-    println!("Building with {} parallel jobs (this may take several minutes)...", num_jobs);
+    println!(
+        "Building with {} parallel jobs (this may take several minutes)...",
+        num_jobs
+    );
     let status = tokio::process::Command::new("cmake")
         .args([
             "--build",
@@ -507,7 +555,9 @@ if tag_clone.success() {
     let binary_src = find_backend_binary(&build_output)?;
 
     std::fs::create_dir_all(&options.target_dir)?;
-    let binary_name = binary_src.file_name().ok_or_else(|| anyhow!("Could not determine binary filename"))?;
+    let binary_name = binary_src
+        .file_name()
+        .ok_or_else(|| anyhow!("Could not determine binary filename"))?;
     let binary_dest = options.target_dir.join(binary_name);
 
     std::fs::copy(&binary_src, &binary_dest)?;
@@ -532,13 +582,8 @@ mod tests {
 
     #[test]
     fn test_llama_cpp_download_url_linux_cpu() {
-        let url = get_prebuilt_url(
-            &BackendType::LlamaCpp,
-            "b8407",
-            "linux",
-            "x86_64",
-            None,
-        ).unwrap();
+        let url =
+            get_prebuilt_url(&BackendType::LlamaCpp, "b8407", "linux", "x86_64", None).unwrap();
 
         assert_eq!(
             url,
@@ -553,8 +598,11 @@ mod tests {
             "b8407",
             "windows",
             "x86_64",
-            Some(&GpuType::Cuda { version: "12.4".to_string() }),
-        ).unwrap();
+            Some(&GpuType::Cuda {
+                version: "12.4".to_string(),
+            }),
+        )
+        .unwrap();
 
         assert!(url.contains("cuda-12.4"));
         assert!(url.contains("b8407"));
@@ -568,20 +616,15 @@ mod tests {
             "windows",
             "x86_64",
             Some(&GpuType::Vulkan),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(url.contains("vulkan"));
     }
 
     #[test]
     fn test_ik_llama_prebuilt_not_available() {
-        let result = get_prebuilt_url(
-            &BackendType::IkLlama,
-            "main",
-            "linux",
-            "x86_64",
-            None,
-        );
+        let result = get_prebuilt_url(&BackendType::IkLlama, "main", "linux", "x86_64", None);
         assert!(result.is_err());
     }
 }
