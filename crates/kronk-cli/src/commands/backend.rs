@@ -92,7 +92,7 @@ fn backends_dir() -> Result<std::path::PathBuf> {
 fn current_unix_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
+        .expect("Time went backwards")
         .as_secs() as i64
 }
 

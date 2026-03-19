@@ -7,6 +7,39 @@ use std::str::FromStr;
 use crate::config::Config;
 use crate::gpu::GpuType;
 
+impl BackendRegistry {
+    /// Canonicalize a path, handling both existing and non-existing files
+    fn canonicalize_path(path: &Path) -> Result<PathBuf> {
+        if path.exists() {
+            std::fs::canonicalize(path)
+                .with_context(|| format!("Failed to canonicalize registry path {:?}", path))
+        } else {
+            // For new files, canonicalize the parent directory
+            if let Some(parent) = path.parent() {
+                std::fs::canonicalize(parent)
+                    .with_context(|| {
+                        format!("Failed to canonicalize parent directory {:?}", parent)
+                    })
+                    .map(|p| p.join(path.file_name().unwrap_or_default()))
+            } else {
+                Err(anyhow!("Registry path {:?} has no parent directory", path))
+            }
+        }
+    }
+
+    /// Canonicalize base directory
+    fn canonicalize_base_dir(base_dir: Option<&Path>) -> Result<PathBuf> {
+        base_dir
+            .map(|b| {
+                std::fs::canonicalize(b).with_context(|| "Failed to canonicalize base directory")
+            })
+            .unwrap_or_else(|| {
+                std::fs::canonicalize(Config::base_dir()?)
+                    .with_context(|| "Failed to canonicalize base directory")
+            })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BackendType {
     LlamaCpp,
@@ -80,30 +113,8 @@ impl BackendRegistry {
 
     pub fn load_with_base_dir(path: &Path, base_dir: Option<&Path>) -> Result<Self> {
         // Validate path is within safe directory (prevent symlink attacks)
-        // Canonicalize parent directory first (works even if file doesn't exist yet)
-        let canonical_path = if path.exists() {
-            std::fs::canonicalize(path)
-                .with_context(|| format!("Failed to canonicalize registry path {:?}", path))?
-        } else {
-            // For new files, canonicalize the parent directory
-            if let Some(parent) = path.parent() {
-                std::fs::canonicalize(parent)
-                    .with_context(|| {
-                        format!("Failed to canonicalize parent directory {:?}", parent)
-                    })?
-                    .join(path.file_name().unwrap_or_default())
-            } else {
-                return Err(anyhow!("Registry path {:?} has no parent directory", path));
-            }
-        };
-
-        // Get the canonical base directory if provided
-        let base_dir = if let Some(base) = base_dir {
-            std::fs::canonicalize(base).with_context(|| "Failed to canonicalize base directory")?
-        } else {
-            std::fs::canonicalize(Config::base_dir()?)
-                .with_context(|| "Failed to canonicalize base directory")?
-        };
+        let canonical_path = Self::canonicalize_path(path)?;
+        let base_dir = Self::canonicalize_base_dir(base_dir)?;
 
         // Ensure the path is within the base directory
         if !canonical_path.starts_with(&base_dir) {
@@ -129,29 +140,8 @@ impl BackendRegistry {
     }
 
     pub fn save(&self) -> Result<()> {
-        // Validate path is within safe directory
-        // Canonicalize parent directory first (works even if file doesn't exist yet)
-        let canonical_path = if self.path.exists() {
-            std::fs::canonicalize(&self.path)
-                .with_context(|| format!("Failed to canonicalize registry path {:?}", self.path))?
-        } else {
-            // For new files, canonicalize the parent directory
-            if let Some(parent) = self.path.parent() {
-                std::fs::canonicalize(parent)
-                    .with_context(|| {
-                        format!("Failed to canonicalize parent directory {:?}", parent)
-                    })?
-                    .join(self.path.file_name().unwrap_or_default())
-            } else {
-                return Err(anyhow!(
-                    "Registry path {:?} has no parent directory",
-                    self.path
-                ));
-            }
-        };
-
-        let base_dir = std::fs::canonicalize(Config::base_dir()?)
-            .with_context(|| "Failed to canonicalize base directory")?;
+        let canonical_path = Self::canonicalize_path(&self.path)?;
+        let base_dir = Self::canonicalize_base_dir(None)?;
 
         if !canonical_path.starts_with(&base_dir) {
             return Err(anyhow!(
