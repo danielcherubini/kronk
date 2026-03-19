@@ -3,7 +3,6 @@ use clap::{Args, Subcommand};
 use kronk_core::backends::*;
 use kronk_core::config::Config;
 use kronk_core::gpu;
-use std::time::Duration;
 
 #[derive(Debug, Args)]
 pub struct BackendArgs {
