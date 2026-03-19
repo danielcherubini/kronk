@@ -144,8 +144,9 @@ kronk backend check-updates        # Check for updates
 
 - **llama.cpp**: Downloads pre-built binaries for your platform, or builds from source with GPU support
 - **ik_llama**: Always builds from source (no pre-built binaries available)
-- Backends are stored in `~/.config/kronk/backends/`
-- Version tracking is stored in `~/.config/kronk/backend_registry.toml`
+- **Linux/macOS:** Backends in `~/.config/kronk/backends/`
+- **Windows:** Backends in `%APPDATA%\kronk\backends\`
+- Version tracking in `~/.config/kronk/backend_registry.toml` (Linux/macOS) or `%APPDATA%\kronk\backend_registry.toml` (Windows)
 
 ### GPU Support
 

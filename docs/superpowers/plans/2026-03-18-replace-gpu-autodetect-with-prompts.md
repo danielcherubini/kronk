@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Remove GPU Detection Functions from `gpu.rs`
+## Task 1: Remove GPU Detection Functions from `gpu.rs`
 
 **Files:**
 - Modify: `crates/kronk-core/src/gpu.rs`
@@ -125,10 +125,10 @@ pub fn detect_build_prerequisites() -> BuildPrerequisites {
    - `test_gpu_type_display`
 
 Keep intact:
-   - `GpuType` enum (used by `installer.rs`, `registry.rs` for serialization)
-   - `VramInfo` struct + `query_vram()` (used by `main.rs` status, `model.rs` context sizing)
-   - `suggest_context_sizes()` + `ContextSuggestion` (used by `model.rs`)
-   - All VRAM/context tests (`test_vram_info_available`, `test_suggest_context_sizes_*`)
+- `GpuType` enum (used by `installer.rs`, `registry.rs` for serialization)
+- `VramInfo` struct + `query_vram()` (used by `main.rs` status, `model.rs` context sizing)
+- `suggest_context_sizes()` + `ContextSuggestion` (used by `model.rs`)
+- All VRAM/context tests (`test_vram_info_available`, `test_suggest_context_sizes_*`)
 
 - [ ] **Step 4: Run test to verify it passes**
 

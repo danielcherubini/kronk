@@ -224,6 +224,17 @@ impl BackendRegistry {
         new_binary_path: PathBuf,
         new_source: Option<BackendSource>,
     ) -> Result<()> {
+        // Validate new_binary_path is within managed backends directory
+        let new_binary_path_canonical = Self::canonicalize_path(&new_binary_path)?;
+        let base_dir = Self::canonicalize_base_dir(None)?;
+        if !new_binary_path_canonical.starts_with(&base_dir) {
+            return Err(anyhow!(
+                "Backend binary path {:?} is outside managed directory {:?}",
+                new_binary_path,
+                base_dir
+            ));
+        }
+
         if let Some(info) = self.data.backends.get_mut(name) {
             info.version = new_version;
             info.path = new_binary_path;

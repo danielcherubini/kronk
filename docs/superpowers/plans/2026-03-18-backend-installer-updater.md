@@ -40,7 +40,7 @@
 - **Platforms:** Windows + Linux (match kronk's current support)
 - **Build Strategy:** User chooses during install (pre-built or source); ik_llama only offers source
 - **GPU Detection:** Extend existing `gpu.rs` module rather than creating a parallel detector
-- **CLI Interface:** Separate `backend` subcommand (`kronk backend install/update/list/rm`)
+- **CLI:** Separate `backend` subcommand (`kronk backend install/update/list/rm`)
 - **Storage:** Managed `~/.config/kronk/backends/` + support for external paths
 - **Version Management:** Track installed backends, check for updates
 - **Timestamps:** Use i64 unix epoch (not SystemTime) for TOML serialization compatibility
