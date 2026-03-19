@@ -123,8 +123,9 @@ kronk config show                                  Print the current configurati
 kronk config edit                                  Open config file in editor
 kronk config path                                  Show the config file path
 kronk logs <name>                                  View backend logs (follow with -f)
+```
 
-## Backend Management
+### Backend Management
 
 Kronk manages LLM backend installations (llama.cpp, ik_llama) with automatic version tracking and updates:
 
@@ -148,7 +149,7 @@ kronk backend check-updates        # Check for updates
 
 ### GPU Support
 
-The installer auto-detects your GPU and offers GPU-accelerated builds:
+The installer detects your GPU and prompts you to select acceleration:
 
 - **CUDA** (NVIDIA) — CUDA cores for faster inference
 - **Vulkan** (AMD/Intel/NVIDIA) — Cross-platform GPU acceleration
