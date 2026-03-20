@@ -81,12 +81,9 @@ pub fn install_service(
                     std::thread::sleep(Duration::from_millis(250));
                 }
                 Err(e) => {
-                    // Check if this is the service-not-found error
-                    use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
-                    if let Some(windows_error) =
-                        e.downcast_ref::<windows::Win32::Foundation::BOOLERROR>()
-                    {
-                        if *windows_error == ERROR_SERVICE_DOES_NOT_EXIST {
+                    // Check if this is the "service does not exist" error (code 1060)
+                    if let windows_service::Error::Winapi(ref io_err) = e {
+                        if io_err.raw_os_error() == Some(1060) {
                             break; // Service gone — proceed
                         }
                     }
@@ -311,7 +308,7 @@ pub fn remove_service(service_name: &str) -> Result<()> {
     let status = service.query_status()?;
     if status.current_state != ServiceState::Stopped {
         match service.stop() {
-            Ok(()) => {
+            Ok(_status) => {
                 // Successfully initiated stop, now wait for it to complete
                 wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
                     .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
