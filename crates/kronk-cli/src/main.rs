@@ -92,6 +92,12 @@ enum Commands {
         #[command(subcommand)]
         command: BackendSubcommand,
     },
+    /// OpenAI-compliant proxy for local AI models
+    Proxy {
+        /// Proxy settings
+        #[command(subcommand)]
+        command: ProxyCommands,
+    },
     /// View server logs
     Logs {
         /// Server name
@@ -102,6 +108,22 @@ enum Commands {
         /// Number of lines to show (default: 50)
         #[arg(short = 'n', long, default_value = "50")]
         lines: usize,
+    },
+}
+
+#[derive(Parser, Debug)]
+pub enum ProxyCommands {
+    /// Start the proxy server
+    Start {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Port to bind to
+        #[arg(long, default_value = "11434")]
+        port: u16,
+        /// Idle timeout in seconds (models unload after this many seconds of inactivity)
+        #[arg(long, default_value = "300")]
+        idle_timeout: u64,
     },
 }
 
@@ -263,6 +285,8 @@ enum ConfigCommands {
 }
 
 fn main() -> Result<()> {
+    logging::init();
+
     // Check if we're being launched by the Windows Service Control Manager.
     // SCM passes "service-run" as the first real argument.
     let raw_args: Vec<String> = std::env::args().collect();
@@ -273,14 +297,6 @@ fn main() -> Result<()> {
         #[cfg(not(target_os = "windows"))]
         anyhow::bail!("Windows service mode is only available on Windows");
     }
-
-    // Normal CLI mode
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
 
     let args = Args::parse();
     let config = Config::load()?;
@@ -303,6 +319,7 @@ fn main() -> Result<()> {
             Commands::Backend { command } => {
                 commands::backend::run(&config, BackendArgs { command }).await
             }
+            Commands::Proxy { command } => cmd_proxy(&config, command).await,
             Commands::Logs {
                 name,
                 follow,
@@ -435,15 +452,11 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
         .unwrap_or_else(|_| std::fs::File::create("kronk-service.log").unwrap());
 
-    tracing_subscriber::fmt()
-        .with_writer(std::sync::Mutex::new(log_file))
-        .with_env_filter("info")
-        .init();
-
-    tracing::info!("Service starting for server: {}", server);
-    if let Some(ref dir) = config_dir {
-        tracing::info!("Config dir: {}", dir.display());
-    }
+    tracing::info!(
+        "Service starting for server: {}, config dir: {:?}",
+        server,
+        config_dir.as_ref().map(|d| d.display())
+    );
 
     // Create a shutdown channel
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
@@ -492,7 +505,11 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     } {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("Failed to load config: {}", e);
+            tracing::error!(
+                "Failed to load config: {}, config dir: {:?}",
+                e,
+                config_dir.as_ref().map(|d| d.display())
+            );
             let _ = status_handle.set_service_status(ServiceStatus {
                 service_type: ServiceType::OWN_PROCESS,
                 current_state: ServiceState::Stopped,
@@ -1511,6 +1528,52 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Start the OpenAI-compliant proxy server
+async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
+    use kronk_core::proxy::server::ProxyServer;
+    use kronk_core::proxy::ProxyState;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    let ProxyCommands::Start {
+        host,
+        port,
+        idle_timeout,
+    } = command;
+
+    // Apply CLI overrides to config
+    let mut updated_config = config.clone();
+    updated_config.proxy.host = host.clone();
+    updated_config.proxy.port = port;
+    updated_config.proxy.idle_timeout_secs = idle_timeout;
+
+    // Parse host and port
+    let (host_addr, warning) = match host.parse::<std::net::IpAddr>() {
+        Ok(addr) => (addr, false),
+        Err(_) => (
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+            true,
+        ),
+    };
+    let addr = SocketAddr::new(host_addr, port);
+
+    if warning {
+        tracing::warn!("Invalid host '{}' - using 127.0.0.1", host);
+    }
+
+    tracing::info!("Starting Kronk Proxy on {}", addr);
+    tracing::info!("Idle timeout: {}s", idle_timeout);
+    tracing::info!("Use `kronk proxy start --help` for more options");
+
+    let state = Arc::new(ProxyState::new(updated_config));
+
+    // Create and run proxy server
+    let server = ProxyServer::new(state.clone());
+    server.run(addr).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]

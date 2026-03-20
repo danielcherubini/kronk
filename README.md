@@ -60,6 +60,26 @@ kronk model pull bartowski/OmniCoder-8B-GGUF
 
 Kronk downloads all available quants, detects your GPU VRAM, and suggests optimal context sizes.
 
+### OpenAI-Compliant Proxy
+
+Kronk includes a built-in proxy that acts as a drop-in replacement for the OpenAI API. It can automatically start models on-demand, load balance requests, and unload idle models to save resources.
+
+```bash
+# Start the proxy server
+kronk proxy start
+```
+
+You can then point any OpenAI-compatible client to `http://localhost:11434/v1`:
+
+```bash
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "bartowski/OmniCoder-8B-GGUF",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
 ### Create a server from an installed model
 
 ```bash
@@ -119,6 +139,7 @@ kronk model create <name>                          Create a server from an insta
 kronk model rm <model>                             Remove an installed model
 kronk model scan                                   Scan for untracked GGUF files
 kronk model search <query>                         Search HuggingFace for GGUF models
+kronk proxy start                                  Start the OpenAI-compliant proxy server
 kronk config show                                  Print the current configuration
 kronk config edit                                  Open config file in editor
 kronk config path                                  Show the config file path
@@ -171,7 +192,7 @@ Kronk auto-generates a config on first run:
 ```toml
 [backends.llama_cpp]
 path = "C:\\path\\to\\llama-server.exe"
-health_check_url = "http://localhost:8080/health"
+health_check_url = "http://localhost:11434/health"
 
 [servers.default]
 backend = "llama_cpp"
@@ -191,6 +212,13 @@ restart_policy = "always"
 max_restarts = 10
 restart_delay_ms = 3000
 health_check_interval_ms = 5000
+
+[proxy]
+enabled = false
+host = "0.0.0.0"
+port = 11434
+idle_timeout_secs = 300
+circuit_breaker_threshold = 3
 ```
 
 You can define multiple backends and servers. Switch between them with `kronk run <name>`.
@@ -234,7 +262,7 @@ Kronk spawns your LLM backend as a child process and watches it:
 
 ### Firewall (Windows)
 
-`kronk service install` automatically adds an inbound firewall rule for port 8080. `kronk service remove` cleans it up.
+`kronk service install` automatically adds an inbound firewall rule for port 11434. `kronk service remove` cleans it up.
 
 ---
 
