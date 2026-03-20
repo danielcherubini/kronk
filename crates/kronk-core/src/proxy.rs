@@ -249,61 +249,41 @@ impl ProxyState {
 
         let config = self.config.clone();
 
-        // Find a server that provides this model
-        let server_name = match self.get_available_server_for_model(model_name).await {
-            Some(name) => name,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "Failed to resolve server for model {}",
-                    model_name
-                ));
-            }
-        };
+        // Resolve the server name for this model
+        let servers = config.resolve_servers_for_model(model_name);
+        let server_name = servers
+            .first()
+            .map(|(name, _, _)| name.clone())
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve server for model {}", model_name))?;
 
-        // Check if the server is already loaded and ready - if so, just use it
+        // Get server and backend config from config
+        let (server_config, backend_config) = config.resolve_server(&server_name)?;
+
+        // Atomically check if already loaded and reserve if not (single write lock)
         {
-            let models = self.models.read().await;
+            let mut models = self.models.write().await;
             if let Some(state) = models.get(&server_name) {
-                if state.is_ready() {
+                if state.is_ready() || matches!(state, ModelState::Starting { .. }) {
                     debug!(
-                        "Server '{}' already loaded for model '{}'",
+                        "Server '{}' already loaded/starting for model '{}'",
                         server_name, model_name
                     );
-                    drop(models);
-                    drop(config);
                     return Ok(server_name);
                 }
             }
-        }
 
-        // Get server and backend config from config
-        let (server_config, backend_config) = match config.resolve_server(&server_name) {
-            Ok(sc) => sc,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-
-        // Reserve a server immediately to prevent race conditions
-        {
-            let mut models = self.models.write().await;
-            for (server_name, _, _) in config.resolve_servers_for_model(model_name) {
-                if !models.contains_key(&server_name) {
-                    // Reserve this server with Starting state
-                    models.insert(
-                        server_name.clone(),
-                        ModelState::Starting {
-                            model_name: model_name.to_string(),
-                            backend: server_config.backend.clone(),
-                            backend_url: String::new(),
-                            last_accessed: Instant::now(),
-                            consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-                            failure_timestamp: None,
-                        },
-                    );
-                    break;
-                }
-            }
+            // Reserve this server with Starting state
+            models.insert(
+                server_name.clone(),
+                ModelState::Starting {
+                    model_name: model_name.to_string(),
+                    backend: server_config.backend.clone(),
+                    backend_url: String::new(),
+                    last_accessed: Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                },
+            );
         }
 
         let backend_path = backend_config.path.clone();
@@ -321,7 +301,7 @@ impl ProxyState {
             server_config.backend, server_name, model_name
         );
 
-        let child = tokio::process::Command::new(&backend_path)
+        let mut child = tokio::process::Command::new(&backend_path)
             .args(&args)
             .env("MODEL_NAME", model_name)
             .spawn()
@@ -339,6 +319,25 @@ impl ProxyState {
             "Backend '{}' started for server '{}' (pid: {:?})",
             server_config.backend, server_name, pid
         );
+
+        // Spawn a reaper task so the child process is waited on and doesn't become a zombie
+        let reaper_server = server_name.clone();
+        tokio::spawn(async move {
+            match child.wait().await {
+                Ok(status) => {
+                    debug!(
+                        "Backend process {} for server '{}' exited with {}",
+                        pid, reaper_server, status
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to wait on backend process {} for server '{}': {}",
+                        pid, reaper_server, e
+                    );
+                }
+            }
+        });
 
         // Wait for health check to pass
         let timeout = Duration::from_secs(30);
@@ -461,6 +460,7 @@ impl ProxyState {
     pub async fn check_idle_timeouts(&self) -> Vec<String> {
         let now = Instant::now();
         let mut to_unload = Vec::new();
+        let mut failed_to_remove = Vec::new();
 
         let models = self.models.read().await;
         for (server_name, state) in models.iter() {
@@ -472,7 +472,7 @@ impl ProxyState {
                         "Server '{}' is in Failed state, marking for cleanup",
                         server_name,
                     );
-                    to_unload.push(server_name.clone());
+                    failed_to_remove.push(server_name.clone());
                     continue;
                 }
             };
@@ -492,11 +492,21 @@ impl ProxyState {
 
         drop(models);
 
-        // Actually unload the models
+        // Remove Failed models directly (no process to kill)
+        if !failed_to_remove.is_empty() {
+            let mut models = self.models.write().await;
+            for server_name in &failed_to_remove {
+                models.remove(server_name);
+                info!("Removed failed server '{}' from model map", server_name);
+            }
+        }
+
+        // Unload Ready models via the normal shutdown path
         for server_name in &to_unload {
             let _ = self.unload_model(server_name).await;
         }
 
+        to_unload.extend(failed_to_remove);
         to_unload
     }
 

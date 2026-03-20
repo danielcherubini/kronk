@@ -285,6 +285,8 @@ enum ConfigCommands {
 }
 
 fn main() -> Result<()> {
+    logging::init();
+
     // Check if we're being launched by the Windows Service Control Manager.
     // SCM passes "service-run" as the first real argument.
     let raw_args: Vec<String> = std::env::args().collect();
@@ -1542,10 +1544,10 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     } = command;
 
     // Apply CLI overrides to config
-    let mut proxy_config = config.proxy.clone();
-    proxy_config.host = host.clone();
-    proxy_config.port = port;
-    proxy_config.idle_timeout_secs = idle_timeout;
+    let mut updated_config = config.clone();
+    updated_config.proxy.host = host.clone();
+    updated_config.proxy.port = port;
+    updated_config.proxy.idle_timeout_secs = idle_timeout;
 
     // Parse host and port
     let (host_addr, warning) = match host.parse::<std::net::IpAddr>() {
@@ -1565,7 +1567,7 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     tracing::info!("Idle timeout: {}s", idle_timeout);
     tracing::info!("Use `kronk proxy start --help` for more options");
 
-    let state = Arc::new(ProxyState::new(config.clone()));
+    let state = Arc::new(ProxyState::new(updated_config));
 
     // Create and run proxy server
     let server = ProxyServer::new(state.clone());
