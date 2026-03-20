@@ -313,10 +313,9 @@ enum ConfigCommands {
 }
 
 fn main() -> Result<()> {
-    logging::init();
-
     // Check if we're being launched by the Windows Service Control Manager.
     // SCM passes "service-run" as the first real argument.
+    // Skip logging::init() for service mode — the service sets up file-based logging.
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.len() > 1 && raw_args[1] == "service-run" {
         #[cfg(target_os = "windows")]
@@ -325,6 +324,8 @@ fn main() -> Result<()> {
         #[cfg(not(target_os = "windows"))]
         anyhow::bail!("Windows service mode is only available on Windows");
     }
+
+    logging::init();
 
     let args = Args::parse();
     let config = Config::load()?;
@@ -516,6 +517,13 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let _ = std::fs::create_dir_all(&log_dir);
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
         .unwrap_or_else(|_| std::fs::File::create("kronk-service.log").unwrap());
+
+    // Set up tracing to write to the log file (services have no stderr)
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(std::sync::Mutex::new(log_file))
+        .with_ansi(false)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
     tracing::info!(
         "Service starting for server: {}, config dir: {:?}",
