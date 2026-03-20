@@ -29,3 +29,6 @@ inquire = "0.7"
 indicatif = "0.18"
 tempfile = "3"
 url = "2"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+bytes = "1.0"

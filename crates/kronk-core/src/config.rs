@@ -13,10 +13,40 @@ pub struct Config {
     pub supervisor: Supervisor,
     #[serde(default)]
     pub custom_profiles: Option<HashMap<String, SamplingParams>>,
+    #[serde(default)]
+    pub proxy: ProxyConfig,
     /// The directory this config was loaded from. Used to resolve models_dir
     /// when running as a service (where %APPDATA% differs from the installing user).
     #[serde(skip)]
     pub loaded_from: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProxyConfig {
+    #[serde(default = "default_proxy_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_proxy_host")]
+    pub host: String,
+    #[serde(default = "default_proxy_port")]
+    pub port: u16,
+    #[serde(default = "default_proxy_timeout")]
+    pub idle_timeout_secs: u64,
+}
+
+fn default_proxy_enabled() -> bool {
+    false
+}
+
+fn default_proxy_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+fn default_proxy_port() -> u16 {
+    8080
+}
+
+fn default_proxy_timeout() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,6 +564,12 @@ impl Default for Config {
                 health_check_interval_ms: 5000,
             },
             custom_profiles: None,
+            proxy: ProxyConfig {
+                enabled: false,
+                host: "0.0.0.0".to_string(),
+                port: 8080,
+                idle_timeout_secs: 300,
+            },
             loaded_from: None,
         }
     }
