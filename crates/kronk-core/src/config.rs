@@ -396,6 +396,79 @@ impl Config {
         args
     }
 
+    /// Build the full argument list for a model, including model card args (-m, -c, -ngl).
+    /// This is the complete arg set needed to start a backend for a given model config.
+    pub fn build_full_args(
+        &self,
+        server: &ModelConfig,
+        backend: &BackendConfig,
+        ctx_override: Option<u32>,
+    ) -> Result<Vec<String>> {
+        let mut args = self.build_args(server, backend);
+
+        // Inject model card args: -m, -c, -ngl
+        if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
+            let models_dir = self.models_dir()?;
+            let configs_dir = self.configs_dir()?;
+            let registry = crate::models::ModelRegistry::new(models_dir, configs_dir);
+            if let Some(installed) = registry.find(model_id)? {
+                if let Some(q) = installed.card.quants.get(quant_name.as_str()) {
+                    if !args.iter().any(|a| a == "-m" || a == "--model") {
+                        args.push("-m".to_string());
+                        args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
+                    }
+                }
+                // Context size: override > model card
+                let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
+                if let Some(ctx) = ctx {
+                    if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
+                        args.push("-c".to_string());
+                        args.push(ctx.to_string());
+                    }
+                }
+                if let Some(ngl) = installed.card.model.default_gpu_layers {
+                    if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
+                        args.push("-ngl".to_string());
+                        args.push(ngl.to_string());
+                    }
+                }
+
+                // 3-layer sampling merge with model card
+                if let Some(sampling) =
+                    self.effective_sampling_with_card(server, Some(&installed.card))
+                {
+                    // Remove any existing sampling args to avoid duplicates
+                    let sampling_args = sampling.to_args();
+                    let sampling_flags: std::collections::HashSet<&str> = sampling_args
+                        .iter()
+                        .filter(|a| a.starts_with("--"))
+                        .map(|a| a.as_str())
+                        .collect();
+
+                    if !sampling_flags.is_empty() {
+                        let mut filtered = Vec::with_capacity(args.len());
+                        let mut skip_next = false;
+                        for arg in &args {
+                            if skip_next {
+                                skip_next = false;
+                                continue;
+                            }
+                            if sampling_flags.contains(arg.as_str()) {
+                                skip_next = true;
+                                continue;
+                            }
+                            filtered.push(arg.clone());
+                        }
+                        args = filtered;
+                    }
+                    args.extend(sampling_args);
+                }
+            }
+        }
+
+        Ok(args)
+    }
+
     /// Resolve effective sampling for a server, including custom profile lookup.
     pub fn effective_sampling(&self, server: &ModelConfig) -> Option<SamplingParams> {
         let base = Self::resolve_profile_params(self, &server.profile);
