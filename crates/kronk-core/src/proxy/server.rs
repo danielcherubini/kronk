@@ -3,7 +3,7 @@ use crate::proxy::ProxyState;
 use anyhow::Context;
 use axum::{
     body::{to_bytes, Body},
-    extract::{Request, State},
+    extract::{Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
@@ -59,7 +59,7 @@ impl ProxyServer {
 
     pub async fn run(self, addr: std::net::SocketAddr) -> anyhow::Result<()> {
         info!("Starting proxy server on {}", addr);
-        
+
         let app = self.into_router();
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
@@ -102,7 +102,7 @@ async fn handle_chat_completions(state: State<Arc<ProxyState>>, req: Request<Bod
         None => {
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
-                Ok(name) => name,
+                Ok(child) => child,
                 Err(e) => {
                     info!("Failed to load model {}: {}", model_name, e);
                     return (
@@ -154,11 +154,16 @@ async fn handle_stream_chat_completions(
         None => {
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
-                Ok(name) => name,
+                Ok(child) => child,
                 Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Failed to load model: {}", e),
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!("Failed to load model: {}", e),
+                                "type": "LoadModelError"
+                            }
+                        })),
                     )
                         .into_response();
                 }
@@ -174,7 +179,7 @@ async fn handle_stream_chat_completions(
 #[axum::debug_handler]
 async fn handle_get_model(
     state: State<Arc<ProxyState>>,
-    model_id: String,
+    Path(model_id): Path<String>,
 ) -> Json<serde_json::Value> {
     let model_state = state.get_model_state(&model_id).await;
 
@@ -253,7 +258,10 @@ async fn forward_request(
                 "Circuit breaker tripped for server '{}' ({} failures). Unloading server.",
                 server_name, failures
             );
-            let _ = state.unload_model(server_name).await;
+            // Unload the server using PID from backend_pid
+            if let Some(_pid) = ms.backend_pid {
+                let _ = state.unload_model(server_name).await;
+            }
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({
@@ -283,11 +291,20 @@ async fn forward_request(
     let client = Client::new();
     let method = parts.method.clone();
 
-let mut headers = reqwest::header::HeaderMap::new();
+    let mut headers = reqwest::header::HeaderMap::new();
     for (key, value) in &parts.headers {
         // Skip hop-by-hop headers
-        if !["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "transfer-encoding", "upgrade", "trailer"]
-            .contains(&key.as_str())
+        if ![
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "transfer-encoding",
+            "upgrade",
+            "trailer",
+        ]
+        .contains(&key.as_str())
             && value.to_str().is_ok()
         {
             headers.insert(key.clone(), value.clone());

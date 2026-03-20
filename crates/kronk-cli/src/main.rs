@@ -450,8 +450,6 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
         .unwrap_or_else(|_| std::fs::File::create("kronk-service.log").unwrap());
 
-    
-
     tracing::info!(
         "Service starting for server: {}, config dir: {:?}",
         server,
@@ -506,10 +504,10 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(
-        "Failed to load config: {}, config dir: {:?}",
-        e,
-        config_dir.as_ref().map(|d| d.display())
-    );
+                "Failed to load config: {}, config dir: {:?}",
+                e,
+                config_dir.as_ref().map(|d| d.display())
+            );
             let _ = status_handle.set_service_status(ServiceStatus {
                 service_type: ServiceType::OWN_PROCESS,
                 current_state: ServiceState::Stopped,
@@ -1537,7 +1535,7 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     use std::net::SocketAddr;
     use std::sync::Arc;
 
-let ProxyCommands::Start {
+    let ProxyCommands::Start {
         host,
         port,
         idle_timeout,
@@ -1551,7 +1549,10 @@ let ProxyCommands::Start {
 
     // Parse host and port
     let addr = SocketAddr::new(
-        std::net::IpAddr::V4(host.parse().unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1))),
+        std::net::IpAddr::V4(
+            host.parse()
+                .unwrap_or(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+        ),
         port,
     );
 
@@ -1583,11 +1584,7 @@ let ProxyCommands::Start {
         kronk_core::backends::registry::BackendRegistry::from_backends(data.backends)
     };
 
-    let state = Arc::new(ProxyState::new(
-        proxy_config,
-        registry,
-        config.clone(),
-    ));
+    let state = Arc::new(ProxyState::new(proxy_config, registry, config.clone()));
 
     // Create and run proxy server
     let server = ProxyServer::new(state.clone());

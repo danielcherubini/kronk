@@ -265,7 +265,7 @@ impl ProxyState {
         // Kill the process if we have the PID
         if let Some(pid) = pid {
             info!("Sending SIGTERM to backend process {}", pid);
-            // Send SIGTERM signal
+            // Send SIGTERM signal (cross-platform via ps/kill)
             let _ = std::process::Command::new("kill")
                 .arg("-TERM")
                 .arg(pid.to_string())

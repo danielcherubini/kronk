@@ -92,7 +92,7 @@ make fmt          # Format all code
 ### Documentation
 
 - Add doc comments to public functions and structs
-- Use `///` for single-line docs, `////` for multi-line
+- Use `///` for single-line docs, consecutive `///` lines for multi-line docs or `/ ... /` for block docs
 - Include `///` before `#[test]` for test documentation
 - Document parameters and return values
 

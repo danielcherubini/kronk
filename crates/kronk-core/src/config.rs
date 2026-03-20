@@ -47,7 +47,7 @@ fn default_proxy_host() -> String {
 }
 
 fn default_proxy_port() -> u16 {
-    8080
+    8081
 }
 
 fn default_proxy_timeout() -> u64 {
@@ -695,16 +695,20 @@ mod tests {
             args: vec![],
             profile: Some(Profile::Coding),
             sampling: None,
-            model: Some("bartowski/OmniCoder".to_string()),
-            quant: Some("Q4_K_M".to_string()),
-            port: None,
-            health_check: None,
+            model: None,
+            quant: None,
+            port: Some(8082),
+            health_check: Some(HealthCheck {
+                url: Some("http://localhost:8081/health".to_string()),
+                interval_ms: Some(5000),
+                timeout_ms: None,
+            }),
             enabled: true,
         };
         let toml_str = toml::to_string_pretty(&server).unwrap();
         let loaded: ServerConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(loaded.model, Some("bartowski/OmniCoder".to_string()));
-        assert_eq!(loaded.quant, Some("Q4_K_M".to_string()));
+        assert_eq!(loaded.model, None);
+        assert_eq!(loaded.quant, None);
     }
 
     #[test]
