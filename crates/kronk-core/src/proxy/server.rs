@@ -219,6 +219,16 @@ async fn handle_health() -> Json<serde_json::Value> {
 }
 
 #[axum::debug_handler]
+async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
+    let models: Vec<String> = state.models.read().await.keys().cloned().collect();
+
+    Json(serde_json::json!({
+        "object": "list",
+        "data": models
+    }))
+}
+
+#[axum::debug_handler]
 async fn handle_fallback() -> StatusCode {
     StatusCode::NOT_FOUND
 }
@@ -229,10 +239,6 @@ mod tests {
     use axum::{
         body::to_bytes,
         http::{Method, Request},
-        routing::post,
-        Router,
-    };
-    use std::sync::Arc;
 
     /// Test SSE streaming response for chat completions
     #[tokio::test]
