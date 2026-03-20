@@ -1,16 +1,25 @@
 pub mod server;
 
-use crate::backends::registry::BackendRegistry;
-use crate::config::ProxyConfig;
+use crate::config::Config;
 use crate::models::card::ModelCard;
 use anyhow::{Context, Result};
+use axum::{
+    body::Body,
+    extract::{Path, State},
+    http::{Response, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+    Router,
+};
+
 use reqwest::Client;
+use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::process::Command as TokioCommand;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
+use tokio::time::interval;
 use tracing::{debug, info, warn};
 
 /// State for a model backend.
@@ -21,9 +30,9 @@ pub enum ModelState {
         model_name: String,
         backend: String,
         backend_url: String,
-        last_accessed: SystemTime,
-        consecutive_failures: Arc<AtomicU32>,
-        failure_timestamp: Option<SystemTime>,
+        last_accessed: Instant,
+        consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
+        failure_timestamp: Option<std::time::SystemTime>,
     },
     /// Backend is ready and accepting traffic
     Ready {
@@ -31,10 +40,10 @@ pub enum ModelState {
         backend: String,
         backend_pid: u32,
         backend_url: String,
-        load_time: SystemTime,
-        last_accessed: SystemTime,
-        consecutive_failures: Arc<AtomicU32>,
-        failure_timestamp: Option<SystemTime>,
+        load_time: std::time::SystemTime,
+        last_accessed: Instant,
+        consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
+        failure_timestamp: Option<std::time::SystemTime>,
     },
     /// Backend failed to start
     Failed {
@@ -72,7 +81,7 @@ impl ModelState {
         }
     }
 
-    pub fn consecutive_failures(&self) -> Option<&Arc<AtomicU32>> {
+    pub fn consecutive_failures(&self) -> Option<&Arc<std::sync::atomic::AtomicU32>> {
         match self {
             ModelState::Starting {
                 consecutive_failures,
@@ -86,18 +95,18 @@ impl ModelState {
         }
     }
 
-    pub fn load_time(&self) -> Option<SystemTime> {
+    pub fn load_time(&self) -> Option<std::time::SystemTime> {
         match self {
             ModelState::Ready { load_time, .. } => Some(*load_time),
             _ => None,
         }
     }
 
-    pub fn last_accessed(&self) -> SystemTime {
+    pub fn last_accessed(&self) -> Instant {
         match self {
             ModelState::Ready { last_accessed, .. } => *last_accessed,
             ModelState::Starting { last_accessed, .. } => *last_accessed,
-            ModelState::Failed { .. } => SystemTime::now(),
+            ModelState::Failed { .. } => Instant::now(),
         }
     }
 
@@ -112,7 +121,7 @@ impl ModelState {
                 failure_timestamp, ..
             } => failure_timestamp
                 .map(|ts| {
-                    SystemTime::now()
+                    std::time::SystemTime::now()
                         .duration_since(ts)
                         .map(|d| d.as_secs() >= cooldown_seconds)
                         .unwrap_or(false)
@@ -125,46 +134,35 @@ impl ModelState {
 /// Metrics for the proxy server.
 #[derive(Debug, Default)]
 pub struct ProxyMetrics {
-    pub total_requests: AtomicU64,
-    pub successful_requests: AtomicU64,
-    pub failed_requests: AtomicU64,
-    pub models_loaded: AtomicU64,
-    pub models_unloaded: AtomicU64,
+    pub total_requests: std::sync::atomic::AtomicU64,
+    pub successful_requests: std::sync::atomic::AtomicU64,
+    pub failed_requests: std::sync::atomic::AtomicU64,
+    pub models_loaded: std::sync::atomic::AtomicU64,
+    pub models_unloaded: std::sync::atomic::AtomicU64,
 }
 
 /// Manages proxy state and model lifecycle.
+#[derive(Clone)]
 pub struct ProxyState {
-    pub config: ProxyConfig,
+    pub config: Config,
     pub models: Arc<RwLock<HashMap<String, ModelState>>>,
-    pub registry: Arc<RwLock<BackendRegistry>>,
-    pub config_data: Arc<RwLock<crate::config::Config>>,
-    pub process_map: Arc<Mutex<HashMap<u32, String>>>,
-    pub process_handles: Arc<Mutex<HashMap<u32, tokio::process::Child>>>,
-    pub client: Arc<Client>,
+    pub client: Client,
     pub metrics: Arc<ProxyMetrics>,
 }
 
 impl ProxyState {
-    pub fn new(
-        config: ProxyConfig,
-        registry: BackendRegistry,
-        config_data: crate::config::Config,
-    ) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             models: Arc::new(RwLock::new(HashMap::new())),
-            registry: Arc::new(RwLock::new(registry)),
-            config_data: Arc::new(RwLock::new(config_data)),
-            process_map: Arc::new(Mutex::new(HashMap::new())),
-            process_handles: Arc::new(Mutex::new(HashMap::new())),
-            client: Arc::new(Client::new()),
+            client: Client::new(),
             metrics: Arc::new(ProxyMetrics::default()),
         }
     }
 
     /// Get the backend URL for a server name.
     pub async fn get_backend_url(&self, server_name: &str) -> Result<String> {
-        let config = self.config_data.read().await;
+        let config = self.config.clone();
         let server = config
             .servers
             .get(server_name)
@@ -194,7 +192,7 @@ impl ProxyState {
     pub async fn get_model_state_with_access(
         &self,
         server_name: &str,
-    ) -> Option<(ModelState, SystemTime)> {
+    ) -> Option<(ModelState, Instant)> {
         let models = self.models.read().await;
         models
             .get(server_name)
@@ -215,31 +213,28 @@ impl ProxyState {
 
     /// Get the circuit breaker failures for a server.
     pub async fn get_circuit_breaker_failures(&self, server_name: &str) -> Option<u32> {
-        self.models
-            .read()
-            .await
-            .get(server_name)
-            .and_then(|s| s.consecutive_failures().map(|f| f.load(Ordering::Relaxed)))
+        self.models.read().await.get(server_name).and_then(|s| {
+            s.consecutive_failures()
+                .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+        })
     }
 
     /// Find an available loaded server for a given model name.
     pub async fn get_available_server_for_model(&self, model_name: &str) -> Option<String> {
-        let config = self.config_data.read().await;
+        let config = self.config.clone();
         let servers = config.resolve_servers_for_model(model_name);
 
         let models = self.models.read().await;
 
         // Simple round-robin or first available
-        // For simplicity, we just pick the first one that is loaded (Ready or Starting)
-        // and hasn't tripped the circuit breaker
         for (server_name, _, _) in servers {
             if let Some(state) = models.get(&server_name) {
                 if (state.is_ready() || matches!(state, ModelState::Starting { .. }))
                     && state
                         .consecutive_failures()
-                        .map(|f| f.load(Ordering::Relaxed))
+                        .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
                         .unwrap_or(0)
-                        < self.config.circuit_breaker_threshold
+                        > self.config.proxy.circuit_breaker_threshold
                 {
                     return Some(server_name);
                 }
@@ -257,7 +252,7 @@ impl ProxyState {
     ) -> Result<String> {
         debug!("Loading model: {}", model_name);
 
-        let config = self.config_data.read().await;
+        let config = self.config.clone();
 
         // Find a server that provides this model
         let server_name = match self.get_available_server_for_model(model_name).await {
@@ -306,8 +301,8 @@ impl ProxyState {
                             model_name: model_name.to_string(),
                             backend: server_config.backend.clone(),
                             backend_url: String::new(),
-                            last_accessed: SystemTime::now(),
-                            consecutive_failures: Arc::new(AtomicU32::new(0)),
+                            last_accessed: Instant::now(),
+                            consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                             failure_timestamp: None,
                         },
                     );
@@ -324,7 +319,7 @@ impl ProxyState {
             .with_context(|| format!("No health URL resolved for server: {}", server_name))?;
         let backend_url = config
             .resolve_backend_url(server_config)
-            .with_context(|| format!("No health URL resolved for server: {}", server_name))?;
+            .with_context(|| format!("No backend URL resolved for server: {}", server_name))?;
 
         info!(
             "Starting backend '{}' for server '{}' (model '{}')",
@@ -350,14 +345,6 @@ impl ProxyState {
             server_config.backend, server_name, pid
         );
 
-        // Register PID and Child handle in process maps
-        {
-            let mut processes = self.process_map.lock().await;
-            processes.insert(pid, server_name.clone());
-            let mut handles = self.process_handles.lock().await;
-            handles.insert(pid, child);
-        }
-
         // Wait for health check to pass
         let timeout = Duration::from_secs(30);
         let start = Instant::now();
@@ -377,24 +364,6 @@ impl ProxyState {
         }
 
         if start.elapsed() >= timeout {
-            // Remove Child handle and wait
-            let child = self.process_handles.lock().await.remove(&pid);
-            if let Some(mut child) = child {
-                tokio::task::spawn_blocking(move || {
-                    std::mem::drop(child.wait());
-                })
-                .await
-                .unwrap();
-            }
-            let mut processes = self.process_map.lock().await;
-            processes.remove(&pid);
-
-            // Remove from models (cleanup failed reservation)
-            {
-                let mut models = self.models.write().await;
-                models.remove(&server_name);
-            }
-
             return Err(anyhow::anyhow!(
                 "Backend '{}' failed to start for server '{}' (timeout after {}s)",
                 server_config.backend,
@@ -413,9 +382,9 @@ impl ProxyState {
                         backend: server_config.backend.clone(),
                         backend_pid: pid,
                         backend_url,
-                        load_time: SystemTime::now(),
-                        last_accessed: SystemTime::now(),
-                        consecutive_failures: Arc::new(AtomicU32::new(0)),
+                        load_time: std::time::SystemTime::now(),
+                        last_accessed: Instant::now(),
+                        consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                         failure_timestamp: None,
                     };
                 }
@@ -423,7 +392,9 @@ impl ProxyState {
         }
 
         info!("Server '{}' loaded successfully", server_name);
-        self.metrics.models_loaded.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .models_loaded
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(server_name)
     }
 
@@ -461,45 +432,33 @@ impl ProxyState {
         // Wait up to 5 seconds for graceful shutdown
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        // Remove Child handle and wait
-        let child = self.process_handles.lock().await.remove(&pid);
-        if let Some(mut child) = child {
-            tokio::task::spawn_blocking(move || {
-                std::mem::drop(child.wait());
-            })
-            .await
-            .unwrap();
-        }
-        let mut processes = self.process_map.lock().await;
-        processes.remove(&pid);
-
         // Remove from models
         let mut models = self.models.write().await;
         models.remove(server_name);
 
         info!("Server '{}' unloaded", server_name);
-        self.metrics.models_unloaded.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .models_unloaded
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
     /// Check if any server has been idle for longer than the timeout.
     pub async fn check_idle_timeouts(&self) -> Vec<String> {
-        let now = SystemTime::now();
+        let now = Instant::now();
         let mut to_unload = Vec::new();
 
         let models = self.models.read().await;
         for (server_name, state) in models.iter() {
-            let idle_duration = now
-                .duration_since(state.last_accessed())
-                .unwrap_or(Duration::ZERO);
-            let timeout = Duration::from_secs(self.config.idle_timeout_secs);
+            let idle_duration = now.duration_since(state.last_accessed());
+            let timeout = Duration::from_secs(self.config.proxy.idle_timeout_secs);
 
             if idle_duration > timeout {
                 warn!(
                     "Server '{}' has been idle for {}s (timeout: {}s)",
                     server_name,
                     idle_duration.as_secs(),
-                    self.config.idle_timeout_secs
+                    self.config.proxy.idle_timeout_secs
                 );
                 to_unload.push(server_name.clone());
             }
@@ -521,10 +480,10 @@ impl ProxyState {
         if let Some(state) = models.get_mut(server_name) {
             match state {
                 ModelState::Starting { last_accessed, .. } => {
-                    *last_accessed = SystemTime::now();
+                    *last_accessed = Instant::now();
                 }
                 ModelState::Ready { last_accessed, .. } => {
-                    *last_accessed = SystemTime::now();
+                    *last_accessed = Instant::now();
                 }
                 ModelState::Failed { .. } => {}
             }
@@ -533,7 +492,7 @@ impl ProxyState {
 
     /// Get the model card for a model name.
     pub async fn get_model_card(&self, model_name: &str) -> Option<crate::models::card::ModelCard> {
-        let configs_dir = self.config_data.read().await.configs_dir().ok()?;
+        let configs_dir = self.config.configs_dir().ok()?;
 
         // Try to find the model card file
         // Format: configs.d/<company>--<model>.toml
@@ -552,6 +511,18 @@ impl ProxyState {
         } else {
             None
         }
+    }
+
+    /// Start the idle reaper background task.
+    pub fn start_idle_reaper(&self) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let _ = state.check_idle_timeouts().await;
+            }
+        });
     }
 }
 
@@ -601,60 +572,139 @@ async fn check_health(url: &str, timeout: Option<u64>) -> Result<reqwest::Respon
         .with_context(|| format!("Failed to check health: {}", url))
 }
 
+/// List all available models (OpenAI API compatible).
+async fn list_models(State(state): State<ProxyState>) -> impl IntoResponse {
+    let mut data = Vec::new();
+    for name in state.config.servers.keys() {
+        data.push(serde_json::json!({
+            "id": name,
+            "object": "model",
+            "created": 0,
+            "owned_by": "kronk"
+        }));
+    }
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "object": "list", "data": data })),
+    )
+}
+
+/// Get details for a single model (OpenAI API compatible).
+async fn get_model(
+    Path(model_name): Path<String>,
+    State(state): State<ProxyState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if state.config.servers.contains_key(&model_name) {
+        Ok(axum::Json(serde_json::json!({
+            "id": model_name,
+            "object": "model",
+            "created": 0,
+            "owned_by": "kronk"
+        })))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+/// Proxy handler for all other /v1/* paths.
+async fn proxy_request(
+    State(state): State<ProxyState>,
+    req: axum::extract::Request,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let path = req.uri().path().to_string();
+    let query = req
+        .uri()
+        .query()
+        .map(|q| format!("?{}", q))
+        .unwrap_or_default();
+
+    // 1. Read the entire body into memory to parse it and forward it
+    let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    // 2. Parse JSON just to find the "model" key
+    let json_body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", e)))?;
+
+    let model_name = json_body.get("model").and_then(|m| m.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        "Missing 'model' field in JSON payload".to_string(),
+    ))?;
+
+    // 3. Ensure model is running and get its local port
+    let server_name = state
+        .load_model(model_name, None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 4. Construct upstream URL
+    let backend_url = state
+        .get_backend_url(&server_name)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut target_url = format!("http://{}{}", backend_url, path);
+    if !query.is_empty() {
+        target_url.push_str(&query);
+    }
+
+    // 5. Forward the request using Reqwest
+    let reqwest_res = state
+        .client
+        .post(&target_url)
+        .header("Content-Type", "application/json")
+        .body(reqwest::Body::from(body_bytes))
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    // 6. Convert the Reqwest response (SSE stream) directly into an Axum body
+    let mut response_builder = Response::builder().status(reqwest_res.status());
+    for (key, value) in reqwest_res.headers() {
+        response_builder = response_builder.header(key, value);
+    }
+    let axum_body = Body::from_stream(reqwest_res.bytes_stream());
+
+    Ok(response_builder.body(axum_body).unwrap())
+}
+
+/// Start the OpenAI proxy server.
+pub async fn start_server(config: Config) -> Result<()> {
+    let state = ProxyState::new(config.clone());
+
+    state.start_idle_reaper();
+
+    let app = Router::new()
+        .route("/v1/models", get(list_models))
+        .route("/v1/models/:model", get(get_model))
+        // Catch-all POST for the proxy handler
+        .route("/v1/*path", post(proxy_request))
+        .with_state(state);
+
+    let bind_addr = format!("{}:{}", config.proxy.host, config.proxy.port);
+    info!("Starting OpenAI proxy server on http://{}", bind_addr);
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_is_model_loaded() {
-        let config = ProxyConfig::default();
-        let registry = BackendRegistry::default();
-        let config_data = crate::config::Config::default();
-        let state = ProxyState::new(config, registry, config_data);
+    async fn test_list_models() {
+        let config = Config::default();
+        let state = ProxyState::new(config);
 
-        assert!(!state.is_model_loaded("test-model").await);
-    }
-
-    #[tokio::test]
-    async fn test_get_model_state() {
-        let config = ProxyConfig::default();
-        let registry = BackendRegistry::default();
-        let config_data = crate::config::Config::default();
-        let state = ProxyState::new(config, registry, config_data);
-
-        assert!(state.get_model_state("test-model").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_get_model_card() {
-        use tempfile::TempDir;
-
-        let config = ProxyConfig::default();
-        let registry = BackendRegistry::default();
-
-        // Create a temporary directory for configs to make test hermetic
-        let temp_dir = TempDir::new().unwrap();
-        let config_data = crate::config::Config {
-            general: crate::config::General {
-                log_level: "info".to_string(),
-                models_dir: None,
-                logs_dir: None,
-            },
-            backends: HashMap::new(),
-            servers: HashMap::new(),
-            supervisor: crate::config::Supervisor {
-                restart_policy: "always".to_string(),
-                max_restarts: 0,
-                restart_delay_ms: 0,
-                health_check_interval_ms: 0,
-            },
-            custom_profiles: None,
-            proxy: config.clone(),
-            loaded_from: Some(temp_dir.path().to_path_buf()),
-        };
-        let state = ProxyState::new(config, registry, config_data);
-
-        let card = state.get_model_card("test-model").await;
-        assert!(card.is_none());
+        let response = list_models(State(state)).await;
+        let body_bytes = axum::body::to_bytes(response.into_response().into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = serde_json::from_slice::<serde_json::Value>(&body_bytes).unwrap();
+        assert_eq!(body["object"], "list");
     }
 }

@@ -311,9 +311,9 @@ async fn forward_request(
             .consecutive_failures()
             .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
             .unwrap_or(0);
-        if failures >= state.config.circuit_breaker_threshold {
+        if failures >= state.config.proxy.circuit_breaker_threshold {
             // Check if cooldown has elapsed
-            if !ms.can_reload(state.config.circuit_breaker_cooldown_seconds) {
+            if !ms.can_reload(state.config.proxy.circuit_breaker_cooldown_seconds) {
                 info!(
                     "Circuit breaker cooldown active for server '{}' ({} failures). Waiting for cooldown.",
                     server_name, failures
@@ -518,10 +518,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_routes_exist() {
-        let config = crate::proxy::ProxyConfig::default();
-        let registry = crate::backends::registry::BackendRegistry::default();
-        let config_data = crate::config::Config::default();
-        let state = Arc::new(crate::proxy::ProxyState::new(config, registry, config_data));
+        let config = crate::config::Config::default();
+        let _registry = crate::backends::registry::BackendRegistry::default();
+        let _config_data = crate::config::ProxyConfig::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(config));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
@@ -554,10 +554,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_chat_completions_route() {
-        let config = crate::proxy::ProxyConfig::default();
-        let registry = crate::backends::registry::BackendRegistry::default();
-        let config_data = crate::config::Config::default();
-        let state = Arc::new(crate::proxy::ProxyState::new(config, registry, config_data));
+        let config = crate::config::Config::default();
+        let _registry = crate::backends::registry::BackendRegistry::default();
+        let _config_data = crate::config::ProxyConfig::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(config));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
@@ -586,10 +586,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_route() {
-        let config = crate::proxy::ProxyConfig::default();
-        let registry = crate::backends::registry::BackendRegistry::default();
-        let config_data = crate::config::Config::default();
-        let state = Arc::new(crate::proxy::ProxyState::new(config, registry, config_data));
+        let config = crate::config::Config::default();
+        let _registry = crate::backends::registry::BackendRegistry::default();
+        let _config_data = crate::config::ProxyConfig::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(config));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();

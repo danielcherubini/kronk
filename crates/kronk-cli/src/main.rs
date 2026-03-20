@@ -1566,7 +1566,7 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     tracing::info!("Use `kronk proxy start --help` for more options");
 
     // Create BackendRegistry for dynamic model loading
-    let registry = {
+    let _registry = {
         let _base_dir = std::env::current_dir().context("Failed to get current directory")?;
         let mut data = kronk_core::backends::registry::RegistryData::default();
         for (name, backend) in &config.backends {
@@ -1589,7 +1589,7 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
         kronk_core::backends::registry::BackendRegistry::from_backends(data.backends)
     };
 
-    let state = Arc::new(ProxyState::new(proxy_config, registry, config.clone()));
+    let state = Arc::new(ProxyState::new(config.clone()));
 
     // Create and run proxy server
     let server = ProxyServer::new(state.clone());
