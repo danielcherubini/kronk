@@ -9,18 +9,23 @@ use axum::{
     routing::{get, post},
     Router,
 };
+
 use reqwest::Client;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::info;
 
 fn json_error_response() -> Response {
-    Json(serde_json::json!({
-        "error": {
-            "message": "Bad Request",
-            "type": "BadRequestError"
-        }
-    }))
-    .into_response()
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": {
+                "message": "Bad Request",
+                "type": "BadRequestError"
+            }
+        })),
+    )
+        .into_response()
 }
 
 pub struct ProxyServer {
@@ -90,10 +95,21 @@ async fn handle_chat_completions(state: State<Arc<ProxyState>>, req: Request<Bod
             }
         };
 
-    let model_name = request
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+    let model_name = match request.get("model").and_then(|v| v.as_str()) {
+        Some(name) => name,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "Missing required field: model",
+                        "type": "BadRequestError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
 
     info!("Routing request for model: {}", model_name);
 
@@ -102,7 +118,7 @@ async fn handle_chat_completions(state: State<Arc<ProxyState>>, req: Request<Bod
         None => {
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
-                Ok(child) => child,
+                Ok(s) => s,
                 Err(e) => {
                     info!("Failed to load model {}: {}", model_name, e);
                     return (
@@ -139,13 +155,35 @@ async fn handle_stream_chat_completions(
     let request: serde_json::Value =
         match serde_json::from_slice(&body_bytes).context("Failed to parse request body") {
             Ok(r) => r,
-            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": "Bad Request",
+                            "type": "BadRequestError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
         };
 
-    let model_name = request
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+    let model_name = match request.get("model").and_then(|v| v.as_str()) {
+        Some(name) => name,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "Missing required field: model",
+                        "type": "BadRequestError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
 
     info!("Streaming request for model: {}", model_name);
 
@@ -154,7 +192,7 @@ async fn handle_stream_chat_completions(
         None => {
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
-                Ok(child) => child,
+                Ok(s) => s,
                 Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -177,27 +215,31 @@ async fn handle_stream_chat_completions(
 }
 
 #[axum::debug_handler]
-async fn handle_get_model(
-    state: State<Arc<ProxyState>>,
-    Path(model_id): Path<String>,
-) -> Json<serde_json::Value> {
+async fn handle_get_model(state: State<Arc<ProxyState>>, Path(model_id): Path<String>) -> Response {
     let model_state = state.get_model_state(&model_id).await;
 
     if let Some(state) = model_state {
+        let load_time = state.load_time().unwrap_or(Instant::now());
+        let owned_by = state.backend();
         Json(serde_json::json!({
             "id": model_id,
             "object": "model",
-            "created": state.load_time.elapsed().as_secs(),
-            "owned_by": state.backend,
+            "created": load_time.elapsed().as_secs(),
+            "owned_by": owned_by,
             "ready": true
         }))
+        .into_response()
     } else {
-        Json(serde_json::json!({
-            "error": {
-                "message": "Model not found",
-                "type": "NotFoundError"
-            }
-        }))
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "Model not found",
+                    "type": "NotFoundError"
+                }
+            })),
+        )
+            .into_response()
     }
 }
 
@@ -251,7 +293,7 @@ async fn forward_request(
     let model_state = state.get_model_state(server_name).await;
     if let Some(ms) = &model_state {
         let failures = ms
-            .consecutive_failures
+            .consecutive_failures()
             .load(std::sync::atomic::Ordering::Relaxed);
         if failures >= state.config.circuit_breaker_threshold {
             info!(
@@ -259,7 +301,7 @@ async fn forward_request(
                 server_name, failures
             );
             // Unload the server using PID from backend_pid
-            if let Some(_pid) = ms.backend_pid {
+            if let Some(_pid) = ms.backend_pid() {
                 let _ = state.unload_model(server_name).await;
             }
             return (
@@ -275,16 +317,46 @@ async fn forward_request(
         }
     }
 
-    let backend_url = state
-        .get_backend_url(server_name)
-        .await
-        .unwrap_or_else(|e| {
+    let backend_url = match state.get_backend_url(server_name).await {
+        Ok(url) => url,
+        Err(e) => {
             info!("Failed to get backend URL for {}: {}", server_name, e);
-            "http://127.0.0.1:8080".to_string()
-        });
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Failed to get backend URL: {}", e),
+                        "type": "BackendUrlError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
 
-    // Combine backend_url with the request path
-    let target_uri = format!("{}{}", backend_url, parts.uri.path());
+    // Combine backend_url with the request path and query
+    let path_and_query = match parts.uri.path_and_query() {
+        Some(pq) => pq,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "Invalid request URI",
+                        "type": "BadRequestError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let (path, query) = path_and_query
+        .as_str()
+        .split_once('?')
+        .unwrap_or((path_and_query.as_str(), ""));
+
+    let target_uri = format!("{}{}", backend_url, path);
 
     info!("Forwarding request to: {}", target_uri);
 
@@ -312,8 +384,13 @@ async fn forward_request(
         }
     }
 
+    let mut query_string = query.to_string();
+    if !query_string.is_empty() {
+        query_string = format!("?{}", query_string);
+    }
+
     match client
-        .request(method, &target_uri)
+        .request(method, format!("{}{}", target_uri, query_string))
         .headers(headers)
         .body(body_bytes.to_vec())
         .send()
@@ -327,7 +404,7 @@ async fn forward_request(
                     .successful_requests
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(ms) = &model_state {
-                    ms.consecutive_failures
+                    ms.consecutive_failures()
                         .store(0, std::sync::atomic::Ordering::Relaxed);
                 }
             } else {
@@ -337,7 +414,7 @@ async fn forward_request(
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if status.is_server_error() {
                     if let Some(ms) = &model_state {
-                        ms.consecutive_failures
+                        ms.consecutive_failures()
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
@@ -360,7 +437,7 @@ async fn forward_request(
                 .failed_requests
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(ms) = &model_state {
-                ms.consecutive_failures
+                ms.consecutive_failures()
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             info!("Failed to forward request: {}", e);
