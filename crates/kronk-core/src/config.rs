@@ -13,10 +13,70 @@ pub struct Config {
     pub supervisor: Supervisor,
     #[serde(default)]
     pub custom_profiles: Option<HashMap<String, SamplingParams>>,
+    #[serde(default)]
+    pub proxy: ProxyConfig,
     /// The directory this config was loaded from. Used to resolve models_dir
     /// when running as a service (where %APPDATA% differs from the installing user).
     #[serde(skip)]
     pub loaded_from: Option<PathBuf>,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_proxy_enabled(),
+            host: default_proxy_host(),
+            port: default_proxy_port(),
+            idle_timeout_secs: default_proxy_timeout(),
+            circuit_breaker_threshold: default_circuit_breaker_threshold(),
+            circuit_breaker_cooldown_seconds: default_circuit_breaker_cooldown(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConfig {
+    #[serde(default = "default_proxy_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_proxy_host")]
+    pub host: String,
+    #[serde(default = "default_proxy_port")]
+    pub port: u16,
+    #[serde(default = "default_proxy_timeout")]
+    pub idle_timeout_secs: u64,
+    #[serde(default = "default_circuit_breaker_threshold")]
+    pub circuit_breaker_threshold: u32,
+    #[serde(default = "default_circuit_breaker_cooldown")]
+    pub circuit_breaker_cooldown_seconds: u64,
+}
+
+/// Maximum request body size in bytes (16 MB)
+pub const MAX_REQUEST_BODY_SIZE: usize = 16 * 1024 * 1024;
+
+fn default_proxy_enabled() -> bool {
+    false
+}
+
+fn default_proxy_host() -> String {
+    "0.0.0.0".to_string()
+}
+
+pub const DEFAULT_PROXY_PORT: u16 = 11434;
+
+fn default_proxy_port() -> u16 {
+    DEFAULT_PROXY_PORT
+}
+
+fn default_proxy_timeout() -> u64 {
+    300
+}
+
+fn default_circuit_breaker_threshold() -> u32 {
+    3
+}
+
+fn default_circuit_breaker_cooldown() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,16 +224,41 @@ impl Config {
         let server = self
             .servers
             .get(name)
-            .with_context(|| format!("Server '{}' not found in config", name))?;
+            .or_else(|| {
+                // Fallback: search for a server where the 'model' field matches the requested name
+                self.servers
+                    .values()
+                    .find(|s| s.model.as_deref() == Some(name) && s.enabled)
+            })
+            .with_context(|| format!("Server or model '{}' not found in config", name))?;
 
         let backend = self.backends.get(&server.backend).with_context(|| {
             format!(
-                "Backend '{}' referenced by server '{}' not found in config",
-                server.backend, name
+                "Backend '{}' referenced by server not found in config",
+                server.backend
             )
         })?;
 
         Ok((server, backend))
+    }
+
+    pub fn resolve_servers_for_model(
+        &self,
+        model_name: &str,
+    ) -> Vec<(String, &ServerConfig, &BackendConfig)> {
+        let mut results = Vec::new();
+
+        for (server_name, server) in &self.servers {
+            if (server_name == model_name || server.model.as_deref() == Some(model_name))
+                && server.enabled
+            {
+                if let Some(backend) = self.backends.get(&server.backend) {
+                    results.push((server_name.clone(), server, backend));
+                }
+            }
+        }
+
+        results
     }
 
     /// Resolve the health check URL for a server, taking into account:
@@ -205,6 +290,45 @@ impl Config {
         // backend.health_check_url is None, try server.port fallback
         if let Some(port) = server.port {
             return Some(format!("http://localhost:{}/health", port));
+        }
+
+        // Neither backend.health_check_url nor server.port present
+        None
+    }
+
+    /// Resolve the backend URL (without /health) for a server.
+    pub fn resolve_backend_url(&self, server: &ServerConfig) -> Option<String> {
+        let backend = match self.backends.get(&server.backend) {
+            Some(b) => b,
+            None => {
+                tracing::warn!(
+                    "Backend '{}' not found when resolving backend URL",
+                    server.backend
+                );
+                return None;
+            }
+        };
+
+        // If backend has health_check_url, derive the base URL from it
+        if let Some(ref health_url) = backend.health_check_url {
+            let mut url = url::Url::parse(health_url).ok()?;
+
+            // Override port if the server specifies one
+            if let Some(port) = server.port {
+                url.set_port(Some(port)).ok()?;
+            }
+
+            // Strip the path to get the base origin (scheme + host + port)
+            url.set_path("");
+            url.set_query(None);
+            url.set_fragment(None);
+            let base = url.to_string().trim_end_matches('/').to_string();
+            return Some(base);
+        }
+
+        // backend.health_check_url is None, try server.port fallback
+        if let Some(port) = server.port {
+            return Some(format!("http://localhost:{}", port));
         }
 
         // Neither backend.health_check_url nor server.port present
@@ -534,6 +658,14 @@ impl Default for Config {
                 health_check_interval_ms: 5000,
             },
             custom_profiles: None,
+            proxy: ProxyConfig {
+                enabled: false,
+                host: "0.0.0.0".to_string(),
+                port: default_proxy_port(),
+                idle_timeout_secs: 300,
+                circuit_breaker_threshold: 3,
+                circuit_breaker_cooldown_seconds: default_circuit_breaker_cooldown(),
+            },
             loaded_from: None,
         }
     }
@@ -626,16 +758,20 @@ mod tests {
             args: vec![],
             profile: Some(Profile::Coding),
             sampling: None,
-            model: Some("bartowski/OmniCoder".to_string()),
-            quant: Some("Q4_K_M".to_string()),
-            port: None,
-            health_check: None,
+            model: None,
+            quant: None,
+            port: Some(8082),
+            health_check: Some(HealthCheck {
+                url: Some("http://localhost:8081/health".to_string()),
+                interval_ms: Some(5000),
+                timeout_ms: None,
+            }),
             enabled: true,
         };
         let toml_str = toml::to_string_pretty(&server).unwrap();
         let loaded: ServerConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(loaded.model, Some("bartowski/OmniCoder".to_string()));
-        assert_eq!(loaded.quant, Some("Q4_K_M".to_string()));
+        assert_eq!(loaded.model, None);
+        assert_eq!(loaded.quant, None);
     }
 
     #[test]

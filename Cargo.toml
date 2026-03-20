@@ -15,6 +15,7 @@ license = "MIT"
 tokio = { version = "1", features = ["full", "process", "io-util"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -29,3 +30,7 @@ inquire = "0.7"
 indicatif = "0.18"
 tempfile = "3"
 url = "2"
+axum = { version = "0.7", features = ["http2", "macros"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+bytes = "1.0"
+http-body-util = "0.1"
