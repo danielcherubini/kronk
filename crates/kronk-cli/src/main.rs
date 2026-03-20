@@ -17,7 +17,7 @@ use commands::backend::{BackendArgs, BackendSubcommand};
 #[derive(Parser, Debug)]
 #[command(name = "kronk")]
 #[command(version)]
-#[command(about = "Oh yeah, it's all coming together. -- Local AI Service Manager")]
+#[command(about = "Oh yeah, it's all coming together. -- Local AI Server")]
 struct Args {
     #[command(subcommand)]
     command: Commands,
@@ -25,7 +25,7 @@ struct Args {
 
 #[derive(Parser, Debug)]
 enum Commands {
-    /// Pull the lever! Run a server in the foreground
+    /// Run a single server in the foreground (for debugging)
     Run {
         /// Server name (required)
         name: String,
@@ -41,11 +41,15 @@ enum Commands {
     /// Internal: called by Windows SCM (do not use directly)
     #[command(hide = true)]
     ServiceRun {
+        /// Run a single server backend (legacy mode)
         #[arg(short, long)]
-        server: String,
+        server: Option<String>,
         /// Override context size (e.g. 8192, 16384). Takes priority over model card value.
         #[arg(long)]
         ctx: Option<u32>,
+        /// Run the proxy server instead of a single backend
+        #[arg(long)]
+        proxy: bool,
     },
     /// Add a new server from a raw command line
     #[command(hide = true)]
@@ -66,6 +70,7 @@ enum Commands {
         command: Vec<String>,
     },
     /// Manage servers — list, add, edit, remove
+    #[command(hide = true)]
     Server {
         #[command(subcommand)]
         command: ServerCommands,
@@ -92,7 +97,20 @@ enum Commands {
         #[command(subcommand)]
         command: BackendSubcommand,
     },
-    /// OpenAI-compliant proxy for local AI models
+    /// Start kronk server (OpenAI-compatible API on a single port)
+    Serve {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Port to bind to
+        #[arg(long, default_value = "11434")]
+        port: u16,
+        /// Idle timeout in seconds (models unload after this many seconds of inactivity)
+        #[arg(long, default_value = "300")]
+        idle_timeout: u64,
+    },
+    /// OpenAI-compliant proxy for local AI models (deprecated: use `kronk serve`)
+    #[command(hide = true)]
     Proxy {
         /// Proxy settings
         #[command(subcommand)]
@@ -100,8 +118,8 @@ enum Commands {
     },
     /// View server logs
     Logs {
-        /// Server name
-        name: String,
+        /// Server name (defaults to "kronk" proxy logs)
+        name: Option<String>,
         /// Follow log output (like tail -f)
         #[arg(short, long)]
         follow: bool,
@@ -138,9 +156,19 @@ pub enum ModelCommands {
     Ls,
     /// Show running model processes
     Ps,
-    /// Create a server from an installed model
+    /// Enable a model (will be loaded on demand by the proxy)
+    Enable {
+        /// Model config name
+        name: String,
+    },
+    /// Disable a model (will not be loaded by the proxy)
+    Disable {
+        /// Model config name
+        name: String,
+    },
+    /// Create a model config from an installed model
     Create {
-        /// Server name to create
+        /// Config name to create
         name: String,
         /// Model ID in "company/modelname" format
         #[arg(long)]
@@ -252,24 +280,24 @@ enum ProfileCommands {
 
 #[derive(Parser, Debug)]
 enum ServiceCommands {
-    /// Install server(s) as system service(s)
+    /// Install kronk as a system service (proxy mode)
     Install {
-        /// Server name (omit to install all enabled servers)
+        /// Server name (omit to install the proxy; provide a name for legacy single-backend mode)
         name: Option<String>,
     },
-    /// Start an installed service
+    /// Start the kronk service
     Start {
-        /// Server name (omit to start all enabled servers)
+        /// Server name (omit to start the proxy service)
         name: Option<String>,
     },
-    /// Stop a running service
+    /// Stop the kronk service
     Stop {
-        /// Server name (omit to stop all enabled servers)
+        /// Server name (omit to stop the proxy service)
         name: Option<String>,
     },
-    /// Remove an installed service
+    /// Remove the kronk service
     Remove {
-        /// Server name (omit to remove all enabled servers)
+        /// Server name (omit to remove the proxy service)
         name: Option<String>,
     },
 }
@@ -306,7 +334,21 @@ fn main() -> Result<()> {
         match args.command {
             Commands::Run { name, ctx } => cmd_run(&config, &name, ctx).await,
             Commands::Service { command } => cmd_service(&config, command),
-            Commands::ServiceRun { server, ctx } => cmd_run(&config, &server, ctx).await,
+            Commands::ServiceRun { server, ctx, proxy } => {
+                if proxy {
+                    let host = config.proxy.host.clone();
+                    let port = config.proxy.port;
+                    let idle_timeout = config.proxy.idle_timeout_secs;
+                    cmd_serve(&config, host, port, idle_timeout).await
+                } else {
+                    let server = server.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Either --server or --proxy must be provided for service-run"
+                        )
+                    })?;
+                    cmd_run(&config, &server, ctx).await
+                }
+            }
             Commands::Add { name, command } => cmd_server_add(&config, &name, command, false).await,
             Commands::Update { name, command } => {
                 cmd_server_edit(&mut config.clone(), &name, command).await
@@ -319,12 +361,20 @@ fn main() -> Result<()> {
             Commands::Backend { command } => {
                 commands::backend::run(&config, BackendArgs { command }).await
             }
+            Commands::Serve {
+                host,
+                port,
+                idle_timeout,
+            } => cmd_serve(&config, host, port, idle_timeout).await,
             Commands::Proxy { command } => cmd_proxy(&config, command).await,
             Commands::Logs {
                 name,
                 follow,
                 lines,
-            } => cmd_logs(&config, &name, follow, lines).await,
+            } => {
+                let name = name.unwrap_or_else(|| "kronk".to_string());
+                cmd_logs(&config, &name, follow, lines).await
+            }
         }
     })
 }
@@ -334,10 +384,10 @@ async fn cmd_logs(config: &Config, name: &str, follow: bool, lines: usize) -> Re
     let log_path = logging::log_path(&logs_dir, name);
 
     if !log_path.exists() {
-        println!("No logs found for server '{}'.", name);
+        println!("No logs found for '{}'.", name);
         println!();
         println!("Logs are created when running as a service.");
-        println!("For foreground: kronk run {}", name);
+        println!("Install the service: kronk service install");
         return Ok(());
     }
 
@@ -371,14 +421,19 @@ async fn cmd_logs(config: &Config, name: &str, follow: bool, lines: usize) -> Re
 
 #[cfg(target_os = "windows")]
 fn service_dispatch() -> Result<()> {
-    // Extract server name and config-dir from args before SCM takes over
+    // Extract args from the command line before SCM takes over
     let raw_args: Vec<String> = std::env::args().collect();
+    let is_proxy = raw_args.iter().any(|a| a == "--proxy");
+
     let server = raw_args
         .iter()
         .position(|a| a == "--server")
         .and_then(|i| raw_args.get(i + 1))
-        .cloned()
-        .expect("Missing --server argument. This binary should be launched by the Windows Service Control Manager.");
+        .cloned();
+
+    if !is_proxy && server.is_none() {
+        anyhow::bail!("Either --server or --proxy must be provided. This binary should be launched by the Windows Service Control Manager.");
+    }
 
     let config_dir = raw_args
         .iter()
@@ -392,11 +447,18 @@ fn service_dispatch() -> Result<()> {
         .and_then(|i| raw_args.get(i + 1))
         .and_then(|s| s.parse().ok());
 
-    let service_name = Config::service_name(&server);
+    let service_name = if is_proxy {
+        "kronk".to_string()
+    } else {
+        Config::service_name(server.as_deref().unwrap())
+    };
 
     // Store in globals so service_main can access them
+    SERVICE_PROXY
+        .set(is_proxy)
+        .map_err(|_| anyhow::anyhow!("Failed to set service proxy flag"))?;
     SERVICE_SERVER
-        .set(server)
+        .set(server.unwrap_or_default())
         .map_err(|_| anyhow::anyhow!("Failed to set service server"))?;
     SERVICE_NAME
         .set(service_name.clone())
@@ -418,6 +480,8 @@ fn service_dispatch() -> Result<()> {
 use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
+static SERVICE_PROXY: OnceLock<bool> = OnceLock::new();
+#[cfg(target_os = "windows")]
 static SERVICE_SERVER: OnceLock<String> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static SERVICE_NAME: OnceLock<String> = OnceLock::new();
@@ -437,6 +501,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     };
     use windows_service::service_control_handler;
 
+    let is_proxy = SERVICE_PROXY.get().copied().unwrap_or(false);
     let server = SERVICE_SERVER.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
     let config_dir = SERVICE_CONFIG_DIR.get().and_then(|o| o.clone());
@@ -526,73 +591,117 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     rt.block_on(async {
-        let (srv, backend) = match config.resolve_server(&server) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("Failed to resolve server '{}': {}", server, e);
-                return;
-            }
-        };
+        if is_proxy {
+            // Proxy mode: start the proxy server
+            use kronk_core::proxy::server::ProxyServer;
+            use kronk_core::proxy::ProxyState;
+            use std::sync::Arc;
 
-        let args = build_full_args(&config, srv, backend, ctx).unwrap_or_else(|e| {
-            tracing::warn!("Failed to build model args: {}", e);
-            let mut args = backend.default_args.clone();
-            args.extend(srv.args.clone());
-            args
-        });
-        let log_dir = config
-            .logs_dir()
-            .ok()
-            .expect("Failed to get logs directory");
-        let health_check = config.resolve_health_check(&srv);
-        let supervisor = ProcessSupervisor::new(
-            backend.path.clone(),
-            args,
-            health_check,
-            config.supervisor.max_restarts,
-            config.supervisor.restart_delay_ms,
-        )
-        .with_log_dir(log_dir);
+            let host = config.proxy.host.clone();
+            let port = config.proxy.port;
+            let (host_addr, _) = match host.parse::<std::net::IpAddr>() {
+                Ok(addr) => (addr, false),
+                Err(_) => (
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+                    true,
+                ),
+            };
+            let addr = std::net::SocketAddr::new(host_addr, port);
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
+            tracing::info!("Starting Kronk proxy service on {}", addr);
 
-        // Create a tokio shutdown channel bridged from the std channel
-        let (shutdown_tx_tokio, shutdown_rx_tokio) = mpsc::channel::<()>(1);
-        tokio::task::spawn_blocking(move || {
-            let _ = shutdown_rx.recv();
-            let _ = shutdown_tx_tokio.blocking_send(());
-        });
+            let state = Arc::new(ProxyState::new(config));
+            let server = ProxyServer::new(state);
 
-        // Log events
-        let logger = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match &event {
-                    ProcessEvent::Started => tracing::info!("Backend process started"),
-                    ProcessEvent::Ready => tracing::info!("Backend server ready"),
-                    ProcessEvent::Output(line) => tracing::info!("[backend] {}", line),
-                    ProcessEvent::Crashed(msg) => tracing::warn!("Backend crashed: {}", msg),
-                    ProcessEvent::Restarting { attempt, max } => {
-                        tracing::info!("Restarting backend ({}/{})", attempt, max)
-                    }
-                    ProcessEvent::Stopped => tracing::info!("Backend stopped"),
-                    ProcessEvent::HealthCheck {
-                        healthy,
-                        uptime_secs,
-                        ..
-                    } => {
-                        tracing::debug!("Health: healthy={}, uptime={}s", healthy, uptime_secs)
+            // Bridge SCM shutdown signal to abort the server
+            let (shutdown_tx_tokio, mut shutdown_rx_tokio) = mpsc::channel::<()>(1);
+            tokio::task::spawn_blocking(move || {
+                let _ = shutdown_rx.recv();
+                let _ = shutdown_tx_tokio.blocking_send(());
+            });
+
+            tokio::select! {
+                result = server.run(addr) => {
+                    if let Err(e) = result {
+                        tracing::error!("Proxy server error: {}", e);
                     }
                 }
+                _ = shutdown_rx_tokio.recv() => {
+                    tracing::info!("Received shutdown signal, stopping proxy...");
+                }
             }
-        });
+        } else {
+            // Legacy single-backend mode
+            let (srv, backend) = match config.resolve_server(&server) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Failed to resolve server '{}': {}", server, e);
+                    return;
+                }
+            };
 
-        // Run supervisor — it will exit when shutdown signal is received
-        if let Err(e) = supervisor.run(tx, Some(shutdown_rx_tokio)).await {
-            tracing::error!("Supervisor error: {}", e);
+            let args = build_full_args(&config, srv, backend, ctx).unwrap_or_else(|e| {
+                tracing::warn!("Failed to build model args: {}", e);
+                let mut args = backend.default_args.clone();
+                args.extend(srv.args.clone());
+                args
+            });
+            let log_dir = config
+                .logs_dir()
+                .ok()
+                .expect("Failed to get logs directory");
+            let health_check = config.resolve_health_check(&srv);
+            let supervisor = ProcessSupervisor::new(
+                backend.path.clone(),
+                args,
+                health_check,
+                config.supervisor.max_restarts,
+                config.supervisor.restart_delay_ms,
+            )
+            .with_log_dir(log_dir);
+
+            let (tx, mut rx) = mpsc::unbounded_channel::<ProcessEvent>();
+
+            // Create a tokio shutdown channel bridged from the std channel
+            let (shutdown_tx_tokio, shutdown_rx_tokio) = mpsc::channel::<()>(1);
+            tokio::task::spawn_blocking(move || {
+                let _ = shutdown_rx.recv();
+                let _ = shutdown_tx_tokio.blocking_send(());
+            });
+
+            // Log events
+            let logger = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    match &event {
+                        ProcessEvent::Started => tracing::info!("Backend process started"),
+                        ProcessEvent::Ready => tracing::info!("Backend server ready"),
+                        ProcessEvent::Output(line) => tracing::info!("[backend] {}", line),
+                        ProcessEvent::Crashed(msg) => {
+                            tracing::warn!("Backend crashed: {}", msg)
+                        }
+                        ProcessEvent::Restarting { attempt, max } => {
+                            tracing::info!("Restarting backend ({}/{})", attempt, max)
+                        }
+                        ProcessEvent::Stopped => tracing::info!("Backend stopped"),
+                        ProcessEvent::HealthCheck {
+                            healthy,
+                            uptime_secs,
+                            ..
+                        } => {
+                            tracing::debug!("Health: healthy={}, uptime={}s", healthy, uptime_secs)
+                        }
+                    }
+                }
+            });
+
+            // Run supervisor — it will exit when shutdown signal is received
+            if let Err(e) = supervisor.run(tx, Some(shutdown_rx_tokio)).await {
+                tracing::error!("Supervisor error: {}", e);
+            }
+
+            tracing::info!("Shutting down...");
+            logger.abort();
         }
-
-        tracing::info!("Shutting down...");
-        logger.abort();
     });
 
     // Report stopped
@@ -615,7 +724,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 /// Merges: backend.default_args + server.args + model card (-m, -c, -ngl) + sampling
 fn build_full_args(
     config: &Config,
-    server: &kronk_core::config::ServerConfig,
+    server: &kronk_core::config::ModelConfig,
     backend: &kronk_core::config::BackendConfig,
     ctx_override: Option<u32>,
 ) -> Result<Vec<String>> {
@@ -680,7 +789,7 @@ async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) 
 
     println!("Oh yeah, it's all coming together.");
     println!();
-    println!("  Server:   {}", server_name);
+    println!("  Model:    {}", server_name);
     println!("  Backend:  {}", backend.path);
     if let Some(ctx) = ctx_override {
         println!("  Context:  {}", ctx);
@@ -706,7 +815,7 @@ async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) 
             match event {
                 ProcessEvent::Started => println!("[kronk] Pull the lever!"),
                 ProcessEvent::Ready => println!("[kronk] Oh yeah, it's all coming together."),
-                ProcessEvent::Output(line) => println!("[server] {}", line),
+                ProcessEvent::Output(line) => println!("[backend] {}", line),
                 ProcessEvent::Crashed(msg) => eprintln!("[kronk] WRONG LEVER! {}", msg),
                 ProcessEvent::Restarting { attempt, max } => {
                     println!(
@@ -734,35 +843,13 @@ async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) 
     Ok(())
 }
 
-/// Resolve server names: if given, use that one; if None, use all enabled.
-fn resolve_server_names(config: &Config, name: Option<String>) -> Result<Vec<String>> {
-    match name {
-        Some(n) => {
-            config.resolve_server(&n)?;
-            Ok(vec![n])
-        }
-        None => {
-            let enabled: Vec<String> = config
-                .servers
-                .iter()
-                .filter(|(_, s)| s.enabled)
-                .map(|(n, _)| n.clone())
-                .collect();
-            if enabled.is_empty() {
-                anyhow::bail!("No enabled servers. Enable one with `kronk config edit`.");
-            }
-            Ok(enabled)
-        }
-    }
-}
-
 fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
     match command {
         ServiceCommands::Install { name } => {
-            let names = resolve_server_names(config, name)?;
-            for server_name in &names {
-                let (srv, backend) = config.resolve_server(server_name)?;
-                let service_name = Config::service_name(server_name);
+            if let Some(server_name) = name {
+                // Legacy: install a single backend as a service
+                let (srv, backend) = config.resolve_server(&server_name)?;
+                let service_name = Config::service_name(&server_name);
 
                 #[cfg(target_os = "windows")]
                 {
@@ -772,7 +859,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
                     kronk_core::platform::windows::install_service(
                         &service_name,
                         &display_name,
-                        server_name,
+                        &server_name,
                         &config_dir,
                         port,
                     )?;
@@ -796,38 +883,58 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
                     anyhow::bail!("Service management not supported on this platform");
                 }
 
-                println!("Installed service for server '{}'.", server_name);
+                println!("Installed service for model '{}'.", server_name);
+            } else {
+                // Default: install the proxy as a service
+                #[cfg(target_os = "windows")]
+                {
+                    let config_dir = Config::base_dir()?;
+                    let port = config.proxy.port;
+                    kronk_core::platform::windows::install_proxy_service(&config_dir, port)?;
+                }
+
+                #[cfg(target_os = "linux")]
+                kronk_core::platform::linux::install_proxy_service()?;
+
+                #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                anyhow::bail!("Service management not supported on this platform");
+
+                println!("Installed kronk service.");
+                println!("Start it: kronk service start");
             }
         }
         ServiceCommands::Start { name } => {
-            let names = resolve_server_names(config, name)?;
-            for server_name in &names {
-                let service_name = Config::service_name(server_name);
-                service_start_inner(&service_name)?;
-                println!("Pull the lever! '{}' started.", service_name);
-            }
+            let service_name = name
+                .map(|n| Config::service_name(&n))
+                .unwrap_or_else(|| "kronk".to_string());
+            service_start_inner(&service_name)?;
+            println!("Pull the lever! '{}' started.", service_name);
         }
         ServiceCommands::Stop { name } => {
-            let names = resolve_server_names(config, name)?;
-            for server_name in &names {
-                let service_name = Config::service_name(server_name);
-                service_stop_inner(&service_name)?;
-                println!("Wrong lever! '{}' stopped.", service_name);
-            }
+            let service_name = name
+                .map(|n| Config::service_name(&n))
+                .unwrap_or_else(|| "kronk".to_string());
+            service_stop_inner(&service_name)?;
+            println!("Wrong lever! '{}' stopped.", service_name);
         }
         ServiceCommands::Remove { name } => {
-            let names = resolve_server_names(config, name)?;
-            for server_name in &names {
-                let service_name = Config::service_name(server_name);
+            let service_name = name
+                .map(|n| Config::service_name(&n))
+                .unwrap_or_else(|| "kronk".to_string());
 
-                #[cfg(target_os = "windows")]
-                kronk_core::platform::windows::remove_service(&service_name)?;
+            #[cfg(target_os = "windows")]
+            kronk_core::platform::windows::remove_service(&service_name)?;
 
-                #[cfg(target_os = "linux")]
-                kronk_core::platform::linux::remove_service(&service_name)?;
+            #[cfg(target_os = "linux")]
+            kronk_core::platform::linux::remove_service(&service_name)?;
 
-                println!("No touchy! '{}' removed.", service_name);
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+            {
+                let _ = service_name;
+                anyhow::bail!("Not supported on this platform");
             }
+
+            println!("No touchy! '{}' removed.", service_name);
         }
     }
     Ok(())
@@ -874,7 +981,7 @@ async fn cmd_status(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    for (name, srv) in &config.servers {
+    for (name, srv) in &config.models {
         let _backend = config.backends.get(&srv.backend);
         let backend_path = _backend.map(|b| b.path.as_str()).unwrap_or("???");
 
@@ -911,7 +1018,7 @@ async fn cmd_status(config: &Config) -> Result<()> {
         };
 
         println!();
-        println!("  Server:   {}", name);
+        println!("  Model:    {}", name);
         println!("  Backend:  {} ({})", srv.backend, backend_path);
         println!("  Service:  {}", service_status);
         println!("  Health:   {}", health);
@@ -934,7 +1041,7 @@ async fn cmd_server(config: &Config, command: ServerCommands) -> Result<()> {
             cmd_server_add(config, &name, command, false).await
         }
         ServerCommands::Edit { name, command } => {
-            if !config.servers.contains_key(&name) {
+            if !config.models.contains_key(&name) {
                 anyhow::bail!(
                     "Server '{}' not found. Use `kronk server add` to create it.",
                     name
@@ -947,11 +1054,10 @@ async fn cmd_server(config: &Config, command: ServerCommands) -> Result<()> {
 }
 
 async fn cmd_server_ls(config: &Config) -> Result<()> {
-    if config.servers.is_empty() {
-        println!("No servers configured.");
+    if config.models.is_empty() {
+        println!("No models configured.");
         println!();
-        println!("Add one:  kronk server add <name> <command...>");
-        println!("Or pull:  kronk model pull <repo>");
+        println!("Pull one: kronk model pull <repo>");
         return Ok(());
     }
 
@@ -960,10 +1066,10 @@ async fn cmd_server_ls(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    println!("Servers:");
+    println!("Models:");
     println!("{}", "-".repeat(60));
 
-    for (name, srv) in &config.servers {
+    for (name, srv) in &config.models {
         let _backend = config.backends.get(&srv.backend);
         let profile_name = srv
             .profile
@@ -1029,7 +1135,7 @@ async fn cmd_server_ls(config: &Config) -> Result<()> {
 }
 
 fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
-    if !config.servers.contains_key(name) {
+    if !config.models.contains_key(name) {
         anyhow::bail!("Server '{}' not found.", name);
     }
 
@@ -1063,7 +1169,7 @@ fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     }
 
     if !force {
-        let confirm = inquire::Confirm::new(&format!("Remove server '{}'?", name))
+        let confirm = inquire::Confirm::new(&format!("Remove model '{}'?", name))
             .with_default(false)
             .prompt()
             .context("Confirmation cancelled")?;
@@ -1074,10 +1180,10 @@ fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     }
 
     let mut config = config.clone();
-    config.servers.remove(name);
+    config.models.remove(name);
     config.save()?;
 
-    println!("Server '{}' removed.", name);
+    println!("Model '{}' removed.", name);
     Ok(())
 }
 
@@ -1087,7 +1193,7 @@ async fn cmd_server_add(
     command: Vec<String>,
     overwrite: bool,
 ) -> Result<()> {
-    use kronk_core::config::{BackendConfig, ServerConfig};
+    use kronk_core::config::{BackendConfig, ModelConfig};
 
     if command.is_empty() {
         anyhow::bail!("No command provided");
@@ -1156,16 +1262,16 @@ async fn cmd_server_add(
     };
 
     // Check for duplicate server
-    if config.servers.contains_key(name) && !overwrite {
+    if config.models.contains_key(name) && !overwrite {
         anyhow::bail!(
             "Server '{}' already exists. Use `kronk server edit` to modify it.",
             name
         );
     }
 
-    config.servers.insert(
+    config.models.insert(
         name.to_string(),
-        ServerConfig {
+        ModelConfig {
             backend: backend_key.clone(),
             args,
             profile: None,
@@ -1182,11 +1288,11 @@ async fn cmd_server_add(
 
     println!("Oh yeah, it's all coming together.");
     println!();
-    println!("  Server:   {}", name);
+    println!("  Model:    {}", name);
     println!("  Backend:  {} ({})", backend_key, exe_str);
     println!();
-    println!("Run it:     kronk run {}", name);
-    println!("Install it: kronk service install {}", name);
+    println!("Enable it:  kronk model enable {}", name);
+    println!("Start:      kronk serve");
 
     Ok(())
 }
@@ -1261,7 +1367,7 @@ async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) 
     // Load config, update only the command string for the existing server
     let mut config = config.clone();
     let srv = config
-        .servers
+        .models
         .get_mut(name)
         .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", name))?;
 
@@ -1272,11 +1378,8 @@ async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) 
 
     println!("Oh yeah, it's all coming together.");
     println!();
-    println!("  Server:   {}", name);
+    println!("  Model:    {}", name);
     println!("  Backend:  {} ({})", backend_key, exe_str);
-    println!();
-    println!("Run it:     kronk run {}", name);
-    println!("Install it: kronk service install {}", name);
 
     Ok(())
 }
@@ -1374,9 +1477,9 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                 }
             }
 
-            // Show which servers use which profile
-            println!("Server assignments:");
-            for (name, srv) in &config.servers {
+            // Show which models use which profile
+            println!("Model assignments:");
+            for (name, srv) in &config.models {
                 let profile_str = srv
                     .profile
                     .as_ref()
@@ -1391,8 +1494,8 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
             let mut config = config.clone();
 
             // Validate server exists
-            if !config.servers.contains_key(&server) {
-                anyhow::bail!("Server '{}' not found", server);
+            if !config.models.contains_key(&server) {
+                anyhow::bail!("Model '{}' not found", server);
             }
 
             // Resolve profile name before mutable borrow
@@ -1427,25 +1530,25 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
                 }
             };
 
-            config.servers.get_mut(&server).unwrap().profile = Some(resolved);
+            config.models.get_mut(&server).unwrap().profile = Some(resolved);
             config.save()?;
 
             println!("Oh yeah, it's all coming together.");
-            println!("  Server '{}' now uses '{}' preset.", server, profile);
+            println!("  Model '{}' now uses '{}' preset.", server, profile);
 
             Ok(())
         }
         ProfileCommands::Clear { server } => {
             let mut config = config.clone();
             let srv = config
-                .servers
+                .models
                 .get_mut(&server)
-                .with_context(|| format!("Server '{}' not found", server))?;
+                .with_context(|| format!("Model '{}' not found", server))?;
 
             srv.profile = None;
             config.save()?;
 
-            println!("Profile cleared for server '{}'.", server);
+            println!("Profile cleared for model '{}'.", server);
             Ok(())
         }
         ProfileCommands::Add {
@@ -1489,7 +1592,7 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
             config.save()?;
 
             println!("Custom profile '{}' created.", name);
-            println!("Assign it: kronk profile set <server> {}", name);
+            println!("Assign it: kronk profile set <model> {}", name);
             Ok(())
         }
         ProfileCommands::Remove { name } => {
@@ -1506,7 +1609,7 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
 
             // Check if any servers reference this profile
             let referencing: Vec<&str> = config
-                .servers
+                .models
                 .iter()
                 .filter(
                     |(_, s)| matches!(&s.profile, Some(Profile::Custom { name: n }) if n == &name),
@@ -1530,18 +1633,17 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     }
 }
 
-/// Start the OpenAI-compliant proxy server
-async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
+/// Start the kronk server (proxy) with the given host, port, and idle timeout.
+async fn start_proxy_server(
+    config: &Config,
+    host: String,
+    port: u16,
+    idle_timeout: u64,
+) -> Result<()> {
     use kronk_core::proxy::server::ProxyServer;
     use kronk_core::proxy::ProxyState;
     use std::net::SocketAddr;
     use std::sync::Arc;
-
-    let ProxyCommands::Start {
-        host,
-        port,
-        idle_timeout,
-    } = command;
 
     // Apply CLI overrides to config
     let mut updated_config = config.clone();
@@ -1563,9 +1665,8 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
         tracing::warn!("Invalid host '{}' - using 127.0.0.1", host);
     }
 
-    tracing::info!("Starting Kronk Proxy on {}", addr);
+    tracing::info!("Starting Kronk on {}", addr);
     tracing::info!("Idle timeout: {}s", idle_timeout);
-    tracing::info!("Use `kronk proxy start --help` for more options");
 
     let state = Arc::new(ProxyState::new(updated_config));
 
@@ -1574,6 +1675,24 @@ async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     server.run(addr).await?;
 
     Ok(())
+}
+
+/// Start the kronk server.
+async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u64) -> Result<()> {
+    start_proxy_server(config, host, port, idle_timeout).await
+}
+
+/// Start the OpenAI-compliant proxy server (deprecated: use `kronk serve`).
+async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
+    eprintln!("Warning: `kronk proxy start` is deprecated. Use `kronk serve` instead.");
+
+    let ProxyCommands::Start {
+        host,
+        port,
+        idle_timeout,
+    } = command;
+
+    start_proxy_server(config, host, port, idle_timeout).await
 }
 
 #[cfg(test)]

@@ -240,7 +240,7 @@ async fn handle_get_model(state: State<Arc<ProxyState>>, Path(model_id): Path<St
     }
 
     // Check if it's a configured (but not loaded) model
-    for (server_name, server_cfg) in &state.config.servers {
+    for (server_name, server_cfg) in &state.config.models {
         if !server_cfg.enabled {
             continue;
         }
@@ -296,7 +296,7 @@ async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::V
 
     // Build a list of all configured (enabled) models, enriched with runtime state
     let mut data: Vec<serde_json::Value> = Vec::new();
-    for (server_name, server_cfg) in &state.config.servers {
+    for (server_name, server_cfg) in &state.config.models {
         if !server_cfg.enabled {
             continue;
         }

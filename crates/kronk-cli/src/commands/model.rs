@@ -35,6 +35,8 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         ModelCommands::Pull { repo } => cmd_pull(config, &repo).await,
         ModelCommands::Ls => cmd_ls(config),
         ModelCommands::Ps => cmd_ps(config).await,
+        ModelCommands::Enable { name } => cmd_enable(config, &name),
+        ModelCommands::Disable { name } => cmd_disable(config, &name),
         ModelCommands::Create {
             name,
             model,
@@ -262,7 +264,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("Oh yeah, it's all coming together.");
     println!("  Model card saved: {}", card_path.display());
     println!();
-    println!("  Create a server:");
+    println!("  Create a model config:");
     println!(
         "    kronk model create my-server --model {} --profile coding",
         model_id
@@ -311,13 +313,13 @@ fn cmd_ls(config: &Config) -> Result<()> {
         }
 
         let linked_servers: Vec<&str> = config
-            .servers
+            .models
             .iter()
             .filter(|(_, p)| p.model.as_deref() == Some(&model.id))
             .map(|(name, _)| name.as_str())
             .collect();
         if !linked_servers.is_empty() {
-            println!("    servers: {}", linked_servers.join(", "));
+            println!("    configs: {}", linked_servers.join(", "));
         }
 
         let untracked = registry
@@ -338,15 +340,15 @@ async fn cmd_ps(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    let model_servers: Vec<(&str, &kronk_core::config::ServerConfig)> = config
-        .servers
+    let model_servers: Vec<(&str, &kronk_core::config::ModelConfig)> = config
+        .models
         .iter()
         .filter(|(_, p)| p.model.is_some())
         .map(|(n, p)| (n.as_str(), p))
         .collect();
 
     if model_servers.is_empty() {
-        println!("No model-based servers.");
+        println!("No models configured.");
         println!();
         println!("Create one:  kronk model create <name> --model <id> --profile coding");
         return Ok(());
@@ -468,7 +470,7 @@ async fn cmd_create(
     let args = vec!["--host".to_string(), "0.0.0.0".to_string()];
 
     let mut config = config.clone();
-    if config.servers.contains_key(name) {
+    if config.models.contains_key(name) {
         anyhow::bail!(
             "Server '{}' already exists. Use `kronk server edit` or choose a different name.",
             name
@@ -499,9 +501,9 @@ async fn cmd_create(
         }
     };
 
-    config.servers.insert(
+    config.models.insert(
         name.to_string(),
-        kronk_core::config::ServerConfig {
+        kronk_core::config::ModelConfig {
             backend: backend_key.clone(),
             args,
             profile: resolved_profile,
@@ -518,17 +520,53 @@ async fn cmd_create(
 
     println!("Oh yeah, it's all coming together.");
     println!();
-    println!("  Server:    {}", name);
+    println!("  Name:      {}", name);
     println!("  Model:     {}", model_id);
     println!("  Quant:     {}", quant_name);
     println!("  GGUF:      {}", gguf_path.display());
-    if let Some(p) = &config.servers[name].profile {
+    if let Some(p) = &config.models[name].profile {
         println!("  Profile:   {}", p);
     }
     println!();
-    println!("Run it:      kronk run {}", name);
-    println!("Install it:  kronk service install {}", name);
+    println!("Enable it:   kronk model enable {}", name);
+    println!("Start:       kronk serve");
 
+    Ok(())
+}
+
+fn cmd_enable(config: &Config, name: &str) -> Result<()> {
+    let mut config = config.clone();
+    let model = config
+        .models
+        .get_mut(name)
+        .with_context(|| format!("Model '{}' not found in config", name))?;
+
+    if model.enabled {
+        println!("Model '{}' is already enabled.", name);
+        return Ok(());
+    }
+
+    model.enabled = true;
+    config.save()?;
+    println!("Model '{}' enabled.", name);
+    Ok(())
+}
+
+fn cmd_disable(config: &Config, name: &str) -> Result<()> {
+    let mut config = config.clone();
+    let model = config
+        .models
+        .get_mut(name)
+        .with_context(|| format!("Model '{}' not found in config", name))?;
+
+    if !model.enabled {
+        println!("Model '{}' is already disabled.", name);
+        return Ok(());
+    }
+
+    model.enabled = false;
+    config.save()?;
+    println!("Model '{}' disabled.", name);
     Ok(())
 }
 
@@ -542,7 +580,7 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         .with_context(|| format!("Model '{}' not found.", model_id))?;
 
     let linked_servers: Vec<&str> = config
-        .servers
+        .models
         .iter()
         .filter(|(_, p)| p.model.as_deref() == Some(model_id))
         .map(|(name, _)| name.as_str())

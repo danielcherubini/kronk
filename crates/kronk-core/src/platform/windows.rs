@@ -132,6 +132,86 @@ pub fn install_service(
     Ok(())
 }
 
+/// Install kronk proxy as a native Windows Service.
+/// The service will run `kronk.exe service-run --proxy --config-dir <path>` when started.
+pub fn install_proxy_service(config_dir: &std::path::Path, port: u16) -> Result<()> {
+    let exe_path = std::env::current_exe().context("Failed to get current exe path")?;
+    let service_name = "kronk";
+    let display_name = "Kronk";
+
+    let manager =
+        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
+            .context("Failed to open Service Control Manager — run as Administrator")?;
+
+    // Remove existing service if present
+    if let Ok(existing) = manager.open_service(service_name, ServiceAccess::ALL_ACCESS) {
+        let status = existing.query_status()?;
+        if status.current_state != ServiceState::Stopped {
+            existing.stop()?;
+            wait_for_state(&existing, ServiceState::Stopped, Duration::from_secs(30))
+                .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
+        }
+        existing.delete()?;
+        drop(existing);
+
+        let delete_start = Instant::now();
+        let delete_timeout = Duration::from_secs(10);
+        loop {
+            match manager.open_service(service_name, ServiceAccess::QUERY_STATUS) {
+                Ok(_) => {
+                    if delete_start.elapsed() > delete_timeout {
+                        anyhow::bail!(
+                            "Timed out waiting for SCM to delete service '{}'",
+                            service_name
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                Err(e) => {
+                    if let windows_service::Error::Winapi(ref io_err) = e {
+                        if io_err.raw_os_error() == Some(1060) {
+                            break;
+                        }
+                    }
+                    tracing::warn!("Error checking service deletion status: {}", e);
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            }
+        }
+    }
+
+    let service_info = ServiceInfo {
+        name: OsString::from(service_name),
+        display_name: OsString::from(display_name),
+        service_type: ServiceType::OWN_PROCESS,
+        start_type: ServiceStartType::AutoStart,
+        error_control: ServiceErrorControl::Normal,
+        executable_path: exe_path,
+        launch_arguments: vec![
+            OsString::from("service-run"),
+            OsString::from("--proxy"),
+            OsString::from("--config-dir"),
+            OsString::from(config_dir),
+        ],
+        dependencies: vec![],
+        account_name: None,
+        account_password: None,
+    };
+
+    manager
+        .create_service(
+            &service_info,
+            ServiceAccess::CHANGE_CONFIG | ServiceAccess::START,
+        )
+        .context("Failed to create service — run as Administrator")?;
+
+    add_firewall_rule(service_name, port).ok();
+    grant_user_control(service_name)
+        .with_context(|| format!("Failed to set service permissions for '{}'", service_name))?;
+
+    Ok(())
+}
+
 /// Resolve the SID of the current user via `whoami /user`.
 /// Returns the SID string, e.g. "S-1-5-21-1234567890-1234567890-1234567890-1001".
 fn get_current_user_sid() -> Result<String> {

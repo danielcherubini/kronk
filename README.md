@@ -13,12 +13,12 @@
 
 </div>
 
-A local AI service manager written in Rust. Kronk turns your `llama-server.exe` (or any LLM backend) into a proper, supervised system service with health checks, auto-restart, and easy configuration.
+A local AI server written in Rust. Kronk provides an OpenAI-compatible API on a single port, automatically managing backend lifecycles — starting models on demand, routing requests, and unloading idle models to save resources.
 
-No wrappers. No NSSM. No batch files. Just a native Windows Service or systemd unit. After a one-time admin install, start and stop services as a regular user.
+Think of it as your own local Ollama or LM Studio server, but for llama.cpp and ik_llama backends.
 
 > [!TIP]
-> Get up and running in minutes with `kronk add default llama-server.exe --host 0.0.0.0 -m model.gguf -ngl 999`
+> Get up and running: `kronk model pull bartowski/OmniCoder-8B-GGUF && kronk serve`
 
 ---
 
@@ -44,14 +44,6 @@ sudo dpkg -i kronk_*.deb
 sudo rpm -i kronk-*.rpm
 ```
 
-### Add a server from a command you already use
-
-```bash
-kronk add default llama-server.exe --host 0.0.0.0 -m model.gguf -ngl 999 -fa 1 -c 8192
-```
-
-Kronk figures out the backend from the binary path and saves everything to config.
-
 ### Pull a model from HuggingFace
 
 ```bash
@@ -60,16 +52,13 @@ kronk model pull bartowski/OmniCoder-8B-GGUF
 
 Kronk downloads all available quants, detects your GPU VRAM, and suggests optimal context sizes.
 
-### OpenAI-Compliant Proxy
-
-Kronk includes a built-in proxy that acts as a drop-in replacement for the OpenAI API. It can automatically start models on-demand, load balance requests, and unload idle models to save resources.
+### Start the server
 
 ```bash
-# Start the proxy server
-kronk proxy start
+kronk serve
 ```
 
-You can then point any OpenAI-compatible client to `http://localhost:11434/v1`:
+That's it. Kronk starts an OpenAI-compatible server on `http://localhost:11434`. When a request comes in for a model, Kronk automatically starts the right backend, waits for it to be ready, and forwards the request.
 
 ```bash
 curl http://localhost:11434/v1/chat/completions \
@@ -80,24 +69,12 @@ curl http://localhost:11434/v1/chat/completions \
   }'
 ```
 
-### Create a server from an installed model
+Models are unloaded after 5 minutes of inactivity (configurable with `--idle-timeout`).
+
+### Install as a system service
 
 ```bash
-kronk model create my-server --model bartowski/OmniCoder-8B-GGUF --profile coding
-```
-
-Kronk auto-configures the server with the selected quant and sampling profile.
-
-### Run it
-
-```bash
-# Foreground (with live output)
-kronk run default
-
-# Override context size (takes priority over model card)
-kronk run default --ctx 8192
-
-# Or install as a system service (run as admin / sudo)
+# Install and start (run as admin / sudo)
 kronk service install
 kronk service start
 
@@ -107,31 +84,20 @@ kronk service start
 kronk status
 ```
 
-Kronk supervises the process, streams logs, checks health, and restarts on crash.
-
 > [!NOTE]
-> After installing the service, you can run `kronk run <name>` in the foreground to monitor logs and debug issues.
+> For debugging individual backends, you can still use `kronk run <server-name>` to run a single server in the foreground.
 
 ---
 
 ## CLI
 
 ```text
-kronk run <name> [--ctx N]                         Run a server in the foreground
+kronk serve [--host H] [--port P] [--idle-timeout S]  Start the server
 kronk status                                       Show status of all servers
-kronk service install [name]                       Install as a system service
-kronk service start [name]                         Start an installed service
-kronk service stop [name]                          Stop a running service
-kronk service remove [name]                        Remove an installed service
-kronk server ls                                    List all servers with status
-kronk server add <name> <cmd...>                   Add a new server from a raw command
-kronk server edit <name> <cmd...>                  Edit an existing server
-kronk server rm <name>                             Remove a server
-kronk profile list                                 List available sampling profiles
-kronk profile set <server> <profile>               Set a server's sampling profile
-kronk profile clear <server>                       Clear a server's profile
-kronk profile add <name> [--temp ...] [--top-k ...]  Create a custom profile
-kronk profile remove <name>                        Remove a custom profile
+kronk service install                              Install as a system service
+kronk service start                                Start the service
+kronk service stop                                 Stop the service
+kronk service remove                               Remove the service
 kronk model pull <repo>                            Pull a model from HuggingFace
 kronk model ls                                     List installed models
 kronk model ps                                     Show running model processes
@@ -139,11 +105,11 @@ kronk model create <name>                          Create a server from an insta
 kronk model rm <model>                             Remove an installed model
 kronk model scan                                   Scan for untracked GGUF files
 kronk model search <query>                         Search HuggingFace for GGUF models
-kronk proxy start                                  Start the OpenAI-compliant proxy server
 kronk config show                                  Print the current configuration
 kronk config edit                                  Open config file in editor
 kronk config path                                  Show the config file path
-kronk logs <name>                                  View backend logs (follow with -f)
+kronk logs [name]                                  View logs (defaults to proxy logs)
+kronk run <name> [--ctx N]                         Run a single backend (for debugging)
 ```
 
 ### Backend Management
@@ -192,36 +158,28 @@ Kronk auto-generates a config on first run:
 ```toml
 [backends.llama_cpp]
 path = "C:\\path\\to\\llama-server.exe"
-health_check_url = "http://localhost:11434/health"
+health_check_url = "http://localhost:8080/health"
 
-[servers.default]
-backend = "llama_cpp"
-args = ["--host", "0.0.0.0", "-m", "model.gguf", "-ngl", "999", "-c", "8192"]
-profile = "coding"
-enabled = true
-
-[servers.model-server]
+[servers.my-model]
 backend = "llama_cpp"
 model = "bartowski/OmniCoder-8B-GGUF"
 quant = "Q4_K_M"
 profile = "coding"
 enabled = true
 
+[proxy]
+host = "0.0.0.0"
+port = 11434
+idle_timeout_secs = 300
+
 [supervisor]
 restart_policy = "always"
 max_restarts = 10
 restart_delay_ms = 3000
 health_check_interval_ms = 5000
-
-[proxy]
-enabled = false
-host = "0.0.0.0"
-port = 11434
-idle_timeout_secs = 300
-circuit_breaker_threshold = 3
 ```
 
-You can define multiple backends and servers. Switch between them with `kronk run <name>`.
+You can define multiple backends and servers. When `kronk serve` is running, request any configured model and it will be started automatically. Backend ports are auto-assigned — you don't need to configure them.
 
 Model cards are stored in `~/.config/kronk/configs.d/<company>--<model>.toml` and contain quant info, context settings, and sampling presets.
 
@@ -296,12 +254,6 @@ The binary is at `target/release/kronk.exe` (Windows) or `target/release/kronk` 
 
 ## Roadmap
 
-See [TODO.md](TODO.md) for the full development plan:
-
-- **Multi-port support** — Per-server port config, auto `--port` injection
-- **Log viewer** — `kronk logs` with `--follow`, log rotation
-- **Parallel downloads** — Multi-connection Range downloads for GGUF files
-- **Windows service polling** — Replace fixed sleeps with proper SCM status polling
 - **TUI Dashboard** — `kronk-tui` crate with ratatui
 - **System tray** — Windows tray icon for quick service toggle
 - **Tauri GUI** — Lightweight desktop frontend for non-CLI users

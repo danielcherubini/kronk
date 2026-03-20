@@ -45,6 +45,47 @@ pub fn install_service(
     Ok(())
 }
 
+/// Install the kronk proxy as a systemd user service.
+pub fn install_proxy_service() -> Result<()> {
+    let config_dir = systemd_user_dir()?;
+    fs::create_dir_all(&config_dir).context("Failed to create systemd user dir")?;
+
+    let exe_path = std::env::current_exe()
+        .context("Failed to get current exe path")?
+        .display()
+        .to_string();
+
+    let unit = format!(
+        "[Unit]\n\
+         Description=Kronk\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         ExecStart={exe_path} service-run --proxy\n\
+         Restart=always\n\
+         RestartSec=3\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n"
+    );
+
+    let unit_path = config_dir.join("kronk.service");
+    fs::write(&unit_path, unit).context("Failed to write unit file")?;
+
+    Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status()
+        .context("Failed to reload systemd")?;
+
+    Command::new("systemctl")
+        .args(["--user", "enable", "kronk"])
+        .status()
+        .context("Failed to enable service")?;
+
+    Ok(())
+}
+
 pub fn start_service(service_name: &str) -> Result<()> {
     let status = Command::new("systemctl")
         .args(["--user", "start", service_name])

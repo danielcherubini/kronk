@@ -158,7 +158,7 @@ impl ProxyState {
     pub async fn get_backend_url(&self, server_name: &str) -> Result<String> {
         let config = self.config.clone();
         let server = config
-            .servers
+            .models
             .get(server_name)
             .with_context(|| format!("Server '{}' not found", server_name))?;
 
@@ -287,13 +287,18 @@ impl ProxyState {
 
         let backend_path = backend_config.path.clone();
 
-        let args = config.build_args(server_config, backend_config);
-        let health_url = config
-            .resolve_health_url(server_config)
-            .with_context(|| format!("No health URL resolved for server: {}", server_name))?;
-        let backend_url = config
-            .resolve_backend_url(server_config)
-            .with_context(|| format!("No backend URL resolved for server: {}", server_name))?;
+        // Find a free port for this backend
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        drop(listener); // Free the port for the backend to use
+
+        // Build args and override --host/--port so backends always bind to localhost
+        let mut args = config.build_args(server_config, backend_config);
+        override_arg(&mut args, "--host", "127.0.0.1");
+        override_arg(&mut args, "--port", &port.to_string());
+
+        let health_url = format!("http://127.0.0.1:{}/health", port);
+        let backend_url = format!("http://127.0.0.1:{}", port);
 
         info!(
             "Starting backend '{}' for server '{}' (model '{}')",
@@ -546,6 +551,21 @@ impl ProxyState {
         } else {
             None
         }
+    }
+}
+
+/// Override a CLI flag's value in an argument list (e.g. --host, --port).
+/// If the flag exists, replaces its value. If not, appends the flag and value.
+fn override_arg(args: &mut Vec<String>, flag: &str, value: &str) {
+    if let Some(pos) = args.iter().position(|a| a == flag) {
+        if pos + 1 < args.len() {
+            args[pos + 1] = value.to_string();
+        } else {
+            args.push(value.to_string());
+        }
+    } else {
+        args.push(flag.to_string());
+        args.push(value.to_string());
     }
 }
 

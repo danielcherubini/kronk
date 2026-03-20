@@ -446,8 +446,10 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
                                     println!("Files removed.");
                                 }
                                 Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                                    println!("Skipping file removal: backend server may still be running.");
-                                    println!("Run 'kronk server stop' first, then try again.");
+                                    println!(
+                                        "Skipping file removal: backend may still be running."
+                                    );
+                                    println!("Run 'kronk service stop' first, then try again.");
                                     return Err(anyhow!(
                                         "Failed to remove backend directory: {}",
                                         e

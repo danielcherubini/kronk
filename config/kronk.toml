@@ -3,7 +3,7 @@ log_level = "info"
 
 [backends]
 
-[servers]
+[models]
 
 [supervisor]
 health_check_interval_ms = 10000
