@@ -5,4 +5,5 @@ pub mod logging;
 pub mod models;
 pub mod platform;
 pub mod process;
+pub mod proxy;
 pub mod profiles;

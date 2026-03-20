@@ -101,6 +101,7 @@ pub enum BackendSource {
     SourceCode { version: String, git_url: String },
 }
 
+#[derive(Debug)]
 pub struct BackendRegistry {
     path: PathBuf,
     base_dir: PathBuf,
