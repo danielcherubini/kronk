@@ -736,58 +736,7 @@ fn build_full_args(
     backend: &kronk_core::config::BackendConfig,
     ctx_override: Option<u32>,
 ) -> Result<Vec<String>> {
-    let mut args = backend.default_args.clone();
-    args.extend(server.args.clone());
-
-    // Inject model card args: -m, -c, -ngl
-    if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
-        let models_dir = config.models_dir()?;
-        let configs_dir = config.configs_dir()?;
-        let registry = kronk_core::models::ModelRegistry::new(models_dir, configs_dir);
-        if let Some(installed) = registry.find(model_id)? {
-            if let Some(q) = installed.card.quants.get(quant_name) {
-                if !args.iter().any(|a| a == "-m" || a == "--model") {
-                    args.push("-m".to_string());
-                    args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
-                }
-            }
-            // Context size: CLI override > model card
-            let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
-            if let Some(ctx) = ctx {
-                if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
-                    args.push("-c".to_string());
-                    args.push(ctx.to_string());
-                }
-            }
-            if let Some(ngl) = installed.card.model.default_gpu_layers {
-                if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
-                    args.push("-ngl".to_string());
-                    args.push(ngl.to_string());
-                }
-            }
-
-            // 3-layer sampling merge
-            if let Some(sampling) =
-                config.effective_sampling_with_card(server, Some(&installed.card))
-            {
-                args.extend(sampling.to_args());
-            }
-
-            return Ok(args);
-        }
-    }
-
-    // No model card — still apply ctx override if given
-    if let Some(ctx) = ctx_override {
-        args::inject_context_size(&mut args, ctx);
-    }
-
-    // No model card — just use server sampling
-    if let Some(sampling) = config.effective_sampling_with_card(server, None) {
-        args.extend(sampling.to_args());
-    }
-
-    Ok(args)
+    config.build_full_args(server, backend, ctx_override)
 }
 
 async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) -> Result<()> {

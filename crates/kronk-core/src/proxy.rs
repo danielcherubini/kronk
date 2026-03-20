@@ -292,8 +292,8 @@ impl ProxyState {
         let port = listener.local_addr()?.port();
         drop(listener); // Free the port for the backend to use
 
-        // Build args and override --host/--port so backends always bind to localhost
-        let mut args = config.build_args(server_config, backend_config);
+        // Build full args (including -m, -c, -ngl from model card) and override host/port
+        let mut args = config.build_full_args(server_config, backend_config, None)?;
         override_arg(&mut args, "--host", "127.0.0.1");
         override_arg(&mut args, "--port", &port.to_string());
 

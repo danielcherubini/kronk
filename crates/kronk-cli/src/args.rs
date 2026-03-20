@@ -1,5 +1,6 @@
 /// Replace or inject `-c <value>` in the argument list.
 /// Removes any existing `-c` / `--ctx-size` and replaces with new value.
+#[cfg(test)]
 pub fn inject_context_size(args: &mut Vec<String>, ctx: u32) {
     // Find the first -c / --ctx-size flag
     let first_idx = args
