@@ -169,9 +169,7 @@ async fn handle_stream_chat_completions(
     let response = Response::builder()
         .status(200)
         .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .body(Body::from(format!(
-            "data: {{\"id\":\"1\",\"object\":\"chat.completion\",\"choices\":[{{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello World\"}}}}}}\n\ndata: [DONE]\n\n",
-        )))
+        .body(Body::from("data: {\"id\":\"1\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello World\"}}]}\n\ndata: [DONE]\n\n"))
         .unwrap();
 
     response
@@ -228,12 +226,8 @@ async fn handle_fallback() -> StatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::to_bytes,
-        http::{Method, Request},
-        routing::post,
-        Router,
-    };
+    use axum::http::Request;
+    use reqwest::Method;
     use std::sync::Arc;
 
     /// Test SSE streaming response for chat completions
