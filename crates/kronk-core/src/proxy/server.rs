@@ -240,14 +240,13 @@ async fn handle_get_model(state: State<Arc<ProxyState>>, Path(model_id): Path<St
     }
 
     // Check if it's a configured (but not loaded) model
-    for (server_name, server_cfg) in &state.config.models {
+    for (config_name, server_cfg) in &state.config.models {
         if !server_cfg.enabled {
             continue;
         }
-        let cfg_model = server_cfg.model.as_deref().unwrap_or(server_name.as_str());
-        if cfg_model == model_id || server_name == &model_id {
+        if config_name == &model_id || server_cfg.model.as_deref() == Some(model_id.as_str()) {
             return Json(serde_json::json!({
-                "id": cfg_model,
+                "id": config_name,
                 "object": "model",
                 "created": 0,
                 "owned_by": server_cfg.backend,
@@ -296,20 +295,19 @@ async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::V
 
     // Build a list of all configured (enabled) models, enriched with runtime state
     let mut data: Vec<serde_json::Value> = Vec::new();
-    for (server_name, server_cfg) in &state.config.models {
+    for (config_name, server_cfg) in &state.config.models {
         if !server_cfg.enabled {
             continue;
         }
-        let model_id = server_cfg.model.as_deref().unwrap_or(server_name.as_str());
 
-        if let Some(model_state) = loaded_models.get(server_name) {
+        if let Some(model_state) = loaded_models.get(config_name) {
             let created = model_state
                 .load_time()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             data.push(serde_json::json!({
-                "id": model_id,
+                "id": config_name,
                 "object": "model",
                 "created": created,
                 "owned_by": model_state.backend(),
@@ -317,7 +315,7 @@ async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::V
             }));
         } else {
             data.push(serde_json::json!({
-                "id": model_id,
+                "id": config_name,
                 "object": "model",
                 "created": 0,
                 "owned_by": server_cfg.backend,

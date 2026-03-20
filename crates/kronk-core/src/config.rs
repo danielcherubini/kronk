@@ -248,13 +248,18 @@ impl Config {
     ) -> Vec<(String, &ModelConfig, &BackendConfig)> {
         let mut results = Vec::new();
 
-        for (server_name, server) in &self.models {
-            if (server_name == model_name || server.model.as_deref() == Some(model_name))
-                && server.enabled
-            {
-                if let Some(backend) = self.backends.get(&server.backend) {
-                    results.push((server_name.clone(), server, backend));
-                }
+        for (config_name, server) in &self.models {
+            if !server.enabled {
+                continue;
+            }
+            let backend = match self.backends.get(&server.backend) {
+                Some(b) => b,
+                None => continue,
+            };
+
+            // Match on config key (alias) or full model ID
+            if config_name == model_name || server.model.as_deref() == Some(model_name) {
+                results.push((config_name.clone(), server, backend));
             }
         }
 
