@@ -25,7 +25,7 @@ struct Args {
 
 #[derive(Parser, Debug)]
 enum Commands {
-    /// Pull the lever! Run a server in the foreground
+    /// Run a single server in the foreground (for debugging)
     Run {
         /// Server name (required)
         name: String,
@@ -66,6 +66,7 @@ enum Commands {
         command: Vec<String>,
     },
     /// Manage servers — list, add, edit, remove
+    #[command(hide = true)]
     Server {
         #[command(subcommand)]
         command: ServerCommands,
