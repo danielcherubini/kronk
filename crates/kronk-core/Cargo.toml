@@ -25,6 +25,8 @@ tempfile.workspace = true
 axum.workspace = true
 tower-http.workspace = true
 bytes.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
