@@ -117,7 +117,7 @@ pub struct ProxyState {
     pub registry: Arc<RwLock<BackendRegistry>>,
     pub config_data: Arc<RwLock<crate::config::Config>>,
     pub process_map: Arc<Mutex<HashMap<u32, String>>>,
-    pub process_handles: Arc<Mutex<HashMap<u32, std::process::Child>>>,
+    pub process_handles: Arc<Mutex<HashMap<u32, tokio::process::Child>>>,
     pub client: Arc<Client>,
     pub metrics: Arc<ProxyMetrics>,
 }
@@ -247,6 +247,19 @@ impl ProxyState {
             }
         };
 
+        // Check if the server is already loaded and ready - if so, just use it
+        {
+            let models = self.models.read().await;
+            if let Some(state) = models.get(&server_name) {
+                if state.is_ready() {
+                    debug!("Server '{}' already loaded for model '{}'", server_name, model_name);
+                    drop(models);
+                    drop(config);
+                    return Ok(server_name);
+                }
+            }
+        }
+
         // Get server and backend config from config
         let (server_config, backend_config) = match config.resolve_server(&server_name) {
             Ok(sc) => sc,
@@ -255,19 +268,10 @@ impl ProxyState {
             }
         };
 
-        // Find a server that provides this model and isn't already loaded
-        let servers = config.resolve_servers_for_model(model_name);
-        if servers.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No server configured for model: {}",
-                model_name
-            ));
-        }
-
         // Reserve a server immediately to prevent race conditions
         {
             let mut models = self.models.write().await;
-            for (server_name, _, _) in servers {
+            for (server_name, _, _) in config.resolve_servers_for_model(model_name) {
                 if !models.contains_key(&server_name) {
                     // Reserve this server with Starting state
                     models.insert(
@@ -300,13 +304,13 @@ impl ProxyState {
             server_config.backend, server_name, model_name
         );
 
-        let child = std::process::Command::new(&backend_path)
+        let child = tokio::process::Command::new(&backend_path)
             .args(&args)
             .env("MODEL_NAME", model_name)
             .spawn()
             .with_context(|| format!("Failed to start backend '{}'", server_config.backend))?;
 
-        let pid = child.id();
+        let pid = child.id().unwrap();
         info!(
             "Backend '{}' started for server '{}' (pid: {:?})",
             server_config.backend, server_name, pid
@@ -339,15 +343,17 @@ impl ProxyState {
         }
 
         if start.elapsed() >= timeout {
-            // Remove Child handle and process
-            {
-                let mut processes = self.process_map.lock().await;
-                let mut handles = self.process_handles.lock().await;
-                if let Some(mut child) = handles.remove(&pid) {
-                    let _ = child.wait();
-                }
-                processes.remove(&pid);
-            }
+// Remove Child handle and wait
+        let child = self.process_handles.lock().await.remove(&pid);
+        if let Some(mut child) = child {
+            tokio::task::spawn_blocking(move || {
+                std::mem::drop(child.wait());
+            })
+            .await
+            .unwrap();
+        }
+            let mut processes = self.process_map.lock().await;
+            processes.remove(&pid);
 
             // Remove from models (cleanup failed reservation)
             {
@@ -421,18 +427,16 @@ impl ProxyState {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Remove Child handle and wait
-        {
-            let mut handles = self.process_handles.lock().await;
-            if let Some(mut child) = handles.remove(&pid) {
-                let _ = child.wait();
-            }
+        let child = self.process_handles.lock().await.remove(&pid);
+        if let Some(mut child) = child {
+            tokio::task::spawn_blocking(move || {
+                std::mem::drop(child.wait());
+            })
+            .await
+            .unwrap();
         }
-
-        // Remove from process maps
-        {
-            let mut processes = self.process_map.lock().await;
-            processes.remove(&pid);
-        }
+        let mut processes = self.process_map.lock().await;
+        processes.remove(&pid);
 
         // Remove from models
         let mut models = self.models.write().await;

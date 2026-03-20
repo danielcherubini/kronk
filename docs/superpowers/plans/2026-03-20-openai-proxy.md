@@ -245,6 +245,7 @@ async fn proxy_request(
     req: Request,
 ) -> Result<Response, (StatusCode, String)> {
     let path = req.uri().path().to_string();
+    ```rust
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     
     // 1. Read the entire body into memory to parse it and forward it
@@ -268,6 +269,7 @@ async fn proxy_request(
     let target_url = format!("http://127.0.0.1:{}{}{}", port, path, query);
 
     // 5. Forward the request using Reqwest
+```rust
     let reqwest_res = state.client.post(&target_url)
         .header("Content-Type", "application/json")
         .body(reqwest::Body::from(body_bytes)) // Pass along exact bytes received

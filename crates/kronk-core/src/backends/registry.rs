@@ -106,6 +106,7 @@ pub struct BackendRegistry {
     path: PathBuf,
     base_dir: PathBuf,
     data: RegistryData,
+    read_only: bool,
 }
 
 impl BackendRegistry {
@@ -139,6 +140,7 @@ impl BackendRegistry {
             path: path.to_path_buf(),
             base_dir,
             data,
+            read_only: false,
         })
     }
 
@@ -148,6 +150,7 @@ impl BackendRegistry {
             path: PathBuf::from("dynamic"),
             base_dir: PathBuf::from("/"),
             data: RegistryData { backends },
+            read_only: true,
         }
     }
 
@@ -158,10 +161,15 @@ impl BackendRegistry {
             path: PathBuf::from("/tmp/test-registry.toml"),
             base_dir: PathBuf::from("/tmp"),
             data: RegistryData::default(),
+            read_only: false,
         }
     }
 
     pub fn save(&self) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Registry is in read-only mode"));
+        }
+
         let canonical_path = Self::canonicalize_path(&self.path)?;
 
         if !canonical_path.starts_with(&self.base_dir) {
@@ -195,6 +203,7 @@ impl BackendRegistry {
             path: path.to_path_buf(),
             base_dir: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
             data,
+            read_only: false,
         })
     }
 
@@ -224,10 +233,15 @@ impl BackendRegistry {
             path: path.to_path_buf(),
             base_dir: base_dir.to_path_buf(),
             data,
+            read_only: false,
         })
     }
 
     pub fn add(&mut self, backend: BackendInfo) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Registry is in read-only mode"));
+        }
+
         // Use transactional pattern: modify on scratch copy, only replace after save succeeds
         let original_backends = std::mem::take(&mut self.data.backends);
         let mut new_backends = original_backends.clone();
@@ -242,6 +256,10 @@ impl BackendRegistry {
     }
 
     pub fn remove(&mut self, name: &str) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Registry is in read-only mode"));
+        }
+
         // Use transactional pattern: modify on scratch copy, only replace after save succeeds
         let original_backends = std::mem::take(&mut self.data.backends);
         let mut new_backends = original_backends.clone();
@@ -292,6 +310,10 @@ impl BackendRegistry {
         new_binary_path: PathBuf,
         new_source: Option<BackendSource>,
     ) -> Result<()> {
+        if self.read_only {
+            return Err(anyhow!("Registry is in read-only mode"));
+        }
+
         // Validate new_binary_path is within managed backends directory
         let new_binary_path_canonical = Self::canonicalize_path(&new_binary_path)?;
         if !new_binary_path_canonical.starts_with(&self.base_dir) {

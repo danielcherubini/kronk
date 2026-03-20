@@ -9,8 +9,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-
-use reqwest::Client;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
@@ -365,7 +363,6 @@ async fn forward_request(
 
     info!("Forwarding request to: {}", target_uri);
 
-    let client = Client::new();
     let method = parts.method.clone();
 
     let mut headers = reqwest::header::HeaderMap::new();
@@ -394,7 +391,7 @@ async fn forward_request(
         query_string = format!("?{}", query_string);
     }
 
-    match client
+    match state.client
         .request(method, format!("{}{}", target_uri, query_string))
         .headers(headers)
         .body(body_bytes.to_vec())
