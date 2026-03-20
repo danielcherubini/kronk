@@ -160,12 +160,10 @@ impl ProxyState {
         }
 
         let server_name = target_server_name.unwrap_or_else(|| model_name.to_string());
-        let server = target_server.ok_or_else(|| {
-            anyhow::anyhow!("Failed to resolve server for model {}", model_name)
-        })?;
-        let backend_config = target_backend.ok_or_else(|| {
-            anyhow::anyhow!("Failed to resolve backend for model {}", model_name)
-        })?;
+        let server = target_server
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve server for model {}", model_name))?;
+        let backend_config = target_backend
+            .ok_or_else(|| anyhow::anyhow!("Failed to resolve backend for model {}", model_name))?;
 
         // Get backend config from registry
         let backend_info = self
@@ -429,10 +427,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_model_card() {
         use tempfile::TempDir;
-        
+
         let config = ProxyConfig::default();
         let registry = BackendRegistry::default();
-        
+
         // Create a temporary directory for configs to make test hermetic
         let temp_dir = TempDir::new().unwrap();
         let config_data = crate::config::Config {
