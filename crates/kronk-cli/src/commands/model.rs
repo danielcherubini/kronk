@@ -35,6 +35,8 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         ModelCommands::Pull { repo } => cmd_pull(config, &repo).await,
         ModelCommands::Ls => cmd_ls(config),
         ModelCommands::Ps => cmd_ps(config).await,
+        ModelCommands::Enable { name } => cmd_enable(config, &name),
+        ModelCommands::Disable { name } => cmd_disable(config, &name),
         ModelCommands::Create {
             name,
             model,
@@ -529,6 +531,42 @@ async fn cmd_create(
     println!("Enable it:   kronk model enable {}", name);
     println!("Start:       kronk serve");
 
+    Ok(())
+}
+
+fn cmd_enable(config: &Config, name: &str) -> Result<()> {
+    let mut config = config.clone();
+    let model = config
+        .models
+        .get_mut(name)
+        .with_context(|| format!("Model '{}' not found in config", name))?;
+
+    if model.enabled {
+        println!("Model '{}' is already enabled.", name);
+        return Ok(());
+    }
+
+    model.enabled = true;
+    config.save()?;
+    println!("Model '{}' enabled.", name);
+    Ok(())
+}
+
+fn cmd_disable(config: &Config, name: &str) -> Result<()> {
+    let mut config = config.clone();
+    let model = config
+        .models
+        .get_mut(name)
+        .with_context(|| format!("Model '{}' not found in config", name))?;
+
+    if !model.enabled {
+        println!("Model '{}' is already disabled.", name);
+        return Ok(());
+    }
+
+    model.enabled = false;
+    config.save()?;
+    println!("Model '{}' disabled.", name);
     Ok(())
 }
 

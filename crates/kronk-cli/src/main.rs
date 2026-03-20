@@ -156,9 +156,19 @@ pub enum ModelCommands {
     Ls,
     /// Show running model processes
     Ps,
-    /// Create a server from an installed model
+    /// Enable a model (will be loaded on demand by the proxy)
+    Enable {
+        /// Model config name
+        name: String,
+    },
+    /// Disable a model (will not be loaded by the proxy)
+    Disable {
+        /// Model config name
+        name: String,
+    },
+    /// Create a model config from an installed model
     Create {
-        /// Server name to create
+        /// Config name to create
         name: String,
         /// Model ID in "company/modelname" format
         #[arg(long)]
