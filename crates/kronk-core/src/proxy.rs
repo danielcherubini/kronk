@@ -62,6 +62,13 @@ impl ModelState {
         matches!(self, ModelState::Ready { .. })
     }
 
+    pub fn backend_url(&self) -> Option<&str> {
+        match self {
+            ModelState::Ready { backend_url, .. } => Some(backend_url),
+            _ => None,
+        }
+    }
+
     pub fn backend_pid(&self) -> Option<u32> {
         match self {
             ModelState::Ready { backend_pid, .. } => Some(*backend_pid),

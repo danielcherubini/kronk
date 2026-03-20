@@ -391,20 +391,23 @@ async fn forward_request(
         }
     }
 
-    let backend_url = match state.get_backend_url(server_name).await {
-        Ok(url) => url,
-        Err(e) => {
-            info!("Failed to get backend URL for {}: {}", server_name, e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "error": {
-                        "message": format!("Failed to get backend URL: {}", e),
-                        "type": "BackendUrlError"
-                    }
-                })),
-            )
-                .into_response();
+    let backend_url = {
+        let models = state.models.read().await;
+        match models.get(server_name).and_then(|ms| ms.backend_url()) {
+            Some(url) => url.to_string(),
+            None => {
+                info!("No backend URL for model '{}' (not loaded?)", server_name);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("Model '{}' is not loaded", server_name),
+                            "type": "BackendUrlError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
         }
     };
 
