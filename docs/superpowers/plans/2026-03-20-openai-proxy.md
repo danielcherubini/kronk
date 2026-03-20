@@ -245,7 +245,6 @@ async fn proxy_request(
     req: Request,
 ) -> Result<Response, (StatusCode, String)> {
     let path = req.uri().path().to_string();
-    ```rust
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     
     // 1. Read the entire body into memory to parse it and forward it

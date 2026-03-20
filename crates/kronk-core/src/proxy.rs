@@ -212,8 +212,7 @@ impl ProxyState {
         // and hasn't tripped the circuit breaker
         for (server_name, _, _) in servers {
             if let Some(state) = models.get(&server_name) {
-                if state.is_ready()
-                    || matches!(state, ModelState::Starting { .. })
+                if (state.is_ready() || matches!(state, ModelState::Starting { .. }))
                     && state
                         .consecutive_failures()
                         .map(|f| f.load(Ordering::Relaxed))
@@ -507,7 +506,12 @@ impl ProxyState {
         // Try to find the model card file
         // Format: configs.d/<company>--<model>.toml
         let (org, name) = model_name.split_once('/').unwrap_or(("", model_name));
-        let card_path = configs_dir.join(format!("{}--{}.toml", org, name));
+        let card_filename = if org.is_empty() {
+            format!("{}.toml", name)
+        } else {
+            format!("{}--{}.toml", org, name)
+        };
+        let card_path = configs_dir.join(card_filename);
 
         if card_path.exists() {
             let content = std::fs::read_to_string(&card_path).ok()?;
