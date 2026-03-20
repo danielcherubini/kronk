@@ -1,6 +1,5 @@
 use crate::proxy::ProxyState;
 use anyhow::Context;
-use async_stream::stream as async_stream_stream;
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -9,7 +8,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use std::sync::Arc;
 use tracing::{debug, info};
 
