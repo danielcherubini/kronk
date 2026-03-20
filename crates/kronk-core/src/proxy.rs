@@ -70,17 +70,17 @@ impl ModelState {
         }
     }
 
-    pub fn consecutive_failures(&self) -> &Arc<AtomicU32> {
+    pub fn consecutive_failures(&self) -> Option<&Arc<AtomicU32>> {
         match self {
             ModelState::Starting {
                 consecutive_failures,
                 ..
-            } => consecutive_failures,
+            } => Some(consecutive_failures),
             ModelState::Ready {
                 consecutive_failures,
                 ..
-            } => consecutive_failures,
-            ModelState::Failed { .. } => unreachable!(),
+            } => Some(consecutive_failures),
+            ModelState::Failed { .. } => None,
         }
     }
 
@@ -191,6 +191,15 @@ impl ProxyState {
             })
     }
 
+    /// Get the circuit breaker failures for a server.
+    pub async fn get_circuit_breaker_failures(&self, server_name: &str) -> Option<u32> {
+        self.models
+            .read()
+            .await
+            .get(server_name)
+            .and_then(|s| s.consecutive_failures().map(|f| f.load(Ordering::Relaxed)))
+    }
+
     /// Find an available loaded server for a given model name.
     pub async fn get_available_server_for_model(&self, model_name: &str) -> Option<String> {
         let config = self.config_data.read().await;
@@ -202,8 +211,12 @@ impl ProxyState {
         // For simplicity, we just pick the first one that is loaded and hasn't tripped the circuit breaker
         for (server_name, _, _) in servers {
             if let Some(state) = models.get(&server_name) {
-                if state.consecutive_failures().load(Ordering::Relaxed)
-                    < self.config.circuit_breaker_threshold
+                if state.is_ready()
+                    && state
+                        .consecutive_failures()
+                        .map(|f| f.load(Ordering::Relaxed))
+                        .unwrap_or(0)
+                        < self.config.circuit_breaker_threshold
                 {
                     return Some(server_name);
                 }
@@ -355,12 +368,6 @@ impl ProxyState {
             let mut models = self.models.write().await;
             if let Some(state) = models.get_mut(&server_name) {
                 if let ModelState::Starting { .. } = state {
-                    let child_handle = {
-                        let mut handles = self.process_handles.lock().await;
-                        handles.remove(&pid)
-                    };
-                    let _ = child_handle; // Drop the handle after storing
-
                     *state = ModelState::Ready {
                         model_name: model_name.to_string(),
                         backend: server_config.backend.clone(),
@@ -410,6 +417,9 @@ impl ProxyState {
         info!("Sending SIGTERM to backend process {}", pid);
         let _ = kill_process(pid).await;
 
+        // Wait up to 5 seconds for graceful shutdown
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
         // Remove Child handle and wait
         {
             let mut handles = self.process_handles.lock().await;
@@ -417,15 +427,11 @@ impl ProxyState {
                 let _ = child.wait();
             }
         }
-        // Wait up to 5 seconds for graceful shutdown
-        tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Remove from process maps
         {
             let mut processes = self.process_map.lock().await;
-            let mut handles = self.process_handles.lock().await;
             processes.remove(&pid);
-            handles.remove(&pid);
         }
 
         // Remove from models

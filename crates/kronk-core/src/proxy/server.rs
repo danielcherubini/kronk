@@ -298,7 +298,8 @@ async fn forward_request(
     if let Some(ms) = &model_state {
         let failures = ms
             .consecutive_failures()
-            .load(std::sync::atomic::Ordering::Relaxed);
+            .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(0);
         if failures >= state.config.circuit_breaker_threshold {
             info!(
                 "Circuit breaker tripped for server '{}' ({} failures). Unloading server.",
@@ -408,8 +409,9 @@ async fn forward_request(
                     .successful_requests
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(ms) = &model_state {
-                    ms.consecutive_failures()
-                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(f) = ms.consecutive_failures() {
+                        f.store(0, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             } else {
                 state
@@ -418,8 +420,9 @@ async fn forward_request(
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if status.is_server_error() {
                     if let Some(ms) = &model_state {
-                        ms.consecutive_failures()
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(f) = ms.consecutive_failures() {
+                            f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                 }
             }
@@ -441,8 +444,9 @@ async fn forward_request(
                 .failed_requests
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(ms) = &model_state {
-                ms.consecutive_failures()
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Some(f) = ms.consecutive_failures() {
+                    f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             info!("Failed to forward request: {}", e);
             (
@@ -450,7 +454,7 @@ async fn forward_request(
                 Json(serde_json::json!({
                     "error": {
                         "message": format!("Backend error: {}", e),
-                        "type": "BadRequestError"
+                        "type": "BadGatewayError"
                     }
                 })),
             )
