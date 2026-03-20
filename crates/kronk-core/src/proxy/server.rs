@@ -239,6 +239,10 @@ mod tests {
     use axum::{
         body::to_bytes,
         http::{Method, Request},
+        routing::post,
+        Router,
+    };
+    use std::sync::Arc;
 
     /// Test SSE streaming response for chat completions
     #[tokio::test]
