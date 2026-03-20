@@ -286,14 +286,14 @@ async fn forward_request(
     for (key, value) in &parts.headers {
         // Skip hop-by-hop headers: connection, keep-alive, proxy-authenticate,
         // proxy-authorization, te, transfer-encoding, upgrade, trailer
-        if key != &header::CONNECTION
-            && key != &header::KEEP_ALIVE
-            && key != &header::PROXY_AUTHENTICATE
-            && key != &header::PROXY_AUTHORIZATION
-            && key != &header::TE
-            && key != &header::TRANSFER_ENCODING
-            && key != &header::UPGRADE
-            && key != &header::TRAILER
+        if key.as_str() != "connection"
+            && key.as_str() != "keep-alive"
+            && key.as_str() != "proxy-authenticate"
+            && key.as_str() != "proxy-authorization"
+            && key.as_str() != "te"
+            && key.as_str() != "transfer-encoding"
+            && key.as_str() != "upgrade"
+            && key.as_str() != "trailer"
         {
             if let Ok(v) = value.to_str() {
                 headers.insert(key.clone(), value.clone());
