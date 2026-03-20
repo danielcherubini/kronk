@@ -139,8 +139,7 @@ jobs:
             2. Set your backend path and model
             3. Install as a service (Windows): `kronk service install` (run as admin)
           files: |
-            windows/target/release/kronk.exe
-            windows/dist/*.exe
-            linux/target/release/kronk
-            linux/target/debian/*.deb
-            linux/target/generate-rpm/*.rpm
+            windows/**/*.exe
+            linux/**/kronk
+            linux/**/*.deb
+            linux/**/*.rpm
