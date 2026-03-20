@@ -174,8 +174,8 @@ async fn handle_stream_chat_completions(
     let response = Response::builder()
         .status(200)
         .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .body(Body::from(format!(
-            "data: {{{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":{},{\"model\":\"{}\",\"choices\":[{{{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}}}]}}}}\n\ndata: {{{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":{},{\"model\":\"{}\",\"choices\":[{{{\"index\":0,\"delta\":{\"content\":\" World\"}}}}]}}}}\n\ndata: [DONE]\n\n",
+.body(Body::from(format!(
+            "data: {{{{{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":{},{\"model\":\"{}\",\"choices\":[{{{{{{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}}}}}]}}}}}}\n\ndata: {{{{{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":{},{\"model\":\"{}\",\"choices\":[{{{{{{\"index\":0,\"delta\":{\"content\":\" World\"}}}}}}]}}}}}}\n\ndata: [DONE]\n\n",
             timestamp, model_name, timestamp, model_name
         )))
         .unwrap();
