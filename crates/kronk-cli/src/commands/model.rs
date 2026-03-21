@@ -340,43 +340,22 @@ async fn cmd_ps(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    let model_servers: Vec<(&str, &kronk_core::config::ModelConfig)> = config
-        .models
-        .iter()
-        .filter(|(_, p)| p.model.is_some())
-        .map(|(n, p)| (n.as_str(), p))
-        .collect();
+    for (name, srv) in &config.models {
+        let _backend = config.backends.get(&srv.backend);
+        let backend_path = _backend.map(|b| b.path.as_str()).unwrap_or("???");
 
-    if model_servers.is_empty() {
-        println!("No models configured.");
-        println!();
-        println!("Create one:  kronk model create <name> --model <id> --profile coding");
-        return Ok(());
-    }
-
-    println!("Model processes:");
-    println!("{}", "-".repeat(60));
-
-    for (name, srv) in model_servers {
-        let model_id = srv.model.as_deref().unwrap_or("?");
-        let quant = srv.quant.as_deref().unwrap_or("?");
-        let profile_name = srv
-            .profile
-            .as_ref()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "none".to_string());
-
+        // Check service status
         let service_name = Config::service_name(name);
         let service_status = {
             #[cfg(target_os = "windows")]
             {
-                kronk_core::platform::windows::query_service(&service_name)
-                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+                use kronk_core::platform::windows;
+                windows::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string())
             }
             #[cfg(target_os = "linux")]
             {
-                kronk_core::platform::linux::query_service(&service_name)
-                    .unwrap_or_else(|_| "UNKNOWN".to_string())
+                use kronk_core::platform::linux;
+                linux::query_service(&service_name).unwrap_or_else(|_| "UNKNOWN".to_string())
             }
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             {
@@ -385,23 +364,28 @@ async fn cmd_ps(config: &Config) -> Result<()> {
             }
         };
 
-        // Use server's resolved health check config
+        // Check health endpoint using server's resolved health check config
         let health_check = config.resolve_health_check(srv);
         let health = if let Some(url) = health_check.url {
             match http_client.get(url).send().await {
-                Ok(resp) if resp.status().is_success() => "HEALTHY",
-                _ => "DOWN",
+                Ok(resp) if resp.status().is_success() => "HEALTHY".to_string(),
+                Ok(resp) => format!("HTTP {}", resp.status()),
+                Err(_) => "DOWN".to_string(),
             }
         } else {
-            "N/A"
+            "N/A".to_string()
         };
 
         println!();
-        println!("  {}  {} / {}", name, model_id, quant);
-        println!(
-            "    profile: {}  service: {}  health: {}",
-            profile_name, service_status, health
-        );
+        println!("  Model:    {}", name);
+        println!("  Backend:  {} ({})", srv.backend, backend_path);
+        println!("  Health:   {}", health);
+    }
+
+    // GPU VRAM usage
+    if let Some(vram) = kronk_core::gpu::query_vram() {
+        println!();
+        println!("  VRAM:     {} / {} MiB", vram.used_mib, vram.total_mib);
     }
 
     println!();

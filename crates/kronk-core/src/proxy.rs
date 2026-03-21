@@ -1,11 +1,14 @@
 pub mod server;
 
 use crate::config::Config;
+use crate::gpu;
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::time::UNIX_EPOCH;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -559,6 +562,135 @@ impl ProxyState {
             None
         }
     }
+
+    /// Build a comprehensive status response for the proxy.
+    pub async fn build_status_response(&self) -> serde_json::Value {
+        let vram = tokio::task::spawn_blocking(|| gpu::query_vram())
+            .await
+            .unwrap_or_else(|_| Ok(None))
+            .unwrap();
+
+        let idle_timeout_secs = self.config.proxy.idle_timeout_secs;
+        let models = self.models.read().await;
+        let mut model_list = Vec::new();
+
+        for (model_name, model_config) in &self.config.models {
+            if !model_config.enabled {
+                continue;
+            }
+
+            let backend = match self.config.backends.get(&model_config.backend) {
+                Some(b) => b.path.clone(),
+                None => continue,
+            };
+
+            let model_state = models.get(model_name);
+            let model_info = if let Some(state) = model_state {
+                match state {
+                    crate::proxy::ModelState::Ready {
+                        backend_pid,
+                        load_time,
+                        last_accessed,
+                        consecutive_failures,
+                        ..
+                    } => {
+                        let now = Instant::now();
+                        let last_accessed_secs_ago = now.duration_since(*last_accessed).as_secs();
+
+                        let idle_timeout_remaining_secs = state
+                            .last_accessed()
+                            .map(|la| {
+                                let timeout = Duration::from_secs(idle_timeout_secs);
+                                let elapsed = now.duration_since(la);
+                                if elapsed < timeout {
+                                    (timeout - elapsed).as_secs()
+                                } else {
+                                    0
+                                }
+                            })
+                            .unwrap_or(0);
+
+                        let load_time_ts = load_time
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+
+                        Some(serde_json::json!({
+                            "backend": backend,
+                            "backend_pid": *backend_pid,
+                            "load_time": load_time_ts,
+                            "last_accessed_secs_ago": last_accessed_secs_ago,
+                            "idle_timeout_remaining_secs": idle_timeout_remaining_secs,
+                            "consecutive_failures": consecutive_failures.load(std::sync::atomic::Ordering::Relaxed),
+                            "ready": true
+                        }))
+                    }
+                    crate::proxy::ModelState::Starting {
+                        backend,
+                        last_accessed,
+                        consecutive_failures,
+                        ..
+                    } => {
+                        let now = Instant::now();
+                        let last_accessed_secs_ago = now.duration_since(*last_accessed).as_secs();
+
+                        Some(serde_json::json!({
+                            "backend": backend,
+                            "last_accessed_secs_ago": last_accessed_secs_ago,
+                            "consecutive_failures": consecutive_failures.load(std::sync::atomic::Ordering::Relaxed),
+                            "ready": false
+                        }))
+                    }
+                    crate::proxy::ModelState::Failed { .. } => {
+                        Some(serde_json::json!({
+                            "backend": backend,
+                            "ready": false
+                        }))
+                    }
+                }
+            } else {
+                None
+            };
+
+            model_list.push(serde_json::json!({
+                "id": model_name,
+                "enabled": model_config.enabled,
+                "backend": model_config.backend,
+                "ready": model_info.as_ref().and_then(|m| m.get("ready").and_then(|v| v.as_bool())).unwrap_or(false),
+                "runtime": model_info
+            }));
+        }
+
+        drop(models);
+
+        let metrics = &self.metrics;
+        let total_requests = metrics.total_requests.load(std::sync::atomic::Ordering::Relaxed);
+        let successful_requests = metrics.successful_requests.load(std::sync::atomic::Ordering::Relaxed);
+        let failed_requests = metrics.failed_requests.load(std::sync::atomic::Ordering::Relaxed);
+        let models_loaded = metrics.models_loaded.load(std::sync::atomic::Ordering::Relaxed);
+        let models_unloaded = metrics.models_unloaded.load(std::sync::atomic::Ordering::Relaxed);
+        let active_models = models.len();
+
+        serde_json::json!({
+            "status": "ok",
+            "vram": vram.map(|v| serde_json::json!({
+                "used_mib": v.used_mib,
+                "total_mib": v.total_mib
+            })),
+            "models": model_list,
+            "proxy": serde_json::json!({
+                "idle_timeout_secs": idle_timeout_secs
+            }),
+            "metrics": serde_json::json!({
+                "total_requests": total_requests,
+                "successful_requests": successful_requests,
+                "failed_requests": failed_requests,
+                "models_loaded": models_loaded,
+                "models_unloaded": models_unloaded,
+                "active_models": active_models
+            })
+        })
+    }
 }
 
 /// Override a CLI flag's value in an argument list (e.g. --host, --port).
@@ -695,5 +827,48 @@ mod tests {
         let state = ProxyState::new(config);
         let result = state.get_available_server_for_model("nonexistent").await;
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_status_response() {
+        let config = Config::default();
+        let state = ProxyState::new(config);
+
+        let response = state.build_status_response().await;
+
+        let status = response.get("status").unwrap();
+        assert_eq!(status.as_str(), Some("ok"));
+
+        let vram = response.get("vram").unwrap();
+        assert!(vram.is_object());
+
+        let models = response.get("models").unwrap();
+        assert!(models.is_array());
+
+        let proxy = response.get("proxy").unwrap();
+        assert!(proxy.is_object());
+
+        let metrics = response.get("metrics").unwrap();
+        assert!(metrics.is_object());
+    }
+
+    #[tokio::test]
+    async fn test_build_status_response_with_loaded_model() {
+        let config = Config::default();
+        let state = ProxyState::new(config);
+
+        // Load a model
+        let result = state.load_model("default", None).await;
+        assert!(result.is_ok());
+
+        let response = state.build_status_response().await;
+
+        let models = response.get("models").unwrap();
+        let model = models.get("default").unwrap();
+
+        assert!(model.get("ready").unwrap().as_bool().unwrap());
+        assert!(model.get("runtime").unwrap().is_object());
+        assert!(model.get("runtime").unwrap().get("backend_pid").is_some());
+        assert!(model.get("runtime").unwrap().get("load_time").is_some());
     }
 }

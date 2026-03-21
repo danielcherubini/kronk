@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use serde_json;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
@@ -65,6 +66,7 @@ impl ProxyServer {
             )
             .route("/v1/models", get(handle_list_models))
             .route("/v1/models/:model_id", get(handle_get_model))
+            .route("/status", get(handle_status))
             .route("/health", get(handle_health))
             .route("/metrics", get(handle_metrics))
             .fallback(handle_fallback)
@@ -266,6 +268,12 @@ async fn handle_get_model(state: State<Arc<ProxyState>>, Path(model_id): Path<St
         })),
     )
         .into_response()
+}
+
+#[axum::debug_handler]
+async fn handle_status(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
+    let response = state.build_status_response().await;
+    Json(response)
 }
 
 #[axum::debug_handler]
@@ -607,6 +615,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
+
+        // Test status endpoint
+        let response = client
+            .get(format!("http://{}/status", bound_addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
     }
 
     #[tokio::test]
@@ -667,5 +683,39 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), 500); // Fails to load unknown model
+    }
+
+    #[tokio::test]
+    async fn test_status_endpoint_response_structure() {
+        let config = crate::config::Config::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(config));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+
+        let server = ProxyServer::new(state.clone());
+        let app = server.into_router();
+        let _handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("http://{}/status", bound_addr))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let body = response.text().await.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(json.get("status").unwrap().as_str(), Some("ok"));
+        assert!(json.get("models").unwrap().is_array());
+        assert!(json.get("proxy").unwrap().is_object());
+        assert!(json.get("metrics").unwrap().is_object());
     }
 }
