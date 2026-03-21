@@ -65,16 +65,41 @@ pub fn detect_build_prerequisites() -> BuildPrerequisites {
         #[cfg(target_os = "windows")]
         {
             // Try MSVC (cl.exe) first, then MinGW (g++)
-            std::process::Command::new("cl.exe")
+            // Also check vswhere.exe to detect VS Build Tools/VS installation
+            let cl_available = std::process::Command::new("cl.exe")
                 .arg("/?")
                 .output()
                 .map(|o| o.status.success())
-                .unwrap_or(false)
-                || std::process::Command::new("g++")
-                    .arg("--version")
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
+                .unwrap_or(false);
+
+            let gpp_available = std::process::Command::new("g++")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            // Check vswhere.exe for VS Build Tools
+            let program_files = std::env::var("ProgramFiles(x86)")
+                .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+            let vswhere_path = format!(
+                "{}/Microsoft Visual Studio/Installer/vswhere.exe",
+                program_files
+            );
+            let vswhere_available = std::process::Command::new(&vswhere_path)
+                .args(&[
+                    "-latest",
+                    "-products",
+                    "*",
+                    "-requires",
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property",
+                    "installationPath",
+                ])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            cl_available || gpp_available || vswhere_available
         }
         #[cfg(not(target_os = "windows"))]
         {
