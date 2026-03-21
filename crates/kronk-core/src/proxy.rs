@@ -612,11 +612,10 @@ impl ProxyState {
                             })
                             .unwrap_or(0);
 
-                        let load_time_ts = load_time
-                            .as_ref()
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
+                        let load_time_ts = match load_time {
+                            Some(t) => t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs()).unwrap_or(0),
+                            None => 0,
+                        };
 
                         Some(serde_json::json!({
                             "backend": backend,
