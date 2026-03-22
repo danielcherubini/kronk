@@ -10,7 +10,7 @@
 
 **Files:**
 - Modify: `crates/kronk-cli/src/main.rs`
-- Modify: `crates/kronk-cli/src/tests.rs`
+- Modify: `crates/kronk-cli/tests/tests.rs`
 
 **Steps:**
 - [ ] Write tests for `extract_kronk_flags()` in `tests.rs`:

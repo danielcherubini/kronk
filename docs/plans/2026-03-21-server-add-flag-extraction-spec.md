@@ -112,7 +112,7 @@ When `--model` is extracted as a model card reference, `ModelConfig.source` is a
 ### Output Messages
 
 Both commands will print detailed output matching `model create`:
-```
+```text
 Oh yeah, it's all coming together.
 
   Name:      qwen35

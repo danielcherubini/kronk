@@ -1632,7 +1632,9 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
             srv.quant = Some(quant.clone());
         }
         if let Some(ref profile) = extracted.profile {
-            let p = profile.parse::<kronk_core::profiles::Profile>().unwrap();
+            let p = profile
+                .parse::<kronk_core::profiles::Profile>()
+                .context("Failed to parse profile name")?;
             srv.profile = Some(p);
         }
         if let Some(port) = extracted.port {
