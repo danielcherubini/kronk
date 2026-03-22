@@ -225,11 +225,12 @@ async fn test_cmd_server_edit_nonexistent_server_errors() {
     );
 }
 
-/// cmd_server_edit with an invalid profile name should return an error,
-/// not panic.
+/// cmd_server_edit with a valid profile should succeed (not panic).
 #[tokio::test]
-async fn test_cmd_server_edit_invalid_profile_errors() {
+async fn test_cmd_server_edit_valid_profile_succeeds() {
+    let temp_dir = tempfile::tempdir().unwrap();
     let mut config = kronk_core::config::Config::default();
+    config.loaded_from = Some(temp_dir.path().to_path_buf());
     // Insert a dummy server first
     config.models.insert(
         "test_server".to_string(),
