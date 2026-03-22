@@ -622,6 +622,15 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     };
     use windows_service::service_control_handler;
 
+    // Set up Job Object so all child processes are killed when this service exits.
+    // The guard must be kept alive for the lifetime of the service.
+    let _job_guard = kronk_core::platform::job_object::setup_kill_on_exit()
+        .map_err(|e| {
+            eprintln!("Warning: Failed to create Job Object: {}. Child processes may orphan on exit.", e);
+            e
+        })
+        .ok();
+
     let is_proxy = SERVICE_PROXY.get().copied().unwrap_or(false);
     let server = SERVICE_SERVER.get().cloned().unwrap_or_default();
     let service_name = SERVICE_NAME.get().cloned().unwrap_or_default();
@@ -928,7 +937,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
         ServiceCommands::Install { name } => {
             if let Some(server_name) = name {
                 // Legacy: install a single backend as a service
-                let (srv, backend) = config.resolve_server(&server_name)?;
+                let (srv, _backend) = config.resolve_server(&server_name)?;
                 let service_name = Config::service_name(&server_name);
 
                 #[cfg(target_os = "windows")]
