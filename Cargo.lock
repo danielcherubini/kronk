@@ -1330,6 +1330,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "windows-service",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
