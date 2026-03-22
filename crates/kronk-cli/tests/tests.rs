@@ -1,6 +1,7 @@
 /// Tests for extract_kronk_flags helper function
-use super::extract_kronk_flags;
+use kronk::extract_kronk_flags;
 
+use kronk::{cmd_server_add, cmd_server_edit};
 #[test]
 fn test_extract_model_huggingface_ref() {
     let args = vec!["--model".to_string(), "unsloth/Qwen3.5-0.8B".to_string()];

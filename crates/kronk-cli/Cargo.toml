@@ -11,6 +11,10 @@ repository = "https://github.com/danielcherubini/kronk"
 name = "kronk"
 path = "src/main.rs"
 
+[[test]]
+name = "tests"
+path = "tests/tests.rs"
+
 [dependencies]
 kronk-core = { path = "../kronk-core" }
 tokio.workspace = true
@@ -23,6 +27,9 @@ directories.workspace = true
 toml.workspace = true
 inquire.workspace = true
 serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

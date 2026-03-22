@@ -1,3 +1,7 @@
+pub mod args;
+pub mod commands;
+
+use crate::commands::backend::{BackendArgs, BackendSubcommand};
 use anyhow::{Context, Result};
 use clap::Parser;
 use kronk_core::config::{Config, ModelConfig};
@@ -11,9 +15,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
-mod args;
-mod commands;
-use commands::backend::{BackendArgs, BackendSubcommand};
+// Re-export functions for testing
 
 /// Flags extracted from command line arguments that are specific to kronk.
 /// Remaining args are passed through to the backend unchanged.
@@ -69,7 +71,7 @@ pub fn extract_kronk_flags(args: Vec<String>) -> Result<ExtractedFlags> {
         match arg.as_str() {
             "--model" | "-m" => {
                 if i + 1 >= args.len() {
-                    anyhow::bail!("--model flag requires a value");
+                    anyhow::bail!("--model/-m flag requires a value");
                 }
                 let model_value = args[i + 1].clone();
                 // Check if it looks like a model card ref
@@ -102,7 +104,7 @@ pub fn extract_kronk_flags(args: Vec<String>) -> Result<ExtractedFlags> {
             }
             "--port" => {
                 if i + 1 >= args.len() {
-                    anyhow::bail!("--port flag requires a value");
+                    anyhow::bail!("--port flag requires a valid u16 value");
                 }
                 let port_val = args[i + 1]
                     .parse::<u16>()
@@ -433,6 +435,7 @@ enum ConfigCommands {
     Path,
 }
 
+#[allow(dead_code)]
 fn main() -> Result<()> {
     // Check if we're being launched by the Windows Service Control Manager.
     // SCM passes "service-run" as the first real argument.
@@ -500,6 +503,7 @@ fn main() -> Result<()> {
     })
 }
 
+#[allow(dead_code)]
 async fn cmd_logs(config: &Config, name: &str, follow: bool, lines: usize) -> Result<()> {
     let logs_dir = config.logs_dir()?;
     let log_path = logging::log_path(&logs_dir, name);
@@ -853,6 +857,7 @@ fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
 /// Build the full argument list for a server, resolving model card args at runtime.
 /// Merges: backend.default_args + server.args + model card (-m, -c, -ngl) + sampling
+#[allow(dead_code)]
 fn build_full_args(
     config: &Config,
     server: &kronk_core::config::ModelConfig,
@@ -862,6 +867,7 @@ fn build_full_args(
     config.build_full_args(server, backend, ctx_override)
 }
 
+#[allow(dead_code)]
 async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) -> Result<()> {
     let (server, backend) = config.resolve_server(server_name)?;
 
@@ -923,6 +929,7 @@ async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
     match command {
         ServiceCommands::Install { name } => {
@@ -1020,6 +1027,7 @@ fn cmd_service(config: &Config, command: ServiceCommands) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn service_start_inner(service_name: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     kronk_core::platform::windows::start_service(service_name)?;
@@ -1036,6 +1044,7 @@ fn service_start_inner(service_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn service_stop_inner(service_name: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     kronk_core::platform::windows::stop_service(service_name)?;
@@ -1052,6 +1061,7 @@ fn service_stop_inner(service_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Format seconds as human-readable duration (e.g. "4m28s" or "32s").
 fn format_duration_secs(secs: u64) -> String {
     if secs >= 60 {
@@ -1061,6 +1071,7 @@ fn format_duration_secs(secs: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 async fn cmd_status(config: &Config) -> Result<()> {
     println!("KRONK Status");
     println!("{}", "-".repeat(60));
@@ -1175,6 +1186,7 @@ async fn cmd_status(config: &Config) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn cmd_server(config: &Config, command: ServerCommands) -> Result<()> {
     match command {
         ServerCommands::Ls => cmd_server_ls(config).await,
@@ -1194,6 +1206,7 @@ async fn cmd_server(config: &Config, command: ServerCommands) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 async fn cmd_server_ls(config: &Config) -> Result<()> {
     if config.models.is_empty() {
         println!("No models configured.");
@@ -1275,6 +1288,7 @@ async fn cmd_server_ls(config: &Config) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     if !config.models.contains_key(name) {
         anyhow::bail!("Server '{}' not found.", name);
@@ -1477,11 +1491,8 @@ pub async fn cmd_server_add(
                         .join(", ")
                 );
             }
-            Some(quant.clone())
-        } else {
-            // No model card - quant is just stored as-is
-            Some(quant.clone())
         }
+        Some(quant.clone())
     } else {
         None
     };
@@ -1568,7 +1579,9 @@ pub async fn cmd_server_add(
     Ok(())
 }
 
-async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) -> Result<()> {
+pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) -> Result<()> {
+    use kronk_core::profiles::Profile;
+
     if command.is_empty() {
         anyhow::bail!("No command provided");
     }
@@ -1578,15 +1591,51 @@ async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) 
 
     let (backend_key, exe_str) = resolve_backend(config, exe_path)?;
 
-    // Load config, update only the command string for the existing server
-    let mut config = config.clone();
+    // Extract kronk flags
+    let extracted = extract_kronk_flags(args.clone())?;
+    tracing::debug!(
+        "extracted: {:?}, remaining: {:?}",
+        extracted,
+        extracted.remaining_args
+    );
+
+    // Update the existing server with extracted flags (work directly with mutable ref)
     let srv = config
         .models
         .get_mut(name)
         .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", name))?;
 
+    tracing::debug!("before edit: model={:?}, quant={:?}", srv.model, srv.quant);
     srv.backend = backend_key.clone();
-    srv.args = args;
+    srv.args = extracted.remaining_args;
+
+    // Apply extracted flags to model config
+    if let Some(ref model) = extracted.model {
+        tracing::debug!("setting model to: {}", model);
+        srv.model = Some(model.clone());
+        srv.source = Some(model.clone());
+    }
+    if let Some(ref quant) = extracted.quant {
+        srv.quant = Some(quant.clone());
+    }
+    if let Some(ref profile) = extracted.profile {
+        let profile_enum = match profile.as_str() {
+            "coding" => Profile::Coding,
+            "chat" => Profile::Chat,
+            "analysis" => Profile::Analysis,
+            "creative" => Profile::Creative,
+            _ => Profile::Custom {
+                name: profile.clone(),
+            },
+        };
+        srv.profile = Some(profile_enum);
+    }
+    if let Some(port) = extracted.port {
+        srv.port = Some(port);
+    }
+    if let Some(ctx) = extracted.context_length {
+        srv.context_length = Some(ctx);
+    }
 
     config.save()?;
 
@@ -1598,6 +1647,7 @@ async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::Show => {
@@ -1620,6 +1670,7 @@ fn cmd_config(config: &Config, command: ConfigCommands) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     use kronk_core::profiles::Profile;
 
@@ -1847,6 +1898,7 @@ fn cmd_profile(config: &Config, command: ProfileCommands) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 /// Start the kronk server (proxy) with the given host, port, and idle timeout.
 async fn start_proxy_server(
     config: &Config,
@@ -1891,11 +1943,13 @@ async fn start_proxy_server(
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Start the kronk server.
 async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u64) -> Result<()> {
     start_proxy_server(config, host, port, idle_timeout).await
 }
 
+#[allow(dead_code)]
 /// Start the OpenAI-compliant proxy server (deprecated: use `kronk serve`).
 async fn cmd_proxy(config: &Config, command: ProxyCommands) -> Result<()> {
     eprintln!("Warning: `kronk proxy start` is deprecated. Use `kronk serve` instead.");

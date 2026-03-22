@@ -640,6 +640,16 @@ impl Config {
         Ok(())
     }
 
+    /// Save config to a specific directory path.
+    /// Used by tests and Windows service which need to save to non-standard locations.
+    pub fn save_to(&self, config_dir: &std::path::Path) -> Result<()> {
+        let config_path = config_dir.join("config.toml");
+        fs::create_dir_all(config_dir).context("Failed to create config directory")?;
+        let toml_str = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&config_path, &toml_str).context("Failed to write config")?;
+        Ok(())
+    }
+
     /// Shared helper to resolve profile params from custom_profiles, profiles.d/, or built-in.
     /// Returns Option<SamplingParams> by checking:
     /// 1. self.custom_profiles for the profile name
@@ -812,7 +822,20 @@ mod tests {
 
     #[test]
     fn test_effective_sampling_profile_only() {
-        let config = Config::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            general: General {
+                log_level: "info".to_string(),
+                models_dir: None,
+                logs_dir: None,
+            },
+            backends: HashMap::new(),
+            models: HashMap::new(),
+            supervisor: Supervisor::default(),
+            custom_profiles: None,
+            proxy: ProxyConfig::default(),
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+        };
         let server = ModelConfig {
             backend: "test".to_string(),
             args: vec![],
@@ -832,7 +855,20 @@ mod tests {
 
     #[test]
     fn test_effective_sampling_override() {
-        let config = Config::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            general: General {
+                log_level: "info".to_string(),
+                models_dir: None,
+                logs_dir: None,
+            },
+            backends: HashMap::new(),
+            models: HashMap::new(),
+            supervisor: Supervisor::default(),
+            custom_profiles: None,
+            proxy: ProxyConfig::default(),
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+        };
         let server = ModelConfig {
             backend: "test".to_string(),
             args: vec![],
@@ -856,7 +892,20 @@ mod tests {
 
     #[test]
     fn test_effective_sampling_none() {
-        let config = Config::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            general: General {
+                log_level: "info".to_string(),
+                models_dir: None,
+                logs_dir: None,
+            },
+            backends: HashMap::new(),
+            models: HashMap::new(),
+            supervisor: Supervisor::default(),
+            custom_profiles: None,
+            proxy: ProxyConfig::default(),
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+        };
         let server = ModelConfig {
             backend: "test".to_string(),
             args: vec![],
@@ -931,7 +980,20 @@ args = ["--host", "0.0.0.0"]
     fn test_effective_sampling_with_model_card() {
         use crate::models::card::{ModelCard, ModelMeta};
 
-        let config = Config::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            general: General {
+                log_level: "info".to_string(),
+                models_dir: None,
+                logs_dir: None,
+            },
+            backends: HashMap::new(),
+            models: HashMap::new(),
+            supervisor: Supervisor::default(),
+            custom_profiles: None,
+            proxy: ProxyConfig::default(),
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+        };
 
         let mut sampling = HashMap::new();
         sampling.insert(
@@ -983,7 +1045,20 @@ args = ["--host", "0.0.0.0"]
 
     #[test]
     fn test_effective_sampling_backward_compat() {
-        let config = Config::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            general: General {
+                log_level: "info".to_string(),
+                models_dir: None,
+                logs_dir: None,
+            },
+            backends: HashMap::new(),
+            models: HashMap::new(),
+            supervisor: Supervisor::default(),
+            custom_profiles: None,
+            proxy: ProxyConfig::default(),
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+        };
         let server = ModelConfig {
             backend: "test".to_string(),
             args: vec![],
