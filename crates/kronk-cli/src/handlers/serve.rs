@@ -28,7 +28,7 @@ async fn start_proxy_server(
     port: u16,
     idle_timeout: u64,
 ) -> Result<()> {
-    use kronk_core::proxy::server::ProxyServer;
+    use kronk_core::proxy::ProxyServer;
     use kronk_core::proxy::ProxyState;
     use std::net::SocketAddr;
     use std::sync::Arc;
