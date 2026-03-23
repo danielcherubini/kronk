@@ -78,8 +78,11 @@ impl Config {
         Ok(config)
     }
 
-    /// Save config to the default location.
+    /// Save config to the location it was loaded from, or the default location.
     pub fn save(&self) -> Result<()> {
+        if let Some(ref loaded) = self.loaded_from {
+            return self.save_to(loaded);
+        }
         let config_path = Self::config_path()?;
         let toml_str = toml::to_string_pretty(self).context("Failed to serialize config")?;
         fs::write(&config_path, &toml_str).context("Failed to write config")?;
