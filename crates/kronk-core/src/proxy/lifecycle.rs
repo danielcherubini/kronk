@@ -118,6 +118,7 @@ impl ProxyState {
         // Wait for health check to pass
         let timeout = Duration::from_secs(self.config.proxy.startup_timeout_secs);
         let start = Instant::now();
+        let mut health_ok = false;
 
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -130,12 +131,13 @@ impl ProxyState {
             if let Ok(response) = super::process::check_health(&health_url, Some(30)).await {
                 if response.status().is_success() {
                     debug!("Health check passed for server: {}", server_name);
+                    health_ok = true;
                     break;
                 }
             }
         }
 
-        if start.elapsed() >= timeout {
+        if !health_ok {
             return Err(anyhow::anyhow!(
                 "Backend '{}' failed to start for server '{}' (timeout after {}s)",
                 server_config.backend,
@@ -289,7 +291,9 @@ impl ProxyState {
 
         // Unload Ready models via the normal shutdown path
         for server_name in &to_unload {
-            let _ = self.unload_model(server_name).await;
+            if let Err(e) = self.unload_model(server_name).await {
+                warn!("Failed to unload server '{}': {}", server_name, e);
+            }
         }
 
         to_unload.extend(failed_to_remove);

@@ -169,7 +169,7 @@ pub async fn forward_request(
                             f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                         // Set failure timestamp for cooldown
-                        if ms.is_ready() {
+                        if ms.is_ready() || matches!(ms, ModelState::Starting { .. }) {
                             let new_ts = SystemTime::now();
                             let mut models = state.models.write().await;
                             #[allow(clippy::collapsible_match)]

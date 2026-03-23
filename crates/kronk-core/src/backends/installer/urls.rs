@@ -131,6 +131,23 @@ mod tests {
     }
 
     #[test]
+    fn test_llama_cpp_download_url_windows_cuda13() {
+        let url = get_prebuilt_url(
+            &BackendType::LlamaCpp,
+            "b8407",
+            "windows",
+            "x86_64",
+            Some(&GpuType::Cuda {
+                version: "13.4".to_string(),
+            }),
+        )
+        .unwrap();
+
+        assert!(url.contains("cuda-13.1"));
+        assert!(url.contains("b8407"));
+    }
+
+    #[test]
     fn test_ik_llama_prebuilt_not_available() {
         let result = get_prebuilt_url(&BackendType::IkLlama, "main", "linux", "x86_64", None);
         assert!(result.is_err());

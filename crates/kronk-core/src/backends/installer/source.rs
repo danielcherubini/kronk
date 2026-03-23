@@ -62,6 +62,12 @@ pub async fn install_from_source(
 /// Clone a git repository, with fallback logic for "latest" and "main" tags.
 async fn clone_repository(version: &str, git_url: &str, source_dir: &Path) -> Result<()> {
     println!("Cloning repository (shallow)...");
+
+    // For "latest", resolve the most recent tag first before trying branch clone
+    if version == "latest" && try_clone_latest_tag(git_url, source_dir).await? {
+        return Ok(());
+    }
+
     let clone_result = tokio::process::Command::new("git")
         .args([
             "clone",
@@ -79,11 +85,7 @@ async fn clone_repository(version: &str, git_url: &str, source_dir: &Path) -> Re
         return Ok(());
     }
 
-    // For "latest", try to resolve the most recent tag first
-    let mut cloned_from_tag = false;
-    if version == "latest" {
-        cloned_from_tag = try_clone_latest_tag(git_url, source_dir).await?;
-    }
+    let cloned_from_tag = false;
 
     // Only allow fallback to HEAD for "main" or "latest" (tags may not exist)
     if version != "main" && version != "latest" {

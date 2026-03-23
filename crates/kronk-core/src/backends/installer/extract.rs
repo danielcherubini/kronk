@@ -87,7 +87,8 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = entry.unix_mode() {
-                    std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
+                    let _ =
+                        std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode));
                 }
             }
         }

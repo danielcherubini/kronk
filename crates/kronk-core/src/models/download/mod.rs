@@ -91,19 +91,13 @@ pub async fn download_chunked(
             .progress_chars("=>-"),
     );
 
+    // Note: auth_header is already set as a default header on the client,
+    // so we pass None to avoid duplicate Authorization headers.
     let result = if num_connections == 1 {
-        single::download_single(&client, url, dest, auth_header, &pb).await
+        single::download_single(&client, url, dest, None, &pb).await
     } else {
-        parallel::download_parallel(
-            &client,
-            url,
-            dest,
-            total_size,
-            num_connections,
-            auth_header,
-            &pb,
-        )
-        .await
+        parallel::download_parallel(&client, url, dest, total_size, num_connections, None, &pb)
+            .await
     };
 
     match result {
