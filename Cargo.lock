@@ -1317,6 +1317,7 @@ dependencies = [
  "http-body-util",
  "indicatif",
  "inquire",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

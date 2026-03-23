@@ -5,7 +5,7 @@ use kronk_core::models::search::{self, SortBy};
 use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
 use std::collections::HashMap;
 
-use crate::ModelCommands;
+use crate::cli::ModelCommands;
 
 /// Generate a unique key for a quant entry, avoiding collisions in the map.
 /// If `base_key` is already taken, appends the filename stem as a suffix.

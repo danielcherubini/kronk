@@ -184,7 +184,7 @@ async fn test_cmd_server_add_nonexistent_model_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = kronk_core::config::Config::default();
     config.loaded_from = Some(temp_dir.path().to_path_buf());
-    let result = cmd_server_add(
+    let result: anyhow::Result<()> = cmd_server_add(
         &config,
         "test_server",
         vec![
@@ -210,7 +210,7 @@ async fn test_cmd_server_edit_nonexistent_server_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut config = kronk_core::config::Config::default();
     config.loaded_from = Some(temp_dir.path().to_path_buf());
-    let result = cmd_server_edit(
+    let result: anyhow::Result<()> = cmd_server_edit(
         &mut config,
         "nonexistent",
         vec![
@@ -233,8 +233,10 @@ async fn test_cmd_server_edit_nonexistent_server_errors() {
 #[tokio::test]
 async fn test_cmd_server_edit_valid_profile_succeeds() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut config = kronk_core::config::Config::default();
-    config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+    // Use Config::load_from() which creates the default config file
+    let mut config = kronk_core::config::Config::load_from(temp_dir.path())
+        .expect("Failed to load/create default config");
     // Insert a dummy server first
     config.models.insert(
         "test_server".to_string(),
@@ -261,7 +263,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             health_check_url: None,
         },
     );
-    let result = cmd_server_edit(
+    let result: anyhow::Result<()> = cmd_server_edit(
         &mut config,
         "test_server",
         vec![

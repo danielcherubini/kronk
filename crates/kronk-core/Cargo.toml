@@ -29,6 +29,7 @@ bytes.workspace = true
 serde_json.workspace = true
 http-body-util.workspace = true
 async-stream = "0.3"
+libc = "0.2.183"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
