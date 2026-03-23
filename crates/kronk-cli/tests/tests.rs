@@ -235,15 +235,8 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     let temp_dir = tempfile::tempdir().unwrap();
 
     // Use Config::load_from() which creates the default config file
-    let mut config = match kronk_core::config::Config::load_from(temp_dir.path()) {
-        Ok(c) => c,
-        Err(_) => {
-            // If loading fails (e.g., profiles.d creation), create a minimal config
-            let mut config = kronk_core::config::Config::default();
-            config.loaded_from = Some(temp_dir.path().to_path_buf());
-            config
-        }
-    };
+    let mut config = kronk_core::config::Config::load_from(temp_dir.path())
+        .expect("Failed to load/create default config");
     // Insert a dummy server first
     config.models.insert(
         "test_server".to_string(),
