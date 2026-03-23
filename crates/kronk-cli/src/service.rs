@@ -129,7 +129,25 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
         .or_else(|_| std::fs::File::create("kronk-service.log"))
         .or_else(|_| std::fs::File::create(std::env::temp_dir().join("kronk-service.log")))
-        .expect("Failed to create log file in any location");
+        .or_else(|_| {
+            // Last resort: write to /dev/null (Unix) or NUL (Windows)
+            #[cfg(unix)]
+            {
+                std::fs::File::create("/dev/null")
+            }
+            #[cfg(windows)]
+            {
+                std::fs::File::create("NUL")
+            }
+        });
+
+    let log_file = match log_file {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("FATAL: Cannot create any log file: {}", e);
+            return;
+        }
+    };
 
     // Set up tracing to write to the log file (services have no stderr)
     let subscriber = tracing_subscriber::fmt()

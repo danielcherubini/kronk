@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Consolidate CLI `main.rs` / `lib.rs` duplication
+## Task 1: Consolidate CLI `main.rs` / `lib.rs` duplication
 
 The biggest issue: `main.rs` (1982 lines) and `lib.rs` (1989 lines) contain nearly identical code. All logic moves into `lib.rs` modules; `main.rs` becomes ~15 lines.
 
@@ -44,7 +44,7 @@ The biggest issue: `main.rs` (1982 lines) and `lib.rs` (1989 lines) contain near
 
 ---
 
-### Task 2: Split `crates/kronk-core/src/config.rs` (1135 lines)
+## Task 2: Split `crates/kronk-core/src/config.rs` (1135 lines)
 
 Convert `config.rs` into a `config/` directory module.
 
@@ -74,7 +74,7 @@ Convert `config.rs` into a `config/` directory module.
 
 ---
 
-### Task 3: Split `crates/kronk-core/src/proxy.rs` (876 lines) into `proxy/` directory
+## Task 3: Split `crates/kronk-core/src/proxy.rs` (876 lines) into `proxy/` directory
 
 Currently `proxy.rs` coexists with `proxy/server.rs` using the Rust 2018 sibling-file pattern. Convert to `proxy/mod.rs` directory-style to add more submodules.
 
@@ -101,7 +101,7 @@ Currently `proxy.rs` coexists with `proxy/server.rs` using the Rust 2018 sibling
 
 ---
 
-### Task 4: Split `crates/kronk-core/src/proxy/server.rs` (719 lines)
+## Task 4: Split `crates/kronk-core/src/proxy/server.rs` (719 lines)
 
 Split the Axum proxy server into server setup vs. route handlers.
 
@@ -123,7 +123,7 @@ Split the Axum proxy server into server setup vs. route handlers.
 
 ---
 
-### Task 5: Split `crates/kronk-core/src/backends/installer.rs` (667 lines)
+## Task 5: Split `crates/kronk-core/src/backends/installer.rs` (667 lines)
 
 Split the installer into logical phases: URL resolution, downloading, extraction, and installation.
 
@@ -149,7 +149,7 @@ Split the installer into logical phases: URL resolution, downloading, extraction
 
 ---
 
-### Task 6: Split `crates/kronk-core/src/models/download.rs` (518 lines)
+## Task 6: Split `crates/kronk-core/src/models/download.rs` (518 lines)
 
 Split the download module by download strategy.
 

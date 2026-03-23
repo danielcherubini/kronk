@@ -1,10 +1,10 @@
 use super::types::Config;
 
 /// Shared helper to resolve profile params from custom_profiles, profiles.d/, or built-in.
-/// Returns Option<SamplingParams> by checking:
-/// 1. self.custom_profiles for the profile name
-/// 2. profiles.d/ via crate::profiles::load_profiles_d
-/// 3. Profile::params() for built-in profiles
+/// Returns `Option<SamplingParams>` by checking:
+/// 1. `config.custom_profiles` for the profile name
+/// 2. `profiles.d/` via `crate::profiles::load_profiles_d`
+/// 3. `Profile::params()` for built-in profiles
 pub fn resolve_profile_params(
     config: &Config,
     profile: &Option<crate::profiles::Profile>,

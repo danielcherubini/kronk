@@ -55,9 +55,13 @@ pub async fn download_chunked(
         .await
         .with_context(|| format!("HEAD request failed for {}", url))?;
 
+    if !head.status().is_success() {
+        anyhow::bail!("HEAD request returned HTTP {}: {}", head.status(), url);
+    }
+
     let total_size = head
         .content_length()
-        .with_context(|| "Server did not return Content-Length")?;
+        .context("Server did not return Content-Length")?;
 
     // Skip download if file already exists with matching size
     if dest.exists() {
@@ -84,10 +88,12 @@ pub async fn download_chunked(
     };
 
     let pb = ProgressBar::new(total_size);
+    let template = "{spinner:.green} [{elapsed_precise}] \
+                    [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})";
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
-            .unwrap()
+            .template(template)
+            .context("Invalid progress bar template")?
             .progress_chars("=>-"),
     );
 
