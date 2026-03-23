@@ -437,8 +437,6 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     // Extract kronk flags from args
     let extracted = crate::flags::extract_kronk_flags(args)?;
 
-    let mut config = config.clone();
-
     // Mutate via get_mut in a block so the borrow is dropped before save()
     {
         let srv = config.models.get_mut(name).unwrap();

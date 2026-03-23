@@ -367,7 +367,7 @@ fn build_full_args(
 
 // On Windows, use the real ProcessSupervisor from kronk_core
 #[cfg(target_os = "windows")]
-use kronk_core::process::ProcessSupervisor;
+use kronk_core::process::{ProcessEvent, ProcessSupervisor};
 
 #[cfg(not(target_os = "windows"))]
 pub fn service_dispatch() -> anyhow::Result<()> {

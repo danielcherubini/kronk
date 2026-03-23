@@ -63,9 +63,9 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
         }
     });
 
-    supervisor.run(tx, None).await?;
+    let result = supervisor.run(tx, None).await;
     printer.abort();
-    Ok(())
+    result
 }
 
 /// Build the full argument list for a server, resolving model card args at runtime.

@@ -70,7 +70,7 @@ pub async fn handle_chat_completions(
             match state.load_model(model_name, model_card.as_ref()).await {
                 Ok(s) => s,
                 Err(e) => {
-                    info!("Failed to load model {}: {}", model_name, e);
+                    tracing::warn!("Failed to load model {}: {}", model_name, e);
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({

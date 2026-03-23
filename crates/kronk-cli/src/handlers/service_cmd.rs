@@ -5,7 +5,7 @@
 use anyhow::Result;
 use kronk_core::config::Config;
 
-/// Manage Windows services
+/// Manage system services (Windows and Linux)
 pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Result<()> {
     match command {
         crate::cli::ServiceCommands::Install { name } => {

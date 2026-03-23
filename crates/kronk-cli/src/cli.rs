@@ -57,12 +57,26 @@ pub fn extract_kronk_flags(args: Vec<String>) -> anyhow::Result<ExtractedFlags> 
     while i < args.len() {
         let arg = &args[i];
 
-        match arg.as_str() {
+        // Support --flag=value syntax: split on first '=' and treat as two args
+        let (key, eq_value) = if let Some(eq_pos) = arg.find('=') {
+            let (k, v) = arg.split_at(eq_pos);
+            (k, Some(v[1..].to_string())) // skip the '='
+        } else {
+            (arg.as_str(), None)
+        };
+
+        match key {
             "--model" | "-m" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("--model/-m flag requires a value");
-                }
-                let model_value = args[i + 1].clone();
+                let model_value = if let Some(ref v) = eq_value {
+                    i += 1;
+                    v.clone()
+                } else {
+                    if i + 1 >= args.len() {
+                        anyhow::bail!("--model/-m flag requires a value");
+                    }
+                    i += 2;
+                    args[i - 1].clone()
+                };
                 // Check if it looks like a model card ref
                 let is_model_ref = model_value.contains('/')
                     && !model_value.contains(".gguf")
@@ -73,43 +87,68 @@ pub fn extract_kronk_flags(args: Vec<String>) -> anyhow::Result<ExtractedFlags> 
                 } else {
                     // Not a model ref, leave in remaining_args
                     remaining_args.push(arg.clone());
-                    remaining_args.push(model_value);
+                    if eq_value.is_none() {
+                        remaining_args.push(model_value);
+                    }
                 }
-                i += 2;
             }
             "--profile" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("--profile flag requires a value");
-                }
-                profile = Some(args[i + 1].clone());
-                i += 2;
+                let val = if let Some(ref v) = eq_value {
+                    i += 1;
+                    v.clone()
+                } else {
+                    if i + 1 >= args.len() {
+                        anyhow::bail!("--profile flag requires a value");
+                    }
+                    i += 2;
+                    args[i - 1].clone()
+                };
+                profile = Some(val);
             }
             "--quant" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("--quant flag requires a value");
-                }
-                quant = Some(args[i + 1].clone());
-                i += 2;
+                let val = if let Some(ref v) = eq_value {
+                    i += 1;
+                    v.clone()
+                } else {
+                    if i + 1 >= args.len() {
+                        anyhow::bail!("--quant flag requires a value");
+                    }
+                    i += 2;
+                    args[i - 1].clone()
+                };
+                quant = Some(val);
             }
             "--port" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("--port flag requires a valid u16 value");
-                }
-                let port_val = args[i + 1]
+                let val = if let Some(ref v) = eq_value {
+                    i += 1;
+                    v.clone()
+                } else {
+                    if i + 1 >= args.len() {
+                        anyhow::bail!("--port flag requires a valid u16 value");
+                    }
+                    i += 2;
+                    args[i - 1].clone()
+                };
+                let port_val = val
                     .parse::<u16>()
                     .context("--port requires a valid u16 value")?;
                 port = Some(port_val);
-                i += 2;
             }
             "--ctx" => {
-                if i + 1 >= args.len() {
-                    anyhow::bail!("--ctx flag requires a value");
-                }
-                let ctx_val = args[i + 1]
+                let val = if let Some(ref v) = eq_value {
+                    i += 1;
+                    v.clone()
+                } else {
+                    if i + 1 >= args.len() {
+                        anyhow::bail!("--ctx flag requires a value");
+                    }
+                    i += 2;
+                    args[i - 1].clone()
+                };
+                let ctx_val = val
                     .parse::<u32>()
                     .context("--ctx requires a valid u32 value")?;
                 context_length = Some(ctx_val);
-                i += 2;
             }
             _ => {
                 remaining_args.push(arg.clone());
