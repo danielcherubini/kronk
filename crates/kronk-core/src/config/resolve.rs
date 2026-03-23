@@ -309,7 +309,7 @@ impl Config {
     /// Build the proxy base URL from config, e.g. `http://0.0.0.0:11411`.
     /// Always returns a URL since the proxy may be running even if not
     /// marked as enabled in config (e.g. started manually via `kronk serve`).
-    pub fn proxy_url(&self) -> Option<String> {
-        Some(format!("http://{}:{}", self.proxy.host, self.proxy.port))
+    pub fn proxy_url(&self) -> String {
+        format!("http://{}:{}", self.proxy.host, self.proxy.port)
     }
 }

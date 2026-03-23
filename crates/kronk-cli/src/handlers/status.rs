@@ -16,9 +16,13 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
         .build()
         .unwrap_or_default();
 
-    let proxy_url = config.proxy_url().map(|url| format!("{}/status", url));
-    let proxy_response = if let Some(url) = proxy_url {
-        match http_client.get(&url).send().await {
+    let proxy_url = config.proxy_url();
+    let proxy_response = if !proxy_url.is_empty() {
+        match http_client
+            .get(format!("{}/status", proxy_url))
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
             _ => None,
         }

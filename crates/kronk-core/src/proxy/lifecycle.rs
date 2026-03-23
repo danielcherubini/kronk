@@ -267,7 +267,7 @@ impl ProxyState {
                     continue;
                 }
             };
-            let idle_duration = now.duration_since(last);
+            let idle_duration = now.saturating_duration_since(last);
             let timeout = Duration::from_secs(self.config.proxy.idle_timeout_secs);
 
             if idle_duration > timeout {
