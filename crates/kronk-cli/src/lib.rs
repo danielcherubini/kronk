@@ -16,6 +16,7 @@ use clap::Parser;
 use cli::{Args, Commands};
 use handlers::{config, profile, run, serve, server, service_cmd, status};
 use kronk_core::config::Config;
+#[cfg(target_os = "windows")]
 use service::{service_dispatch, win_service_main};
 
 /// Extracted flags from command line arguments

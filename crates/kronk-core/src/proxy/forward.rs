@@ -179,8 +179,7 @@ pub async fn forward_request(
                                         failure_timestamp, ..
                                     }
                                     | ModelState::Starting {
-                                        failure_timestamp,
-                                        ..
+                                        failure_timestamp, ..
                                     } => {
                                         *failure_timestamp = Some(new_ts);
                                     }
@@ -216,7 +215,22 @@ pub async fn forward_request(
             }
 
             let body = Body::from_stream(response.bytes_stream());
-            builder.body(body).unwrap().into_response()
+            match builder.body(body) {
+                Ok(resp) => resp.into_response(),
+                Err(e) => {
+                    tracing::error!("Failed to build response body: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": "Internal error building response",
+                                "type": "InternalError"
+                            }
+                        })),
+                    )
+                        .into_response()
+                }
+            }
         }
         Err(e) => {
             state

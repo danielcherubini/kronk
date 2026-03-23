@@ -2,7 +2,6 @@
 //!
 //! Handles `kronk logs <server>` for viewing server logs.
 
-use anyhow::Context;
 use anyhow::Result;
 use kronk_core::config::Config;
 use kronk_core::logging;

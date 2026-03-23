@@ -79,6 +79,7 @@ fn build_full_args(
 }
 
 /// Process supervisor for running backends
+#[allow(dead_code)]
 struct ProcessSupervisor {
     path: String,
     args: Vec<String>,

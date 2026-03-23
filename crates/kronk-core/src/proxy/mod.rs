@@ -1,20 +1,24 @@
-mod state;
-mod lifecycle;
-mod process;
-mod handlers;
 mod forward;
-mod server;
+mod handlers;
+mod lifecycle;
+pub mod process;
+pub mod server;
+mod state;
+mod status;
+mod types;
 
-pub use state::{ModelState, ProxyMetrics, ProxyState};
-pub use process::{override_arg, is_process_alive, kill_process, force_kill_process, check_health};
-pub use server::ProxyServer;
-pub use handlers::{handle_chat_completions, handle_stream_chat_completions, handle_get_model, handle_list_models, handle_health, handle_status, handle_metrics, handle_fallback, json_error_response};
 pub use forward::forward_request;
-
+pub use handlers::{
+    handle_chat_completions, handle_fallback, handle_get_model, handle_health, handle_list_models,
+    handle_metrics, handle_status, handle_stream_chat_completions, json_error_response,
+};
+pub use process::{check_health, force_kill_process, is_process_alive, kill_process, override_arg};
+pub use server::ProxyServer;
+pub use types::{ModelState, ProxyMetrics, ProxyState};
 
 #[cfg(test)]
 mod tests {
-    use super::*; // To bring everything from mod.rs into scope
+    use super::*;
     use crate::config::Config;
 
     #[tokio::test]

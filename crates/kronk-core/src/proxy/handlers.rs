@@ -27,7 +27,10 @@ pub fn json_error_response() -> Response {
 }
 
 #[axum::debug_handler]
-pub async fn handle_chat_completions(state: State<Arc<ProxyState>>, req: Request<Body>) -> Response {
+pub async fn handle_chat_completions(
+    state: State<Arc<ProxyState>>,
+    req: Request<Body>,
+) -> Response {
     let (parts, body) = req.into_parts();
     let body_bytes = match to_bytes(body, MAX_REQUEST_BODY_SIZE).await {
         Ok(b) => b,
@@ -162,7 +165,10 @@ pub async fn handle_stream_chat_completions(
 }
 
 #[axum::debug_handler]
-pub async fn handle_get_model(state: State<Arc<ProxyState>>, Path(model_id): Path<String>) -> Response {
+pub async fn handle_get_model(
+    state: State<Arc<ProxyState>>,
+    Path(model_id): Path<String>,
+) -> Response {
     // Check if already loaded (by server name or model name)
     let model_state = state.get_model_state(&model_id).await;
 

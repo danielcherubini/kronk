@@ -1,22 +1,20 @@
+pub mod listener;
+pub mod router;
+
 use crate::proxy::ProxyState;
-use axum::{
-    routing::{get, post},
-    Router,
-};
 use std::sync::Arc;
-use tracing::info;
 
-use super::handlers::{
-    handle_chat_completions, handle_fallback, handle_get_model, handle_health,
-    handle_list_models, handle_metrics, handle_status, handle_stream_chat_completions,
-};
-
+/// The proxy server, owning shared state and background tasks.
 pub struct ProxyServer {
     state: Arc<ProxyState>,
     idle_timeout_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ProxyServer {
+    /// Create a new proxy server with the given shared state.
+    ///
+    /// Starts a background task that periodically checks for idle models
+    /// and unloads them.
     pub fn new(state: Arc<ProxyState>) -> Self {
         let handle = Self::start_idle_timeout_checker(state.clone());
         Self {
@@ -35,36 +33,24 @@ impl ProxyServer {
         })
     }
 
+    /// Cancel the background idle timeout checker.
     pub fn cancel_idle_timeout_checker(&mut self) {
         if let Some(handle) = self.idle_timeout_handle.take() {
             handle.abort();
         }
     }
 
-    pub fn into_router(self) -> Router {
-        Router::new()
-            .route("/v1/chat/completions", post(handle_chat_completions))
-            .route(
-                "/v1/chat/completions/stream",
-                post(handle_stream_chat_completions),
-            )
-            .route("/v1/models", get(handle_list_models))
-            .route("/v1/models/:model_id", get(handle_get_model))
-            .route("/status", get(handle_status))
-            .route("/health", get(handle_health))
-            .route("/metrics", get(handle_metrics))
-            .fallback(handle_fallback)
-            .with_state(self.state.clone())
+    /// Consume the server and return a configured axum Router.
+    pub fn into_router(self) -> axum::Router {
+        router::build_router(self.state)
     }
 
+    /// Start serving on the given address.
+    ///
+    /// Builds the router and delegates to the listener module.
     pub async fn run(self, addr: std::net::SocketAddr) -> anyhow::Result<()> {
-        info!("Starting proxy server on {}", addr);
-
         let app = self.into_router();
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
-
-        Ok(())
+        listener::run(app, addr).await
     }
 }
 
