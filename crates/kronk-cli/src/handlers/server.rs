@@ -424,6 +424,11 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
         anyhow::bail!("No command provided");
     }
 
+    // Verify server exists before any mutations
+    if !config.models.contains_key(name) {
+        anyhow::bail!("Server '{}' not found", name);
+    }
+
     let exe_path = &command[0];
     let args: Vec<String> = command[1..].to_vec();
 
@@ -433,11 +438,6 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     let extracted = crate::flags::extract_kronk_flags(args)?;
 
     let mut config = config.clone();
-
-    // Verify server exists
-    if !config.models.contains_key(name) {
-        anyhow::bail!("Server '{}' not found", name);
-    }
 
     // Mutate via get_mut in a block so the borrow is dropped before save()
     {

@@ -1,9 +1,10 @@
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use anyhow::Context;
 use futures_util::TryStreamExt;
 use indicatif::ProgressBar;
 use reqwest::Client;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use super::MAX_RETRIES;

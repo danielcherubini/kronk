@@ -1,11 +1,12 @@
 mod parallel;
 mod single;
 
+use std::path::Path;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use std::path::Path;
-use std::time::Duration;
 
 const MIN_CHUNK_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
 const MAX_RETRIES: u32 = 3;
