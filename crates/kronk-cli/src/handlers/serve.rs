@@ -11,14 +11,16 @@ pub async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u
 }
 
 /// Start the OpenAI-compliant proxy server (deprecated: use `kronk serve`).
-pub async fn cmd_proxy(config: &Config, _command: crate::cli::ProxyCommands) -> Result<()> {
+pub async fn cmd_proxy(config: &Config, command: crate::cli::ProxyCommands) -> Result<()> {
     eprintln!("Warning: `kronk proxy start` is deprecated. Use `kronk serve` instead.");
 
-    let host = "127.0.0.1";
-    let port = 11434;
-    let idle_timeout = 300;
-
-    start_proxy_server(config, host.to_string(), port, idle_timeout).await
+    match command {
+        crate::cli::ProxyCommands::Start {
+            host,
+            port,
+            idle_timeout,
+        } => start_proxy_server(config, host, port, idle_timeout).await,
+    }
 }
 
 /// Start the kronk server (proxy) with the given host, port, and idle timeout.

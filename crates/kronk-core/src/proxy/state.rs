@@ -96,7 +96,7 @@ impl ProxyState {
                         .consecutive_failures()
                         .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
                         .unwrap_or(0)
-                        <= self.config.proxy.circuit_breaker_threshold
+                        < self.config.proxy.circuit_breaker_threshold
                 {
                     return Some(server_name);
                 }
