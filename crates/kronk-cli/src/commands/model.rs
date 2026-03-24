@@ -90,18 +90,20 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     let models_dir = config.models_dir()?;
     // Strip -GGUF suffix from directory name (cleaner paths)
     // "Tesslate/OmniCoder-9B-GGUF" -> models_dir/Tesslate/OmniCoder-9B
-    let clean_parts: Vec<&str> = repo_id
+    let clean_parts: Vec<String> = repo_id
         .split('/')
         .map(|part| {
             part.strip_suffix("-GGUF")
                 .or_else(|| part.strip_suffix("-gguf"))
                 .unwrap_or(part)
+                .to_string()
         })
         .collect();
     let model_id = clean_parts.join("/");
-    let model_dir = clean_parts
-        .iter()
-        .fold(models_dir.clone(), |acc, part| acc.join(part));
+    let mut model_dir = models_dir.clone();
+    for part in clean_parts.iter() {
+        model_dir = model_dir.join(part);
+    }
     std::fs::create_dir_all(&model_dir)
         .with_context(|| format!("Failed to create directory: {}", model_dir.display()))?;
 
@@ -275,75 +277,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
 fn cmd_ls(config: &Config) -> Result<()> {
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
-    let registry = ModelRegistry::new(models_dir, configs_dir);
-    let models = registry.scan()?;
-
-    if models.is_empty() {
-        println!("No models installed.");
-        println!();
-        println!("Pull one:  kronk model pull <huggingface-repo>");
-        return Ok(());
-    }
-
-    println!("Installed models:");
-    println!("{}", "-".repeat(60));
-
-    for model in &models {
-        println!();
-        println!("  {}  ({})", model.id, model.card.model.name);
-        if let Some(ctx) = model.card.model.default_context_length {
-            print!("    context: {}  ", ctx);
-        }
-        if let Some(ngl) = model.card.model.default_gpu_layers {
-            print!("gpu-layers: {}", ngl);
-        }
-        println!();
-
-        if model.card.quants.is_empty() {
-            println!("    (no quants)");
-        } else {
-            for (qname, qinfo) in &model.card.quants {
-                let size_str = qinfo
-                    .size_bytes
-                    .map(format_size)
-                    .unwrap_or_else(|| "?".to_string());
-                println!("    {} -- {} ({})", qname, qinfo.file, size_str);
-            }
-        }
-
-        let linked_servers: Vec<&str> = config
-            .models
-            .iter()
-            .filter(|(_, p)| p.model.as_deref() == Some(&model.id))
-            .map(|(name, _)| name.as_str())
-            .collect();
-        if !linked_servers.is_empty() {
-            println!("    configs: {}", linked_servers.join(", "));
-        }
-
-        let untracked = registry
-            .untracked_ggufs(&model.dir, &model.card)
-            .unwrap_or_default();
-        if !untracked.is_empty() {
-            println!("    untracked: {}", untracked.join(", "));
-        }
-    }
-
-    println!();
-    Ok(())
-}
-
-async fn cmd_create(
-    config: &Config,
-    name: &str,
-    model_id: &str,
-    quant: Option<String>,
-    profile: Option<String>,
-    backend: Option<String>,
-) -> Result<()> {
-    let models_dir = config.models_dir()?;
-    let configs_dir = config.configs_dir()?;
-    let registry = ModelRegistry::new(models_dir, configs_dir);
+    let registry = ModelRegistry::new(models_dir.clone(), configs_dir.clone());
 
     let installed = registry.find(model_id)?.with_context(|| {
         format!(
@@ -500,7 +434,7 @@ fn cmd_disable(config: &Config, name: &str) -> Result<()> {
 fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
-    let registry = ModelRegistry::new(models_dir, configs_dir);
+    let registry = ModelRegistry::new(models_dir.clone(), configs_dir.clone());
 
     let model = registry
         .find(model_id)?

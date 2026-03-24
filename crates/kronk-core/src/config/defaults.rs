@@ -7,7 +7,7 @@ pub fn resolve_profile_params(
     profile: &Option<crate::profiles::Profile>,
 ) -> Option<crate::profiles::SamplingParams> {
     match profile {
-        Some(profile) => config.sampling_templates.get(profile).cloned(),
+        Some(profile) => config.sampling_templates.get(&profile.to_string()).cloned(),
         None => None,
     }
 }
