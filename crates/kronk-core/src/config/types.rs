@@ -14,6 +14,8 @@ pub struct Config {
     #[serde(default)]
     pub custom_profiles: Option<HashMap<String, SamplingParams>>,
     #[serde(default)]
+    pub sampling_templates: HashMap<String, SamplingParams>,
+    #[serde(default)]
     pub proxy: ProxyConfig,
     /// The directory this config was loaded from. Used to resolve models_dir
     /// when running as a service (where %APPDATA% differs from the installing user).
@@ -191,3 +193,84 @@ fn default_health_check_interval_ms() -> u64 {
 
 /// Maximum request body size in bytes (16 MB)
 pub const MAX_REQUEST_BODY_SIZE: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profiles::Profile;
+
+    #[test]
+    fn test_default_sampling_templates() {
+        let config = Config::default();
+        let templates = &config.sampling_templates;
+
+        // Verify all 4 built-in profiles are present
+        assert!(templates.contains_key("coding"));
+        assert!(templates.contains_key("chat"));
+        assert!(templates.contains_key("analysis"));
+        assert!(templates.contains_key("creative"));
+
+        // Verify values match Profile::params()
+        let coding = templates.get("coding").unwrap();
+        let expected = Profile::Coding.params();
+        assert_eq!(coding, &expected);
+
+        let chat = templates.get("chat").unwrap();
+        let expected = Profile::Chat.params();
+        assert_eq!(chat, &expected);
+
+        let analysis = templates.get("analysis").unwrap();
+        let expected = Profile::Analysis.params();
+        assert_eq!(analysis, &expected);
+
+        let creative = templates.get("creative").unwrap();
+        let expected = Profile::Creative.params();
+        assert_eq!(creative, &expected);
+    }
+
+    #[test]
+    fn test_sampling_templates_toml_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+
+        let loaded: Config = toml::from_str(&toml_str).unwrap();
+        let loaded_templates = &loaded.sampling_templates;
+        let default_templates = &config.sampling_templates;
+
+        // Verify all profile values match after round-trip
+        let profile_names = vec![
+            "coding".to_string(),
+            "chat".to_string(),
+            "analysis".to_string(),
+            "creative".to_string(),
+        ];
+        for profile_name in profile_names {
+            let default = default_templates.get(&profile_name).unwrap();
+            let loaded = loaded_templates.get(&profile_name).unwrap();
+            assert_eq!(default, loaded);
+        }
+    }
+
+    #[test]
+    fn test_sampling_templates_serde_custom() {
+        let mut templates = HashMap::new();
+        let custom = SamplingParams {
+            temperature: Some(0.5),
+            top_k: Some(100),
+            ..Default::default()
+        };
+        templates.insert("custom".to_string(), custom.clone());
+
+        let config = Config {
+            sampling_templates: templates,
+            ..Default::default()
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let loaded: Config = toml::from_str(&toml_str).unwrap();
+
+        let loaded_custom = loaded.sampling_templates.get("custom").unwrap();
+        assert_eq!(loaded_custom.temperature, Some(0.5));
+        assert_eq!(loaded_custom.top_k, Some(100));
+    }
+}
