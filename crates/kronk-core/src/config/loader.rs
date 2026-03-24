@@ -110,28 +110,10 @@ impl Config {
     }
 
     /// Resolve the configs.d directory for model cards.
-    /// `<base_dir>/configs.d/`
-    pub fn configs_dir(&self) -> Result<PathBuf> {
-        if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("configs.d"))
-        } else {
-            Ok(Self::base_dir()?.join("configs.d"))
-        }
-    }
-
     /// Resolve the models directory path.
     /// Uses `general.models_dir` if set, otherwise defaults to `<base_dir>/models/`.
     /// On Windows: `%APPDATA%\kronk\models\`
     /// On Linux: `~/.config/kronk/models/`
-    pub fn models_dir(&self) -> Result<PathBuf> {
-        if let Some(ref dir) = self.general.models_dir {
-            Ok(PathBuf::from(dir))
-        } else if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("models"))
-        } else {
-            Ok(Self::base_dir()?.join("models"))
-        }
-    }
 
     /// Resolve the logs directory path.
     /// Uses `general.logs_dir` if set, otherwise defaults to `<base_dir>/logs/`.
@@ -207,6 +189,12 @@ impl Default for Config {
             },
         );
 
+        // Built-in sampling templates for all profiles
+        let mut sampling_templates = HashMap::new();
+        for (_, _, profile) in Profile::all() {
+            sampling_templates.insert(profile.to_string(), profile.params());
+        }
+
         Config {
             general: General {
                 log_level: "info".to_string(),
@@ -218,6 +206,7 @@ impl Default for Config {
             supervisor: Supervisor::default(),
             custom_profiles: None,
             proxy: ProxyConfig::default(),
+            sampling_templates,
             loaded_from: None,
         }
     }

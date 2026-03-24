@@ -193,8 +193,18 @@ impl Config {
 
         // Inject model card args: -m, -c, -ngl
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
-            let models_dir = self.models_dir()?;
-            let configs_dir = self.configs_dir()?;
+            let models_dir = self
+                .general
+                .models_dir
+                .clone()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("models.d"));
+            let configs_dir = self
+                .general
+                .models_dir
+                .clone()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("configs.d"));
             let registry = crate::models::ModelRegistry::new(models_dir, configs_dir);
             if let Some(installed) = registry.find(model_id)? {
                 if let Some(q) = installed.card.quants.get(quant_name.as_str()) {

@@ -55,7 +55,28 @@ impl Default for ProxyConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Config {
+    /// Get the configs directory for this config.
+    pub fn configs_dir(&self) -> anyhow::Result<&std::path::Path> {
+        self.loaded_from
+            .as_ref()
+            .map(|p| p.as_path())
+            .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))
+    }
+
+    /// Get the models directory for this config.
+    pub fn models_dir(&self) -> anyhow::Result<&std::path::Path> {
+        if let Some(models_dir) = &self.general.models_dir {
+            return Ok(std::path::Path::new(models_dir));
+        }
+        self.loaded_from
+            .as_ref()
+            .map(|p| p.as_path())
+            .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct General {
     pub log_level: String,
     #[serde(default)]
