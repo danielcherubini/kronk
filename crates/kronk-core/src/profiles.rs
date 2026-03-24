@@ -23,7 +23,7 @@ pub struct SamplingParams {
 }
 
 /// Built-in profile presets that auto-configure sampling params.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Profile {
     Coding,

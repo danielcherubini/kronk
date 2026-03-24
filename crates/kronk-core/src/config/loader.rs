@@ -1,4 +1,4 @@
-use super::migrate::migrate_model_cards_to_configs_d;
+use super::migrate::{migrate_model_cards_to_configs_d, migrate_profiles_to_model_cards};
 use super::types::{BackendConfig, Config, General, ModelConfig, ProxyConfig, Supervisor};
 use crate::profiles::Profile;
 use anyhow::{Context, Result};
@@ -64,17 +64,8 @@ impl Config {
             default
         };
 
-        // Ensure default profile TOML files exist (covers both fresh installs
-        // and upgrades from versions that predate profiles.d/).
-        let profiles_dir = config_dir.join("profiles.d");
-        if !profiles_dir.exists() {
-            if let Err(e) = crate::profiles::generate_default_profiles(&profiles_dir) {
-                tracing::warn!("Failed to generate default profiles: {}", e);
-            }
-        }
-
         config.loaded_from = Some(config_dir.to_path_buf());
-        migrate_model_cards_to_configs_d(&config)?;
+        migrate_profiles_to_model_cards(&mut config)?;
         Ok(config)
     }
 
@@ -101,14 +92,6 @@ impl Config {
 
     /// Resolve the profiles.d directory for sampling presets.
     /// `<base_dir>/profiles.d/`
-    pub fn profiles_dir(&self) -> Result<PathBuf> {
-        if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("profiles.d"))
-        } else {
-            Ok(Self::base_dir()?.join("profiles.d"))
-        }
-    }
-
     /// Resolve the configs.d directory for model cards.
     /// Resolve the models directory path.
     /// Uses `general.models_dir` if set, otherwise defaults to `<base_dir>/models/`.
