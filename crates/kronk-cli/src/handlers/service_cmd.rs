@@ -30,7 +30,7 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
 
                 #[cfg(target_os = "linux")]
                 {
-                    let args = build_full_args(config, srv, backend, None)?;
+                    let args = config.build_full_args(srv, backend, None)?;
                     let port = srv.port.unwrap_or(8080);
                     kronk_core::platform::linux::install_service(
                         &service_name,
@@ -137,14 +137,4 @@ fn service_stop_inner(service_name: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Build the full argument list for a server, resolving model card args at runtime.
-fn build_full_args(
-    config: &Config,
-    server: &kronk_core::config::ModelConfig,
-    backend: &kronk_core::config::BackendConfig,
-    ctx_override: Option<u32>,
-) -> anyhow::Result<Vec<String>> {
-    config.build_full_args(server, backend, ctx_override)
 }

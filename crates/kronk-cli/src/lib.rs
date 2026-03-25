@@ -8,7 +8,6 @@
 //! for each model. Model cards are stored in `~/.config/kronk/configs.d/<company>--<model>.toml`
 //! and are automatically discovered when models are installed.
 
-pub mod args;
 pub mod cli;
 pub mod commands;
 pub mod flags;
