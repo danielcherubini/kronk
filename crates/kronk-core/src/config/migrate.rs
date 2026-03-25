@@ -95,7 +95,17 @@ pub fn migrate_profiles_to_model_cards(config: &mut Config) -> anyhow::Result<()
                 {
                     profiles.push((name.clone(), profile_def.sampling));
                 } else {
-                    // Skip malformed profile files
+                    // Skip malformed profile files with a warning
+                    match toml::from_str::<TempProfileDef>(&std::fs::read_to_string(&path)?) {
+                        Ok(_) => unreachable!(),
+                        Err(e) => {
+                            tracing::warn!(
+                                "Skipping malformed profile file {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -151,12 +161,14 @@ pub fn migrate_profiles_to_model_cards(config: &mut Config) -> anyhow::Result<()
                 if ext == Some("toml") {
                     // Only count actual TOML files that were part of the old profiles
                     // Ensure these files are indeed empty before removal
-                    let name = path.file_stem().unwrap().to_string_lossy().to_string();
-                    if profiles.iter().any(|(p_name, _)| p_name == &name) {
-                        // Check if this profile was migrated. If so, remove the file.
-                        std::fs::remove_file(&path)?;
-                    } else {
-                        remaining += 1; // Keep if not migrated, or is some other TOML
+                    let name = path.file_stem().and_then(|s| s.to_str());
+                    if let Some(name) = name {
+                        if profiles.iter().any(|(p_name, _)| p_name == name) {
+                            // Check if this profile was migrated. If so, remove the file.
+                            std::fs::remove_file(&path)?;
+                        } else {
+                            remaining += 1; // Keep if not migrated, or is some other TOML
+                        }
                     }
                 }
             }

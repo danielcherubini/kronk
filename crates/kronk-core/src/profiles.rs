@@ -150,8 +150,6 @@ impl SamplingParams {
     }
 }
 
-// Removed ProfileDef, load_profiles_d, generate_default_profiles and their tests.
-
 #[cfg(test)]
 mod tests {
     use super::*;

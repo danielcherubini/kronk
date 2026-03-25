@@ -308,10 +308,13 @@ pub enum ModelCommands {
     /// List installed models
     Ls {
         /// Model identifier - extracted if it looks like a model card ref (contains `/`, no `.gguf`, not absolute path)
+        #[arg(long)]
         model: Option<String>,
         /// Quantization level (e.g., "Q4_K_M")
+        #[arg(long)]
         quant: Option<String>,
         /// Sampling profile name
+        #[arg(long)]
         profile: Option<String>,
     },
     /// Enable a model (will be loaded on demand by the proxy)

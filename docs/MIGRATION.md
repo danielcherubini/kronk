@@ -10,7 +10,7 @@ Kronk is transitioning from the `profiles.d/` directory-based sampling configura
 
 Previously, sampling presets were stored in `profiles.d/` as separate TOML files:
 
-```
+```text
 ~/.config/kronk/
 ├── profiles.d/
 │   ├── coding.toml
@@ -136,7 +136,7 @@ kronk profile list
 ```
 
 Output:
-```
+```text
 coding   Temperature: 0.7, Top P: 0.95, Repetition Penalty: 1.1, Max Tokens: 2048
 chat     Temperature: 0.9, Top P: 0.9, Repetition Penalty: 1.05, Max Tokens: 4096
 analysis Temperature: 0.5, Top P: 0.95, Repetition Penalty: 1.15, Max Tokens: 8192
@@ -146,15 +146,15 @@ creative Temperature: 1.1, Top P: 0.9, Repetition Penalty: 1.0, Max Tokens: 2048
 ### 5. Set Profile for a Model
 
 ```bash
-# Set coding profile as default for this model
-kronk profile set coding
+# Set coding profile for a specific server
+kronk profile set my-server coding
 ```
 
-### 6. Remove Profile
+### 6. Clear Profile for a Server
 
 ```bash
-# Remove a profile (deprecated, will error with unknown names)
-kronk profile remove nonexistent_profile
+# Clear the sampling profile for a specific server
+kronk profile clear my-server
 ```
 
 ## Migration Process

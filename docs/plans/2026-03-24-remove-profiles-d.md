@@ -18,7 +18,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 1: Add `[sampling_templates]` to Config
+## Task 1: Add `[sampling_templates]` to Config
 
 **Files:**
 - Modify: `crates/kronk-core/src/config/types.rs`
@@ -40,7 +40,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 2: Auto-migrate profiles.d and custom_profiles into model cards
+## Task 2: Auto-migrate profiles.d and custom_profiles into model cards
 
 **Files:**
 - Modify: `crates/kronk-core/src/config/migrate.rs`
@@ -79,7 +79,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 3: Wire migration into Config::load_from, remove profiles.d generation
+## Task 3: Wire migration into Config::load_from, remove profiles.d generation
 
 **Files:**
 - Modify: `crates/kronk-core/src/config/loader.rs`
@@ -99,7 +99,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 4: Remove `Profile::params()` — profile becomes a pure label
+## Task 4: Remove `Profile::params()` — profile becomes a pure label
 
 **Files:**
 - Modify: `crates/kronk-core/src/profiles.rs`
@@ -126,7 +126,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 5: Remove `Profile::Custom` and `custom_profiles` from Config
+## Task 5: Remove `Profile::Custom` and `custom_profiles` from Config
 
 **Files:**
 - Modify: `crates/kronk-core/src/profiles.rs`
@@ -150,7 +150,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 6: Remove `ProfileDef`, `load_profiles_d`, `generate_default_profiles`
+## Task 6: Remove `ProfileDef`, `load_profiles_d`, `generate_default_profiles`
 
 **Files:**
 - Modify: `crates/kronk-core/src/profiles.rs`
@@ -173,7 +173,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 7: Populate modelcard sampling on pull from `sampling_templates`
+## Task 7: Populate modelcard sampling on pull from `sampling_templates`
 
 **Files:**
 - Modify: `crates/kronk-cli/src/commands/model.rs` (in `cmd_pull`)
@@ -195,7 +195,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 8: Update profile CLI handler and CLI definition
+## Task 8: Update profile CLI handler and CLI definition
 
 **Files:**
 - Modify: `crates/kronk-cli/src/handlers/profile.rs`
@@ -218,7 +218,7 @@ entries into existing model cards before cleaning up.
 
 ---
 
-### Task 9: Clean up re-exports, unused imports, and docs
+## Task 9: Clean up re-exports, unused imports, and docs
 
 **Files:**
 - Modify: `crates/kronk-core/src/config/mod.rs`
