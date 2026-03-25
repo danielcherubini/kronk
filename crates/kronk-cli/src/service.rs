@@ -275,12 +275,14 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                 }
             };
 
-            let args = config.build_full_args(srv, backend, ctx).unwrap_or_else(|e| {
-                tracing::warn!("Failed to build model args: {}", e);
-                let mut args = backend.default_args.clone();
-                args.extend(srv.args.clone());
-                args
-            });
+            let args = config
+                .build_full_args(srv, backend, ctx)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to build model args: {}", e);
+                    let mut args = backend.default_args.clone();
+                    args.extend(srv.args.clone());
+                    args
+                });
             let log_dir = config.logs_dir().unwrap_or_else(|e| {
                 tracing::warn!("Failed to get logs directory: {}, using current dir", e);
                 std::path::PathBuf::from(".")
@@ -352,17 +354,17 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
     tracing::info!("Service stopped");
 
-// On Windows, use the real ProcessSupervisor from kronk_core
-#[cfg(target_os = "windows")]
-use kronk_core::process::{ProcessEvent, ProcessSupervisor};
+    // On Windows, use the real ProcessSupervisor from kronk_core
+    #[cfg(target_os = "windows")]
+    use kronk_core::process::{ProcessEvent, ProcessSupervisor};
 
-#[cfg(not(target_os = "windows"))]
-pub fn service_dispatch() -> anyhow::Result<()> {
-    anyhow::bail!("Service dispatch is only available on Windows");
-}
+    #[cfg(not(target_os = "windows"))]
+    pub fn service_dispatch() -> anyhow::Result<()> {
+        anyhow::bail!("Service dispatch is only available on Windows");
+    }
 
-#[cfg(not(target_os = "windows"))]
-pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
-    // No-op on non-Windows
-}
+    #[cfg(not(target_os = "windows"))]
+    pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
+        // No-op on non-Windows
+    }
 }
