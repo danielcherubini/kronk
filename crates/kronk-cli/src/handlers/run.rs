@@ -10,7 +10,7 @@ use kronk_core::process::{ProcessEvent, ProcessSupervisor};
 pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) -> Result<()> {
     let (server, backend) = config.resolve_server(server_name)?;
 
-    let args = build_full_args(config, server, backend, ctx_override)?;
+    let args = config.build_full_args(server, backend, ctx_override)?;
 
     println!("Oh yeah, it's all coming together.");
     println!();
@@ -66,14 +66,4 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     let result = supervisor.run(tx, None).await;
     printer.abort();
     result
-}
-
-/// Build the full argument list for a server, resolving model card args at runtime.
-fn build_full_args(
-    config: &Config,
-    server: &kronk_core::config::ModelConfig,
-    backend: &kronk_core::config::BackendConfig,
-    ctx_override: Option<u32>,
-) -> Result<Vec<String>> {
-    config.build_full_args(server, backend, ctx_override)
 }
