@@ -1,4 +1,4 @@
-use super::migrate::migrate_model_cards_to_configs_d;
+use super::migrate::migrate_profiles_to_model_cards;
 use super::types::{BackendConfig, Config, General, ModelConfig, ProxyConfig, Supervisor};
 use crate::profiles::Profile;
 use anyhow::{Context, Result};
@@ -64,17 +64,8 @@ impl Config {
             default
         };
 
-        // Ensure default profile TOML files exist (covers both fresh installs
-        // and upgrades from versions that predate profiles.d/).
-        let profiles_dir = config_dir.join("profiles.d");
-        if !profiles_dir.exists() {
-            if let Err(e) = crate::profiles::generate_default_profiles(&profiles_dir) {
-                tracing::warn!("Failed to generate default profiles: {}", e);
-            }
-        }
-
         config.loaded_from = Some(config_dir.to_path_buf());
-        migrate_model_cards_to_configs_d(&config)?;
+        migrate_profiles_to_model_cards(&mut config)?;
         Ok(config)
     }
 
@@ -97,40 +88,6 @@ impl Config {
         let toml_str = toml::to_string_pretty(self).context("Failed to serialize config")?;
         fs::write(&config_path, &toml_str).context("Failed to write config")?;
         Ok(())
-    }
-
-    /// Resolve the profiles.d directory for sampling presets.
-    /// `<base_dir>/profiles.d/`
-    pub fn profiles_dir(&self) -> Result<PathBuf> {
-        if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("profiles.d"))
-        } else {
-            Ok(Self::base_dir()?.join("profiles.d"))
-        }
-    }
-
-    /// Resolve the configs.d directory for model cards.
-    /// `<base_dir>/configs.d/`
-    pub fn configs_dir(&self) -> Result<PathBuf> {
-        if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("configs.d"))
-        } else {
-            Ok(Self::base_dir()?.join("configs.d"))
-        }
-    }
-
-    /// Resolve the models directory path.
-    /// Uses `general.models_dir` if set, otherwise defaults to `<base_dir>/models/`.
-    /// On Windows: `%APPDATA%\kronk\models\`
-    /// On Linux: `~/.config/kronk/models/`
-    pub fn models_dir(&self) -> Result<PathBuf> {
-        if let Some(ref dir) = self.general.models_dir {
-            Ok(PathBuf::from(dir))
-        } else if let Some(ref loaded) = self.loaded_from {
-            Ok(loaded.join("models"))
-        } else {
-            Ok(Self::base_dir()?.join("models"))
-        }
     }
 
     /// Resolve the logs directory path.
@@ -207,6 +164,50 @@ impl Default for Config {
             },
         );
 
+        // Built-in sampling templates for all profiles
+        let mut sampling_templates = HashMap::new();
+        for (_, _, profile) in Profile::all() {
+            let params = match profile {
+                Profile::Coding => crate::profiles::SamplingParams {
+                    temperature: Some(0.3),
+                    top_p: Some(0.9),
+                    top_k: Some(50),
+                    min_p: Some(0.05),
+                    presence_penalty: Some(0.1),
+                    frequency_penalty: None,
+                    repeat_penalty: None,
+                },
+                Profile::Chat => crate::profiles::SamplingParams {
+                    temperature: Some(0.7),
+                    top_p: Some(0.95),
+                    top_k: Some(40),
+                    min_p: Some(0.05),
+                    presence_penalty: Some(0.0),
+                    frequency_penalty: None,
+                    repeat_penalty: None,
+                },
+                Profile::Analysis => crate::profiles::SamplingParams {
+                    temperature: Some(0.3),
+                    top_p: Some(0.9),
+                    top_k: Some(20),
+                    min_p: Some(0.05),
+                    presence_penalty: Some(0.0),
+                    frequency_penalty: None,
+                    repeat_penalty: None,
+                },
+                Profile::Creative => crate::profiles::SamplingParams {
+                    temperature: Some(0.9),
+                    top_p: Some(0.95),
+                    top_k: Some(50),
+                    min_p: Some(0.02),
+                    presence_penalty: Some(0.0),
+                    frequency_penalty: None,
+                    repeat_penalty: None,
+                },
+            };
+            sampling_templates.insert(profile.to_string(), params);
+        }
+
         Config {
             general: General {
                 log_level: "info".to_string(),
@@ -216,8 +217,8 @@ impl Default for Config {
             backends,
             models,
             supervisor: Supervisor::default(),
-            custom_profiles: None,
             proxy: ProxyConfig::default(),
+            sampling_templates,
             loaded_from: None,
         }
     }

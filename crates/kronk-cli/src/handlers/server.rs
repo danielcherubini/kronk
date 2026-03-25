@@ -275,7 +275,10 @@ pub async fn cmd_server_add(
     let model_info = if let Some(ref model_ref) = extracted.model {
         let models_dir = config.models_dir()?;
         let configs_dir = config.configs_dir()?;
-        let registry = kronk_core::models::ModelRegistry::new(models_dir, configs_dir);
+        let registry = kronk_core::models::ModelRegistry::new(
+            models_dir.to_path_buf(),
+            configs_dir.to_path_buf(),
+        );
 
         match registry.find(model_ref) {
             Ok(Some(installed)) => Some(installed),
@@ -360,9 +363,11 @@ pub async fn cmd_server_add(
     let profile = extracted
         .profile
         .as_ref()
-        .map(|s| s.parse::<kronk_core::profiles::Profile>())
-        .transpose()
-        .context("Failed to parse profile name")?;
+        .map(|s| {
+            s.parse::<kronk_core::profiles::Profile>()
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .transpose()?;
 
     // Build ModelConfig
     let model_config = kronk_core::config::ModelConfig {
@@ -402,7 +407,10 @@ pub async fn cmd_server_add(
         if let Some(ref model) = model_config.model {
             let models_dir = config.models_dir()?;
             let configs_dir = config.configs_dir()?;
-            let registry = kronk_core::models::ModelRegistry::new(models_dir, configs_dir);
+            let registry = kronk_core::models::ModelRegistry::new(
+                models_dir.to_path_buf(),
+                configs_dir.to_path_buf(),
+            );
             if let Ok(Some(installed)) = registry.find(model) {
                 if let Some(q) = installed.card.quants.get(quant) {
                     println!("  GGUF:     {}", q.file);
@@ -452,7 +460,7 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
         if let Some(ref profile) = extracted.profile {
             let p = profile
                 .parse::<kronk_core::profiles::Profile>()
-                .context("Failed to parse profile name")?;
+                .map_err(|e| anyhow::anyhow!(e))?;
             srv.profile = Some(p);
         }
         if let Some(port) = extracted.port {

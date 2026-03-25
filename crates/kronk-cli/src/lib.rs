@@ -1,6 +1,12 @@
 //! Kronk CLI library
 //!
 //! This library provides the core functionality for the kronk CLI application.
+//!
+//! ## Model Card-Based Configuration
+//!
+//! Kronk uses model cards to store quantization info, context settings, and sampling presets
+//! for each model. Model cards are stored in `~/.config/kronk/configs.d/<company>--<model>.toml`
+//! and are automatically discovered when models are installed.
 
 pub mod args;
 pub mod cli;
@@ -9,6 +15,8 @@ pub mod flags;
 pub mod handlers;
 pub mod service;
 
+// Re-exports for integration tests
+pub use flags::extract_kronk_flags;
 pub use handlers::server::{cmd_server_add, cmd_server_edit};
 
 use anyhow::Result;
@@ -18,12 +26,6 @@ use handlers::{config, profile, run, serve, server, service_cmd, status};
 use kronk_core::config::Config;
 #[cfg(target_os = "windows")]
 use service::{service_dispatch, win_service_main};
-
-/// Extracted flags from command line arguments
-pub use cli::ExtractedFlags;
-
-/// Extract kronk-specific flags from command line arguments.
-pub use flags::extract_kronk_flags;
 
 /// Main entry point for the CLI
 pub async fn main() -> Result<()> {

@@ -1,4 +1,3 @@
-use super::defaults::resolve_profile_params;
 use super::types::{BackendConfig, Config, HealthCheck, ModelConfig};
 use crate::profiles::SamplingParams;
 use anyhow::Result;
@@ -193,8 +192,20 @@ impl Config {
 
         // Inject model card args: -m, -c, -ngl
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
-            let models_dir = self.models_dir()?;
-            let configs_dir = self.configs_dir()?;
+            let models_dir = self
+                .general
+                .models_dir
+                .clone()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("models.d"));
+            let configs_dir = self.configs_dir().unwrap_or_else(|_| {
+                // Fallback: derive from models_dir if configs_dir is not available
+                self.general
+                    .models_dir
+                    .clone()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("configs.d"))
+            });
             let registry = crate::models::ModelRegistry::new(models_dir, configs_dir);
             if let Some(installed) = registry.find(model_id)? {
                 if let Some(q) = installed.card.quants.get(quant_name.as_str()) {
@@ -254,9 +265,13 @@ impl Config {
         Ok(args)
     }
 
-    /// Resolve effective sampling for a server, including custom profile lookup.
+    /// Resolve effective sampling for a server (no model card).
+    /// Looks up sampling_templates by profile name, then merges server overrides.
     pub fn effective_sampling(&self, server: &ModelConfig) -> Option<SamplingParams> {
-        let base = resolve_profile_params(self, &server.profile);
+        let base = server
+            .profile
+            .as_ref()
+            .and_then(|p| self.sampling_templates.get(&p.to_string()).cloned());
 
         match (base, &server.sampling) {
             (Some(base), Some(overrides)) => Some(base.merge(overrides)),
@@ -266,35 +281,30 @@ impl Config {
         }
     }
 
-    /// Resolve effective sampling with the 3-layer merge chain:
-    /// 1. Profile built-in defaults
-    /// 2. Model card per-profile sampling overrides
-    /// 3. Server-level sampling overrides
+    /// Resolve effective sampling with a 2-layer merge chain:
+    /// 1. Model card `[sampling.<profile>]` (the single source of truth)
+    /// 2. Server-level sampling overrides
+    ///
+    /// Falls back to `sampling_templates` if the card has no entry for the profile.
     pub fn effective_sampling_with_card(
         &self,
         server: &ModelConfig,
         card: Option<&crate::models::card::ModelCard>,
     ) -> Option<SamplingParams> {
-        // Layer 1: Profile base params
-        let base = resolve_profile_params(self, &server.profile);
-
-        // Layer 2: Model card sampling overrides for this profile
         let profile_name = server.profile.as_ref().map(|p| p.to_string());
-        let with_model = match (base, card, profile_name) {
-            (Some(base), Some(card), Some(ref pname)) => {
-                if let Some(model_sampling) = card.sampling_for(pname) {
-                    Some(base.merge(model_sampling))
-                } else {
-                    Some(base)
-                }
-            }
-            (Some(base), _, _) => Some(base),
-            (None, Some(card), Some(ref pname)) => card.sampling_for(pname).cloned(),
-            (None, _, _) => None,
+
+        // Layer 1: Model card sampling for this profile, falling back to templates
+        let base = match (card, &profile_name) {
+            (Some(card), Some(pname)) => card
+                .sampling_for(pname)
+                .cloned()
+                .or_else(|| self.sampling_templates.get(pname).cloned()),
+            (None, Some(pname)) => self.sampling_templates.get(pname).cloned(),
+            _ => None,
         };
 
-        // Layer 3: Server-level overrides
-        match (with_model, &server.sampling) {
+        // Layer 2: Server-level overrides
+        match (base, &server.sampling) {
             (Some(base), Some(overrides)) => Some(base.merge(overrides)),
             (Some(base), None) => Some(base),
             (None, Some(sampling)) => Some(sampling.clone()),

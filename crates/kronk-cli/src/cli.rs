@@ -306,7 +306,17 @@ pub enum ModelCommands {
         repo: String,
     },
     /// List installed models
-    Ls,
+    Ls {
+        /// Model identifier - extracted if it looks like a model card ref (contains `/`, no `.gguf`, not absolute path)
+        #[arg(long)]
+        model: Option<String>,
+        /// Quantization level (e.g., "Q4_K_M")
+        #[arg(long)]
+        quant: Option<String>,
+        /// Sampling profile name
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Enable a model (will be loaded on demand by the proxy)
     Enable {
         /// Model config name
@@ -395,37 +405,13 @@ pub enum ProfileCommands {
     Set {
         /// Server name
         server: String,
-        /// Profile name: coding, chat, analysis, creative, or a custom name
+        /// Profile name: coding, chat, analysis, creative
         profile: String,
     },
     /// Clear a server's sampling profile (remove sampling preset)
     Clear {
         /// Server name
         server: String,
-    },
-    /// Create a custom profile with specific sampling params
-    Add {
-        /// Custom profile name
-        name: String,
-        #[arg(long)]
-        temp: Option<f64>,
-        #[arg(long)]
-        top_k: Option<u32>,
-        #[arg(long)]
-        top_p: Option<f64>,
-        #[arg(long)]
-        min_p: Option<f64>,
-        #[arg(long)]
-        presence_penalty: Option<f64>,
-        #[arg(long)]
-        frequency_penalty: Option<f64>,
-        #[arg(long)]
-        repeat_penalty: Option<f64>,
-    },
-    /// Remove a custom profile
-    Remove {
-        /// Custom profile name
-        name: String,
     },
 }
 

@@ -12,7 +12,7 @@ pub struct Config {
     #[serde(default)]
     pub supervisor: Supervisor,
     #[serde(default)]
-    pub custom_profiles: Option<HashMap<String, SamplingParams>>,
+    pub sampling_templates: HashMap<String, SamplingParams>,
     #[serde(default)]
     pub proxy: ProxyConfig,
     /// The directory this config was loaded from. Used to resolve models_dir
@@ -53,7 +53,30 @@ impl Default for ProxyConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Config {
+    /// Get the configs.d directory for model cards.
+    /// Returns `<loaded_from>/configs.d/`.
+    pub fn configs_dir(&self) -> anyhow::Result<std::path::PathBuf> {
+        self.loaded_from
+            .as_deref()
+            .map(|p| p.join("configs.d"))
+            .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))
+    }
+
+    /// Get the models directory for this config.
+    /// Uses `general.models_dir` if set, otherwise `<loaded_from>/models/`.
+    pub fn models_dir(&self) -> anyhow::Result<std::path::PathBuf> {
+        if let Some(models_dir) = &self.general.models_dir {
+            return Ok(std::path::PathBuf::from(models_dir));
+        }
+        self.loaded_from
+            .as_deref()
+            .map(|p| p.join("models"))
+            .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct General {
     pub log_level: String,
     #[serde(default)]
@@ -191,3 +214,76 @@ fn default_health_check_interval_ms() -> u64 {
 
 /// Maximum request body size in bytes (16 MB)
 pub const MAX_REQUEST_BODY_SIZE: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_sampling_templates() {
+        let config = Config::default();
+        let templates = &config.sampling_templates;
+
+        // Verify all 4 built-in profiles are present
+        assert!(templates.contains_key("coding"));
+        assert!(templates.contains_key("chat"));
+        assert!(templates.contains_key("analysis"));
+        assert!(templates.contains_key("creative"));
+
+        // Verify coding template has expected values
+        let coding = templates.get("coding").unwrap();
+        assert_eq!(coding.temperature, Some(0.3));
+        assert_eq!(coding.top_p, Some(0.9));
+
+        // Verify creative template has expected values
+        let creative = templates.get("creative").unwrap();
+        assert_eq!(creative.temperature, Some(0.9));
+        assert_eq!(creative.top_p, Some(0.95));
+    }
+
+    #[test]
+    fn test_sampling_templates_toml_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+
+        let loaded: Config = toml::from_str(&toml_str).unwrap();
+        let loaded_templates = &loaded.sampling_templates;
+        let default_templates = &config.sampling_templates;
+
+        // Verify all profile values match after round-trip
+        let profile_names = vec![
+            "coding".to_string(),
+            "chat".to_string(),
+            "analysis".to_string(),
+            "creative".to_string(),
+        ];
+        for profile_name in profile_names {
+            let default = default_templates.get(&profile_name).unwrap();
+            let loaded = loaded_templates.get(&profile_name).unwrap();
+            assert_eq!(default, loaded);
+        }
+    }
+
+    #[test]
+    fn test_sampling_templates_serde_custom() {
+        let mut templates = HashMap::new();
+        let custom = SamplingParams {
+            temperature: Some(0.5),
+            top_k: Some(100),
+            ..Default::default()
+        };
+        templates.insert("custom".to_string(), custom.clone());
+
+        let config = Config {
+            sampling_templates: templates,
+            ..Default::default()
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let loaded: Config = toml::from_str(&toml_str).unwrap();
+
+        let loaded_custom = loaded.sampling_templates.get("custom").unwrap();
+        assert_eq!(loaded_custom.temperature, Some(0.5));
+        assert_eq!(loaded_custom.top_k, Some(100));
+    }
+}
