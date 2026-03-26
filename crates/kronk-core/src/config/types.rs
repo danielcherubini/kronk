@@ -71,7 +71,7 @@ impl Config {
         }
         self.loaded_from
             .as_deref()
-            .map(|p| p.join("models"))
+            .map(|p| p.join("models.d"))
             .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))
     }
 }
