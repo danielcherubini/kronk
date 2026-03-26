@@ -200,7 +200,7 @@ impl Config {
                 self.models_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("configs.d"))
             });
-            let registry = crate::models::ModelRegistry::new(models_dir, configs_dir);
+            let registry = crate::models::ModelRegistry::new(models_dir.clone(), configs_dir.clone());
             if let Some(installed) = registry.find(model_id)? {
                 if let Some(q) = installed.card.quants.get(quant_name.as_str()) {
                     if !args.iter().any(|a| a == "-m" || a == "--model") {
@@ -253,6 +253,13 @@ impl Config {
                     }
                     args.extend(sampling_args);
                 }
+            } else {
+                tracing::warn!(
+                    "Model card for '{}' not found in registry (searched in: models={}, configs={})",
+                    model_id,
+                    models_dir.display(),
+                    configs_dir.display()
+                );
             }
         }
 

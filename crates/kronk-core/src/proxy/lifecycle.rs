@@ -77,10 +77,17 @@ impl ProxyState {
             server_config.backend, server_name, model_name
         );
 
-        let mut child = tokio::process::Command::new(&backend_path)
-            .args(&args)
-            .env("MODEL_NAME", model_name)
-            .spawn()
+        let mut child = tokio::process::Command::new(&backend_path);
+        child.args(&args)
+            .env("MODEL_NAME", model_name);
+        
+        info!(
+            "Executing backend: {} {}",
+            backend_path,
+            args.join(" ")
+        );
+
+        let mut child = child.spawn()
             .with_context(|| {
                 format!(
                     "Failed to execute backend process '{}'",
