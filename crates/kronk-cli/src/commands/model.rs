@@ -361,9 +361,8 @@ async fn cmd_create(
 ) -> Result<()> {
     let mut config = config.clone(); // Clone config to allow modification
 
-    // Only store host in profile args — model path, context, gpu layers
-    // are resolved at runtime from the model card via model/quant fields
-    let args = vec!["--host".to_string(), "0.0.0.0".to_string()];
+    // No host args needed — proxy handles routing
+    let args = vec![];
 
     // Check if server name already exists
     if config.models.contains_key(server_name) {
