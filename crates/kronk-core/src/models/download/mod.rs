@@ -6,10 +6,20 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::header::HeaderMap;
 use reqwest::Client;
 
 const MIN_CHUNK_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
 const MAX_RETRIES: u32 = 3;
+
+/// Parse the Content-Length header from raw headers, bypassing reqwest's
+/// Response::content_length() which returns Some(0) for HEAD requests (known bug).
+pub fn parse_content_length(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
 
 /// Build an HTTP client with sensible timeouts for large file downloads.
 fn build_client() -> Result<Client> {
@@ -60,9 +70,12 @@ pub async fn download_chunked(
         anyhow::bail!("HEAD request returned HTTP {}: {}", head.status(), url);
     }
 
-    let total_size = head
-        .content_length()
-        .context("Server did not return Content-Length")?;
+    let total_size = parse_content_length(head.headers())
+        .context("Server did not return a valid Content-Length")?;
+
+    if total_size == 0 {
+        anyhow::bail!("Server reported Content-Length of 0 for {}", url);
+    }
 
     // Skip download if file already exists with matching size
     if dest.exists() {
@@ -107,21 +120,41 @@ pub async fn download_chunked(
             .await
     };
 
-    match result {
-        Ok(()) => {
-            pb.finish_with_message("done");
-            Ok(total_size)
-        }
-        Err(e) => {
-            pb.finish_and_clear();
-            Err(e)
-        }
-    }
+    pb.finish_and_clear();
+    result?;
+    Ok(total_size)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_content_length_valid() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "12345".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), Some(12345));
+    }
+
+    #[test]
+    fn test_parse_content_length_missing() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_content_length(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_content_length_non_numeric() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "abc".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_content_length_zero() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "0".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), Some(0));
+    }
 
     #[tokio::test]
     #[ignore] // Requires network access

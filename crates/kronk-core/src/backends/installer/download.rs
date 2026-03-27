@@ -6,6 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+use crate::models::download::parse_content_length;
+
 /// Download a file from a URL to a destination path with progress bar.
 pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
     let client = Client::builder()
@@ -27,7 +29,8 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
         ));
     }
 
-    let total_size = response.content_length().unwrap_or(0);
+    let total_size = parse_content_length(response.headers())
+        .unwrap_or(0);
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(
@@ -51,6 +54,6 @@ pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
     // Flush to ensure all data is written to disk before returning
     file.flush().await?;
 
-    pb.finish_with_message("Download complete");
+    pb.finish_and_clear();
     Ok(())
 }
