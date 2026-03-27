@@ -200,7 +200,8 @@ impl Config {
                 self.models_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("configs"))
             });
-            let registry = crate::models::ModelRegistry::new(models_dir.clone(), configs_dir.clone());
+            let registry =
+                crate::models::ModelRegistry::new(models_dir.clone(), configs_dir.clone());
             if let Some(installed) = registry.find(model_id)? {
                 if let Some(q) = installed.card.quants.get(quant_name.as_str()) {
                     if !args.iter().any(|a| a == "-m" || a == "--model") {

@@ -78,22 +78,16 @@ impl ProxyState {
         );
 
         let mut child = tokio::process::Command::new(&backend_path);
-        child.args(&args)
-            .env("MODEL_NAME", model_name);
-        
-        info!(
-            "Executing backend: {} {}",
-            backend_path,
-            args.join(" ")
-        );
+        child.args(&args).env("MODEL_NAME", model_name);
 
-        let mut child = child.spawn()
-            .with_context(|| {
-                format!(
-                    "Failed to execute backend process '{}'",
-                    server_config.backend
-                )
-            })?;
+        info!("Executing backend: {} {}", backend_path, args.join(" "));
+
+        let mut child = child.spawn().with_context(|| {
+            format!(
+                "Failed to execute backend process '{}'",
+                server_config.backend
+            )
+        })?;
 
         let pid = child.id().ok_or_else(|| {
             anyhow::anyhow!("Failed to get PID for backend '{}'", server_config.backend)
