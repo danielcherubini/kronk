@@ -7,72 +7,6 @@ use std::str::FromStr;
 use crate::config::Config;
 use crate::gpu::GpuType;
 
-impl BackendRegistry {
-    /// Canonicalize a path, handling both existing and non-existing files
-    fn canonicalize_path(path: &Path) -> Result<PathBuf> {
-        if path.exists() {
-            std::fs::canonicalize(path)
-                .with_context(|| format!("Failed to canonicalize registry path {:?}", path))
-        } else {
-            // For new files, canonicalize the parent directory
-            if let Some(parent) = path.parent() {
-                std::fs::canonicalize(parent)
-                    .with_context(|| {
-                        format!("Failed to canonicalize parent directory {:?}", parent)
-                    })
-                    .map(|p| p.join(path.file_name().unwrap_or_default()))
-            } else {
-                Err(anyhow!("Registry path {:?} has no parent directory", path))
-            }
-        }
-    }
-
-    /// Canonicalize base directory
-    fn canonicalize_base_dir(base_dir: Option<&Path>) -> Result<PathBuf> {
-        base_dir
-            .map(|b| {
-                std::fs::canonicalize(b).with_context(|| "Failed to canonicalize base directory")
-            })
-            .unwrap_or_else(|| {
-                std::fs::canonicalize(Config::base_dir()?)
-                    .with_context(|| "Failed to canonicalize base directory")
-            })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum BackendType {
-    LlamaCpp,
-    IkLlama,
-    Custom,
-}
-
-impl std::fmt::Display for BackendType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BackendType::LlamaCpp => write!(f, "llama_cpp"),
-            BackendType::IkLlama => write!(f, "ik_llama"),
-            BackendType::Custom => write!(f, "custom"),
-        }
-    }
-}
-
-impl FromStr for BackendType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "llama_cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
-            "ik_llama" | "ik-llama" | "ikllama" => Ok(BackendType::IkLlama),
-            "custom" => Ok(BackendType::Custom),
-            _ => Err(format!(
-                "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, custom",
-                s
-            )),
-        }
-    }
-}
-
 /// Metadata for an installed backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendInfo {
@@ -87,6 +21,7 @@ pub struct BackendInfo {
     pub source: Option<BackendSource>,
 }
 
+/// Registry data structure
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct RegistryData {
     #[serde(default)]
@@ -115,11 +50,9 @@ impl BackendRegistry {
     }
 
     pub fn load_with_base_dir(path: &Path, base_dir: Option<&Path>) -> Result<Self> {
-        // Validate path is within safe directory (prevent symlink attacks)
         let canonical_path = Self::canonicalize_path(path)?;
         let base_dir = Self::canonicalize_base_dir(base_dir)?;
 
-        // Ensure the path is within the base directory
         if !canonical_path.starts_with(&base_dir) {
             return Err(anyhow!(
                 "Registry path {:?} is outside base directory {:?}",
@@ -242,13 +175,11 @@ impl BackendRegistry {
             return Err(anyhow!("Registry is in read-only mode"));
         }
 
-        // Use transactional pattern: modify on scratch copy, only replace after save succeeds
         let original_backends = std::mem::take(&mut self.data.backends);
         let mut new_backends = original_backends.clone();
         new_backends.insert(backend.name.clone(), backend);
         self.data.backends = new_backends;
         if let Err(e) = self.save() {
-            // Rollback: restore original state
             self.data.backends = original_backends;
             return Err(e);
         }
@@ -260,13 +191,11 @@ impl BackendRegistry {
             return Err(anyhow!("Registry is in read-only mode"));
         }
 
-        // Use transactional pattern: modify on scratch copy, only replace after save succeeds
         let original_backends = std::mem::take(&mut self.data.backends);
         let mut new_backends = original_backends.clone();
         new_backends.remove(name);
         self.data.backends = new_backends;
         if let Err(e) = self.save() {
-            // Rollback: restore original state
             self.data.backends = original_backends;
             return Err(e);
         }
@@ -303,6 +232,31 @@ impl BackendRegistry {
         self.data.backends.values().collect()
     }
 
+    /// Accessor methods for private fields
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
+    pub fn data(&self) -> &RegistryData {
+        &self.data
+    }
+
+    pub fn data_mut(&mut self) -> &mut RegistryData {
+        &mut self.data
+    }
+
     pub fn update_version(
         &mut self,
         name: &str,
@@ -314,7 +268,6 @@ impl BackendRegistry {
             return Err(anyhow!("Registry is in read-only mode"));
         }
 
-        // Validate new_binary_path is within managed backends directory
         let new_binary_path_canonical = Self::canonicalize_path(&new_binary_path)?;
         if !new_binary_path_canonical.starts_with(&self.base_dir) {
             return Err(anyhow!(
@@ -324,7 +277,6 @@ impl BackendRegistry {
             ));
         }
 
-        // Use transactional pattern: modify on scratch copy, only replace after save succeeds
         let original_backends = std::mem::take(&mut self.data.backends);
         let mut new_backends = original_backends.clone();
         if let Some(info) = new_backends.get_mut(name) {
@@ -335,17 +287,76 @@ impl BackendRegistry {
                 .map_or(0, |d| d.as_secs() as i64);
             info.source = new_source;
         } else {
-            // Rollback: restore original state
             self.data.backends = original_backends;
             return Err(anyhow!("Backend '{}' not found", name));
         }
         self.data.backends = new_backends;
         if let Err(e) = self.save() {
-            // Rollback: restore original state
             self.data.backends = original_backends;
             return Err(e);
         }
         Ok(())
+    }
+}
+
+impl BackendRegistry {
+    /// Canonicalize a path, handling both existing and non-existing files
+    fn canonicalize_path(path: &Path) -> Result<PathBuf> {
+        if path.exists() {
+            std::fs::canonicalize(path)
+                .with_context(|| format!("Failed to canonicalize registry path {:?}", path))
+        } else if let Some(parent) = path.parent() {
+            std::fs::canonicalize(parent)
+                .with_context(|| format!("Failed to canonicalize parent directory {:?}", parent))
+                .map(|p| p.join(path.file_name().unwrap_or_default()))
+        } else {
+            Err(anyhow!("Registry path {:?} has no parent directory", path))
+        }
+    }
+
+    /// Canonicalize base directory
+    fn canonicalize_base_dir(base_dir: Option<&Path>) -> Result<PathBuf> {
+        base_dir
+            .map(|b| {
+                std::fs::canonicalize(b).with_context(|| "Failed to canonicalize base directory")
+            })
+            .unwrap_or_else(|| {
+                std::fs::canonicalize(Config::base_dir()?)
+                    .with_context(|| "Failed to canonicalize base directory")
+            })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackendType {
+    LlamaCpp,
+    IkLlama,
+    Custom,
+}
+
+impl std::fmt::Display for BackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendType::LlamaCpp => write!(f, "llama_cpp"),
+            BackendType::IkLlama => write!(f, "ik_llama"),
+            BackendType::Custom => write!(f, "custom"),
+        }
+    }
+}
+
+impl FromStr for BackendType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "llama_cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
+            "ik_llama" | "ik-llama" | "ikllama" => Ok(BackendType::IkLlama),
+            "custom" => Ok(BackendType::Custom),
+            _ => Err(format!(
+                "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, custom",
+                s
+            )),
+        }
     }
 }
 
@@ -422,7 +433,6 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        // Write
         {
             let mut registry =
                 BackendRegistry::load_unchecked_with_base_dir(&registry_path, &base_dir).unwrap();
@@ -439,7 +449,6 @@ mod tests {
             });
         }
 
-        // Read back
         let registry = BackendRegistry::load_unchecked(&registry_path).unwrap();
         let backend = registry.get("test").unwrap();
         assert_eq!(backend.version, "b1234");
