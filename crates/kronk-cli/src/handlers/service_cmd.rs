@@ -172,6 +172,7 @@ fn service_restart_inner(service_name: &str) -> Result<()> {
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
+        let _ = service_name;
         anyhow::bail!("Not supported on this platform");
     }
 

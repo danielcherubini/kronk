@@ -86,13 +86,17 @@ pub fn stop_service_force(service_name: &str) -> Result<()> {
     service.stop().context("Failed to stop service")?;
 
     // Wait for normal stop
-    wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30))
-        .with_context(|| format!("Service '{}' did not stop in time", service_name))?;
-
-    // Force kill any remaining processes
-    kill_service_processes(service_name)?;
-
-    Ok(())
+    match wait_for_state(&service, ServiceState::Stopped, Duration::from_secs(30)) {
+        Ok(_) => {
+            // Service stopped cleanly, no need to force kill
+            Ok(())
+        }
+        Err(_) => {
+            // Timeout occurred, force kill remaining processes
+            kill_service_processes(service_name)?;
+            Ok(())
+        }
+    }
 }
 
 /// Kill any remaining processes for a stopped service.
