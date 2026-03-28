@@ -20,7 +20,7 @@ pub async fn cmd_server_add(
     let (backend_key, exe_str) = super::resolve_backend(&mut config, exe_path)?;
 
     // Extract kronk flags from args
-    let extracted = crate::flags::extract_kronk_flags(args.clone())?;
+    let extracted = crate::flags::extract_kronk_flags(args)?;
 
     // Check for duplicate server
     if config.models.contains_key(name) && !overwrite {
@@ -31,14 +31,12 @@ pub async fn cmd_server_add(
     }
 
     // Resolve model card if model ref is provided
-    let model_info = if let Some(ref model_ref) = extracted.model {
-        let models_dir = config.models_dir()?;
-        let configs_dir = config.configs_dir()?;
-        let registry = kronk_core::models::ModelRegistry::new(
-            models_dir.to_path_buf(),
-            configs_dir.to_path_buf(),
-        );
+    let models_dir = config.models_dir()?;
+    let configs_dir = config.configs_dir()?;
+    let registry =
+        kronk_core::models::ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
 
+    let model_info = if let Some(ref model_ref) = extracted.model {
         match registry.find(model_ref) {
             Ok(Some(installed)) => Some(installed),
             Ok(None) => {
@@ -147,7 +145,7 @@ pub async fn cmd_server_add(
     config.save()?;
 
     // Output
-    println!("Oh yeah, it's all coming together.");
+    println!("Server added successfully.");
     println!();
     println!("  Model:    {}", name);
     println!("  Backend:  {} ({})", backend_key, exe_str);
@@ -162,14 +160,9 @@ pub async fn cmd_server_add(
         println!("  Profile:  {}", profile);
     }
 
-    if let Some(ref quant) = model_config.quant {
-        if let Some(ref model) = model_config.model {
-            let models_dir = config.models_dir()?;
-            let configs_dir = config.configs_dir()?;
-            let registry = kronk_core::models::ModelRegistry::new(
-                models_dir.to_path_buf(),
-                configs_dir.to_path_buf(),
-            );
+    // Use single registry for both lookups
+    if let Some(model) = &model_config.model {
+        if let Some(quant) = &model_config.quant {
             if let Ok(Some(installed)) = registry.find(model) {
                 if let Some(q) = installed.card.quants.get(quant) {
                     println!("  GGUF:     {}", q.file);

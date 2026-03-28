@@ -8,11 +8,11 @@ mod rm;
 // Re-export all public command functions so callers don't change.
 // e.g. `handlers::server::cmd_server_add` still works.
 pub use add::cmd_server_add;
-use anyhow::Result;
 pub use edit::cmd_server_edit;
-use kronk_core::config::Config;
 pub use ls::cmd_server_ls;
 pub use rm::cmd_server_rm;
+use anyhow::Result;
+use kronk_core::config::Config;
 /// Manage servers — list, add, edit, remove
 pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) -> Result<()> {
     match command {
@@ -46,7 +46,7 @@ pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) ->
 ///
 /// # Returns
 /// The backend key (name) that should be used for this backend.
-fn resolve_backend(config: &mut Config, exe_path: &str) -> Result<(String, String)> {
+pub(super) fn resolve_backend(config: &mut Config, exe_path: &str) -> Result<(String, String)> {
     use kronk_core::config::BackendConfig;
     // Only absolutize if it looks like a filesystem path (contains separator or starts with ./..);
     // bare command names (e.g. "llama-server") are left as-is so PATH resolution works at runtime.

@@ -18,7 +18,8 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
     println!("{}", "-".repeat(60));
 
     for (name, srv) in &config.models {
-        let _backend = config.backends.get(&srv.backend);
+        // Backend lookup kept for potential future use
+        let _unused_backend = config.backends.get(&srv.backend);
         let profile_name = srv
             .profile
             .as_ref()

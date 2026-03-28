@@ -53,7 +53,7 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     // Read back for output
     let srv = config.models.get(name).unwrap();
 
-    println!("Oh yeah, it's all coming together.");
+    println!("Server updated successfully.");
     println!();
     println!("  Name:     {}", name);
     println!("  Backend:  {} ({})", backend_key, exe_str);
