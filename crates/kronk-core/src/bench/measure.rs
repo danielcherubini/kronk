@@ -23,7 +23,7 @@ pub async fn send_bench_request(
     max_tokens: u32,
 ) -> Result<crate::bench::RequestMeasurement> {
     // Build the request body
-    let prompt = crate::bench::build_prompt(max_tokens);
+    let prompt = crate::bench::build_prompt(prompt_tokens);
     let request_body = serde_json::json!({
         "model": "benchmark",
         "messages": [
@@ -57,38 +57,42 @@ pub async fn send_bench_request(
         bail!("Request failed with status: {}", response.status());
     }
 
-    // Read the SSE stream and process lines
+    // Read the SSE stream and process lines incrementally
     let mut first_token_time: Option<Instant> = None;
     let mut generated_token_count = 0u32;
     let mut request_end_time: Option<Instant> = None;
-
-    // Collect all chunks into a string buffer
-    let mut full_body = String::new();
+    let mut buffer = String::new();
     let mut stream = response.bytes_stream();
+
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.context("Failed to read response chunk")?;
-        full_body.push_str(&String::from_utf8_lossy(&bytes));
-    }
+        let chunk = chunk.context("Failed to read response chunk")?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-    // Process complete lines (split by \n)
-    for line in full_body.split('\n') {
-        if line.is_empty() || line.starts_with("data: ") {
-            let sse_data = &line[6..]; // Strip "data: " prefix
+        // Process all complete lines in the buffer
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
+            buffer.drain(..=newline_pos);
 
-            if sse_data == "[DONE]" {
-                request_end_time = Some(Instant::now());
-                break;
-            }
+            if let Some(sse_data) = line.strip_prefix("data: ") {
+                if sse_data == "[DONE]" {
+                    request_end_time = Some(Instant::now());
+                    break;
+                }
 
-            // Parse the SSE content
-            if let Some(_content) = parse_sse_content(line) {
-                generated_token_count += 1;
+                // Parse the SSE content
+                if let Some(_content) = parse_sse_content(&line) {
+                    generated_token_count += 1;
 
-                // This is the first chunk with content (TTFT)
-                if first_token_time.is_none() {
-                    first_token_time = Some(Instant::now());
+                    // This is the first chunk with content (TTFT)
+                    if first_token_time.is_none() {
+                        first_token_time = Some(Instant::now());
+                    }
                 }
             }
+        }
+
+        if request_end_time.is_some() {
+            break;
         }
     }
 

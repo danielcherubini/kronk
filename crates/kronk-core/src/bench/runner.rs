@@ -219,11 +219,12 @@ async fn run_benchmark_inner(
 
             // Measurement phase
             let mut measurements = Vec::with_capacity(bench_config.runs as usize);
-            for _ in 0..bench_config.runs {
-                if let Ok(measurement) =
-                    crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await
+            for run_idx in 0..bench_config.runs {
+                match crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size)
+                    .await
                 {
-                    measurements.push(measurement);
+                    Ok(measurement) => measurements.push(measurement),
+                    Err(e) => tracing::warn!("Measurement run {} failed: {}", run_idx + 1, e),
                 }
             }
 

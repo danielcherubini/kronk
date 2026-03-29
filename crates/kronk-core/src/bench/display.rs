@@ -13,12 +13,17 @@ pub fn format_stat(mean: f64, stddev: f64) -> String {
 pub fn print_bench_report(report: &BenchReport) {
     // Header
     let quant_str = report.model_info.quant.as_deref().unwrap_or("");
-    let _model_id_str = report.model_info.model_id.as_deref().unwrap_or("");
+    let model_id_str = report.model_info.model_id.as_deref().unwrap_or("");
     let name = &report.model_info.name;
 
     println!(
-        "kronk bench — {}{} via {}",
+        "kronk bench — {}{}{} via {}",
         name,
+        if !model_id_str.is_empty() {
+            format!(" ({})", model_id_str)
+        } else {
+            String::new()
+        },
         if !quant_str.is_empty() {
             format!(" ({})", quant_str)
         } else {
@@ -27,9 +32,13 @@ pub fn print_bench_report(report: &BenchReport) {
         report.model_info.backend
     );
     println!(
-        "GPU: {} | Context: {:?} | Runs: {} | Warmup: {}",
+        "GPU: {} | Context: {} | Runs: {} | Warmup: {}",
         report.model_info.gpu_type,
-        report.model_info.context_length,
+        report
+            .model_info
+            .context_length
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "N/A".to_string()),
         report.config.runs,
         report.config.warmup
     );
@@ -53,7 +62,7 @@ pub fn print_bench_report(report: &BenchReport) {
     }
 
     println!(" ────────────────────────────────────────────────────────────────────");
-    println!(" Model load time: {} ms", report.load_time_ms);
+    println!(" Model load time: {:.0} ms", report.load_time_ms);
 
     if let Some(vram) = &report.vram {
         println!(" VRAM: {} / {} MiB", vram.used_mib, vram.total_mib);
