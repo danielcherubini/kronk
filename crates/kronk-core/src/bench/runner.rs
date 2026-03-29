@@ -295,13 +295,13 @@ async fn _run_benchmark_inner(
             // Warmup phase - discard results
             for _ in 0..bench_config.warmup {
                 let _ =
-                    crate::bench::measure::send_bench_request(&backend.url, pp_size).await;
+                    crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await;
             }
 
             // Measurement phase
             let mut measurements = Vec::with_capacity(bench_config.runs as usize);
             for run_idx in 0..bench_config.runs {
-                match crate::bench::measure::send_bench_request(&backend.url, pp_size)
+                match crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size)
                     .await
                 {
                     Ok(measurement) => measurements.push(measurement),
