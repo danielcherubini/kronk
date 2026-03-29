@@ -17,6 +17,7 @@ use crate::config::Config;
 use crate::proxy::process::{check_health, force_kill_process, is_process_alive, kill_process};
 
 /// Information about a running backend
+#[derive(Debug)]
 struct BenchBackend {
     pid: u32,
     url: String,
@@ -110,7 +111,15 @@ async fn _start_backend(
 
     info!("Executing backend: {} {}", backend_path, args.join(" "));
 
-    let mut child = Command::new(backend_path)
+    let mut cmd = Command::new(backend_path);
+    // Set working directory to the backend's parent dir so Windows can find
+    // companion DLLs (ggml-cuda.dll, ggml.dll, etc.) alongside the binary.
+    if let Some(parent) = std::path::Path::new(backend_path).parent() {
+        if parent.is_dir() {
+            cmd.current_dir(parent);
+        }
+    }
+    let mut child = cmd
         .args(&args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
