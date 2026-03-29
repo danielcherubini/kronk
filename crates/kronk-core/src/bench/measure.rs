@@ -165,15 +165,17 @@ pub fn parse_sse_content(line: &str) -> Option<String> {
 
     // Parse as JSON
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(sse_data) {
-        // Check for choices[0].delta.content
+        // Check for choices[0].delta.content or reasoning_content (thinking models e.g. Qwen3)
         let choices = json.get("choices");
         let choice = choices?.as_array().and_then(|arr| arr.first());
-        let delta = choice?.as_object().and_then(|obj| obj.get("delta"));
-        let content = delta?.as_object().and_then(|obj| obj.get("content"));
+        let delta = choice?.as_object().and_then(|obj| obj.get("delta"))?;
+        let delta_obj = delta.as_object()?;
 
-        if let Some(content_str) = content?.as_str() {
-            if !content_str.is_empty() {
-                return Some(content_str.to_string());
+        for key in &["content", "reasoning_content"] {
+            if let Some(content_str) = delta_obj.get(*key).and_then(|v| v.as_str()) {
+                if !content_str.is_empty() {
+                    return Some(content_str.to_string());
+                }
             }
         }
     }
