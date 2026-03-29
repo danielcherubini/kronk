@@ -12,7 +12,7 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
             if let Some(server_name) = name {
                 // Legacy: install a single backend as a service
                 let (srv, backend) = config.resolve_server(&server_name)?;
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(target_os = "windows")]
                 let _ = &backend;
                 let service_name = Config::service_name(&server_name);
 
