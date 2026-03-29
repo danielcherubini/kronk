@@ -115,7 +115,7 @@ fn kill_service_processes(service_name: &str) -> Result<()> {
 
     // If we have a process ID, try to kill it
     if let Some(process_id) = status.process_id {
-        let pid = process_id.as_u32();
+        let pid = process_id.to_u32();
         let mut cmd = process::Command::new("taskkill");
         cmd.arg("/F").arg("/PID").arg(pid.to_string());
 
