@@ -10,9 +10,8 @@ use anyhow::{Context, Result};
 use std::time::Instant;
 use tokio::process::Command;
 
-use crate::bench::{compute_summary, BenchSummary};
+use crate::bench::{compute_summary, BenchConfig, BenchReport, BenchSummary, ModelInfo};
 use crate::config::Config;
-use crate::gpu::VramInfo;
 use crate::proxy::process::check_health;
 use crate::proxy::process::{force_kill_process, is_process_alive, kill_process};
 use tracing::info;
@@ -160,7 +159,7 @@ async fn stop_backend(backend: &BenchBackend) -> Result<()> {
 pub async fn run_benchmark(
     config: &Config,
     server_name: &str,
-    bench_config: &crate::bench::BenchConfig,
+    bench_config: &BenchConfig,
 ) -> Result<BenchReport> {
     println!("Starting benchmark for '{}'...", server_name);
 
@@ -199,72 +198,41 @@ pub async fn run_benchmark(
 /// Inner benchmark logic that runs measurements
 async fn run_benchmark_inner(
     backend: &BenchBackend,
-    bench_config: &crate::bench::BenchConfig,
+    bench_config: &BenchConfig,
 ) -> Vec<BenchSummary> {
     let mut summaries = Vec::new();
 
     // For each pp_size × tg_size combination
-    for (pp_size, tg_size) in vec![(512, 128)] {
-        let test_name = format!("pp{}/tg{}", pp_size, tg_size);
-        println!(
-            "Running {} (warmup: {}, runs: {})...",
-            test_name, bench_config.warmup, bench_config.runs
-        );
+    for &pp_size in &bench_config.pp_sizes {
+        for &tg_size in &bench_config.tg_sizes {
+            let test_name = format!("pp{}/tg{}", pp_size, tg_size);
+            println!(
+                "Running {} (warmup: {}, runs: {})...",
+                test_name, bench_config.warmup, bench_config.runs
+            );
 
-        // Warmup phase - discard results
-        for _ in 0..bench_config.warmup {
-            let _ = crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await;
-        }
-
-        // Measurement phase
-        let mut measurements = Vec::with_capacity(bench_config.runs as usize);
-        for _ in 0..bench_config.runs {
-            if let Ok(measurement) =
-                crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await
-            {
-                measurements.push(measurement);
+            // Warmup phase - discard results
+            for _ in 0..bench_config.warmup {
+                let _ =
+                    crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await;
             }
-        }
 
-        let summary = compute_summary(&test_name, pp_size, tg_size, &measurements);
-        summaries.push(summary);
+            // Measurement phase
+            let mut measurements = Vec::with_capacity(bench_config.runs as usize);
+            for _ in 0..bench_config.runs {
+                if let Ok(measurement) =
+                    crate::bench::measure::send_bench_request(&backend.url, pp_size, tg_size).await
+                {
+                    measurements.push(measurement);
+                }
+            }
+
+            let summary = compute_summary(&test_name, pp_size, tg_size, &measurements);
+            summaries.push(summary);
+        }
     }
 
     summaries
-}
-
-/// Model metadata for display
-#[derive(Debug, Clone)]
-pub struct ModelInfo {
-    /// Server config name
-    pub name: String,
-    /// Model identifier (e.g., "bartowski/Qwen2.5-Coder-7B-GGUF")
-    pub model_id: Option<String>,
-    /// Quantization (e.g., "Q4_K_M")
-    pub quant: Option<String>,
-    /// Backend config name
-    pub backend: String,
-    /// GPU type (e.g., "CUDA", "Vulkan", "CPU")
-    pub gpu_type: String,
-    /// Context length
-    pub context_length: Option<u32>,
-    /// GPU layers info
-    pub gpu_layers: Option<String>,
-}
-
-/// Complete benchmark report
-#[derive(Debug, Clone)]
-pub struct BenchReport {
-    /// Model metadata
-    pub model_info: ModelInfo,
-    /// Benchmark configuration
-    pub config: crate::bench::BenchConfig,
-    /// All test summaries
-    pub summaries: Vec<BenchSummary>,
-    /// Model load time in milliseconds
-    pub load_time_ms: f64,
-    /// VRAM info (if available)
-    pub vram: Option<VramInfo>,
 }
 
 /// Override a CLI flag's value in an argument list
