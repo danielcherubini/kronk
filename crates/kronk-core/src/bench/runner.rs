@@ -2,8 +2,8 @@
 //!
 //! This module provides:
 //! - `BenchBackend`: tracks a running backend process
-//! - `start_backend`: spawn and health-check a backend
-//! - `stop_backend`: gracefully stop a backend
+//! - `_start_backend`: spawn and health-check a backend
+//! - `_stop_backend`: gracefully stop a backend
 //! - `run_benchmark`: orchestrate benchmark runs
 
 use std::time::Instant;
@@ -24,7 +24,7 @@ struct BenchBackend {
 }
 
 /// Detect GPU type from backend path and NVIDIA availability
-fn detect_gpu_type(backend_path: &str, has_nvidia: bool) -> String {
+fn _detect_gpu_type(backend_path: &str, has_nvidia: bool) -> String {
     let path_lower = backend_path.to_lowercase();
     if path_lower.contains("vulkan") {
         "Vulkan".to_string()
@@ -40,7 +40,7 @@ fn detect_gpu_type(backend_path: &str, has_nvidia: bool) -> String {
 }
 
 /// Extract GPU layers from args (next value after "-ngl")
-fn extract_gpu_layers(args: &[String]) -> Option<String> {
+fn _extract_gpu_layers(args: &[String]) -> Option<String> {
     args.windows(2)
         .filter(|w| w[0] == "-ngl" || w[0] == "--n-gpu-layers")
         .map(|w| w[1].clone())
@@ -48,8 +48,34 @@ fn extract_gpu_layers(args: &[String]) -> Option<String> {
         .map(|v| v.trim_matches('"').to_string())
 }
 
+/// Override a CLI flag's value in an argument list.
+///
+/// Removes **all** existing occurrences of `flag` and its following value, then
+/// appends a single canonical `flag value` pair.  This prevents duplicate flags
+/// left by `build_full_args` from conflicting with the bench-specific values.
+fn _override_arg(args: &mut Vec<String>, flag: &str, value: &str) {
+    // Collect indices of every occurrence of the flag (iterate in reverse so
+    // removal doesn't shift indices we haven't visited yet).
+    let positions: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| if a == flag { Some(i) } else { None })
+        .collect();
+
+    for pos in positions.into_iter().rev() {
+        // Remove the value first (higher index), then the flag.
+        if pos + 1 < args.len() {
+            args.remove(pos + 1);
+        }
+        args.remove(pos);
+    }
+
+    args.push(flag.to_string());
+    args.push(value.to_string());
+}
+
 /// Start a backend process and wait for it to be healthy
-async fn start_backend(
+async fn _start_backend(
     config: &Config,
     server_name: &str,
     ctx_override: Option<u32>,
@@ -67,10 +93,10 @@ async fn start_backend(
     let port = listener.local_addr()?.port();
     drop(listener);
 
-    // Build full args
+    // Build full args, then overwrite host/port removing any duplicates
     let mut args = config.build_full_args(server_config, backend_config, ctx_override)?;
-    override_arg(&mut args, "--host", "127.0.0.1");
-    override_arg(&mut args, "--port", &port.to_string());
+    _override_arg(&mut args, "--host", "127.0.0.1");
+    _override_arg(&mut args, "--port", &port.to_string());
 
     let backend_path = &backend_config.path;
     let health_url = format!("http://127.0.0.1:{}/health", port);
@@ -93,9 +119,12 @@ async fn start_backend(
         let _ = child.wait().await;
     });
 
-    // Poll health every 500ms with 120 second timeout
+    // Poll health every 500ms with 120 second timeout.
+    // Use an explicit `healthy` flag so that a successful check on the very last
+    // iteration is not mis-classified as a timeout by the post-loop guard.
     let timeout = std::time::Duration::from_secs(120);
     let start = Instant::now();
+    let mut healthy = false;
 
     while start.elapsed() < timeout {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -112,6 +141,7 @@ async fn start_backend(
         if let Ok(response) = check_health(&health_url, Some(30)).await {
             if response.status().is_success() {
                 info!("Backend '{}' is healthy", server_name);
+                healthy = true;
                 break;
             }
         }
@@ -119,7 +149,7 @@ async fn start_backend(
         tracing::debug!("Health check pending for backend: {}", server_name);
     }
 
-    if start.elapsed() >= timeout {
+    if !healthy {
         let _ = kill_process(pid).await;
         return Err(anyhow!(
             "Backend '{}' failed to become healthy after {}s",
@@ -138,7 +168,7 @@ async fn start_backend(
 }
 
 /// Stop a backend process
-async fn stop_backend(backend: &BenchBackend) -> Result<()> {
+async fn _stop_backend(backend: &BenchBackend) -> Result<()> {
     info!("Stopping backend (pid: {:?})", backend.pid);
 
     kill_process(backend.pid).await?;
@@ -179,20 +209,25 @@ pub async fn run_benchmark(
         model_id: server_config.model.clone(),
         quant: server_config.quant.clone(),
         backend: server_config.backend.clone(),
-        gpu_type: detect_gpu_type(&backend_config.path, crate::gpu::query_vram().is_some()),
+        gpu_type: _detect_gpu_type(&backend_config.path, crate::gpu::query_vram().is_some()),
         context_length: bench_config.ctx_override.or(server_config.context_length),
-        gpu_layers: extract_gpu_layers(&server_config.args),
+        gpu_layers: _extract_gpu_layers(&server_config.args),
     };
 
     // Start backend
-    let backend = start_backend(config, server_name, bench_config.ctx_override).await?;
+    let backend = _start_backend(config, server_name, bench_config.ctx_override).await?;
 
     println!("Backend loaded in {:.0} ms", backend.load_time_ms);
 
-    // Run inner benchmark logic — always stop backend regardless of outcome
-    let inner_result = run_benchmark_inner(&backend, bench_config).await;
-    stop_backend(&backend).await.ok();
+    // Run inner benchmark logic — always attempt to stop the backend regardless
+    // of outcome, then surface errors from either phase.
+    let inner_result = _run_benchmark_inner(&backend, bench_config).await;
+    let stop_result = _stop_backend(&backend).await;
+
+    // Prefer the measurement error; only surface the stop error when measurement
+    // succeeded (avoids masking the root cause with a teardown error).
     let summaries = inner_result?;
+    stop_result?;
 
     Ok(BenchReport {
         model_info,
@@ -204,7 +239,7 @@ pub async fn run_benchmark(
 }
 
 /// Inner benchmark logic that runs measurements
-async fn run_benchmark_inner(
+async fn _run_benchmark_inner(
     backend: &BenchBackend,
     bench_config: &BenchConfig,
 ) -> Result<Vec<BenchSummary>> {
@@ -252,20 +287,6 @@ async fn run_benchmark_inner(
     Ok(summaries)
 }
 
-/// Override a CLI flag's value in an argument list
-fn override_arg(args: &mut Vec<String>, flag: &str, value: &str) {
-    if let Some(pos) = args.iter().position(|a| a == flag) {
-        if pos + 1 < args.len() {
-            args[pos + 1] = value.to_string();
-        } else {
-            args.push(value.to_string());
-        }
-    } else {
-        args.push(flag.to_string());
-        args.push(value.to_string());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,25 +294,25 @@ mod tests {
     /// Verifies that a backend binary path containing "cuda" is detected as CUDA.
     #[test]
     fn test_gpu_type_from_path_cuda() {
-        let result = detect_gpu_type("llama-server-cuda", false);
+        let result = _detect_gpu_type("llama-server-cuda", false);
         assert_eq!(result, "CUDA");
     }
 
     /// Verifies that a backend binary path containing "vulkan" is detected as Vulkan.
     #[test]
     fn test_gpu_type_from_path_vulkan() {
-        let result = detect_gpu_type("llama-server-vulkan", false);
+        let result = _detect_gpu_type("llama-server-vulkan", false);
         assert_eq!(result, "Vulkan");
     }
 
     /// Verifies that an unrecognised backend path without NVIDIA presence defaults to CPU.
     #[test]
     fn test_gpu_type_from_path_default() {
-        let result = detect_gpu_type("llama-server", false);
+        let result = _detect_gpu_type("llama-server", false);
         assert_eq!(result, "CPU");
     }
 
-    /// Verifies that `extract_gpu_layers` returns the value following "-ngl" in the args list.
+    /// Verifies that `_extract_gpu_layers` returns the value following "-ngl" in the args list.
     #[test]
     fn test_extract_gpu_layers_some() {
         let args = vec![
@@ -300,15 +321,62 @@ mod tests {
             "-ngl".to_string(),
             "99".to_string(),
         ];
-        let result = extract_gpu_layers(&args);
+        let result = _extract_gpu_layers(&args);
         assert_eq!(result, Some("99".to_string()));
     }
 
-    /// Verifies that `extract_gpu_layers` returns `None` when "-ngl" is absent from the args list.
+    /// Verifies that `_extract_gpu_layers` returns `None` when "-ngl" is absent from the args list.
     #[test]
     fn test_extract_gpu_layers_none() {
         let args = vec!["-m".to_string(), "model.gguf".to_string()];
-        let result = extract_gpu_layers(&args);
+        let result = _extract_gpu_layers(&args);
         assert_eq!(result, None);
+    }
+
+    /// Verifies that `_override_arg` replaces an existing flag value in place.
+    #[test]
+    fn test_override_arg_replaces_existing() {
+        let mut args = vec![
+            "--host".to_string(),
+            "0.0.0.0".to_string(),
+            "--port".to_string(),
+            "8080".to_string(),
+        ];
+        _override_arg(&mut args, "--host", "127.0.0.1");
+        assert_eq!(
+            args,
+            vec![
+                "--port".to_string(),
+                "8080".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+            ]
+        );
+    }
+
+    /// Verifies that `_override_arg` removes duplicate flag occurrences, leaving exactly one.
+    #[test]
+    fn test_override_arg_removes_duplicates() {
+        let mut args = vec![
+            "--port".to_string(),
+            "8080".to_string(),
+            "--port".to_string(),
+            "9090".to_string(),
+        ];
+        _override_arg(&mut args, "--port", "54321");
+        let port_count = args.iter().filter(|a| a.as_str() == "--port").count();
+        assert_eq!(port_count, 1);
+        let pos = args.iter().position(|a| a == "--port").unwrap();
+        assert_eq!(args[pos + 1], "54321");
+    }
+
+    /// Verifies that `_override_arg` appends a new flag when not already present.
+    #[test]
+    fn test_override_arg_appends_when_absent() {
+        let mut args = vec!["--model".to_string(), "foo.gguf".to_string()];
+        _override_arg(&mut args, "--host", "127.0.0.1");
+        assert!(args.contains(&"--host".to_string()));
+        let pos = args.iter().position(|a| a == "--host").unwrap();
+        assert_eq!(args[pos + 1], "127.0.0.1");
     }
 }
