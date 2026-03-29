@@ -267,39 +267,39 @@ async fn install_binary(build_output: &Path, options: &InstallOptions) -> Result
         std::fs::set_permissions(&binary_dest, perms)?;
     }
 
-    // Copy shared libraries on Unix (llama-server.so, libggml.so, etc.)
-    #[cfg(unix)]
-    {
-        use std::path::Path;
-
-        // Find all .so files in build directory and copy them to target
-        fn copy_shared_libs(src: &Path, dest: &Path) {
-            if let Ok(entries) = std::fs::read_dir(src) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    if entry_path.is_file() {
-                        if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                            if name.contains(".so") || name.ends_with(".dylib") {
-                                let dest_path = dest.join(name);
-                                if !dest_path.exists() {
-                                    if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                        tracing::warn!(
-                                            "Failed to copy shared library {}: {}",
-                                            name,
-                                            e
-                                        );
-                                    }
+    // Copy shared libraries so the backend can find them at runtime.
+    // On Unix: .so / .dylib files; on Windows: .dll files (e.g. ggml-cuda.dll).
+    fn copy_shared_libs(src: &std::path::Path, dest: &std::path::Path) {
+        if let Ok(entries) = std::fs::read_dir(src) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                        let is_shared = if cfg!(target_os = "windows") {
+                            name.ends_with(".dll")
+                        } else {
+                            name.contains(".so") || name.ends_with(".dylib")
+                        };
+                        if is_shared {
+                            let dest_path = dest.join(name);
+                            if !dest_path.exists() {
+                                if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                                    tracing::warn!(
+                                        "Failed to copy shared library {}: {}",
+                                        name,
+                                        e
+                                    );
                                 }
                             }
                         }
-                    } else if entry_path.is_dir() {
-                        copy_shared_libs(&entry_path, dest);
                     }
+                } else if entry_path.is_dir() {
+                    copy_shared_libs(&entry_path, dest);
                 }
             }
         }
-        copy_shared_libs(build_output, &options.target_dir);
     }
+    copy_shared_libs(build_output, &options.target_dir);
 
     println!("Backend built and installed at: {:?}", binary_dest);
     Ok(binary_dest)
