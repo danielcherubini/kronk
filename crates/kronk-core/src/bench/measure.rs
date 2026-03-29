@@ -32,8 +32,6 @@ pub async fn send_bench_request(
             {"role": "user", "content": prompt}
         ],
         "max_tokens": max_tokens,
-        "temperature": 0,
-        "top_p": 1.0,
         "stream": true
     });
 
