@@ -74,6 +74,15 @@ pub async fn main() -> Result<()> {
         Commands::Backend { command } => {
             commands::backend::run(&config, crate::commands::backend::BackendArgs { command }).await
         }
+        Commands::Bench {
+            name,
+            all,
+            pp,
+            tg,
+            runs,
+            warmup,
+            ctx,
+        } => handlers::bench::cmd_bench(&config, name, all, pp, tg, runs, warmup, ctx).await,
         Commands::Serve {
             host,
             port,

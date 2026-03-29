@@ -2,6 +2,7 @@
 //!
 //! Each submodule handles a specific command group.
 
+pub mod bench;
 pub mod config;
 pub mod logs;
 pub mod profile;

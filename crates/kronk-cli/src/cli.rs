@@ -88,6 +88,29 @@ pub enum Commands {
         #[command(subcommand)]
         command: BackendSubcommand,
     },
+    /// Benchmark model inference performance
+    Bench {
+        /// Model config name to benchmark (required unless --all is used)
+        name: Option<String>,
+        /// Benchmark all enabled model configs sequentially
+        #[arg(long)]
+        all: bool,
+        /// Prompt processing sizes, comma-separated (default: "512")
+        #[arg(long, default_value = "512")]
+        pp: String,
+        /// Token generation lengths, comma-separated (default: "128")
+        #[arg(long, default_value = "128")]
+        tg: String,
+        /// Number of measurement runs per test (default: 3)
+        #[arg(long, default_value_t = 3)]
+        runs: u32,
+        /// Number of warmup runs before measuring (default: 1)
+        #[arg(long, default_value_t = 1)]
+        warmup: u32,
+        /// Override context size (e.g. 4096, 8192)
+        #[arg(long)]
+        ctx: Option<u32>,
+    },
     /// Start kronk server (OpenAI-compatible API on a single port)
     Serve {
         /// Host to bind to
