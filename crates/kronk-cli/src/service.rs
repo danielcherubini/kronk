@@ -20,8 +20,6 @@ static SERVICE_CTX: OnceLock<Option<u32>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 windows_service::define_windows_service!(ffi_service_main, win_service_main);
 
-
-
 #[cfg(target_os = "windows")]
 use anyhow::{Context, Result};
 #[cfg(target_os = "windows")]

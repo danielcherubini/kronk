@@ -284,11 +284,7 @@ async fn install_binary(build_output: &Path, options: &InstallOptions) -> Result
                             let dest_path = dest.join(name);
                             if !dest_path.exists() {
                                 if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                    tracing::warn!(
-                                        "Failed to copy shared library {}: {}",
-                                        name,
-                                        e
-                                    );
+                                    tracing::warn!("Failed to copy shared library {}: {}", name, e);
                                 }
                             }
                         }
