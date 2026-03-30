@@ -238,7 +238,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
             tracing::info!("Starting Kronk proxy service on {}", addr);
 
-            let db_dir = config.config_dir().ok();
+            let db_dir = kronk_core::config::Config::config_dir().ok();
             let state = Arc::new(ProxyState::new(config.clone(), db_dir));
             let server = ProxyServer::new(state);
 
