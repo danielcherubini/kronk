@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "kronk"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-core"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1360,7 +1360,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-mock"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "tokio",
  "tracing",
