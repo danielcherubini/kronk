@@ -60,8 +60,7 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
                 let backend_pid = model
                     .get("backend_pid")
                     .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
-                    .unwrap_or(0);
+                    .map(|v| v as u32);
 
                 let loaded_str = if loaded {
                     let last_accessed = model
@@ -72,12 +71,20 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
                         .get("idle_timeout_remaining_secs")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0);
-                    format!(
-                        "true (pid: {}, idle: {}s ago, unloads in {})",
-                        backend_pid,
-                        last_accessed,
-                        format_duration_secs(remaining),
-                    )
+                    if let Some(pid) = backend_pid {
+                        format!(
+                            "true (pid: {}, idle: {}s ago, unloads in {})",
+                            pid,
+                            last_accessed,
+                            format_duration_secs(remaining),
+                        )
+                    } else {
+                        format!(
+                            "true (idle: {}s ago, unloads in {})",
+                            last_accessed,
+                            format_duration_secs(remaining),
+                        )
+                    }
                 } else {
                     "false".to_string()
                 };
@@ -115,11 +122,7 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
                 Some(active) => {
                     let pid = active.pid;
                     if kronk_core::proxy::process::is_process_alive(pid as u32) {
-                        if active.port > 0 {
-                            format!("true (pid: {}, port: {})", pid, active.port)
-                        } else {
-                            format!("true (pid: {})", pid)
-                        }
+                        format!("true (pid: {}, port: {})", pid, active.port)
                     } else {
                         format!("false (stale — pid {} no longer running)", pid)
                     }

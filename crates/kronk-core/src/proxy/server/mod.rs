@@ -55,7 +55,8 @@ impl ProxyServer {
                     }
                 }
             }
-            // Clear any remaining entries to start fresh
+            // Belt-and-suspenders: clear any entries that survived the loop
+            // (e.g. if get_active_models failed mid-way and the loop was skipped).
             let _ = crate::db::queries::clear_active_models(&conn);
         }
     }
@@ -63,7 +64,7 @@ impl ProxyServer {
     fn start_idle_timeout_checker(state: Arc<ProxyState>) -> tokio::task::JoinHandle<()> {
         use std::time::Duration;
         tokio::spawn(async move {
-            let interval = Duration::from_secs(state.config.proxy.idle_timeout_secs / 2);
+            let interval = Duration::from_secs((state.config.proxy.idle_timeout_secs / 2).max(1));
             loop {
                 tokio::time::sleep(interval).await;
                 let _ = state.check_idle_timeouts().await;

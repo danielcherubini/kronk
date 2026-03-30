@@ -44,18 +44,17 @@ pub async fn run_initial_backfill(conn: &Connection, config: &Config) -> Result<
             tracing::warn!("Failed to upsert pull record for {}: {}", repo_id, e);
         }
 
-        // Fetch blob metadata for LFS hashes
+        // Fetch blob metadata for LFS hashes (best-effort; proceed even on failure)
         let blobs = match crate::models::pull::fetch_blob_metadata(repo_id).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("Failed to fetch blob metadata for {}: {}", repo_id, e);
-                // Continue without blobs — use file sizes from card
                 println!("    Failed to fetch blob metadata — continuing without LFS hashes.");
-                continue;
+                std::collections::HashMap::new()
             }
         };
 
-        // Upsert file records with LFS hashes
+        // Upsert file records with LFS hashes (empty map means hashes will be None)
         for (filename, blob_info) in blobs {
             if let Err(e) = crate::db::queries::upsert_model_file(
                 conn,

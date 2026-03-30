@@ -11,7 +11,7 @@
 
 ---
 
-### Task 1: Add `active_models` table and backfill detection to DB
+## Task 1: Add `active_models` table and backfill detection to DB
 
 **Context:**
 The DB currently has three tables (`model_pulls`, `model_files`, `download_log`) from migration v1. We need a fourth table `active_models` to track running backend processes, and a mechanism to detect when the DB was just freshly created so the CLI can trigger a one-time backfill. This task adds migration v2 with the new table, and changes `db::open()` to return whether backfill is needed.
@@ -121,7 +121,7 @@ The DB currently has three tables (`model_pulls`, `model_files`, `download_log`)
 
 ---
 
-### Task 2: Auto-backfill DB on first creation
+## Task 2: Auto-backfill DB on first creation
 
 **Context:**
 When a user upgrades to the version with the DB and runs any command, `db::open()` creates a fresh DB. We want to detect this and automatically populate `model_pulls` and `model_files` with metadata from all installed models. This requires: (1) scanning installed model cards (sync, local), and (2) fetching commit SHAs and LFS hashes from HuggingFace (async, network). The backfill runs once, on first DB creation, and the user sees progress output so they know what's happening.
@@ -215,7 +215,7 @@ Since `db::open()` is synchronous but backfill needs async network calls, the ap
 
 ---
 
-### Task 3: Wire DB into proxy for process tracking
+## Task 3: Wire DB into proxy for process tracking
 
 **Context:**
 The proxy currently tracks running models in an in-memory `HashMap<String, ModelState>` inside `ProxyState`. When the proxy exits (gracefully or crashes), that state is lost. We want to persist model load/unload events to the `active_models` table so that: (1) `kronk status` can show richer data, (2) on startup, orphaned processes from a previous crash can be detected and killed.
@@ -348,7 +348,7 @@ The `ProxyState` needs access to a `Connection`. Since `Connection` is `!Send`, 
 
 ---
 
-### Task 4: Enhance `kronk status` to show PID and loaded state from DB
+## Task 4: Enhance `kronk status` to show PID and loaded state from DB
 
 **Context:**
 Currently `kronk status` shows "proxy not running" when the proxy `/status` endpoint is unreachable. With the `active_models` table, we can show richer information even in the fallback path: which models were last loaded, their PIDs, and whether those PIDs are still alive. When the proxy IS running, we can also include PID info from the `/status` endpoint (it already returns `backend_pid`).

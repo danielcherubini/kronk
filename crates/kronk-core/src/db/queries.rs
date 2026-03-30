@@ -536,7 +536,7 @@ mod tests {
         let loaded_at1 = models[0].loaded_at.clone();
 
         // Wait a bit to ensure different timestamp
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(200));
 
         touch_active_model(&conn, "test-server").unwrap();
 

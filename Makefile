@@ -1,10 +1,15 @@
-.PHONY: build install install-global test check fmt clippy clean
+.PHONY: build install install-global update test check fmt clippy clean
 
 build:
 	cargo build --release --workspace
 
 install:
 	cargo install --path crates/kronk-cli --force
+
+update: build
+	kronk service stop || true
+	cargo install --path crates/kronk-cli --force
+	kronk service start
 
 # Windows: copy release binary to Program Files (requires admin)
 install-global: build
