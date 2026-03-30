@@ -15,15 +15,16 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
         println!("  VRAM:     {} / {} MiB", vram.used_mib, vram.total_mib);
     }
 
+    // Query DB once outside loop
+    let db_active = Config::config_dir()
+        .ok()
+        .and_then(|dir| kronk_core::db::open(&dir).ok())
+        .and_then(|r| kronk_core::db::queries::get_active_models(&r.conn).ok())
+        .unwrap_or_default();
+
     // Models from config
     for (name, srv) in &config.models {
         // Check if there's an active DB entry for this model
-        let db_active = Config::config_dir()
-            .ok()
-            .and_then(|dir| kronk_core::db::open(&dir).ok())
-            .and_then(|r| kronk_core::db::queries::get_active_models(&r.conn).ok())
-            .unwrap_or_default();
-
         let db_entry = db_active.iter().find(|m| m.server_name == *name);
 
         let loaded_str = match db_entry {
