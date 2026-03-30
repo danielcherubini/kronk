@@ -150,9 +150,12 @@ pub fn log_download(conn: &Connection, entry: &DownloadLogEntry) -> Result<()> {
 
 /// Delete all records for a repo (model_pulls, model_files).
 /// Does NOT delete download_log entries (they're historical).
+/// Both deletes run in a single transaction — either both succeed or neither does.
 pub fn delete_model_records(conn: &Connection, repo_id: &str) -> Result<()> {
-    conn.execute("DELETE FROM model_pulls WHERE repo_id = ?1", [repo_id])?;
-    conn.execute("DELETE FROM model_files WHERE repo_id = ?1", [repo_id])?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM model_pulls WHERE repo_id = ?1", [repo_id])?;
+    tx.execute("DELETE FROM model_files WHERE repo_id = ?1", [repo_id])?;
+    tx.commit()?;
     Ok(())
 }
 

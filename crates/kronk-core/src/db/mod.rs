@@ -31,9 +31,10 @@ pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
 
 /// Open an in-memory SQLite database for testing
 ///
-/// Runs migrations on the in-memory database.
+/// Applies the same PRAGMA settings as `open()` and runs migrations.
 pub fn open_in_memory() -> anyhow::Result<Connection> {
     let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     migrations::run(&conn)?;
     Ok(conn)
 }

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::cli::ModelCommands;
 
 /// Return a naive ISO 8601 UTC timestamp for DB logging.
-fn chrono_or_manual_timestamp() -> String {
+fn manual_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -351,7 +351,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
 
         kronk_core::db::queries::upsert_model_pull(&conn, repo_id, &listing.commit_sha)?;
 
-        let now = chrono_or_manual_timestamp();
+        let now = manual_timestamp();
         for df in &downloaded_files {
             let lfs_sha = blobs
                 .as_ref()
@@ -834,7 +834,8 @@ async fn cmd_update(
                 Some(dl.size_bytes as i64),
             );
 
-            let now = chrono_or_manual_timestamp();
+            let now = manual_timestamp();
+
             let _ = kronk_core::db::queries::log_download(
                 &conn,
                 &kronk_core::db::queries::DownloadLogEntry {
