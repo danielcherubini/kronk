@@ -3,6 +3,7 @@ pub mod download;
 pub mod pull;
 pub mod registry;
 pub mod search;
+pub mod update;
 
 pub use card::{ModelCard, ModelMeta, QuantInfo};
 pub use registry::{InstalledModel, ModelRegistry};
