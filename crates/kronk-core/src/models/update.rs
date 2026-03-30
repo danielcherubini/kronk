@@ -45,6 +45,8 @@ pub enum UpdateStatus {
     RepoChangedFilesUnchanged,
     /// One or more tracked GGUF files have changed
     UpdatesAvailable,
+    /// One or more files have unknown status (cannot verify if changed)
+    VerificationFailed,
     /// Error checking (network, API, etc.)
     CheckFailed(String),
 }
@@ -124,7 +126,9 @@ pub async fn check_for_updates(conn: &Connection, repo_id: &str) -> Result<Updat
     }
 
     // Step 5: ASYNC — fetch per-file blob metadata
-    let remote_blobs = match pull::fetch_blob_metadata(repo_id).await {
+    // Use the resolved repo_id from remote_listing (may have -GGUF appended)
+    let resolved_repo_id = &remote_listing.repo_id;
+    let remote_blobs = match pull::fetch_blob_metadata(resolved_repo_id).await {
         Ok(blobs) => blobs,
         Err(e) => {
             return Ok(UpdateCheckResult {
@@ -142,11 +146,17 @@ pub async fn check_for_updates(conn: &Connection, repo_id: &str) -> Result<Updat
     let file_updates = compare_files(&file_records, &remote_blobs);
 
     // Step 7: determine overall status
+    let has_unknown = file_updates
+        .iter()
+        .any(|f| matches!(f.status, FileStatus::Unknown));
+
     let has_changes = file_updates
         .iter()
         .any(|f| matches!(f.status, FileStatus::Changed { .. } | FileStatus::NewRemote));
 
-    let status = if has_changes {
+    let status = if has_unknown {
+        UpdateStatus::VerificationFailed
+    } else if has_changes {
         UpdateStatus::UpdatesAvailable
     } else {
         UpdateStatus::RepoChangedFilesUnchanged
@@ -232,7 +242,8 @@ pub fn compare_files(
 pub async fn refresh_metadata(conn: &Connection, repo_id: &str) -> Result<()> {
     // ASYNC — fetch remote data
     let listing = pull::list_gguf_files(repo_id).await?;
-    let blobs = pull::fetch_blob_metadata(repo_id).await?;
+    // Use the resolved repo_id from listing (may have -GGUF appended)
+    let blobs = pull::fetch_blob_metadata(&listing.repo_id).await?;
 
     // SYNC — write to DB
     upsert_model_pull(conn, repo_id, &listing.commit_sha)?;
