@@ -9,6 +9,12 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+/// Result of opening a database connection
+pub struct OpenResult {
+    pub conn: Connection,
+    pub needs_backfill: bool,
+}
+
 /// Open (or create) the SQLite database at `config_dir/kronk.db`
 ///
 /// Sets up the database with:
@@ -16,8 +22,8 @@ use rusqlite::Connection;
 /// - Foreign keys enabled
 /// - Migrations applied
 ///
-/// Returns a connection to the database.
-pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
+/// Returns a connection and whether backfill is needed (true if DB was freshly created).
+pub fn open(config_dir: &Path) -> anyhow::Result<OpenResult> {
     // Ensure the config directory exists before SQLite tries to create the file.
     std::fs::create_dir_all(config_dir)?;
     let db_path = config_dir.join("kronk.db");
@@ -26,9 +32,16 @@ pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
 
+    // Check user_version BEFORE running migrations to detect fresh DB
+    let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let needs_backfill = current_version == 0;
+
     migrations::run(&conn)?;
 
-    Ok(conn)
+    Ok(OpenResult {
+        conn,
+        needs_backfill,
+    })
 }
 
 /// Open an in-memory SQLite database for testing.
@@ -36,11 +49,20 @@ pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
 /// Applies `PRAGMA foreign_keys=ON` (same as `open()`) and runs migrations.
 /// Note: `journal_mode=WAL` is not applied because it is not supported for
 /// in-memory databases.
-pub fn open_in_memory() -> anyhow::Result<Connection> {
+pub fn open_in_memory() -> anyhow::Result<OpenResult> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+
+    // In-memory DB starts at version 0, so it needs backfill
+    let current_version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let needs_backfill = current_version == 0;
+
     migrations::run(&conn)?;
-    Ok(conn)
+
+    Ok(OpenResult {
+        conn,
+        needs_backfill,
+    })
 }
 
 #[cfg(test)]
@@ -49,7 +71,7 @@ mod tests {
 
     #[test]
     fn test_open_in_memory() {
-        let conn = open_in_memory().unwrap();
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
 
         // Verify tables exist by querying sqlite_master
         let pulls_count: i64 = conn
@@ -91,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_migrations_idempotent() {
-        let conn = open_in_memory().unwrap();
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
 
         // Run migrations twice - should not error
         migrations::run(&conn).unwrap();
@@ -100,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_user_version_updated() {
-        let conn = open_in_memory().unwrap();
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
 
         let version: i32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))

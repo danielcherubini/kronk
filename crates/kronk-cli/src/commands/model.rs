@@ -348,7 +348,10 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     // Record all pull metadata in DB (sync, single connection, after all async work)
     let db_record_result: anyhow::Result<()> = (|| {
         let db_dir = kronk_core::config::Config::config_dir()?;
-        let conn = kronk_core::db::open(&db_dir)?;
+        let OpenResult {
+            conn,
+            needs_backfill: _,
+        } = kronk_core::db::open(&db_dir)?;
 
         kronk_core::db::queries::upsert_model_pull(&conn, repo_id, &listing.commit_sha)?;
 
@@ -641,7 +644,11 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
     // Use model.card.model.source as the DB key (it's the HF repo_id stored during pull),
     // falling back to model.id (file-derived) if source is empty.
     if let Ok(db_dir) = kronk_core::config::Config::config_dir() {
-        if let Ok(conn) = kronk_core::db::open(&db_dir) {
+        if let Ok(OpenResult {
+            conn,
+            needs_backfill: _,
+        }) = kronk_core::db::open(&db_dir)
+        {
             let repo_key = if model.card.model.source.is_empty() {
                 &model.id
             } else {
@@ -665,7 +672,10 @@ async fn cmd_update(
     use kronk_core::models::update;
 
     let db_dir = kronk_core::config::Config::config_dir()?;
-    let conn = kronk_core::db::open(&db_dir)?;
+    let OpenResult {
+        conn,
+        needs_backfill: _,
+    } = kronk_core::db::open(&db_dir)?;
 
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
