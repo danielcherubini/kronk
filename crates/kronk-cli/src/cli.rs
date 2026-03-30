@@ -212,6 +212,20 @@ pub enum ModelCommands {
     },
     /// Scan for untracked GGUF files and update model cards
     Scan,
+    /// Check for and download model updates from HuggingFace
+    Update {
+        /// Model ID to update (e.g. "bartowski/OmniCoder-8B-GGUF"). Checks all if omitted.
+        model: Option<String>,
+        /// Only check for updates, don't download
+        #[arg(long, conflicts_with = "refresh")]
+        check: bool,
+        /// Refresh stored metadata without re-downloading (establishes baseline for future checks)
+        #[arg(long, conflicts_with = "check")]
+        refresh: bool,
+        /// Skip confirmation prompt (for scripting/CI)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Search HuggingFace for GGUF models
     Search {
         /// Search query (e.g. "llama", "coding", "mistral 7b")

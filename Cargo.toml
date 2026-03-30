@@ -34,3 +34,4 @@ axum = { version = "0.7", features = ["http2", "macros"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 bytes = "1.0"
 http-body-util = "0.1"
+rusqlite = { version = "0.34", features = ["bundled"] }

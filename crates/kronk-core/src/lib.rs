@@ -12,6 +12,7 @@
 pub mod backends;
 pub mod bench;
 pub mod config;
+pub mod db;
 pub mod gpu;
 pub mod logging;
 pub mod models;

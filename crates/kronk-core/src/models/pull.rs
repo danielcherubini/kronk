@@ -1,8 +1,11 @@
-use crate::models::card::ModelCard;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use hf_hub::api::tokio::Api;
-use std::path::PathBuf;
 use tokio::sync::OnceCell;
+
+use crate::models::card::ModelCard;
 
 static HF_API: OnceCell<Api> = OnceCell::const_new();
 
@@ -24,13 +27,32 @@ pub struct RemoteGguf {
     pub quant: Option<String>,
 }
 
+/// Result of listing GGUF files from a HuggingFace repo.
+#[derive(Debug, Clone)]
+pub struct RepoGgufListing {
+    /// Resolved repo ID (may differ from input if `-GGUF` was appended)
+    pub repo_id: String,
+    /// HF repo HEAD commit SHA at time of listing
+    pub commit_sha: String,
+    /// Available GGUF files
+    pub files: Vec<RemoteGguf>,
+}
+
+/// Per-file blob metadata returned by the HuggingFace blobs API.
+#[derive(Debug, Clone)]
+pub struct BlobInfo {
+    pub filename: String,
+    pub blob_id: Option<String>,
+    pub size: Option<i64>,
+    pub lfs_sha256: Option<String>,
+}
+
 /// List GGUF files available in a HuggingFace model repository.
-/// Returns the resolved repo_id (which may differ from input if `-GGUF` was appended)
-/// and the list of available GGUF files.
+/// Returns a `RepoGgufListing` with the resolved repo_id, commit SHA, and file list.
 ///
 /// Auto-resolves repos: if `repo_id` doesn't end with `-GGUF` and the initial
 /// fetch finds no GGUF files (or the repo doesn't exist), retries with `-GGUF` appended.
-pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)> {
+pub async fn list_gguf_files(repo_id: &str) -> Result<RepoGgufListing> {
     let api = hf_api().await?;
 
     // Try the repo_id as given first
@@ -46,6 +68,7 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
         let repo = api.model(candidate.clone());
         match repo.info().await {
             Ok(info) => {
+                let commit_sha = info.sha.clone();
                 let ggufs: Vec<RemoteGguf> = info
                     .siblings
                     .into_iter()
@@ -60,7 +83,11 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
                     .collect();
 
                 if !ggufs.is_empty() {
-                    return Ok((candidate.clone(), ggufs));
+                    return Ok(RepoGgufListing {
+                        repo_id: candidate.clone(),
+                        commit_sha,
+                        files: ggufs,
+                    });
                 }
                 // Repo exists but no GGUFs — try next candidate
                 last_error = Some(format!(
@@ -81,6 +108,86 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<(String, Vec<RemoteGguf>)>
         candidates.join(", "),
         detail
     )
+}
+
+/// Fetch per-file blob metadata from HuggingFace using the blobs API.
+///
+/// Uses `hf_hub`'s authenticated client to call the HF API with `?blobs=true`,
+/// which returns `blobId`, `size`, and `lfs.sha256` per sibling.
+/// Returns a map of filename → BlobInfo for GGUF files only.
+pub async fn fetch_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobInfo>> {
+    let api = hf_api().await?;
+    let endpoint =
+        std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+    let url = format!("{}/api/models/{}?blobs=true", endpoint, repo_id);
+
+    let response = api
+        .client()
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch blob metadata for '{}'", repo_id))?
+        .error_for_status()
+        .with_context(|| {
+            format!(
+                "HuggingFace returned an error for blob metadata request for '{}'",
+                repo_id
+            )
+        })?
+        .json::<serde_json::Value>()
+        .await
+        .with_context(|| format!("Failed to parse blob metadata response for '{}'", repo_id))?;
+
+    Ok(parse_blob_siblings(&response))
+}
+
+/// Parse the `siblings` array from a HuggingFace blobs API response.
+///
+/// This is a pure function for testability — extract from `fetch_blob_metadata`
+/// so it can be unit-tested with fixture data.
+pub fn parse_blob_siblings(value: &serde_json::Value) -> HashMap<String, BlobInfo> {
+    let mut result = HashMap::new();
+
+    let siblings = match value.get("siblings").and_then(|s| s.as_array()) {
+        Some(s) => s,
+        None => return result,
+    };
+
+    for sibling in siblings {
+        let rfilename = match sibling.get("rfilename").and_then(|f| f.as_str()) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        if !rfilename.ends_with(".gguf") {
+            continue;
+        }
+
+        let blob_id = sibling
+            .get("blobId")
+            .and_then(|b| b.as_str())
+            .map(|s| s.to_string());
+
+        let size = sibling.get("size").and_then(|s| s.as_i64());
+
+        let lfs_sha256 = sibling
+            .get("lfs")
+            .and_then(|lfs| lfs.get("sha256"))
+            .and_then(|sha| sha.as_str())
+            .map(|s| s.to_string());
+
+        result.insert(
+            rfilename.to_string(),
+            BlobInfo {
+                filename: rfilename.to_string(),
+                blob_id,
+                size,
+                lfs_sha256,
+            },
+        );
+    }
+
+    result
 }
 
 /// Result of downloading a GGUF file.
@@ -202,6 +309,87 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Verifies that GGUF siblings are parsed with blobId, size, and LFS SHA256,
+    /// and that non-GGUF files (e.g. README.md) are excluded from the result.
+    #[test]
+    fn test_parse_blob_siblings_basic() {
+        let json = serde_json::json!({
+            "siblings": [
+                {
+                    "rfilename": "README.md",
+                    "blobId": "blob1",
+                    "size": 1000
+                },
+                {
+                    "rfilename": "Model-Q4_K_M.gguf",
+                    "blobId": "blob2",
+                    "size": 4200000000_i64,
+                    "lfs": {
+                        "sha256": "abcdef1234567890"
+                    }
+                },
+                {
+                    "rfilename": "Model-Q8_0.gguf",
+                    "blobId": "blob3",
+                    "size": 8400000000_i64,
+                    "lfs": {
+                        "sha256": "fedcba0987654321"
+                    }
+                }
+            ]
+        });
+
+        let result = parse_blob_siblings(&json);
+
+        // README should be excluded
+        assert!(!result.contains_key("README.md"));
+        assert_eq!(result.len(), 2);
+
+        let q4 = result.get("Model-Q4_K_M.gguf").unwrap();
+        assert_eq!(q4.blob_id.as_deref(), Some("blob2"));
+        assert_eq!(q4.size, Some(4200000000_i64));
+        assert_eq!(q4.lfs_sha256.as_deref(), Some("abcdef1234567890"));
+
+        let q8 = result.get("Model-Q8_0.gguf").unwrap();
+        assert_eq!(q8.lfs_sha256.as_deref(), Some("fedcba0987654321"));
+    }
+
+    /// Verifies that a GGUF sibling without an `lfs` field has `lfs_sha256 = None`.
+    #[test]
+    fn test_parse_blob_siblings_no_lfs() {
+        let json = serde_json::json!({
+            "siblings": [
+                {
+                    "rfilename": "model.gguf",
+                    "blobId": "blob1",
+                    "size": 1000
+                }
+            ]
+        });
+
+        let result = parse_blob_siblings(&json);
+        let info = result.get("model.gguf").unwrap();
+        assert!(info.lfs_sha256.is_none());
+        assert_eq!(info.size, Some(1000));
+    }
+
+    /// Verifies that an empty `siblings` array produces an empty map.
+    #[test]
+    fn test_parse_blob_siblings_empty() {
+        let json = serde_json::json!({ "siblings": [] });
+        let result: HashMap<_, _> = parse_blob_siblings(&json);
+        assert!(result.is_empty());
+    }
+
+    /// Verifies that a response without a `siblings` key produces an empty map.
+    #[test]
+    fn test_parse_blob_siblings_no_siblings_key() {
+        let json = serde_json::json!({});
+        let result = parse_blob_siblings(&json);
+        assert!(result.is_empty());
+    }
 
     #[test]
     fn test_infer_quant_q4_k_m() {

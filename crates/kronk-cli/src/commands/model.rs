@@ -1,12 +1,71 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use kronk_core::config::Config;
 use kronk_core::models::pull;
 use kronk_core::models::search::{self, SortBy};
 use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::cli::ModelCommands;
+
+/// Return a naive ISO 8601 UTC timestamp for DB logging.
+fn manual_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = secs_to_datetime(secs);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
+        y, mo, d, h, mi, s
+    )
+}
+
+/// Convert Unix seconds to (year, month, day, hour, min, sec) UTC.
+fn secs_to_datetime(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+    let sec = secs % 60;
+    let min = (secs / 60) % 60;
+    let hour = (secs / 3600) % 24;
+    let days = secs / 86400;
+    let mut year = 1970u64;
+    let mut remaining = days;
+    loop {
+        let leap =
+            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+        let days_in_year = if leap { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        year += 1;
+    }
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days_in_months: [u64; 12] = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 1u64;
+    for &dim in &days_in_months {
+        if remaining < dim {
+            break;
+        }
+        remaining -= dim;
+        month += 1;
+    }
+    (year, month, remaining + 1, hour, min, sec)
+}
 
 /// Generate a unique key for a quant entry, avoiding collisions in the map.
 /// If `base_key` is already taken, appends the filename stem as a suffix.
@@ -50,6 +109,12 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         } => cmd_create(config, &name, &model, quant, profile, backend).await,
         ModelCommands::Rm { model } => cmd_rm(config, &model),
         ModelCommands::Scan => cmd_scan(config),
+        ModelCommands::Update {
+            model,
+            check,
+            refresh,
+            yes,
+        } => cmd_update(config, model, check, refresh, yes).await,
         ModelCommands::Search {
             query,
             sort,
@@ -64,14 +129,15 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!();
     println!("  Fetching file list from {}...", repo_id);
 
-    let (resolved_repo, ggufs) = pull::list_gguf_files(repo_id).await?;
+    let listing = pull::list_gguf_files(repo_id).await?;
 
-    if resolved_repo != repo_id {
-        println!("  Resolved to: {}", resolved_repo);
+    if listing.repo_id != repo_id {
+        println!("  Resolved to: {}", listing.repo_id);
     }
 
     // Use the resolved repo_id for all subsequent operations
-    let repo_id = &resolved_repo;
+    let repo_id = &listing.repo_id;
+    let ggufs = &listing.files;
 
     let options: Vec<String> = ggufs
         .iter()
@@ -153,6 +219,14 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         }
     };
 
+    // Track successful downloads for DB recording
+    struct DownloadedFile {
+        filename: String,
+        quant: Option<String>,
+        size_bytes: u64,
+    }
+    let mut downloaded_files: Vec<DownloadedFile> = Vec::new();
+
     for display_str in &selected {
         let idx = options.iter().position(|o| o == display_str).unwrap();
         let gguf = &ggufs[idx];
@@ -173,6 +247,12 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                 context_length: None,
             },
         );
+
+        downloaded_files.push(DownloadedFile {
+            filename: gguf.filename.clone(),
+            quant: gguf.quant.clone(),
+            size_bytes: result.size_bytes,
+        });
 
         println!("  Downloaded: {}", result.path.display());
     }
@@ -255,6 +335,65 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     }
 
     println!("  Context: {} tokens", selected_ctx);
+
+    // Fetch LFS blob metadata (async, before opening DB)
+    let blobs = match pull::fetch_blob_metadata(repo_id).await {
+        Ok(b) => Some(b),
+        Err(e) => {
+            tracing::warn!("Failed to fetch blob metadata (non-fatal): {}", e);
+            None
+        }
+    };
+
+    // Record all pull metadata in DB (sync, single connection, after all async work)
+    let db_record_result: anyhow::Result<()> = (|| {
+        let db_dir = kronk_core::config::Config::config_dir()?;
+        let conn = kronk_core::db::open(&db_dir)?;
+
+        kronk_core::db::queries::upsert_model_pull(&conn, repo_id, &listing.commit_sha)?;
+
+        let now = manual_timestamp();
+        for df in &downloaded_files {
+            let lfs_sha = blobs
+                .as_ref()
+                .and_then(|b| b.get(&df.filename))
+                .and_then(|b| b.lfs_sha256.as_deref());
+            let size = blobs
+                .as_ref()
+                .and_then(|b| b.get(&df.filename))
+                .and_then(|b| b.size)
+                .unwrap_or(df.size_bytes as i64);
+
+            kronk_core::db::queries::upsert_model_file(
+                &conn,
+                repo_id,
+                &df.filename,
+                df.quant.as_deref(),
+                lfs_sha,
+                Some(size),
+            )?;
+            // started_at / completed_at are best-effort approximations: individual
+            // download timings are not tracked at this level; both fields receive
+            // the same timestamp captured before writing to DB.
+            kronk_core::db::queries::log_download(
+                &conn,
+                &kronk_core::db::queries::DownloadLogEntry {
+                    repo_id: repo_id.to_string(),
+                    filename: df.filename.clone(),
+                    started_at: now.clone(),
+                    completed_at: Some(now.clone()),
+                    size_bytes: Some(df.size_bytes as i64),
+                    duration_ms: None,
+                    success: true,
+                    error_message: None,
+                },
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = db_record_result {
+        tracing::warn!("Failed to record pull metadata in DB (non-fatal): {}", e);
+    }
 
     card.save(&card_path)?;
 
@@ -498,7 +637,252 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         std::fs::remove_file(&model.card_path)?;
     }
 
+    // Clean up DB metadata (best-effort — model deletion succeeds even if DB is unavailable).
+    // Use model.card.model.source as the DB key (it's the HF repo_id stored during pull),
+    // falling back to model.id (file-derived) if source is empty.
+    if let Ok(db_dir) = kronk_core::config::Config::config_dir() {
+        if let Ok(conn) = kronk_core::db::open(&db_dir) {
+            let repo_key = if model.card.model.source.is_empty() {
+                &model.id
+            } else {
+                &model.card.model.source
+            };
+            let _ = kronk_core::db::queries::delete_model_records(&conn, repo_key);
+        }
+    }
+
     println!("No touchy! Model '{}' removed.", model_id);
+    Ok(())
+}
+
+async fn cmd_update(
+    config: &Config,
+    model_filter: Option<String>,
+    check_only: bool,
+    refresh: bool,
+    yes: bool,
+) -> Result<()> {
+    use kronk_core::models::update;
+
+    let db_dir = kronk_core::config::Config::config_dir()?;
+    let conn = kronk_core::db::open(&db_dir)?;
+
+    let models_dir = config.models_dir()?;
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
+
+    let models: Vec<kronk_core::models::InstalledModel> = match model_filter {
+        Some(ref id) => {
+            let found = registry
+                .find(id)?
+                .with_context(|| format!("Model '{}' not found.", id))?;
+            vec![found]
+        }
+        None => registry.scan()?,
+    };
+
+    if models.is_empty() {
+        println!("No installed models found.");
+        return Ok(());
+    }
+
+    // --- Refresh mode: stamp metadata without downloading ---
+    if refresh {
+        for model in &models {
+            let repo_id = &model.card.model.source;
+            print!("  Refreshing metadata for {}...", repo_id);
+            update::refresh_metadata(&conn, repo_id).await?;
+            println!(" done.");
+        }
+        println!();
+        println!("Oh yeah, it's all coming together. Metadata refreshed.");
+        return Ok(());
+    }
+
+    // --- Check / update mode ---
+    println!("Checking for updates...");
+    println!();
+
+    let mut check_results: Vec<update::UpdateCheckResult> = Vec::new();
+    for model in &models {
+        let repo_id = &model.card.model.source;
+        let result = update::check_for_updates(&conn, repo_id).await?;
+        check_results.push(result);
+    }
+
+    // Display results
+    for result in &check_results {
+        println!("{}", result.repo_id);
+        let status_label = match &result.status {
+            update::UpdateStatus::UpToDate => "Up to date".to_string(),
+            update::UpdateStatus::NoPriorRecord => {
+                "No prior record (run with --refresh to enable tracking)".to_string()
+            }
+            update::UpdateStatus::UpdatesAvailable => "Updates available".to_string(),
+            update::UpdateStatus::RepoChangedFilesUnchanged => {
+                "Repo changed, files unchanged".to_string()
+            }
+            update::UpdateStatus::VerificationFailed => {
+                "Verification failed (no stored hashes — run with --refresh)".to_string()
+            }
+            update::UpdateStatus::CheckFailed(msg) => format!("Check failed: {}", msg),
+        };
+        println!("  Status: {}", status_label);
+
+        for file in &result.file_updates {
+            let quant_label = file.quant.as_deref().unwrap_or("?");
+            let file_status = match &file.status {
+                update::FileStatus::Unchanged => "unchanged".to_string(),
+                update::FileStatus::Changed { .. } => {
+                    let old_gib = file
+                        .local_size
+                        .map(|s| format!("{:.1} GiB", s as f64 / 1_073_741_824.0))
+                        .unwrap_or_else(|| "?".to_string());
+                    let new_gib = file
+                        .remote_size
+                        .map(|s| format!("{:.1} GiB", s as f64 / 1_073_741_824.0))
+                        .unwrap_or_else(|| "?".to_string());
+                    format!("changed ({} → {})", old_gib, new_gib)
+                }
+                update::FileStatus::NewRemote => "new remote file".to_string(),
+                update::FileStatus::Unknown => "unknown (no hash stored)".to_string(),
+                update::FileStatus::RemovedFromRemote => "removed from remote".to_string(),
+            };
+            println!("    {:<8}  {}  {}", quant_label, file.filename, file_status);
+        }
+        println!();
+    }
+
+    if check_only {
+        return Ok(());
+    }
+
+    // Collect models with available updates
+    let models_to_update: Vec<(
+        &update::UpdateCheckResult,
+        &kronk_core::models::InstalledModel,
+    )> = check_results
+        .iter()
+        .zip(models.iter())
+        .filter(|(r, _)| matches!(r.status, update::UpdateStatus::UpdatesAvailable))
+        .collect();
+
+    if models_to_update.is_empty() {
+        println!("All models up to date.");
+        return Ok(());
+    }
+
+    // Count files that need downloading
+    let total_files: usize = models_to_update
+        .iter()
+        .flat_map(|(r, _)| r.file_updates.iter())
+        .filter(|f| {
+            matches!(
+                f.status,
+                update::FileStatus::Changed { .. } | update::FileStatus::NewRemote
+            )
+        })
+        .count();
+
+    if !yes {
+        let confirm =
+            inquire::Confirm::new(&format!("Download updates for {} file(s)?", total_files))
+                .with_default(true)
+                .prompt()
+                .context("Confirmation cancelled")?;
+        if !confirm {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Download updates
+    for (result, model) in &models_to_update {
+        let repo_id = &result.repo_id;
+
+        // Fetch fresh listing and blob metadata once per repo (not per file)
+        let listing = kronk_core::models::pull::list_gguf_files(repo_id).await?;
+        let blobs = kronk_core::models::pull::fetch_blob_metadata(repo_id)
+            .await
+            .ok();
+
+        // Clone card once before the loop so all file updates are accumulated
+        let mut card = model.card.clone();
+
+        for file_info in &result.file_updates {
+            let should_download = matches!(
+                file_info.status,
+                update::FileStatus::Changed { .. } | update::FileStatus::NewRemote
+            );
+            if !should_download {
+                continue;
+            }
+
+            // Delete old file if Changed
+            if matches!(file_info.status, update::FileStatus::Changed { .. }) {
+                let old_path = model.dir.join(&file_info.filename);
+                if old_path.exists() {
+                    std::fs::remove_file(&old_path).with_context(|| {
+                        format!("Failed to remove old file: {}", old_path.display())
+                    })?;
+                }
+            }
+
+            println!("  Downloading {}...", file_info.filename);
+            let dl =
+                kronk_core::models::pull::download_gguf(repo_id, &file_info.filename, &model.dir)
+                    .await?;
+
+            // Update DB with blob metadata (fetched once above)
+            let lfs_sha = blobs
+                .as_ref()
+                .and_then(|b| b.get(&file_info.filename))
+                .and_then(|b| b.lfs_sha256.as_deref());
+
+            let _ = kronk_core::db::queries::upsert_model_file(
+                &conn,
+                repo_id,
+                &file_info.filename,
+                file_info.quant.as_deref(),
+                lfs_sha,
+                Some(dl.size_bytes as i64),
+            );
+
+            let now = manual_timestamp();
+
+            let _ = kronk_core::db::queries::log_download(
+                &conn,
+                &kronk_core::db::queries::DownloadLogEntry {
+                    repo_id: repo_id.to_string(),
+                    filename: file_info.filename.clone(),
+                    started_at: now.clone(),
+                    completed_at: Some(now),
+                    size_bytes: Some(dl.size_bytes as i64),
+                    duration_ms: None,
+                    success: true,
+                    error_message: None,
+                },
+            );
+
+            // Accumulate size_bytes updates into the shared card clone
+            for quant_info in card.quants.values_mut() {
+                if quant_info.file == file_info.filename {
+                    quant_info.size_bytes = Some(dl.size_bytes);
+                }
+            }
+
+            println!("    Done: {}", dl.path.display());
+        }
+
+        // Save card once after all files for this repo are processed
+        card.save(&model.card_path)?;
+
+        // Update DB pull record with new commit SHA
+        let _ = kronk_core::db::queries::upsert_model_pull(&conn, repo_id, &listing.commit_sha);
+    }
+
+    println!();
+    println!("Oh yeah, it's all coming together. Models updated.");
     Ok(())
 }
 
