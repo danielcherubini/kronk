@@ -209,8 +209,10 @@ impl Config {
                         args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
                     }
                 }
-                // Context size: override > model card
-                let ctx = ctx_override.or_else(|| installed.card.context_length_for(quant_name));
+                // Context size: cli override > config override > model card
+                let ctx = ctx_override
+                    .or(server.context_length)
+                    .or_else(|| installed.card.context_length_for(quant_name));
                 if let Some(ctx) = ctx {
                     if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
                         args.push("-c".to_string());

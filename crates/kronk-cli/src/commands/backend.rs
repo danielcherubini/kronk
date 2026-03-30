@@ -93,9 +93,19 @@ fn parse_gpu_type(gpu_str: &str) -> Result<kronk_core::gpu::GpuType> {
 
     match gpu_str.as_str() {
         "cpu" => Ok(kronk_core::gpu::GpuType::CpuOnly),
-        "cuda" => Ok(kronk_core::gpu::GpuType::Cuda {
-            version: "12.4".to_string(),
-        }),
+        "cuda" => {
+            let version = kronk_core::gpu::detect_cuda_version()
+                .unwrap_or_else(|| {
+                    eprintln!(
+                        "Warning: Could not auto-detect CUDA version (nvcc/nvidia-smi not found). \
+                         Defaulting to {}. Use 'cuda:<version>' to specify explicitly.",
+                        kronk_core::gpu::DEFAULT_CUDA_VERSION
+                    );
+                    kronk_core::gpu::DEFAULT_CUDA_VERSION.to_string()
+                });
+            println!("Detected CUDA version: {}", version);
+            Ok(kronk_core::gpu::GpuType::Cuda { version })
+        }
         "rocm" => Ok(kronk_core::gpu::GpuType::RocM {
             version: "6.1".to_string(),
         }),
@@ -215,9 +225,16 @@ async fn cmd_install(
 
         match gpu_choice {
             "NVIDIA (CUDA)" => {
+                // Auto-detect and show CUDA version
+                let detected = gpu::detect_cuda_version();
+                let detected_hint = match &detected {
+                    Some(v) => format!(" [detected: {}]", v),
+                    None => String::new(),
+                };
+
                 // Ask for CUDA version for prebuilt binary selection
                 let cuda_ver_choice = inquire::Select::new(
-                    "Which CUDA version do you have?",
+                    &format!("Which CUDA version do you have?{}", detected_hint),
                     vec![
                         "CUDA 11.x (default: 11.1)",
                         "CUDA 12.x (default: 12.4)",

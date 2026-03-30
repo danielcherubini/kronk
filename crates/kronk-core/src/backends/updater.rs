@@ -17,63 +17,74 @@ struct GithubRelease {
     prerelease: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubCommit {
+    sha: String,
+}
+
 /// Check the latest release version for a backend.
 ///
 /// For llama.cpp: uses /releases/latest (they have stable releases).
-/// For ik_llama: uses /releases (and picks the first one) because
-/// they only have pre-releases, and /releases/latest returns 404
-/// when no non-prerelease exists.
+/// For ik_llama: uses the latest commit on main, since ik_llama doesn't
+/// publish proper releases (only a single stale pre-release tag).
 pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
     let client = Client::builder()
         .user_agent("kronk-backend-manager")
         .build()?;
 
     let token = github_token();
-    let url = match backend {
-        BackendType::LlamaCpp => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
-        BackendType::IkLlama => {
-            "https://api.github.com/repos/ikawrakow/ik_llama.cpp/releases?per_page=1"
-        }
-        BackendType::Custom => return Err(anyhow!("Cannot check updates for custom backends")),
-    };
-
-    let mut request = client.get(url);
-    if let Some(t) = token.as_deref() {
-        request = request.header("Authorization", format!("Bearer {}", t));
-    }
-    let response = request
-        .send()
-        .await
-        .with_context(|| format!("Failed to fetch from {}", url))?;
-
-    if !response.status().is_success() {
-        // Check for rate limiting
-        if response.status() == reqwest::StatusCode::FORBIDDEN {
-            return Err(anyhow!(
-                "GitHub API request failed with 403 Forbidden. \
-                 This may be due to rate limiting (60 requests/hour for unauthenticated requests). \
-                 Set GITHUB_TOKEN environment variable for increased rate limits (5000 requests/hour)."
-            ));
-        }
-        return Err(anyhow!("GitHub API request failed: {}", response.status()));
-    }
 
     match backend {
         BackendType::LlamaCpp => {
+            let url =
+                "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+            let mut request = client.get(url);
+            if let Some(t) = token.as_deref() {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+            let response = request
+                .send()
+                .await
+                .with_context(|| format!("Failed to fetch from {}", url))?;
+            check_rate_limit(&response)?;
             let release: GithubRelease = response.json().await?;
             Ok(release.tag_name)
         }
         BackendType::IkLlama => {
-            // ik_llama only has pre-releases, so /releases/latest returns 404.
-            // Fetch all releases and pick the first (most recent).
-            let releases: Vec<GithubRelease> = response.json().await?;
-            releases
-                .first()
-                .map(|r| r.tag_name.clone())
-                .ok_or_else(|| anyhow!("No releases found for ik_llama"))
+            // ik_llama doesn't publish proper releases — their only release tag
+            // is a stale pre-release. Use the latest commit SHA on main instead.
+            let url =
+                "https://api.github.com/repos/ikawrakow/ik_llama.cpp/commits/main";
+            let mut request = client.get(url);
+            if let Some(t) = token.as_deref() {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+            let response = request
+                .send()
+                .await
+                .with_context(|| format!("Failed to fetch from {}", url))?;
+            check_rate_limit(&response)?;
+            let commit: GithubCommit = response.json().await?;
+            // Return "main" as the version — the actual SHA is for display/comparison
+            // but we clone "main" branch for source builds
+            Ok(format!("main@{}", &commit.sha[..8]))
         }
-        _ => Err(anyhow!("Cannot check updates for custom backends")),
+        BackendType::Custom => Err(anyhow!("Cannot check updates for custom backends")),
     }
+}
+
+fn check_rate_limit(response: &reqwest::Response) -> Result<()> {
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err(anyhow!(
+            "GitHub API request failed with 403 Forbidden. \
+             This may be due to rate limiting (60 requests/hour for unauthenticated requests). \
+             Set GITHUB_TOKEN environment variable for increased rate limits (5000 requests/hour)."
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(anyhow!("GitHub API request failed: {}", response.status()));
+    }
+    Ok(())
 }
 
 pub struct UpdateCheck {

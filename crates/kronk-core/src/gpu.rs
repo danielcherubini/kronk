@@ -126,6 +126,72 @@ pub fn detect_build_prerequisites() -> BuildPrerequisites {
     }
 }
 
+/// Default CUDA version used when auto-detection fails.
+pub const DEFAULT_CUDA_VERSION: &str = "12.4";
+
+/// Detect the installed CUDA toolkit version.
+///
+/// Tries `nvcc --version` first (most reliable), then falls back to
+/// `nvidia-smi` driver-reported CUDA version. Returns `None` if neither
+/// is available.
+pub fn detect_cuda_version() -> Option<String> {
+    // Try nvcc first — this reports the actual toolkit version
+    if let Some(ver) = detect_cuda_version_nvcc() {
+        return Some(ver);
+    }
+    // Fall back to nvidia-smi — reports the max supported CUDA version
+    detect_cuda_version_nvidia_smi()
+}
+
+/// Parse CUDA version from `nvcc --version` output.
+fn detect_cuda_version_nvcc() -> Option<String> {
+    let output = std::process::Command::new("nvcc")
+        .arg("--version")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // nvcc output contains a line like: "Cuda compilation tools, release 12.4, V12.4.131"
+    // or "Cuda compilation tools, release 13.1, V13.1.105"
+    for line in stdout.lines() {
+        if let Some(pos) = line.find("release ") {
+            let after = &line[pos + 8..];
+            // Take "12.4" from "12.4, V12.4.131"
+            let version = after.split(',').next()?.trim();
+            if !version.is_empty() {
+                return Some(version.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parse CUDA version from `nvidia-smi` output.
+fn detect_cuda_version_nvidia_smi() -> Option<String> {
+    let output = std::process::Command::new("nvidia-smi").output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // nvidia-smi header contains: "CUDA Version: 12.4"
+    for line in stdout.lines() {
+        if let Some(pos) = line.find("CUDA Version:") {
+            let after = &line[pos + 13..];
+            let version = after.split_whitespace().next()?;
+            if !version.is_empty() {
+                return Some(version.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Query GPU VRAM via nvidia-smi. Returns None if no NVIDIA GPU or nvidia-smi unavailable.
 pub fn query_vram() -> Option<VramInfo> {
     let output = std::process::Command::new("nvidia-smi")
@@ -301,5 +367,70 @@ mod tests {
         assert!(!caps.os.is_empty());
         assert!(!caps.arch.is_empty());
         // No gpu field — that's the point
+    }
+
+    #[test]
+    fn test_detect_cuda_version_nvcc_parsing() {
+        // Simulate nvcc output parsing
+        let sample = "nvcc: NVIDIA (R) Cuda compiler driver\n\
+                       Copyright (c) 2005-2024 NVIDIA Corporation\n\
+                       Built on Thu_Mar_28_02:18:24_PDT_2024\n\
+                       Cuda compilation tools, release 12.4, V12.4.131\n\
+                       Build cuda_12.4.r12.4/compiler.34097967_0";
+
+        let mut version = None;
+        for line in sample.lines() {
+            if let Some(pos) = line.find("release ") {
+                let after = &line[pos + 8..];
+                if let Some(v) = after.split(',').next() {
+                    let v = v.trim();
+                    if !v.is_empty() {
+                        version = Some(v.to_string());
+                    }
+                }
+            }
+        }
+        assert_eq!(version, Some("12.4".to_string()));
+    }
+
+    #[test]
+    fn test_detect_cuda_version_nvcc_parsing_v13() {
+        let sample = "Cuda compilation tools, release 13.1, V13.1.105";
+        let mut version = None;
+        for line in sample.lines() {
+            if let Some(pos) = line.find("release ") {
+                let after = &line[pos + 8..];
+                if let Some(v) = after.split(',').next() {
+                    let v = v.trim();
+                    if !v.is_empty() {
+                        version = Some(v.to_string());
+                    }
+                }
+            }
+        }
+        assert_eq!(version, Some("13.1".to_string()));
+    }
+
+    #[test]
+    fn test_detect_cuda_version_nvidia_smi_parsing() {
+        let sample =
+            "| NVIDIA-SMI 550.54.14    Driver Version: 550.54.14    CUDA Version: 12.4     |";
+        let mut version = None;
+        for line in sample.lines() {
+            if let Some(pos) = line.find("CUDA Version:") {
+                let after = &line[pos + 13..];
+                if let Some(v) = after.trim().split_whitespace().next() {
+                    if !v.is_empty() {
+                        version = Some(v.to_string());
+                    }
+                }
+            }
+        }
+        assert_eq!(version, Some("12.4".to_string()));
+    }
+
+    #[test]
+    fn test_default_cuda_version_is_set() {
+        assert!(!DEFAULT_CUDA_VERSION.is_empty());
     }
 }

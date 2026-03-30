@@ -68,13 +68,20 @@ async fn clone_repository(version: &str, git_url: &str, source_dir: &Path) -> Re
         return Ok(());
     }
 
+    // Versions like "main@abc12345" mean "clone the main branch"
+    let branch = if version.starts_with("main@") {
+        "main"
+    } else {
+        version
+    };
+
     let clone_result = tokio::process::Command::new("git")
         .args([
             "clone",
             "--depth",
             "1",
             "--branch",
-            version,
+            branch,
             git_url,
             &source_dir.to_string_lossy(),
         ])
@@ -86,7 +93,7 @@ async fn clone_repository(version: &str, git_url: &str, source_dir: &Path) -> Re
     }
 
     // Only allow fallback to HEAD for "main" or "latest" (tags may not exist)
-    if version != "main" && version != "latest" {
+    if !version.starts_with("main") && version != "latest" {
         return Err(anyhow!(
             "Tag/branch '{}' not found. Only 'main' or 'latest' are allowed for fallback.\n\
              Use an explicit version tag (e.g., 'b8407') or specify --build to build from source.",
