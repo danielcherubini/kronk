@@ -7,6 +7,7 @@ use std::sync::Arc;
 /// The proxy server, owning shared state and background tasks.
 pub struct ProxyServer {
     state: Arc<ProxyState>,
+    #[allow(dead_code)]
     idle_timeout_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
