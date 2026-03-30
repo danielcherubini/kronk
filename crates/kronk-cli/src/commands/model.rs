@@ -1,10 +1,11 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use kronk_core::config::Config;
 use kronk_core::models::pull;
 use kronk_core::models::search::{self, SortBy};
 use kronk_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::cli::ModelCommands;
 
@@ -371,6 +372,9 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                 lfs_sha,
                 Some(size),
             )?;
+            // started_at / completed_at are best-effort approximations: individual
+            // download timings are not tracked at this level; both fields receive
+            // the same timestamp captured before writing to DB.
             kronk_core::db::queries::log_download(
                 &conn,
                 &kronk_core::db::queries::DownloadLogEntry {
@@ -633,10 +637,17 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         std::fs::remove_file(&model.card_path)?;
     }
 
-    // Clean up DB metadata (best-effort — model deletion succeeds even if DB is unavailable)
+    // Clean up DB metadata (best-effort — model deletion succeeds even if DB is unavailable).
+    // Use model.card.model.source as the DB key (it's the HF repo_id stored during pull),
+    // falling back to model.id (file-derived) if source is empty.
     if let Ok(db_dir) = kronk_core::config::Config::config_dir() {
         if let Ok(conn) = kronk_core::db::open(&db_dir) {
-            let _ = kronk_core::db::queries::delete_model_records(&conn, &model.id);
+            let repo_key = if model.card.model.source.is_empty() {
+                &model.id
+            } else {
+                &model.card.model.source
+            };
+            let _ = kronk_core::db::queries::delete_model_records(&conn, repo_key);
         }
     }
 

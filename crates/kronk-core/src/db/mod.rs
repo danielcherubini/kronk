@@ -18,6 +18,8 @@ use rusqlite::Connection;
 ///
 /// Returns a connection to the database.
 pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
+    // Ensure the config directory exists before SQLite tries to create the file.
+    std::fs::create_dir_all(config_dir)?;
     let db_path = config_dir.join("kronk.db");
     let conn = Connection::open(&db_path)?;
 
@@ -29,9 +31,11 @@ pub fn open(config_dir: &Path) -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
-/// Open an in-memory SQLite database for testing
+/// Open an in-memory SQLite database for testing.
 ///
-/// Applies the same PRAGMA settings as `open()` and runs migrations.
+/// Applies `PRAGMA foreign_keys=ON` (same as `open()`) and runs migrations.
+/// Note: `journal_mode=WAL` is not applied because it is not supported for
+/// in-memory databases.
 pub fn open_in_memory() -> anyhow::Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;

@@ -1,9 +1,11 @@
-use crate::models::card::ModelCard;
-use anyhow::{Context, Result};
-use hf_hub::api::tokio::Api;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use hf_hub::api::tokio::Api;
 use tokio::sync::OnceCell;
+
+use crate::models::card::ModelCard;
 
 static HF_API: OnceCell<Api> = OnceCell::const_new();
 
@@ -309,6 +311,8 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// Verifies that GGUF siblings are parsed with blobId, size, and LFS SHA256,
+    /// and that non-GGUF files (e.g. README.md) are excluded from the result.
     #[test]
     fn test_parse_blob_siblings_basic() {
         let json = serde_json::json!({
@@ -352,6 +356,7 @@ mod tests {
         assert_eq!(q8.lfs_sha256.as_deref(), Some("fedcba0987654321"));
     }
 
+    /// Verifies that a GGUF sibling without an `lfs` field has `lfs_sha256 = None`.
     #[test]
     fn test_parse_blob_siblings_no_lfs() {
         let json = serde_json::json!({
@@ -370,6 +375,7 @@ mod tests {
         assert_eq!(info.size, Some(1000));
     }
 
+    /// Verifies that an empty `siblings` array produces an empty map.
     #[test]
     fn test_parse_blob_siblings_empty() {
         let json = serde_json::json!({ "siblings": [] });
@@ -377,6 +383,7 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    /// Verifies that a response without a `siblings` key produces an empty map.
     #[test]
     fn test_parse_blob_siblings_no_siblings_key() {
         let json = serde_json::json!({});

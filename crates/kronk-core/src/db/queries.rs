@@ -120,11 +120,8 @@ pub fn get_model_files(conn: &Connection, repo_id: &str) -> Result<Vec<ModelFile
             downloaded_at: row.get(5)?,
         })
     })?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Log a download event (append-only).

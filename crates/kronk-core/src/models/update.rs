@@ -225,7 +225,10 @@ pub fn compare_files(
 /// Fetches current commit SHA and file LFS OIDs from HuggingFace and writes to DB.
 /// Used to establish a baseline for models pulled before the DB existed.
 ///
-/// Pattern: async fetches first → sync DB writes (avoids `!Send` issues).
+/// # !Send note
+/// This function's `Future` is `!Send` because `&Connection` (`Connection: !Send`) is
+/// referenced after `.await` points (the DB writes follow the async fetches). It must
+/// be called with direct `.await` — do **not** pass it to `tokio::spawn`.
 pub async fn refresh_metadata(conn: &Connection, repo_id: &str) -> Result<()> {
     // ASYNC — fetch remote data
     let listing = pull::list_gguf_files(repo_id).await?;

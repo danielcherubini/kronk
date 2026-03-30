@@ -17,9 +17,11 @@ pub const LATEST_VERSION: i32 = 1;
 /// Each individual migration runs in its own transaction. After each successful
 /// migration, updates `user_version` to that migration's version.
 pub fn run(conn: &Connection) -> anyhow::Result<()> {
-    // Define all migrations in order
+    // Define all migrations in order.
+    // Each tuple uses an explicit version literal (not the LATEST_VERSION constant)
+    // so that adding a new migration never accidentally changes an existing version number.
     let migrations: &[Migration] = &[(
-        LATEST_VERSION,
+        1,
         r#"
             -- Tracks HuggingFace repo state at time of pull
             CREATE TABLE IF NOT EXISTS model_pulls (
