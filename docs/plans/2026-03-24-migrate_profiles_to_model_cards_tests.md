@@ -1,6 +1,7 @@
 # [Feature] Test migrate_profiles_to_model_cards
 
 **Goal:** Write failing tests for `migrate_profiles_to_model_cards` function
+**Status:** DONE - Tests integrated into migration plan
 
 **Architecture:** 
 - Create a `Config` struct that wraps `profiles/` and `configs/` directories

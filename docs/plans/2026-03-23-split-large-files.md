@@ -1,6 +1,7 @@
 # Split Large Files Into Modules - Implementation Plan
 
 **Goal:** Reduce file sizes by splitting the 6 largest files (500+ lines) into well-organized submodules, eliminating ~4000 lines of CLI duplication, and improving navigability.
+**Status:** DONE
 **Architecture:** Convert large flat files into directory modules with `mod.rs` re-exporting public items. Each submodule has a single responsibility. The CLI's duplicated `main.rs`/`lib.rs` (~2000 lines each, nearly identical) are consolidated so `main.rs` becomes a thin wrapper calling into `lib.rs`.
 **Tech Stack:** Rust module system, `pub use` re-exports to preserve existing public API.
 

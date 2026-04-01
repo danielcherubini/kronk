@@ -1,6 +1,7 @@
 # System Tray Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** TODO - GUI feature, not yet implemented
 
 **Goal:** Add a Windows system tray icon that shows kronk status and lets users start/stop services without opening a terminal.
 

@@ -1,6 +1,7 @@
 # TUI Dashboard Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** TODO - GUI feature, not yet implemented
 
 **Goal:** Build a War Room dashboard showing live VRAM, tokens/sec, temperature, and logs using ratatui.
 

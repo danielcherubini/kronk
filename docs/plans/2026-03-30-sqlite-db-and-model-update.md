@@ -1,6 +1,7 @@
 # SQLite Database + `kronk model update` Plan
 
 **Goal:** Introduce a SQLite database (`kronk.db`) in the config directory to store internal metadata, and use it to power a new `kronk model update` command that detects and downloads updated GGUF files from HuggingFace.
+**Status:** DONE
 
 **Architecture:** A new `db` module in `kronk-core` owns the database connection, schema migrations, and typed query functions. The DB stores internal metadata (pull timestamps, commit SHAs, file hashes, download logs) while TOML model cards remain the user-facing config for sampling presets, context lengths, and GPU layers. The `kronk model update` command compares stored commit SHAs and per-file LFS OIDs against HuggingFace to detect changes.
 

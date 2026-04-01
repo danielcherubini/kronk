@@ -4,6 +4,7 @@
 hardcoded built-in profile defaults. Model cards become the sole source of
 sampling parameters. A new `[sampling_templates]` section in `config.toml`
 provides seed values for new model cards created during `kronk model pull`.
+**Status:** DONE - Part of model card migration
 
 **Architecture:** The `Profile` enum (coding, chat, analysis, creative)
 becomes a pure label — a key into the model card's `[sampling.<profile>]`

@@ -1,6 +1,7 @@
 # kronk-cli Code Quality Improvements Plan
 
 **Goal:** Improve code quality, consistency, and maintainability of the kronk-cli crate through targeted refactoring, dead code removal, and documentation.
+**Status:** DONE
 
 **Architecture:** Five focused tasks addressing real issues found via code review. Each task is independently committable and ordered by impact.
 

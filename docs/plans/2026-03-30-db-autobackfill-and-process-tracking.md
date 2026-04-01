@@ -1,6 +1,7 @@
 # DB Auto-Backfill on First Open + Process Tracking Plan
 
 **Goal:** (1) Automatically backfill the SQLite database with metadata from all installed models when the DB is first created, and (2) persist running model PIDs/ports in the DB so `kronk status` can report live state and `kronk serve` can clean up orphaned processes on startup.
+**Status:** DONE
 
 **Architecture:** The `db::open()` function detects a freshly created DB (migration v1 just ran on an empty DB) and triggers a one-time backfill that scans installed model cards and fetches commit SHAs + LFS hashes from HuggingFace. A new `active_models` table tracks which backend processes are currently running, written by the proxy's `load_model()`/`unload_model()` lifecycle. On `kronk serve` startup, stale entries are detected (PID no longer alive) and cleaned up.
 

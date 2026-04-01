@@ -1,6 +1,7 @@
 # Fix Download Progress Bar Plan
 
 **Goal:** Fix the download progress bar showing "0 B/0 B" and the completion message appearing broken during `kronk model pull`.
+**Status:** DONE
 
 **Architecture:** The root cause is a known reqwest bug (#843, open since 2020) where `Response::content_length()` returns `Some(0)` for HEAD requests despite the raw `Content-Length` header being correct. The fix parses the header manually, adds a testable helper, cleans up progress bar completion in both download paths, and simplifies the control flow.
 
