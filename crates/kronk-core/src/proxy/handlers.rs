@@ -31,11 +31,19 @@ pub async fn handle_chat_completions(
     state: State<Arc<ProxyState>>,
     req: Request<Body>,
 ) -> Response {
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
     let body_bytes = match to_bytes(body, MAX_REQUEST_BODY_SIZE).await {
         Ok(b) => b,
         Err(_) => return json_error_response(),
     };
+
+    // Normalise: clients that set base_url=http://host/v1 may POST to /v1 directly.
+    // Rewrite to /v1/chat/completions so the backend gets the right path.
+    if parts.uri.path() == "/v1" {
+        if let Ok(uri) = "/v1/chat/completions".parse::<axum::http::Uri>() {
+            parts.uri = uri;
+        }
+    }
 
     let request: serde_json::Value =
         match serde_json::from_slice(&body_bytes).context("Failed to parse request body") {

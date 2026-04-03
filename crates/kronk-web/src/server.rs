@@ -6,9 +6,9 @@ use axum::{
     routing::{any, get},
     Router,
 };
-use tower_http::cors::CorsLayer;
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 
 use crate::api;
 

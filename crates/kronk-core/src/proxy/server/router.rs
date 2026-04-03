@@ -20,6 +20,8 @@ use crate::proxy::ProxyState;
 pub fn build_router(state: Arc<ProxyState>) -> Router {
     Router::new()
         // OpenAI-compatible routes
+        // Some clients (e.g. those with base_url = http://host/v1) POST directly to /v1
+        .route("/v1", post(handle_chat_completions))
         .route("/v1/chat/completions", post(handle_chat_completions))
         .route(
             "/v1/chat/completions/stream",
