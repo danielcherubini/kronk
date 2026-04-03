@@ -41,10 +41,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
     // VRAM
     if let Some(vram) = status.get("vram").and_then(|v| v.as_object()) {
         let used = vram.get("used_mib").and_then(|v| v.as_u64()).unwrap_or(0);
-        let total = vram
-            .get("total_mib")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let total = vram.get("total_mib").and_then(|v| v.as_u64()).unwrap_or(0);
         println!("  VRAM:     {} / {} MiB", used, total);
     }
 
@@ -106,10 +103,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
                 println!("  Profile:  {}", profile);
             }
 
-            let backend = model
-                .get("backend")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+            let backend = model.get("backend").and_then(|v| v.as_str()).unwrap_or("?");
             let backend_path = model
                 .get("backend_path")
                 .and_then(|v| v.as_str())
@@ -139,10 +133,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
                 println!("  Status:   {}", parts.join(", "));
 
                 // Last accessed
-                if let Some(secs) = model
-                    .get("last_accessed_secs_ago")
-                    .and_then(|v| v.as_u64())
-                {
+                if let Some(secs) = model.get("last_accessed_secs_ago").and_then(|v| v.as_u64()) {
                     println!("  Accessed: {}s ago", secs);
                 }
 
@@ -167,10 +158,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
                 }
 
                 // Consecutive failures
-                if let Some(failures) = model
-                    .get("consecutive_failures")
-                    .and_then(|v| v.as_u64())
-                {
+                if let Some(failures) = model.get("consecutive_failures").and_then(|v| v.as_u64()) {
                     if failures > 0 {
                         println!("  Failures: {}", failures);
                     }
@@ -259,7 +247,11 @@ fn print_offline_status(config: &Config) {
         if let Some(ref quant) = srv.quant {
             println!("  Quant:    {}", quant);
         }
-        if let Some(ctx) = srv.context_length.map(|c| c as u64).or_else(|| model_contexts.get(name.as_str()).copied()) {
+        if let Some(ctx) = srv
+            .context_length
+            .map(|c| c as u64)
+            .or_else(|| model_contexts.get(name.as_str()).copied())
+        {
             println!("  Context:  {}", ctx);
         }
         println!(

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::pull_jobs::PullJob;
+
 /// State for a model backend.
 #[derive(Debug, Clone)]
 pub enum ModelState {
@@ -135,6 +137,7 @@ pub struct ProxyState {
     pub client: reqwest::Client,
     pub metrics: Arc<ProxyMetrics>,
     pub db_dir: Option<std::path::PathBuf>,
+    pub pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
 }
 
 impl ProxyState {

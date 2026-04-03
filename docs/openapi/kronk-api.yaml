@@ -1,0 +1,667 @@
+openapi: 3.1.0
+
+info:
+  title: Kronk Management API
+  description: |
+    Kronk-native management plane for controlling model backends, pulling models
+    from HuggingFace, and operating the proxy process.
+
+    This API is intentionally separate from the OpenAI-compatible `/v1/` surface.
+    All endpoints are prefixed with `/kronk/v1/`.
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local Kronk instance (default port)
+
+tags:
+  - name: models
+    description: Model backend lifecycle — load, unload, and inspect configured models
+  - name: pulls
+    description: Async model downloads from HuggingFace
+  - name: system
+    description: Proxy health and control
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Model Management
+  # ---------------------------------------------------------------------------
+
+  /kronk/v1/models:
+    get:
+      operationId: listKronkModels
+      summary: List all configured models
+      description: |
+        Returns all models defined in the Kronk configuration, enriched with
+        their current runtime state (loaded, PID, idle time, etc.).
+
+        Unlike `GET /v1/models` (OpenAI-spec), this endpoint includes Kronk-specific
+        operational fields such as `backend_pid`, `idle_timeout_remaining_secs`,
+        and `consecutive_failures`.
+      tags: [models]
+      responses:
+        "200":
+          description: Model list with runtime state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KronkModelList"
+              example:
+                models:
+                  - id: llama3
+                    backend: llama-cpp
+                    model: meta-llama/Meta-Llama-3-8B-Instruct
+                    quant: Q4_K_M
+                    enabled: true
+                    loaded: true
+                    backend_pid: 12345
+                    load_time_secs: 1712000000
+                    last_accessed_secs_ago: 42
+                    idle_timeout_remaining_secs: 258
+                    consecutive_failures: 0
+                  - id: mistral
+                    backend: llama-cpp
+                    model: mistralai/Mistral-7B-v0.1
+                    quant: Q5_K_M
+                    enabled: true
+                    loaded: false
+                    backend_pid: null
+                    load_time_secs: null
+                    last_accessed_secs_ago: null
+                    idle_timeout_remaining_secs: null
+                    consecutive_failures: null
+
+  /kronk/v1/models/{id}:
+    get:
+      operationId: getKronkModel
+      summary: Get a single model's runtime state
+      description: |
+        Returns the configuration and runtime state for a single configured model.
+        The `id` is the model's config key (e.g. `llama3`), not the underlying
+        model repo path.
+      tags: [models]
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      responses:
+        "200":
+          description: Model configuration and runtime state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KronkModel"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /kronk/v1/models/{id}/load:
+    post:
+      operationId: loadModel
+      summary: Load a model backend
+      description: |
+        Starts the backend process for the specified model and waits until the
+        backend's health check passes (or the startup timeout is reached).
+
+        This call is **idempotent** — if the model is already loaded or starting,
+        it returns 200 immediately without re-launching the backend.
+
+        The response is synchronous: it blocks until the backend is ready. The
+        duration is bounded by `proxy.startup_timeout_secs` in the Kronk config.
+      tags: [models]
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Empty body (reserved for future options)
+      responses:
+        "200":
+          description: Model loaded successfully (or was already loaded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadUnloadResult"
+              example:
+                id: llama3
+                loaded: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /kronk/v1/models/{id}/unload:
+    post:
+      operationId: unloadModel
+      summary: Unload a model backend
+      description: |
+        Gracefully stops the backend process for the specified model.
+
+        Sends SIGTERM to the backend and waits up to 5 seconds for it to exit
+        gracefully before sending SIGKILL.
+      tags: [models]
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Empty body (reserved for future options such as `force`)
+      responses:
+        "200":
+          description: Model unloaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadUnloadResult"
+              example:
+                id: llama3
+                loaded: false
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------------------------------------------------------------------------
+  # Pull / Download
+  # ---------------------------------------------------------------------------
+
+  /kronk/v1/pulls:
+    post:
+      operationId: pullModel
+      summary: Start an async model download
+      description: |
+        Starts an asynchronous download of a GGUF model file from HuggingFace.
+
+        Returns immediately with a `job_id` that can be used to poll for status.
+        The download runs in the background; poll `GET /kronk/v1/pulls/{job_id}`
+        to track progress.
+
+        If `filename` is omitted, Kronk will list available GGUF files in the
+        repo and pick a sensible default (Q4_K_M if available, otherwise the
+        first file alphabetically).
+
+        **Progress note:** `bytes_downloaded` and `total_bytes` are only
+        populated on completion due to the current download implementation.
+        Poll for `status` transitions (`pending` → `running` → `completed` /
+        `failed`) rather than byte counts.
+
+        Completed and failed jobs are retained for 1 hour, then evicted.
+      tags: [pulls]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PullRequest"
+            examples:
+              with_filename:
+                summary: Explicit filename
+                value:
+                  repo_id: Tesslate/OmniCoder-9B-GGUF
+                  filename: OmniCoder-9B-Q4_K_M.gguf
+              auto_filename:
+                summary: Auto-select filename
+                value:
+                  repo_id: Tesslate/OmniCoder-9B-GGUF
+      responses:
+        "202":
+          description: Pull job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullJob"
+              example:
+                job_id: pull-abc123
+                status: pending
+                repo_id: Tesslate/OmniCoder-9B-GGUF
+                filename: OmniCoder-9B-Q4_K_M.gguf
+                bytes_downloaded: 0
+                total_bytes: null
+                error: null
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /kronk/v1/pulls/{job_id}:
+    get:
+      operationId: getPullJob
+      summary: Poll a pull job's status
+      description: |
+        Returns the current status of an async pull job.
+
+        Poll this endpoint after calling `POST /kronk/v1/pulls` to check whether
+        the download has completed or failed.
+
+        Jobs are evicted from memory 1 hour after completion or failure.
+      tags: [pulls]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job ID returned by `POST /kronk/v1/pulls`
+          schema:
+            type: string
+            example: pull-abc123
+      responses:
+        "200":
+          description: Pull job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullJob"
+              examples:
+                running:
+                  summary: Job in progress
+                  value:
+                    job_id: pull-abc123
+                    status: running
+                    repo_id: Tesslate/OmniCoder-9B-GGUF
+                    filename: OmniCoder-9B-Q4_K_M.gguf
+                    bytes_downloaded: 0
+                    total_bytes: null
+                    error: null
+                completed:
+                  summary: Job completed
+                  value:
+                    job_id: pull-abc123
+                    status: completed
+                    repo_id: Tesslate/OmniCoder-9B-GGUF
+                    filename: OmniCoder-9B-Q4_K_M.gguf
+                    bytes_downloaded: 4200000000
+                    total_bytes: 4200000000
+                    error: null
+                failed:
+                  summary: Job failed
+                  value:
+                    job_id: pull-abc123
+                    status: failed
+                    repo_id: Tesslate/OmniCoder-9B-GGUF
+                    filename: OmniCoder-9B-Q4_K_M.gguf
+                    bytes_downloaded: 0
+                    total_bytes: null
+                    error: "Failed to download: 403 Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # System
+  # ---------------------------------------------------------------------------
+
+  /kronk/v1/system/health:
+    get:
+      operationId: getSystemHealth
+      summary: Rich system health
+      description: |
+        Returns a detailed health snapshot including VRAM usage and the number
+        of currently loaded models.
+
+        This is distinct from `GET /health` (the lightweight liveness probe used
+        by process supervisors and load balancers). Use this endpoint for
+        dashboards and monitoring where richer context is needed.
+      tags: [system]
+      responses:
+        "200":
+          description: System health snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemHealth"
+              examples:
+                with_gpu:
+                  summary: System with GPU
+                  value:
+                    status: ok
+                    service: kronk
+                    models_loaded: 2
+                    vram:
+                      used_mib: 8192
+                      total_mib: 16384
+                no_gpu:
+                  summary: CPU-only system
+                  value:
+                    status: ok
+                    service: kronk
+                    models_loaded: 1
+                    vram: null
+
+  /kronk/v1/system/restart:
+    post:
+      operationId: restartKronk
+      summary: Gracefully restart Kronk
+      description: |
+        Triggers a graceful restart of the Kronk proxy process.
+
+        The response is sent before the process exits. Kronk sends SIGTERM to
+        itself, allowing in-flight requests to drain and models to be unloaded
+        before the process exits. A process supervisor (systemd, launchd, etc.)
+        is expected to restart the process automatically.
+
+        Pass `?force=true` to skip graceful model unloading and exit immediately.
+
+        **Note:** If Kronk is not running under a process supervisor, it will
+        simply exit and not restart.
+      tags: [system]
+      parameters:
+        - name: force
+          in: query
+          required: false
+          description: Skip graceful model unloading and exit immediately
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Empty body
+      responses:
+        "200":
+          description: Restart initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    example: "Restarting kronk..."
+
+# ---------------------------------------------------------------------------
+# Legacy root endpoints (documented here for completeness; not under /kronk/v1/)
+# ---------------------------------------------------------------------------
+# These are defined in the openai-compat.yaml file alongside the /v1/ routes.
+# See docs/openapi/openai-compat.yaml for /health, /status, and /metrics.
+
+# ===========================================================================
+# Components
+# ===========================================================================
+
+components:
+
+  parameters:
+    ModelId:
+      name: id
+      in: path
+      required: true
+      description: Model config key (e.g. `llama3`). This is the key used in the Kronk config file, not the underlying HuggingFace repo path.
+      schema:
+        type: string
+        example: llama3
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Model 'foo' not found"
+              type: NotFoundError
+
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Missing required field: repo_id"
+              type: BadRequestError
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Backend 'llama-cpp' failed to start for server 'llama3' (timeout after 60s)"
+              type: InternalError
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Model schemas
+    # -------------------------------------------------------------------------
+
+    KronkModel:
+      type: object
+      description: A configured Kronk model with its current runtime state
+      required:
+        - id
+        - backend
+        - enabled
+        - loaded
+      properties:
+        id:
+          type: string
+          description: Model config key
+          example: llama3
+        backend:
+          type: string
+          description: Backend name (e.g. `llama-cpp`)
+          example: llama-cpp
+        model:
+          type: string
+          nullable: true
+          description: Underlying model identifier (HuggingFace repo path or local path)
+          example: meta-llama/Meta-Llama-3-8B-Instruct
+        quant:
+          type: string
+          nullable: true
+          description: Quantisation type (e.g. `Q4_K_M`)
+          example: Q4_K_M
+        enabled:
+          type: boolean
+          description: Whether this model is enabled in the config
+          example: true
+        loaded:
+          type: boolean
+          description: Whether the backend process is currently running and healthy
+          example: true
+        backend_pid:
+          type: integer
+          format: int32
+          nullable: true
+          description: OS process ID of the backend. `null` when not loaded.
+          example: 12345
+        load_time_secs:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix timestamp (seconds) when the backend was last loaded. `null` when not loaded.
+          example: 1712000000
+        last_accessed_secs_ago:
+          type: integer
+          format: int64
+          nullable: true
+          description: Seconds since the model last handled a request. `null` when not loaded.
+          example: 42
+        idle_timeout_remaining_secs:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Seconds until the backend is auto-unloaded due to inactivity.
+            `0` means the idle timeout has already elapsed.
+            `null` when not loaded.
+          example: 258
+        consecutive_failures:
+          type: integer
+          format: int32
+          nullable: true
+          description: |
+            Number of consecutive request failures (circuit breaker counter).
+            `null` when not loaded.
+          example: 0
+
+    KronkModelList:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/KronkModel"
+
+    LoadUnloadResult:
+      type: object
+      required: [id, loaded]
+      properties:
+        id:
+          type: string
+          description: Model config key
+          example: llama3
+        loaded:
+          type: boolean
+          description: Whether the model is loaded after the operation
+          example: true
+
+    # -------------------------------------------------------------------------
+    # Pull job schemas
+    # -------------------------------------------------------------------------
+
+    PullRequest:
+      type: object
+      required: [repo_id]
+      properties:
+        repo_id:
+          type: string
+          description: HuggingFace repository ID (e.g. `Tesslate/OmniCoder-9B-GGUF`)
+          example: Tesslate/OmniCoder-9B-GGUF
+        filename:
+          type: string
+          description: |
+            Specific GGUF filename to download. If omitted, Kronk picks a
+            default (Q4_K_M if available, otherwise first file alphabetically).
+          example: OmniCoder-9B-Q4_K_M.gguf
+
+    PullJob:
+      type: object
+      required:
+        - job_id
+        - status
+        - repo_id
+        - filename
+        - bytes_downloaded
+      properties:
+        job_id:
+          type: string
+          description: Unique job identifier
+          example: pull-abc123
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+          description: |
+            Current job status:
+            - `pending` — job created, not yet started
+            - `running` — download in progress
+            - `completed` — download finished successfully
+            - `failed` — download failed (see `error`)
+          example: running
+        repo_id:
+          type: string
+          description: HuggingFace repository ID
+          example: Tesslate/OmniCoder-9B-GGUF
+        filename:
+          type: string
+          description: GGUF filename being downloaded
+          example: OmniCoder-9B-Q4_K_M.gguf
+        bytes_downloaded:
+          type: integer
+          format: int64
+          description: |
+            Bytes downloaded so far. Due to implementation constraints this is
+            `0` while running and populated only on completion.
+          example: 0
+        total_bytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Total file size in bytes. `null` if unknown.
+          example: 4200000000
+        error:
+          type: string
+          nullable: true
+          description: Error message if `status` is `failed`. `null` otherwise.
+          example: null
+
+    # -------------------------------------------------------------------------
+    # System schemas
+    # -------------------------------------------------------------------------
+
+    VramInfo:
+      type: object
+      required: [used_mib, total_mib]
+      properties:
+        used_mib:
+          type: integer
+          format: int64
+          description: VRAM currently in use (MiB)
+          example: 8192
+        total_mib:
+          type: integer
+          format: int64
+          description: Total VRAM available (MiB)
+          example: 16384
+
+    SystemHealth:
+      type: object
+      required: [status, service, models_loaded]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          description: Overall health status
+          example: ok
+        service:
+          type: string
+          description: Service identifier
+          example: kronk
+        models_loaded:
+          type: integer
+          format: int32
+          description: Number of model backends currently running
+          example: 2
+        vram:
+          $ref: "#/components/schemas/VramInfo"
+          nullable: true
+          description: GPU VRAM usage. `null` on CPU-only systems or when GPU info is unavailable.
+
+    # -------------------------------------------------------------------------
+    # Shared error schema
+    # -------------------------------------------------------------------------
+
+    ErrorDetail:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+          description: Human-readable error description
+          example: "Model 'llama3' not found"
+        type:
+          type: string
+          description: Machine-readable error type
+          example: NotFoundError
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"

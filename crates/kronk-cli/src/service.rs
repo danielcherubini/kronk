@@ -240,7 +240,9 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
             // Use the explicit config_dir from the service install, falling back to default.
             // This ensures the DB path matches what the CLI expects.
-            let db_dir = config_dir.clone().or_else(|| kronk_core::config::Config::config_dir().ok());
+            let db_dir = config_dir
+                .clone()
+                .or_else(|| kronk_core::config::Config::config_dir().ok());
             let state = Arc::new(ProxyState::new(config.clone(), db_dir));
             let server = ProxyServer::new(state);
 
