@@ -12,20 +12,20 @@ struct ModelForm {
     backend: String,
     model: String,
     quant: String,
-    args: String, // newline-separated in the textarea
+    args: String,
     profile: String,
     enabled: bool,
     context_length: String,
     port: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct CardForm {
+/// One row in the quants editor table.
+#[derive(Debug, Clone, Default)]
+struct QuantRow {
     name: String,
-    source: String,
-    default_context_length: String,
-    default_gpu_layers: String,
-    quants_json: String,
+    file: String,
+    size_bytes: String,
+    context_length: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,23 +118,36 @@ fn detail_to_form(d: &ModelDetail) -> ModelForm {
     }
 }
 
-fn card_to_form(card: &CardData) -> CardForm {
-    let quants_json = serde_json::to_string_pretty(&card.quants).unwrap_or_default();
-    CardForm {
-        name: card.model.name.clone(),
-        source: card.model.source.clone(),
-        default_context_length: card
-            .model
-            .default_context_length
-            .map(|v| v.to_string())
-            .unwrap_or_default(),
-        default_gpu_layers: card
-            .model
-            .default_gpu_layers
-            .map(|v| v.to_string())
-            .unwrap_or_default(),
-        quants_json,
-    }
+/// Convert the card's quants map into sorted rows for the editor.
+fn quants_to_rows(quants: &HashMap<String, QuantInfo>) -> Vec<QuantRow> {
+    let mut rows: Vec<QuantRow> = quants
+        .iter()
+        .map(|(name, q)| QuantRow {
+            name: name.clone(),
+            file: q.file.clone(),
+            size_bytes: q.size_bytes.map(|v| v.to_string()).unwrap_or_default(),
+            context_length: q.context_length.map(|v| v.to_string()).unwrap_or_default(),
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
+}
+
+/// Collect the quant rows into the JSON object the API expects.
+fn rows_to_quants_json(rows: &[QuantRow]) -> serde_json::Value {
+    let map: serde_json::Map<String, serde_json::Value> = rows
+        .iter()
+        .filter(|r| !r.name.trim().is_empty())
+        .map(|r| {
+            let val = serde_json::json!({
+                "file": r.file,
+                "size_bytes": r.size_bytes.trim().parse::<u64>().ok(),
+                "context_length": r.context_length.trim().parse::<u32>().ok(),
+            });
+            (r.name.trim().to_string(), val)
+        })
+        .collect();
+    serde_json::Value::Object(map)
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -186,20 +199,20 @@ async fn save_model(form: ModelForm, is_new: bool) -> Result<(), String> {
     }
 }
 
-async fn save_card(model_id: String, form: CardForm) -> Result<(), String> {
-    let quants: serde_json::Value = if form.quants_json.trim().is_empty() {
-        serde_json::json!({})
-    } else {
-        serde_json::from_str(&form.quants_json)
-            .map_err(|e| format!("Invalid quants JSON: {}", e))?
-    };
-
+async fn save_card(
+    model_id: String,
+    name: String,
+    source: String,
+    default_ctx: String,
+    default_gpu: String,
+    quant_rows: Vec<QuantRow>,
+) -> Result<(), String> {
     let body = serde_json::json!({
-        "name": form.name,
-        "source": form.source,
-        "default_context_length": form.default_context_length.parse::<u32>().ok(),
-        "default_gpu_layers": form.default_gpu_layers.parse::<u32>().ok(),
-        "quants": quants,
+        "name": name,
+        "source": source,
+        "default_context_length": default_ctx.parse::<u32>().ok(),
+        "default_gpu_layers": default_gpu.parse::<u32>().ok(),
+        "quants": rows_to_quants_json(&quant_rows),
         "sampling": {},
     });
 
@@ -244,7 +257,7 @@ pub fn ModelEditor() -> impl IntoView {
         async move { fetch_model(id).await }
     });
 
-    // ── Model config form signals ─────────────────────────────────────────────
+    // ── Model config signals ──────────────────────────────────────────────────
     let form_id = RwSignal::new(String::new());
     let form_backend = RwSignal::new(String::new());
     let form_model = RwSignal::new(String::new());
@@ -256,12 +269,13 @@ pub fn ModelEditor() -> impl IntoView {
     let form_port = RwSignal::new(String::new());
     let backends = RwSignal::new(Vec::<String>::new());
 
-    // ── Card form signals ─────────────────────────────────────────────────────
+    // ── Card signals ──────────────────────────────────────────────────────────
     let card_name = RwSignal::new(String::new());
     let card_source = RwSignal::new(String::new());
     let card_default_ctx = RwSignal::new(String::new());
     let card_default_gpu = RwSignal::new(String::new());
-    let card_quants_json = RwSignal::new(String::new());
+    // Each quant row is its own RwSignal so individual fields are reactive
+    let quant_rows: RwSignal<Vec<RwSignal<QuantRow>>> = RwSignal::new(vec![]);
     let has_card = RwSignal::new(false);
 
     // ── Status ────────────────────────────────────────────────────────────────
@@ -269,7 +283,7 @@ pub fn ModelEditor() -> impl IntoView {
     let card_status = RwSignal::new(Option::<(bool, String)>::None);
     let deleted = RwSignal::new(false);
 
-    // Populate form when resource loads
+    // Populate signals when the resource loads
     Effect::new(move |_| {
         if let Some(guard) = detail.get() {
             if let Some(d) = guard.take() {
@@ -287,19 +301,35 @@ pub fn ModelEditor() -> impl IntoView {
 
                 if let Some(card) = &d.card {
                     has_card.set(true);
-                    let cf = card_to_form(card);
-                    card_name.set(cf.name);
-                    card_source.set(cf.source);
-                    card_default_ctx.set(cf.default_context_length);
-                    card_default_gpu.set(cf.default_gpu_layers);
-                    card_quants_json.set(cf.quants_json);
+                    card_name.set(card.model.name.clone());
+                    card_source.set(card.model.source.clone());
+                    card_default_ctx.set(
+                        card.model
+                            .default_context_length
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    );
+                    card_default_gpu.set(
+                        card.model
+                            .default_gpu_layers
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    );
+                    let rows = quants_to_rows(&card.quants)
+                        .into_iter()
+                        .map(RwSignal::new)
+                        .collect();
+                    quant_rows.set(rows);
                 } else {
                     has_card.set(false);
                     card_source.set(f.model);
+                    quant_rows.set(vec![]);
                 }
             }
         }
     });
+
+    // ── Actions ───────────────────────────────────────────────────────────────
 
     let save_model_action: Action<(), (), LocalStorage> =
         Action::new_unsync(move |_: &()| async move {
@@ -327,14 +357,18 @@ pub fn ModelEditor() -> impl IntoView {
                 card_status.set(Some((false, "Save the model config first.".into())));
                 return;
             }
-            let form = CardForm {
-                name: card_name.get(),
-                source: card_source.get(),
-                default_context_length: card_default_ctx.get(),
-                default_gpu_layers: card_default_gpu.get(),
-                quants_json: card_quants_json.get(),
-            };
-            match save_card(id, form).await {
+            // Snapshot all row signals into plain values
+            let rows: Vec<QuantRow> = quant_rows.get().iter().map(|s| s.get()).collect();
+            match save_card(
+                id,
+                card_name.get(),
+                card_source.get(),
+                card_default_ctx.get(),
+                card_default_gpu.get(),
+                rows,
+            )
+            .await
+            {
                 Ok(()) => {
                     has_card.set(true);
                     card_status.set(Some((true, "Card saved.".into())));
@@ -350,6 +384,8 @@ pub fn ModelEditor() -> impl IntoView {
                 Err(e) => model_status.set(Some((false, format!("Delete failed: {}", e)))),
             }
         });
+
+    // ── View ──────────────────────────────────────────────────────────────────
 
     view! {
         <h1>{move || if is_new() { "New Model".to_string() } else { format!("Edit: {}", model_id()) }}</h1>
@@ -565,23 +601,78 @@ pub fn ModelEditor() -> impl IntoView {
                                         />
                                     </td>
                                 </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold; vertical-align: top;">"Quants (JSON)"</td>
-                                    <td style="padding: 6px;">
-                                        <textarea rows="10" style="width: 100%; font-family: monospace; font-size: 0.85em;"
-                                            placeholder="{
-  \"Q4_K_M\": { \"file\": \"model-Q4_K_M.gguf\", \"size_bytes\": 4200000000, \"context_length\": 8192 },
-  \"Q6_K\":   { \"file\": \"model-Q6_K.gguf\",   \"size_bytes\": 6100000000, \"context_length\": null }
-}"
-                                            prop:value=move || card_quants_json.get()
-                                            on:input=move |e| card_quants_json.set(event_target_value(&e))
-                                        />
-                                        <small>"JSON object: quant name → " <code>"{ file, size_bytes?, context_length? }"</code></small>
-                                    </td>
-                                </tr>
                             </table>
 
-                            <div style="margin-top: 0.75em;">
+                            // ── Quants table ──────────────────────────────────
+                            <h3 style="margin-top: 1.25em;">"Quants"</h3>
+                            <table style="border-collapse: collapse; width: 100%;">
+                                <thead>
+                                    <tr style="text-align: left;">
+                                        <th style="padding: 4px 8px;">"Name"</th>
+                                        <th style="padding: 4px 8px;">"File"</th>
+                                        <th style="padding: 4px 8px;">"Size (bytes)"</th>
+                                        <th style="padding: 4px 8px;">"Context length"</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <For
+                                        each=move || quant_rows.get().into_iter().enumerate()
+                                        key=|(i, _)| *i
+                                        children=move |(i, row_signal)| {
+                                            view! {
+                                                <tr>
+                                                    <td style="padding: 4px;">
+                                                        <input type="text" style="width: 8em; font-family: monospace;"
+                                                            placeholder="Q4_K_M"
+                                                            prop:value=move || row_signal.get().name.clone()
+                                                            on:input=move |e| row_signal.update(|r| r.name = event_target_value(&e))
+                                                        />
+                                                    </td>
+                                                    <td style="padding: 4px;">
+                                                        <input type="text" style="width: 100%; font-family: monospace;"
+                                                            placeholder="model-Q4_K_M.gguf"
+                                                            prop:value=move || row_signal.get().file.clone()
+                                                            on:input=move |e| row_signal.update(|r| r.file = event_target_value(&e))
+                                                        />
+                                                    </td>
+                                                    <td style="padding: 4px;">
+                                                        <input type="number" style="width: 9em;"
+                                                            placeholder="optional"
+                                                            prop:value=move || row_signal.get().size_bytes.clone()
+                                                            on:input=move |e| row_signal.update(|r| r.size_bytes = event_target_value(&e))
+                                                        />
+                                                    </td>
+                                                    <td style="padding: 4px;">
+                                                        <input type="number" style="width: 7em;"
+                                                            placeholder="optional"
+                                                            prop:value=move || row_signal.get().context_length.clone()
+                                                            on:input=move |e| row_signal.update(|r| r.context_length = event_target_value(&e))
+                                                        />
+                                                    </td>
+                                                    <td style="padding: 4px;">
+                                                        <button type="button"
+                                                            style="color: #c0392b; background: none; border: 1px solid #c0392b; cursor: pointer; padding: 2px 6px;"
+                                                            on:click=move |_| {
+                                                                quant_rows.update(|rows| { rows.remove(i); });
+                                                            }
+                                                        >"✕"</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        }
+                                    />
+                                </tbody>
+                            </table>
+                            <div style="margin-top: 0.5em;">
+                                <button type="button"
+                                    on:click=move |_| {
+                                        quant_rows.update(|rows| rows.push(RwSignal::new(QuantRow::default())));
+                                    }
+                                >"+ Add Quant"</button>
+                            </div>
+
+                            <div style="margin-top: 1em;">
                                 <button type="submit">"Save Model Card"</button>
                             </div>
 
