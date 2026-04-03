@@ -8,12 +8,12 @@ info:
 
     This API is intentionally separate from the OpenAI-compatible `/v1/` surface.
     All endpoints are prefixed with `/kronk/v1/`.
-  version: 1.0.0
+  version: 1.7.2
   license:
     name: MIT
 
 servers:
-  - url: http://localhost:8080
+  - url: http://localhost:11434
     description: Local Kronk instance (default port)
 
 tags:
@@ -108,6 +108,9 @@ paths:
 
         The response is synchronous: it blocks until the backend is ready. The
         duration is bounded by `proxy.startup_timeout_secs` in the Kronk config.
+
+        The `id` must match a key in the Kronk config `[models]` table. If the
+        model is not configured, a `404` is returned.
       tags: [models]
       parameters:
         - $ref: "#/components/parameters/ModelId"
@@ -182,9 +185,10 @@ paths:
         The download runs in the background; poll `GET /kronk/v1/pulls/{job_id}`
         to track progress.
 
-        If `filename` is omitted, Kronk will list available GGUF files in the
-        repo and pick a sensible default (Q4_K_M if available, otherwise the
-        first file alphabetically).
+        **`quant` is required.** If omitted, the request is rejected with a `422`
+        that includes an `available_quants` array listing all GGUF files in the
+        repo (fetched live from HuggingFace). The same `422` is returned if the
+        specified quant does not exist in the repo.
 
         **Progress note:** `bytes_downloaded` and `total_bytes` are only
         populated on completion due to the current download implementation.
@@ -200,15 +204,15 @@ paths:
             schema:
               $ref: "#/components/schemas/PullRequest"
             examples:
-              with_filename:
-                summary: Explicit filename
+              with_quant:
+                summary: Download a specific quant
                 value:
-                  repo_id: Tesslate/OmniCoder-9B-GGUF
-                  filename: OmniCoder-9B-Q4_K_M.gguf
-              auto_filename:
-                summary: Auto-select filename
+                  repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
+                  quant: Q4_K_M
+              missing_quant:
+                summary: Omit quant to discover available options (returns 422)
                 value:
-                  repo_id: Tesslate/OmniCoder-9B-GGUF
+                  repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
       responses:
         "202":
           description: Pull job created
@@ -217,17 +221,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/PullJob"
               example:
-                job_id: pull-abc123
+                job_id: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
                 status: pending
-                repo_id: Tesslate/OmniCoder-9B-GGUF
-                filename: OmniCoder-9B-Q4_K_M.gguf
+                repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
+                filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
                 bytes_downloaded: 0
                 total_bytes: null
                 error: null
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
 
   /kronk/v1/pulls/{job_id}:
     get:
@@ -248,7 +252,7 @@ paths:
           description: Job ID returned by `POST /kronk/v1/pulls`
           schema:
             type: string
-            example: pull-abc123
+            example: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
       responses:
         "200":
           description: Pull job status
@@ -260,30 +264,30 @@ paths:
                 running:
                   summary: Job in progress
                   value:
-                    job_id: pull-abc123
+                    job_id: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
                     status: running
-                    repo_id: Tesslate/OmniCoder-9B-GGUF
-                    filename: OmniCoder-9B-Q4_K_M.gguf
+                    repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
+                    filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
                     bytes_downloaded: 0
                     total_bytes: null
                     error: null
                 completed:
                   summary: Job completed
                   value:
-                    job_id: pull-abc123
+                    job_id: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
                     status: completed
-                    repo_id: Tesslate/OmniCoder-9B-GGUF
-                    filename: OmniCoder-9B-Q4_K_M.gguf
-                    bytes_downloaded: 4200000000
-                    total_bytes: 4200000000
+                    repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
+                    filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
+                    bytes_downloaded: 1234567890
+                    total_bytes: 1234567890
                     error: null
                 failed:
                   summary: Job failed
                   value:
-                    job_id: pull-abc123
+                    job_id: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
                     status: failed
-                    repo_id: Tesslate/OmniCoder-9B-GGUF
-                    filename: OmniCoder-9B-Q4_K_M.gguf
+                    repo_id: bartowski/Llama-3.2-1B-Instruct-GGUF
+                    filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
                     bytes_downloaded: 0
                     total_bytes: null
                     error: "Failed to download: 403 Forbidden"
@@ -410,6 +414,43 @@ components:
               message: "Model 'foo' not found"
               type: NotFoundError
 
+    ValidationError:
+      description: |
+        Validation error — a required field is missing or invalid.
+
+        When `quant` is missing or not found in the repo, the response includes
+        an `available_quants` array listing all GGUF files available in the
+        HuggingFace repo.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrorResponse"
+          examples:
+            missing_quant:
+              summary: quant field omitted
+              value:
+                error:
+                  message: "quant is required"
+                  type: ValidationError
+                  available_quants:
+                    - filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
+                      quant: Q4_K_M
+                    - filename: Llama-3.2-1B-Instruct-Q8_0.gguf
+                      quant: Q8_0
+                    - filename: Llama-3.2-1B-Instruct-F16.gguf
+                      quant: F16
+            bad_quant:
+              summary: quant not found in repo
+              value:
+                error:
+                  message: "Quant 'Q99_Z' not found in repo 'bartowski/Llama-3.2-1B-Instruct-GGUF'"
+                  type: ValidationError
+                  available_quants:
+                    - filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
+                      quant: Q4_K_M
+                    - filename: Llama-3.2-1B-Instruct-Q8_0.gguf
+                      quant: Q8_0
+
     BadRequest:
       description: Invalid request body or parameters
       content:
@@ -420,6 +461,17 @@ components:
             error:
               message: "Missing required field: repo_id"
               type: BadRequestError
+
+    BadGateway:
+      description: Failed to reach HuggingFace
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Failed to fetch file list from HuggingFace: connection refused"
+              type: UpstreamError
 
     InternalError:
       description: Internal server error
@@ -537,18 +589,36 @@ components:
 
     PullRequest:
       type: object
-      required: [repo_id]
+      required: [repo_id, quant]
       properties:
         repo_id:
           type: string
-          description: HuggingFace repository ID (e.g. `Tesslate/OmniCoder-9B-GGUF`)
-          example: Tesslate/OmniCoder-9B-GGUF
-        filename:
+          description: HuggingFace repository ID (e.g. `bartowski/Llama-3.2-1B-Instruct-GGUF`)
+          example: bartowski/Llama-3.2-1B-Instruct-GGUF
+        quant:
           type: string
           description: |
-            Specific GGUF filename to download. If omitted, Kronk picks a
-            default (Q4_K_M if available, otherwise first file alphabetically).
-          example: OmniCoder-9B-Q4_K_M.gguf
+            Quantisation type to download (e.g. `Q4_K_M`). **Required.**
+
+            If omitted or not found in the repo, the request is rejected with a
+            `422` response containing an `available_quants` array listing all
+            GGUF files available in the repo.
+          example: Q4_K_M
+
+    QuantOption:
+      type: object
+      description: An available GGUF file in a HuggingFace repo
+      required: [filename]
+      properties:
+        filename:
+          type: string
+          description: GGUF filename
+          example: Llama-3.2-1B-Instruct-Q4_K_M.gguf
+        quant:
+          type: string
+          nullable: true
+          description: Inferred quantisation type. `null` if it could not be determined from the filename.
+          example: Q4_K_M
 
     PullJob:
       type: object
@@ -562,7 +632,7 @@ components:
         job_id:
           type: string
           description: Unique job identifier
-          example: pull-abc123
+          example: pull-a1b2c3d4-e5f6-7890-abcd-ef1234567890
         status:
           type: string
           enum: [pending, running, completed, failed]
@@ -576,11 +646,11 @@ components:
         repo_id:
           type: string
           description: HuggingFace repository ID
-          example: Tesslate/OmniCoder-9B-GGUF
+          example: bartowski/Llama-3.2-1B-Instruct-GGUF
         filename:
           type: string
-          description: GGUF filename being downloaded
-          example: OmniCoder-9B-Q4_K_M.gguf
+          description: Resolved GGUF filename being downloaded
+          example: Llama-3.2-1B-Instruct-Q4_K_M.gguf
         bytes_downloaded:
           type: integer
           format: int64
@@ -593,7 +663,7 @@ components:
           format: int64
           nullable: true
           description: Total file size in bytes. `null` if unknown.
-          example: 4200000000
+          example: 1234567890
         error:
           type: string
           nullable: true
@@ -643,7 +713,7 @@ components:
           description: GPU VRAM usage. `null` on CPU-only systems or when GPU info is unavailable.
 
     # -------------------------------------------------------------------------
-    # Shared error schema
+    # Shared error schemas
     # -------------------------------------------------------------------------
 
     ErrorDetail:
@@ -665,3 +735,28 @@ components:
       properties:
         error:
           $ref: "#/components/schemas/ErrorDetail"
+
+    ValidationErrorDetail:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+          description: Human-readable error description
+          example: "quant is required"
+        type:
+          type: string
+          description: Machine-readable error type
+          example: ValidationError
+        available_quants:
+          type: array
+          description: Available GGUF files in the repo. Present when quant validation fails.
+          items:
+            $ref: "#/components/schemas/QuantOption"
+
+    ValidationErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ValidationErrorDetail"
