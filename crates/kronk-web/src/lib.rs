@@ -1,6 +1,9 @@
 #[cfg(feature = "ssr")]
 pub mod server;
 
+#[cfg(feature = "ssr")]
+mod api;
+
 use leptos::prelude::*;
 use leptos_router::{
     components::{Route, Router, Routes},
@@ -19,6 +22,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=pages::dashboard::Dashboard />
                     <Route path=path!("/models") view=pages::models::Models />
                     <Route path=path!("/pull") view=pages::pull::Pull />
+                    <Route path=path!("/logs") view=pages::logs::Logs />
+                    <Route path=path!("/config") view=pages::config_editor::ConfigEditor />
                 </Routes>
             </main>
         </Router>

@@ -1,0 +1,175 @@
+openapi: 3.1.0
+
+info:
+  title: Kronk Web API
+  description: |
+    Endpoints served natively by the `kronk-web` process (port 11435).
+    These endpoints are NOT forwarded to the Kronk proxy — they access the
+    local filesystem directly for log tailing and config editing.
+
+    All endpoints are prefixed with `/api/`.
+  version: 1.7.2
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:11435
+    description: Local Kronk web UI (default port)
+
+tags:
+  - name: web-api
+    description: Web UI — log viewing and config editing
+
+paths:
+
+  /api/logs:
+    get:
+      operationId: getLogs
+      summary: Get recent log lines
+      description: |
+        Returns the last N lines of the `kronk.log` file from the configured
+        `logs_dir`. Returns 404 if `logs_dir` was not passed to the web server
+        at startup.
+      tags: [web-api]
+      parameters:
+        - name: lines
+          in: query
+          required: false
+          description: Number of log lines to return (default 200)
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 10000
+      responses:
+        "200":
+          description: Log lines
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lines]
+                properties:
+                  lines:
+                    type: array
+                    items:
+                      type: string
+              example:
+                lines:
+                  - "2026-04-03T12:00:00Z INFO kronk: starting proxy on 0.0.0.0:11434"
+                  - "2026-04-03T12:00:01Z INFO kronk: loaded model llama3"
+        "404":
+          description: logs_dir not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "logs_dir not configured"
+
+  /api/config:
+    get:
+      operationId: getConfig
+      summary: Get current config file contents
+      description: |
+        Returns the raw TOML content of the Kronk config file. Returns 404 if
+        `config_path` was not passed to the web server at startup.
+      tags: [web-api]
+      responses:
+        "200":
+          description: Config file contents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [content]
+                properties:
+                  content:
+                    type: string
+                    description: Raw TOML content of the config file
+              example:
+                content: "[general]\nlog_level = \"info\"\n"
+        "404":
+          description: config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: saveConfig
+      summary: Save config file contents
+      description: |
+        Validates and saves the provided TOML as the Kronk config file.
+
+        The content is validated by parsing it as a `Config` struct before
+        writing. A restart of the Kronk proxy is required for changes to take
+        effect (use `POST /kronk/v1/system/restart`).
+
+        **Note:** Only fully valid config files (all required top-level tables
+        present) are accepted. Partial TOML edits will be rejected with 422.
+      tags: [web-api]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: New raw TOML content to write
+            example:
+              content: "[general]\nlog_level = \"info\"\n"
+      responses:
+        "200":
+          description: Config saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+        "404":
+          description: config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: TOML validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Invalid TOML: missing field `general` at line 1"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+          example: "logs_dir not configured"
+
+  responses:
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Permission denied: /etc/kronk/kronk.toml"

@@ -31,10 +31,11 @@ mime_guess = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 kronk-core = { path = "../kronk-core", optional = true }
+toml = { workspace = true, optional = true }
 
 [features]
 ssr = [
   "dep:axum", "dep:tokio", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
-  "dep:kronk-core",
+  "dep:kronk-core", "dep:toml",
 ]

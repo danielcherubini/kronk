@@ -10,6 +10,10 @@ pub fn Nav() -> impl IntoView {
             <A href="/models">"Models"</A>
             " | "
             <A href="/pull">"Pull Model"</A>
+            " | "
+            <A href="/logs">"Logs"</A>
+            " | "
+            <A href="/config">"Config"</A>
         </nav>
     }
 }

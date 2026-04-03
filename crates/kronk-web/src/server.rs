@@ -9,12 +9,16 @@ use axum::{
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
 
+use crate::api;
+
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/dist");
 
 #[derive(Clone)]
 pub struct AppState {
     pub proxy_base_url: String,
     pub client: reqwest::Client,
+    pub logs_dir: Option<std::path::PathBuf>,
+    pub config_path: Option<std::path::PathBuf>,
 }
 
 /// Serve a static file from the embedded `dist/` directory.
@@ -94,6 +98,8 @@ async fn serve_index() -> Response {
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/api/logs", get(api::get_logs))
+        .route("/api/config", get(api::get_config).post(api::save_config))
         .route("/kronk/v1/{*path}", any(proxy_kronk))
         .route("/", get(serve_index))
         .route(
@@ -103,14 +109,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
+pub async fn run_with_opts(
+    addr: std::net::SocketAddr,
+    proxy_base_url: String,
+    logs_dir: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
         client: reqwest::Client::new(),
+        logs_dir,
+        config_path,
     });
     let app = build_router(state);
     tracing::info!("Kronk web UI listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Convenience wrapper with no logs_dir/config_path.
+pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
+    run_with_opts(addr, proxy_base_url, None, None).await
 }
