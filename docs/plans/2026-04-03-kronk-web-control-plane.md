@@ -314,7 +314,7 @@ Also add `pub mod server;` to `src/lib.rs` behind `#[cfg(feature = "ssr")]` (NOT
 **Acceptance criteria:**
 - [ ] `cargo build --package kronk-web --features ssr` succeeds
 - [ ] `crates/kronk-web/dist/.gitkeep` exists so the `include_dir!` macro has a target
-- [ ] The server module is gated behind `#[cfg(not(target_arch = "wasm32"))]`
+- [ ] The server module is gated behind `#[cfg(feature = "ssr")]`
 
 ---
 
