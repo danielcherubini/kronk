@@ -107,6 +107,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(api::update_model)
                 .delete(api::delete_model),
         )
+        .route(
+            "/api/models/:id/card",
+            get(api::get_model_card).put(api::save_model_card),
+        )
         .route("/kronk/v1/*path", any(proxy_kronk))
         .route("/", get(serve_index))
         .route(
