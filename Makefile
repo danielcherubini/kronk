@@ -1,11 +1,15 @@
-.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev
+.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target
+
+# Ensure the wasm32 target is installed (idempotent — safe to run multiple times)
+wasm-target:
+	rustup target add wasm32-unknown-unknown
 
 # Build the Leptos WASM frontend into crates/kronk-web/dist/ (required before any Rust release build)
-build-frontend:
+build-frontend: wasm-target
 	cd crates/kronk-web && trunk build --release
 
 # Development WASM build (unoptimised, faster iteration)
-build-frontend-dev:
+build-frontend-dev: wasm-target
 	cd crates/kronk-web && trunk build
 
 # Full release build: frontend first, then the Rust workspace
