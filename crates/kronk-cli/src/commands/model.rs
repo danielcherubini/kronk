@@ -406,10 +406,12 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("  Model card saved: {}", card_path.display());
     println!();
     println!("  Create a model config:");
-    println!(
-        "    kronk model create my-server --model {} --profile coding",
-        model_id
-    );
+    for quant_key in card.quants.keys() {
+        println!(
+            "    kronk model create my-server --model {} --quant {} --profile coding",
+            model_id, quant_key
+        );
+    }
 
     Ok(())
 }
