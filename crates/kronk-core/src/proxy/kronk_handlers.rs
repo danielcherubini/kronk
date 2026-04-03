@@ -45,15 +45,19 @@ pub struct RestartResponse {
 /// Handle listing all configured models (Kronk management API).
 pub async fn handle_kronk_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let models = state.build_status_response().await;
-    let models_obj = models.get("models").unwrap().as_object().unwrap();
+    let models_obj = models.get("models").and_then(|v| v.as_object());
 
     let result: Vec<serde_json::Value> = models_obj
-        .iter()
-        .map(|(id, model)| {
-            let model = model.as_object().unwrap();
-            let mut m = serde_json::to_value(model).unwrap();
-            m["id"] = serde_json::Value::String(id.clone());
-            m
+        .into_iter()
+        .flat_map(|models_obj| {
+            models_obj.iter().filter_map(|(id, model)| {
+                model.as_object().and_then(|model| {
+                    serde_json::to_value(model).ok().map(|mut m| {
+                        m["id"] = serde_json::Value::String(id.clone());
+                        m
+                    })
+                })
+            })
         })
         .collect();
 
@@ -315,6 +319,7 @@ pub async fn handle_kronk_system_health(state: State<Arc<ProxyState>>) -> Json<s
 }
 
 /// Handle system restart (Kronk management API).
+/// TODO: Implement actual restart logic using ProxyState methods
 pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Response {
     Json(serde_json::json!({
         "message": "Restarting kronk..."
