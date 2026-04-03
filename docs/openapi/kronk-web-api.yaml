@@ -8,7 +8,7 @@ info:
     local filesystem directly for log tailing and config editing.
 
     All endpoints are prefixed with `/api/`.
-  version: 1.8.0
+  version: 1.8.1
   license:
     name: MIT
 
@@ -19,6 +19,8 @@ servers:
 tags:
   - name: web-api
     description: Web UI — log viewing and config editing
+  - name: models-api
+    description: Web UI — model config CRUD (reads/writes config.toml directly)
 
 paths:
 
@@ -153,8 +155,281 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/models:
+    get:
+      operationId: listModels
+      summary: List all model configs
+      description: |
+        Returns all model entries from `config.toml` plus the list of configured
+        backend names (for populating dropdowns in the editor UI).
+      tags: [models-api]
+      responses:
+        "200":
+          description: Model list and available backends
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models, backends]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModelConfig"
+                  backends:
+                    type: array
+                    items:
+                      type: string
+                    description: Names of configured backends
+              example:
+                backends: ["llama_cpp", "ik_llama"]
+                models:
+                  - id: "gemma4"
+                    backend: "llama_cpp"
+                    model: "unsloth/gemma-4-E4B-it-GGUF"
+                    quant: "Q6_K"
+                    args: ["-ctk", "q4_0"]
+                    profile: "coding"
+                    enabled: true
+                    context_length: null
+                    port: null
+        "404":
+          description: config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      operationId: createModel
+      summary: Create a new model config entry
+      description: |
+        Adds a new `[models.<id>]` entry to `config.toml`. Returns 409 if a
+        model with that ID already exists. A proxy restart is required for
+        changes to take effect.
+      tags: [models-api]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelBody"
+            example:
+              id: "my-model"
+              backend: "llama_cpp"
+              model: "unsloth/gemma-4-E4B-it-GGUF"
+              quant: "Q4_K_M"
+              args: ["-ctk", "q4_0", "-ctv", "q4_0"]
+              profile: "coding"
+              enabled: true
+      responses:
+        "201":
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Model ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Model 'my-model' already exists"
+        "422":
+          description: Validation error (e.g. empty id)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/models/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Model config ID (key in `[models]` table)
+        schema:
+          type: string
+
+    get:
+      operationId: getModel
+      summary: Get a single model config
+      description: |
+        Returns the config for one model entry plus the list of configured
+        backend names (for populating the editor dropdown).
+      tags: [models-api]
+      responses:
+        "200":
+          description: Model config
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ModelConfig"
+                  - type: object
+                    properties:
+                      backends:
+                        type: array
+                        items:
+                          type: string
+        "404":
+          description: Model not found or config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      operationId: updateModel
+      summary: Update an existing model config
+      description: |
+        Replaces the `[models.<id>]` entry in `config.toml`. The `id` field in
+        the request body is ignored — the path parameter is used. A proxy
+        restart is required for changes to take effect.
+      tags: [models-api]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelBody"
+      responses:
+        "200":
+          description: Model updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: Model not found or config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      operationId: deleteModel
+      summary: Delete a model config entry
+      description: |
+        Removes the `[models.<id>]` entry from `config.toml`. A proxy restart
+        is required for changes to take effect.
+      tags: [models-api]
+      responses:
+        "200":
+          description: Model deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: Model not found or config_path not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   schemas:
+    ModelConfig:
+      type: object
+      required: [id, backend, args, enabled]
+      properties:
+        id:
+          type: string
+          description: Model config key (e.g. "gemma4")
+        backend:
+          type: string
+          description: Backend name (must exist in [backends])
+        model:
+          type: string
+          nullable: true
+          description: HuggingFace repo ID (e.g. "unsloth/gemma-4-E4B-it-GGUF")
+        quant:
+          type: string
+          nullable: true
+          description: Quantisation name (e.g. "Q4_K_M")
+        args:
+          type: array
+          items:
+            type: string
+          description: Extra CLI args passed to the backend
+        profile:
+          type: string
+          nullable: true
+          enum: [coding, chat, analysis, creative]
+          description: Sampling profile preset
+        enabled:
+          type: boolean
+        context_length:
+          type: integer
+          nullable: true
+        port:
+          type: integer
+          nullable: true
+
+    ModelBody:
+      type: object
+      required: [id, backend]
+      properties:
+        id:
+          type: string
+          description: Model config ID (used for create; ignored on PUT)
+        backend:
+          type: string
+        model:
+          type: string
+          nullable: true
+        quant:
+          type: string
+          nullable: true
+        args:
+          type: array
+          items:
+            type: string
+          default: []
+        profile:
+          type: string
+          nullable: true
+          enum: [coding, chat, analysis, creative]
+        enabled:
+          type: boolean
+          default: true
+        context_length:
+          type: integer
+          nullable: true
+        port:
+          type: integer
+          nullable: true
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          example: true
+        id:
+          type: string
+          description: ID of the affected model (present on create/update)
+
     ErrorResponse:
       type: object
       required: [error]

@@ -8,7 +8,7 @@ info:
 
     This API is intentionally separate from the OpenAI-compatible `/v1/` surface.
     All endpoints are prefixed with `/kronk/v1/`.
-  version: 1.8.0
+  version: 1.8.1
   license:
     name: MIT
 
