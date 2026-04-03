@@ -14,8 +14,9 @@ use crate::proxy::{pull_jobs::PullJob, ProxyState};
 #[derive(Debug, Deserialize)]
 pub struct PullRequest {
     pub repo_id: String,
+    /// Quant to download, e.g. "Q4_K_M". Required — omitting returns a 422 with available quants.
     #[serde(default)]
-    pub filename: Option<String>,
+    pub quant: Option<String>,
 }
 
 /// Response for a pull job.
@@ -217,14 +218,89 @@ pub async fn handle_kronk_pull_model(
     state: State<Arc<ProxyState>>,
     Json(request): Json<PullRequest>,
 ) -> Response {
-    let job_id = format!("pull-{}", uuid::Uuid::new_v4().hyphenated());
-
     let repo_id = request.repo_id.clone();
-    let filename = request.filename.clone().unwrap_or_else(|| {
-        // Default filename handling would go here
-        // For now, use a placeholder
-        "default.gguf".to_string()
-    });
+
+    // Quant is required — if missing, fetch the available quants from HF and return them.
+    let quant = match request.quant {
+        Some(q) => q,
+        None => {
+            let available = match crate::models::pull::list_gguf_files(&repo_id).await {
+                Ok(listing) => listing
+                    .files
+                    .into_iter()
+                    .map(|f| {
+                        serde_json::json!({
+                            "filename": f.filename,
+                            "quant": f.quant
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                Err(e) => {
+                    tracing::warn!(repo_id = %repo_id, "Failed to fetch quant list: {}", e);
+                    vec![]
+                }
+            };
+
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "quant is required",
+                        "type": "ValidationError",
+                        "available_quants": available
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Resolve the quant to a concrete filename from the HF listing.
+    let listing = match crate::models::pull::list_gguf_files(&repo_id).await {
+        Ok(l) => l,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Failed to fetch file list from HuggingFace: {}", e),
+                        "type": "UpstreamError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Find a file matching the requested quant (case-insensitive).
+    let matched_file = listing
+        .files
+        .iter()
+        .find(|f| f.quant.as_deref().map(|q| q.eq_ignore_ascii_case(&quant)) == Some(true));
+
+    let filename = match matched_file {
+        Some(f) => f.filename.clone(),
+        None => {
+            let available: Vec<serde_json::Value> = listing
+                .files
+                .into_iter()
+                .map(|f| serde_json::json!({ "filename": f.filename, "quant": f.quant }))
+                .collect();
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Quant '{}' not found in repo '{}'", quant, repo_id),
+                        "type": "ValidationError",
+                        "available_quants": available
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let job_id = format!("pull-{}", uuid::Uuid::new_v4().hyphenated());
 
     // Create pull job
     let pull_job = PullJob {
