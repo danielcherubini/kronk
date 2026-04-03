@@ -246,6 +246,28 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             let state = Arc::new(ProxyState::new(config.clone(), db_dir));
             let server = ProxyServer::new(state);
 
+            // Spawn the web control plane alongside the proxy.
+            #[cfg(feature = "web-ui")]
+            {
+                let proxy_base_url = format!("http://127.0.0.1:{}", port);
+                let logs_dir = config.logs_dir().ok();
+                let config_path = kronk_core::config::Config::config_path().ok();
+                let web_addr: std::net::SocketAddr = "0.0.0.0:11435".parse().unwrap();
+                tracing::info!("Starting Kronk web UI on http://{}", web_addr);
+                tokio::spawn(async move {
+                    if let Err(e) = kronk_web::server::run_with_opts(
+                        web_addr,
+                        proxy_base_url,
+                        logs_dir,
+                        config_path,
+                    )
+                    .await
+                    {
+                        tracing::error!("Web UI server error: {}", e);
+                    }
+                });
+            }
+
             // Bridge SCM shutdown signal to abort the server
             let (shutdown_tx_tokio, mut shutdown_rx_tokio) = mpsc::channel::<()>(1);
             tokio::task::spawn_blocking(move || {
