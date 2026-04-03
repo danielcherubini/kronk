@@ -31,6 +31,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install trunk
         uses: jetli/trunk-action@v0.5.0
         with:
