@@ -1,0 +1,819 @@
+openapi: 3.1.0
+
+info:
+  title: Kronk — OpenAI-Compatible API & Root Endpoints
+  description: |
+    This file documents two groups of endpoints served by Kronk:
+
+    1. **OpenAI-compatible `/v1/` routes** — Chat completions and model listing.
+       These follow the OpenAI API spec closely so that any client written for
+       OpenAI can be pointed at Kronk with minimal changes.
+
+    2. **Root utility endpoints** — `/health`, `/status`, and `/metrics`.
+       These predate the Kronk management API and are kept as-is for backwards
+       compatibility. For richer system health, use `GET /kronk/v1/system/health`
+       (see `kronk-api.yaml`).
+
+    **Base URL:** Point your OpenAI client at `http://localhost:8080` and set
+    `OPENAI_API_KEY` to any non-empty string (Kronk does not currently enforce
+    authentication).
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local Kronk instance (default port)
+
+tags:
+  - name: chat
+    description: Chat completion inference endpoints
+  - name: models
+    description: OpenAI-compatible model listing
+  - name: utility
+    description: Root health, status, and metrics endpoints
+
+paths:
+
+  # ===========================================================================
+  # OpenAI-compatible: Chat Completions
+  # ===========================================================================
+
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion
+      description: |
+        Proxies the request to the appropriate backend for the requested model.
+
+        If the model is not currently loaded, Kronk will automatically start its
+        backend before forwarding the request. Startup time is bounded by
+        `proxy.startup_timeout_secs` in the Kronk config.
+
+        Supports both regular (buffered) and streaming (`"stream": true`) responses.
+        For streaming, prefer `POST /v1/chat/completions/stream` to avoid
+        buffering the full response body.
+
+        **Model field:** The `model` field must match a key in the Kronk config
+        (e.g. `llama3`) or the underlying model name that config entry points to.
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+            examples:
+              basic:
+                summary: Simple user message
+                value:
+                  model: llama3
+                  messages:
+                    - role: user
+                      content: "What is the capital of France?"
+              with_system:
+                summary: System + user message
+                value:
+                  model: llama3
+                  messages:
+                    - role: system
+                      content: "You are a helpful assistant."
+                    - role: user
+                      content: "Explain quantum entanglement simply."
+                  temperature: 0.7
+                  max_tokens: 512
+              streaming:
+                summary: Streaming response
+                value:
+                  model: llama3
+                  messages:
+                    - role: user
+                      content: "Write a short poem about Rust."
+                  stream: true
+      responses:
+        "200":
+          description: |
+            Chat completion response. When `stream` is `false` (default), the
+            full completion is returned as JSON. When `stream` is `true`, the
+            response is a sequence of `text/event-stream` SSE chunks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+              example:
+                id: chatcmpl-abc123
+                object: chat.completion
+                created: 1712000000
+                model: llama3
+                choices:
+                  - index: 0
+                    message:
+                      role: assistant
+                      content: "The capital of France is Paris."
+                    finish_reason: stop
+                usage:
+                  prompt_tokens: 14
+                  completion_tokens: 9
+                  total_tokens: 23
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-Sent Events stream. Each event is a `data:` line
+                  containing a `ChatCompletionChunk` JSON object. The stream
+                  ends with `data: [DONE]`.
+                example: |
+                  data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1712000000,"model":"llama3","choices":[{"index":0,"delta":{"role":"assistant","content":"The"},"finish_reason":null}]}
+
+                  data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1712000000,"model":"llama3","choices":[{"index":0,"delta":{"content":" capital"},"finish_reason":null}]}
+
+                  data: [DONE]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/chat/completions/stream:
+    post:
+      operationId: createStreamingChatCompletion
+      summary: Create a streaming chat completion
+      description: |
+        Identical to `POST /v1/chat/completions` with `"stream": true`, but
+        provided as a dedicated endpoint so that clients can target it directly
+        without needing to set the stream flag in the body.
+
+        The response is always a `text/event-stream` SSE stream regardless of
+        the `stream` field in the request body.
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+            example:
+              model: llama3
+              messages:
+                - role: user
+                  content: "Count to five."
+      responses:
+        "200":
+          description: SSE stream of chat completion chunks
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-Sent Events stream. Each event is a `data:` line
+                  containing a `ChatCompletionChunk` JSON object. Ends with
+                  `data: [DONE]`.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ===========================================================================
+  # OpenAI-compatible: Models
+  # ===========================================================================
+
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List available models
+      description: |
+        Returns all enabled models defined in the Kronk config in the OpenAI
+        `list` response format.
+
+        Each model entry includes a `ready` field (Kronk extension) indicating
+        whether the backend is currently running. This field is not part of the
+        OpenAI spec but is safe to ignore.
+
+        For richer operational data (PIDs, idle time, failure counts), use
+        `GET /kronk/v1/models` instead.
+      tags: [models]
+      responses:
+        "200":
+          description: List of models
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+              example:
+                object: list
+                data:
+                  - id: llama3
+                    object: model
+                    created: 1712000000
+                    owned_by: llama-cpp
+                    ready: true
+                  - id: mistral
+                    object: model
+                    created: 0
+                    owned_by: llama-cpp
+                    ready: false
+
+  /v1/models/{model_id}:
+    get:
+      operationId: getModel
+      summary: Get a model by ID
+      description: |
+        Returns a single model object for the given model ID.
+
+        The `model_id` can be either the Kronk config key (e.g. `llama3`) or
+        the underlying model name (e.g. `meta-llama/Meta-Llama-3-8B-Instruct`).
+
+        Returns the model's `ready` state (Kronk extension) in addition to
+        standard OpenAI fields.
+      tags: [models]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: llama3
+          description: Model config key or underlying model name
+      responses:
+        "200":
+          description: Model object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+              example:
+                id: llama3
+                object: model
+                created: 1712000000
+                owned_by: llama-cpp
+                ready: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Root utility endpoints
+  # ===========================================================================
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Lightweight liveness check. Always returns `{"status": "ok"}` if the
+        process is running. Intended for use by process supervisors, load
+        balancers, and container health checks.
+
+        For a richer health snapshot including VRAM and loaded model count, use
+        `GET /kronk/v1/system/health`.
+      tags: [utility]
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                service: kronk-proxy
+
+  /status:
+    get:
+      operationId: getStatus
+      summary: Detailed proxy status
+      description: |
+        Returns comprehensive operational status including:
+        - VRAM usage (if a GPU is detected)
+        - Per-model runtime state (loaded, PID, idle timers, circuit breaker counters)
+        - Aggregate request metrics
+
+        Models are returned as a keyed object (`{ "llama3": { ... } }`).
+      tags: [utility]
+      responses:
+        "200":
+          description: Proxy status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              examples:
+                with_loaded_model:
+                  summary: One model loaded
+                  value:
+                    vram:
+                      used_mib: 8192
+                      total_mib: 16384
+                    idle_timeout_secs: 300
+                    metrics:
+                      total_requests: 42
+                      successful_requests: 40
+                      failed_requests: 2
+                      models_loaded: 3
+                      models_unloaded: 1
+                    models:
+                      llama3:
+                        backend: llama-cpp
+                        backend_path: /usr/local/bin/llama-server
+                        model: meta-llama/Meta-Llama-3-8B-Instruct
+                        quant: Q4_K_M
+                        profile: null
+                        context_length: 4096
+                        enabled: true
+                        loaded: true
+                        backend_pid: 12345
+                        load_time_secs: 1712000000
+                        last_accessed_secs_ago: 42
+                        idle_timeout_remaining_secs: 258
+                        consecutive_failures: 0
+                      mistral:
+                        backend: llama-cpp
+                        backend_path: /usr/local/bin/llama-server
+                        model: mistralai/Mistral-7B-v0.1
+                        quant: Q5_K_M
+                        profile: null
+                        context_length: 8192
+                        enabled: true
+                        loaded: false
+                        backend_pid: null
+                        load_time_secs: null
+                        last_accessed_secs_ago: null
+                        idle_timeout_remaining_secs: null
+                        consecutive_failures: null
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Request and model metrics
+      description: |
+        Returns lightweight aggregate counters for monitoring:
+        - Request totals (total, successful, failed)
+        - Model load/unload event counts
+        - Current number of active (loaded) model backends
+      tags: [utility]
+      responses:
+        "200":
+          description: Metrics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+              example:
+                total_requests: 42
+                successful_requests: 40
+                failed_requests: 2
+                models_loaded: 3
+                models_unloaded: 1
+                active_models: 2
+
+# ===========================================================================
+# Components
+# ===========================================================================
+
+components:
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Model 'foo' not found"
+              type: NotFoundError
+
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Missing required field: model"
+              type: BadRequestError
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              message: "Failed to load model: timeout after 60s"
+              type: LoadModelError
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Chat Completion schemas (OpenAI-compatible)
+    # -------------------------------------------------------------------------
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+          description: The role of the message author
+          example: user
+        content:
+          type: string
+          nullable: true
+          description: The text content of the message. May be `null` for tool-use messages.
+          example: "What is the capital of France?"
+        name:
+          type: string
+          description: Optional name for the participant (used in multi-user scenarios)
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: |
+            Kronk config key (e.g. `llama3`) or underlying model name.
+            If the model is not loaded, Kronk will start its backend automatically.
+          example: llama3
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+          description: Conversation history including the new user turn
+        temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+          description: Sampling temperature. Higher values produce more random output.
+          example: 0.7
+        top_p:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Nucleus sampling probability mass
+          example: 0.9
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Maximum number of tokens to generate
+          example: 512
+        stream:
+          type: boolean
+          default: false
+          description: Whether to stream the response as Server-Sent Events
+          example: false
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Stop sequence(s). Generation halts when any of these strings is produced.
+          example: ["\n\n", "Human:"]
+        presence_penalty:
+          type: number
+          format: float
+          minimum: -2
+          maximum: 2
+          description: Penalise new tokens based on whether they appear in the text so far
+          example: 0.0
+        frequency_penalty:
+          type: number
+          format: float
+          minimum: -2
+          maximum: 2
+          description: Penalise new tokens based on their frequency in the text so far
+          example: 0.0
+        user:
+          type: string
+          description: Unique identifier for the end user (passed through to backend)
+
+    ChatCompletionChoice:
+      type: object
+      required: [index, message, finish_reason]
+      properties:
+        index:
+          type: integer
+          description: Index of this choice (always 0 for single completions)
+          example: 0
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+        finish_reason:
+          type: string
+          nullable: true
+          enum: [stop, length, tool_calls, content_filter, null]
+          description: |
+            Why generation stopped:
+            - `stop` — natural end or stop sequence reached
+            - `length` — `max_tokens` reached
+            - `tool_calls` — model called a tool
+            - `content_filter` — filtered by content policy
+            - `null` — stream chunk (not the final chunk)
+          example: stop
+
+    UsageStats:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens:
+          type: integer
+          description: Tokens in the input prompt
+          example: 14
+        completion_tokens:
+          type: integer
+          description: Tokens generated
+          example: 9
+        total_tokens:
+          type: integer
+          description: Total tokens consumed
+          example: 23
+
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id:
+          type: string
+          description: Unique completion ID
+          example: chatcmpl-abc123
+        object:
+          type: string
+          enum: [chat.completion]
+          example: chat.completion
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp of creation
+          example: 1712000000
+        model:
+          type: string
+          description: Model that generated the completion
+          example: llama3
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionChoice"
+        usage:
+          $ref: "#/components/schemas/UsageStats"
+          description: Token usage statistics (may be absent in streaming)
+
+    # -------------------------------------------------------------------------
+    # Model listing schemas (OpenAI-compatible)
+    # -------------------------------------------------------------------------
+
+    Model:
+      type: object
+      required: [id, object, created, owned_by]
+      properties:
+        id:
+          type: string
+          description: Model identifier (Kronk config key)
+          example: llama3
+        object:
+          type: string
+          enum: [model]
+          example: model
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp when the model was loaded (0 if never loaded)
+          example: 1712000000
+        owned_by:
+          type: string
+          description: Backend that owns/serves this model
+          example: llama-cpp
+        ready:
+          type: boolean
+          description: |
+            **Kronk extension** (not in OpenAI spec). Whether the backend is
+            currently running and accepting requests.
+          example: true
+
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+          example: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+
+    # -------------------------------------------------------------------------
+    # Root utility schemas
+    # -------------------------------------------------------------------------
+
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+        service:
+          type: string
+          example: kronk-proxy
+
+    VramInfo:
+      type: object
+      required: [used_mib, total_mib]
+      properties:
+        used_mib:
+          type: integer
+          format: int64
+          description: VRAM in use (MiB)
+          example: 8192
+        total_mib:
+          type: integer
+          format: int64
+          description: Total VRAM (MiB)
+          example: 16384
+
+    StatusModelEntry:
+      type: object
+      description: Per-model entry in the /status response (keyed by model name)
+      properties:
+        backend:
+          type: string
+          example: llama-cpp
+        backend_path:
+          type: string
+          description: Filesystem path to the backend executable
+          example: /usr/local/bin/llama-server
+        model:
+          type: string
+          nullable: true
+          example: meta-llama/Meta-Llama-3-8B-Instruct
+        quant:
+          type: string
+          nullable: true
+          example: Q4_K_M
+        profile:
+          type: string
+          nullable: true
+          description: Hardware profile override
+          example: null
+        context_length:
+          type: integer
+          format: int32
+          nullable: true
+          example: 4096
+        enabled:
+          type: boolean
+          example: true
+        loaded:
+          type: boolean
+          example: true
+        backend_pid:
+          type: integer
+          format: int32
+          nullable: true
+          example: 12345
+        load_time_secs:
+          type: integer
+          format: int64
+          nullable: true
+          example: 1712000000
+        last_accessed_secs_ago:
+          type: integer
+          format: int64
+          nullable: true
+          example: 42
+        idle_timeout_remaining_secs:
+          type: integer
+          format: int64
+          nullable: true
+          example: 258
+        consecutive_failures:
+          type: integer
+          format: int32
+          nullable: true
+          example: 0
+
+    StatusMetrics:
+      type: object
+      required:
+        - total_requests
+        - successful_requests
+        - failed_requests
+        - models_loaded
+        - models_unloaded
+      properties:
+        total_requests:
+          type: integer
+          format: int64
+          example: 42
+        successful_requests:
+          type: integer
+          format: int64
+          example: 40
+        failed_requests:
+          type: integer
+          format: int64
+          example: 2
+        models_loaded:
+          type: integer
+          format: int64
+          description: Cumulative number of model load events since startup
+          example: 3
+        models_unloaded:
+          type: integer
+          format: int64
+          description: Cumulative number of model unload events since startup
+          example: 1
+
+    StatusResponse:
+      type: object
+      required: [idle_timeout_secs, metrics, models]
+      properties:
+        vram:
+          $ref: "#/components/schemas/VramInfo"
+          nullable: true
+          description: GPU VRAM info. `null` on CPU-only systems.
+        idle_timeout_secs:
+          type: integer
+          format: int64
+          description: Configured idle timeout in seconds
+          example: 300
+        metrics:
+          $ref: "#/components/schemas/StatusMetrics"
+        models:
+          type: object
+          description: |
+            Per-model status keyed by model config name.
+            Each value is a `StatusModelEntry`.
+          additionalProperties:
+            $ref: "#/components/schemas/StatusModelEntry"
+
+    MetricsResponse:
+      type: object
+      required:
+        - total_requests
+        - successful_requests
+        - failed_requests
+        - models_loaded
+        - models_unloaded
+        - active_models
+      properties:
+        total_requests:
+          type: integer
+          format: int64
+          example: 42
+        successful_requests:
+          type: integer
+          format: int64
+          example: 40
+        failed_requests:
+          type: integer
+          format: int64
+          example: 2
+        models_loaded:
+          type: integer
+          format: int64
+          description: Cumulative load events since startup
+          example: 3
+        models_unloaded:
+          type: integer
+          format: int64
+          description: Cumulative unload events since startup
+          example: 1
+        active_models:
+          type: integer
+          format: int32
+          description: Number of model backends currently running
+          example: 2
+
+    # -------------------------------------------------------------------------
+    # Shared error schema
+    # -------------------------------------------------------------------------
+
+    ErrorDetail:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+          description: Human-readable error description
+          example: "Missing required field: model"
+        type:
+          type: string
+          description: Machine-readable error type
+          example: BadRequestError
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"

@@ -36,8 +36,7 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
 
     match backend {
         BackendType::LlamaCpp => {
-            let url =
-                "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+            let url = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
             let mut request = client.get(url);
             if let Some(t) = token.as_deref() {
                 request = request.header("Authorization", format!("Bearer {}", t));
@@ -53,8 +52,7 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
         BackendType::IkLlama => {
             // ik_llama doesn't publish proper releases — their only release tag
             // is a stale pre-release. Use the latest commit SHA on main instead.
-            let url =
-                "https://api.github.com/repos/ikawrakow/ik_llama.cpp/commits/main";
+            let url = "https://api.github.com/repos/ikawrakow/ik_llama.cpp/commits/main";
             let mut request = client.get(url);
             if let Some(t) = token.as_deref() {
                 request = request.header("Authorization", format!("Bearer {}", t));

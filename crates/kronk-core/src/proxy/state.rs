@@ -20,6 +20,7 @@ impl ProxyState {
                 .expect("failed to build HTTP client"),
             metrics: Arc::new(ProxyMetrics::default()),
             db_dir,
+            pull_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 
