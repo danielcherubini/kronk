@@ -6,11 +6,6 @@ edition.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "kronk-web"
-path = "src/main.rs"
-required-features = ["ssr"]
-
 [dependencies]
 leptos = { workspace = true, features = ["csr"] }
 leptos_router.workspace = true
