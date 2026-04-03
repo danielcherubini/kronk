@@ -251,7 +251,12 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             {
                 let proxy_base_url = format!("http://127.0.0.1:{}", port);
                 let logs_dir = config.logs_dir().ok();
-                let config_path = kronk_core::config::Config::config_path().ok();
+                // Use the explicit config_dir (passed at service install time) so the web UI
+                // points at the installing user's config.toml, not SYSTEM's %APPDATA%.
+                let config_path = config_dir
+                    .as_ref()
+                    .map(|d| d.join("config.toml"))
+                    .or_else(|| kronk_core::config::Config::config_path().ok());
                 let web_addr: std::net::SocketAddr = "0.0.0.0:11435".parse().unwrap();
                 tracing::info!("Starting Kronk web UI on http://{}", web_addr);
                 tokio::spawn(async move {
