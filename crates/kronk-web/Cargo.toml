@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 leptos = { workspace = true, features = ["csr"] }
 leptos_router.workspace = true
 wasm-bindgen.workspace = true
-web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement"] }
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement"] }
 gloo-net.workspace = true
 gloo-timers.workspace = true
 wasm-bindgen-futures.workspace = true

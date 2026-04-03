@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +53,11 @@ pub fn Models() -> impl IntoView {
 
     view! {
         <h1>"Models"</h1>
+        <div style="margin-bottom: 1em;">
+            <A href="/models/new/edit">
+                <button>"+ New Model"</button>
+            </A>
+        </div>
         <Suspense fallback=|| view! { <p>"Loading..."</p> }>
             {move || {
                 models.get().map(|guard| {
@@ -74,6 +80,7 @@ pub fn Models() -> impl IntoView {
                                     {data.models.into_iter().map(|m| {
                                         let id_load = m.id.clone();
                                         let id_unload = m.id.clone();
+                                        let id_edit = m.id.clone();
                                         view! {
                                             <tr>
                                                 <td>{m.id.clone()}</td>
@@ -82,7 +89,7 @@ pub fn Models() -> impl IntoView {
                                                 <td>{m.quant.unwrap_or_default()}</td>
                                                 <td>{if m.enabled { "Yes" } else { "No" }}</td>
                                                 <td>{if m.loaded { "Loaded" } else { "Unloaded" }}</td>
-                                                <td>
+                                                <td style="white-space: nowrap;">
                                                     {if m.loaded {
                                                         view! {
                                                             <button on:click=move |_| { unload_action.dispatch(id_unload.clone()); }>"Unload"</button>
@@ -92,6 +99,10 @@ pub fn Models() -> impl IntoView {
                                                             <button on:click=move |_| { load_action.dispatch(id_load.clone()); }>"Load"</button>
                                                         }.into_any()
                                                     }}
+                                                    " "
+                                                    <A href=format!("/models/{}/edit", id_edit)>
+                                                        <button>"Edit"</button>
+                                                    </A>
                                                 </td>
                                             </tr>
                                         }

@@ -100,6 +100,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/logs", get(api::get_logs))
         .route("/api/config", get(api::get_config).post(api::save_config))
+        .route("/api/models", get(api::list_models).post(api::create_model))
+        .route(
+            "/api/models/:id",
+            get(api::get_model)
+                .put(api::update_model)
+                .delete(api::delete_model),
+        )
         .route("/kronk/v1/*path", any(proxy_kronk))
         .route("/", get(serve_index))
         .route(
