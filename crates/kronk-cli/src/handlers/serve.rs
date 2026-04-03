@@ -78,7 +78,26 @@ async fn start_proxy_server(
             Err(e) => tracing::error!("Failed to open DB for backfill check: {}", e),
         }
     }
-    let state = Arc::new(ProxyState::new(updated_config, db_dir));
+    let state = Arc::new(ProxyState::new(updated_config.clone(), db_dir));
+
+    // Spawn the web control plane alongside the proxy (when built with the web-ui feature).
+    // The web server runs on port 11435 and terminates when this process exits.
+    #[cfg(feature = "web-ui")]
+    {
+        let proxy_base_url = format!("http://127.0.0.1:{}", port);
+        let logs_dir = updated_config.logs_dir().ok();
+        let config_path = kronk_core::config::Config::config_path().ok();
+        let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
+        tracing::info!("Starting Kronk web UI on http://{}", web_addr);
+        tokio::spawn(async move {
+            if let Err(e) =
+                kronk_web::server::run_with_opts(web_addr, proxy_base_url, logs_dir, config_path)
+                    .await
+            {
+                tracing::error!("Web UI server error: {}", e);
+            }
+        });
+    }
 
     // Create and run proxy server
     let server = ProxyServer::new(state.clone());
