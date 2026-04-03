@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "kronk"
-version = "1.8.2"
+version = "1.8.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-core"
-version = "1.8.2"
+version = "1.8.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-mock"
-version = "1.8.2"
+version = "1.8.4"
 dependencies = [
  "tokio",
  "tracing",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "kronk-web"
-version = "1.8.2"
+version = "1.8.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1705,6 +1705,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 0.8.23",
+ "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen",

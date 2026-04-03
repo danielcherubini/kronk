@@ -3,6 +3,7 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 
 use crate::proxy::handlers::{
     handle_chat_completions, handle_fallback, handle_get_model, handle_health, handle_list_models,
@@ -48,4 +49,5 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         )
         .fallback(handle_fallback)
         .with_state(state)
+        .layer(CorsLayer::permissive())
 }

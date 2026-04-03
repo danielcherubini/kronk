@@ -6,6 +6,7 @@ use axum::{
     routing::{any, get},
     Router,
 };
+use tower_http::cors::CorsLayer;
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
 
@@ -118,6 +119,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
         )
         .with_state(state)
+        .layer(CorsLayer::permissive())
 }
 
 pub async fn run_with_opts(

@@ -18,6 +18,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 # Backend-only deps (not needed for WASM, gated behind the `ssr` feature)
 axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 include_dir = { workspace = true, optional = true }
@@ -32,7 +33,7 @@ toml = { workspace = true, optional = true }
 ssr = [
   "dep:axum", "dep:tokio", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
-  "dep:kronk-core", "dep:toml",
+  "dep:kronk-core", "dep:toml", "dep:tower-http",
 ]
 
 [[test]]
