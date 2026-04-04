@@ -22,6 +22,9 @@ use crate::proxy::{
 /// Maximum number of quants that can be downloaded in a single pull request.
 const MAX_CONCURRENT_PULLS: usize = 4;
 
+/// Global mutex serialising post-pull config writes to prevent concurrent-completion races.
+static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// A single quantisation variant available for a HuggingFace GGUF repo.
 #[derive(Debug, Serialize)]
 pub struct QuantEntry {
@@ -824,10 +827,12 @@ async fn setup_model_after_pull(
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
 ) {
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
     let Ok(mut config) = crate::config::Config::load() else {
         return;
     };
     _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+    // _guard dropped here, releasing the lock
 }
 
 /// Handle system restart (Kronk management API).
