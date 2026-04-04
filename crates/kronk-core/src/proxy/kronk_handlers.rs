@@ -1,15 +1,23 @@
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
+use futures_util::stream::{self, Stream};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::gpu::VramInfo;
-use crate::proxy::{pull_jobs::PullJob, ProxyState};
+use crate::proxy::{
+    pull_jobs::{PullJob, PullJobStatus},
+    ProxyState,
+};
 
 /// A single quantisation variant available for a HuggingFace GGUF repo.
 #[derive(Debug, Serialize)]
@@ -545,6 +553,50 @@ pub async fn handle_kronk_get_pull_job(
     }
 }
 
+/// Stream `PullJob` snapshots as SSE events every 500 ms until the job reaches a terminal state.
+///
+/// Events:
+/// - `progress`: emitted while the job is pending or running
+/// - `done`: emitted once when the job completes or fails, then the stream closes
+///
+/// Registered as `GET /kronk/v1/pulls/:job_id/stream`.
+pub async fn handle_pull_job_stream(
+    state: State<Arc<ProxyState>>,
+    Path(job_id): Path<String>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // State tuple: (proxy_state, job_id, just_emitted_done)
+    let stream = stream::unfold(
+        (state.0, job_id, false),
+        |(state, job_id, just_done)| async move {
+            // Previous iteration already emitted the done event — close the stream.
+            if just_done {
+                return None;
+            }
+
+            // Poll every 500 ms.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            let jobs = state.pull_jobs.read().await;
+            let Some(job) = jobs.get(&job_id).cloned() else {
+                // Job not found — close the stream.
+                return None;
+            };
+            drop(jobs);
+
+            let is_terminal =
+                matches!(job.status, PullJobStatus::Completed | PullJobStatus::Failed);
+            let event_name = if is_terminal { "done" } else { "progress" };
+            let data = serde_json::to_string(&job).unwrap_or_default();
+            let event = Event::default().event(event_name).data(data);
+
+            // If terminal, set just_done=true so the next iteration closes the stream.
+            Some((Ok(event), (state, job_id, is_terminal)))
+        },
+    );
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 /// Typed response for the system health endpoint.
 #[derive(Debug, Serialize)]
 pub struct SystemHealthResponse {
@@ -615,6 +667,34 @@ pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Resp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
+
+    /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
+    #[test]
+    fn test_pull_job_serializes_for_sse() {
+        let job = PullJob {
+            job_id: "pull-test-123".to_string(),
+            repo_id: "bartowski/Qwen3-8B-GGUF".to_string(),
+            filename: "Qwen3-8B-Q4_K_M.gguf".to_string(),
+            status: PullJobStatus::Running,
+            bytes_downloaded: 1_234_567,
+            total_bytes: Some(4_800_000_000),
+            error: None,
+            completed_at: None,
+        };
+
+        let json = serde_json::to_string(&job).expect("PullJob serialization failed");
+        assert!(
+            json.contains("\"bytes_downloaded\""),
+            "missing bytes_downloaded in: {json}"
+        );
+        assert!(json.contains("\"status\""), "missing status in: {json}");
+        assert!(
+            json.contains("\"running\""),
+            "missing running status value in: {json}"
+        );
+        assert!(json.contains("\"job_id\""), "missing job_id in: {json}");
+    }
 
     /// Verifies that `QuantEntry` serializes to JSON with all expected keys.
     #[test]
