@@ -208,6 +208,17 @@ async fn configure_cmake(
         }
     }
 
+    // Enable all flash-attention KV cache quant types for ik_llama.
+    // Without this flag only Q8_0 and Q6_0 are compiled in, causing NaN
+    // crashes when using sub-q8_0 KV cache with hybrid Mamba/attention
+    // models such as Qwen3.5.
+    if matches!(
+        options.backend_type,
+        super::super::registry::BackendType::IkLlama
+    ) {
+        cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
+    }
+
     let status = tokio::process::Command::new("cmake")
         .args(&cmake_args)
         .status()
