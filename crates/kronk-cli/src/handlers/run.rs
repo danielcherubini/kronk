@@ -14,16 +14,8 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
 
     // Resolve backend binary path from DB (priority) or config.path (fallback)
     let backend_path = {
-        let db_result = kronk_core::db::open(&Config::base_dir()?);
-        match db_result {
-            Ok(kronk_core::db::OpenResult { conn, .. }) => {
-                config.resolve_backend_path(&server.backend, &conn)?
-            }
-            Err(_) => {
-                let conn = rusqlite::Connection::open_in_memory()?;
-                config.resolve_backend_path(&server.backend, &conn)?
-            }
-        }
+        let conn = Config::open_db();
+        config.resolve_backend_path(&server.backend, &conn)?
     };
     let backend_path_str = backend_path.to_string_lossy().to_string();
 

@@ -315,23 +315,8 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             let health_check = config.resolve_health_check(&srv);
             // Resolve backend binary path from DB (priority) or config.path (fallback)
             let backend_path_str = {
-                let db_conn_opt = config_dir
-                    .as_ref()
-                    .and_then(|dir| kronk_core::db::open(dir).ok().map(|r| r.conn))
-                    .or_else(|| {
-                        kronk_core::db::open(&kronk_core::config::Config::base_dir().ok()?)
-                            .ok()
-                            .map(|r| r.conn)
-                    });
-                let path = if let Some(conn) = db_conn_opt {
-                    config.resolve_backend_path(&srv.backend, &conn)
-                } else {
-                    rusqlite::Connection::open_in_memory()
-                        .ok()
-                        .map(|conn| config.resolve_backend_path(&srv.backend, &conn))
-                        .unwrap_or_else(|| Err(anyhow::anyhow!("Failed to open in-memory DB")))
-                };
-                match path {
+                let conn = Config::open_db_from(config_dir.as_deref());
+                match config.resolve_backend_path(&srv.backend, &conn) {
                     Ok(p) => p.to_string_lossy().to_string(),
                     Err(e) => {
                         tracing::error!("Failed to resolve backend path: {}", e);
