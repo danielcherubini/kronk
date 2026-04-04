@@ -130,4 +130,34 @@ mod tests {
             .unwrap();
         assert_eq!(version, migrations::LATEST_VERSION);
     }
+
+    #[test]
+    fn test_migration_v3_creates_backend_installations() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backend_installations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "backend_installations table should exist after migration v3"
+        );
+
+        // Verify index was created
+        let idx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_backend_installations_name'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            idx_count, 1,
+            "idx_backend_installations_name index should exist after migration v3"
+        );
+    }
 }

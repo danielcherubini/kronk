@@ -77,7 +77,7 @@ pub(super) fn resolve_backend(config: &mut Config, exe_path: &str) -> Result<(St
     let backend_name = config
         .backends
         .iter()
-        .find(|(_, b)| b.path == exe_str)
+        .find(|(_, b)| b.path.as_deref() == Some(&exe_str))
         .map(|(k, _)| k.clone());
     let backend_key = match backend_name {
         Some(k) => k,
@@ -93,7 +93,7 @@ pub(super) fn resolve_backend(config: &mut Config, exe_path: &str) -> Result<(St
             config.backends.insert(
                 key.clone(),
                 BackendConfig {
-                    path: exe_str.clone(),
+                    path: Some(exe_str.clone()),
                     default_args: vec![],
                     health_check_url: None,
                 },

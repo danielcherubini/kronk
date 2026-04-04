@@ -121,15 +121,18 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         let mut backends = HashMap::new();
-        let default_path = if cfg!(windows) {
-            r"C:\llama.cpp\llama-server.exe".to_string()
-        } else {
-            "llama-server".to_string()
-        };
         backends.insert(
             "llama_cpp".to_string(),
             BackendConfig {
-                path: default_path,
+                path: None,
+                default_args: vec![],
+                health_check_url: Some("http://localhost:8080/health".to_string()),
+            },
+        );
+        backends.insert(
+            "ik_llama".to_string(),
+            BackendConfig {
+                path: None,
                 default_args: vec![],
                 health_check_url: Some("http://localhost:8080/health".to_string()),
             },

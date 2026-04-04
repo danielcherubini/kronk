@@ -74,6 +74,13 @@ async fn start_proxy_server(
                         tracing::error!("Initial backfill failed: {}", e);
                     }
                 }
+
+                // Always run the backend registry TOML migration (runs once, then renames the file)
+                if let Err(e) =
+                    kronk_core::db::backfill::migrate_backend_registry_toml(&db_result.conn, dir)
+                {
+                    tracing::error!("Backend registry TOML migration failed: {}", e);
+                }
             }
             Err(e) => tracing::error!("Failed to open DB for backfill check: {}", e),
         }
