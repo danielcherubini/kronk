@@ -19,6 +19,24 @@ impl ProxyServer {
     pub fn new(state: Arc<ProxyState>) -> Self {
         Self::cleanup_stale_processes(&state);
         let handle = Self::start_idle_timeout_checker(state.clone());
+
+        // Spawn background task to refresh system metrics every 5s
+        let metrics_arc = Arc::clone(&state.system_metrics);
+        tokio::spawn(async move {
+            loop {
+                let snapshot =
+                    match tokio::task::spawn_blocking(crate::gpu::collect_system_metrics).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("system metrics collection panicked: {}", e);
+                            crate::gpu::SystemMetrics::default()
+                        }
+                    };
+                *metrics_arc.write().await = snapshot;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        });
+
         Self {
             state,
             idle_timeout_handle: Some(handle),
