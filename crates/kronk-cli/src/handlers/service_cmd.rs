@@ -34,9 +34,23 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                 {
                     let args = config.build_full_args(srv, backend, None)?;
                     let port = srv.port.unwrap_or(8080);
+                    // Resolve backend binary path from DB (priority) or config.path (fallback)
+                    let backend_path = {
+                        let conn_result = kronk_core::db::open(&Config::base_dir()?);
+                        match conn_result {
+                            Ok(kronk_core::db::OpenResult { conn, .. }) => {
+                                config.resolve_backend_path(&srv.backend, &conn)?
+                            }
+                            Err(_) => {
+                                let conn = rusqlite::Connection::open_in_memory()?;
+                                config.resolve_backend_path(&srv.backend, &conn)?
+                            }
+                        }
+                    };
+                    let backend_path_str = backend_path.to_string_lossy().to_string();
                     kronk_core::platform::linux::install_service(
                         &service_name,
-                        &backend.path,
+                        &backend_path_str,
                         &args,
                         port,
                     )?;

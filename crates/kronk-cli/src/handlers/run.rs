@@ -1,6 +1,6 @@
 //! Run command handler
 //!
-//! Handles `kronk run <server>` for running a single server in foreground.
+//! Handles `kronk run <server>` for debugging/foreground running.
 
 use anyhow::Result;
 use kronk_core::config::Config;
@@ -12,10 +12,25 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
 
     let args = config.build_full_args(server, backend, ctx_override)?;
 
+    // Resolve backend binary path from DB (priority) or config.path (fallback)
+    let backend_path = {
+        let db_result = kronk_core::db::open(&Config::base_dir()?);
+        match db_result {
+            Ok(kronk_core::db::OpenResult { conn, .. }) => {
+                config.resolve_backend_path(&server.backend, &conn)?
+            }
+            Err(_) => {
+                let conn = rusqlite::Connection::open_in_memory()?;
+                config.resolve_backend_path(&server.backend, &conn)?
+            }
+        }
+    };
+    let backend_path_str = backend_path.to_string_lossy().to_string();
+
     println!("Oh yeah, it's all coming together.");
     println!();
     println!("  Model:    {}", server_name);
-    println!("  Backend:  {}", backend.path);
+    println!("  Backend:  {}", backend_path.display());
     if let Some(ctx) = ctx_override {
         println!("  Context:  {}", ctx);
     }
@@ -26,7 +41,7 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     println!();
 
     let supervisor = ProcessSupervisor::new(
-        backend.path.clone(),
+        backend_path_str,
         args,
         health_check,
         config.supervisor.max_restarts,

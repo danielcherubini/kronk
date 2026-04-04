@@ -236,7 +236,7 @@ fn print_offline_status(config: &Config) {
         let backend_path = config
             .backends
             .get(&srv.backend)
-            .map(|b| b.path.as_str())
+            .and_then(|b| b.path.as_deref())
             .unwrap_or("???");
 
         println!();

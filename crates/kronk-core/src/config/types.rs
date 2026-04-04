@@ -87,7 +87,8 @@ pub struct General {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
-    pub path: String,
+    #[serde(default)]
+    pub path: Option<String>,
     #[serde(default)]
     pub default_args: Vec<String>,
     #[serde(default)]

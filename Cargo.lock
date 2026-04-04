@@ -1633,6 +1633,7 @@ dependencies = [
  "kronk-core",
  "kronk-web",
  "reqwest",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",

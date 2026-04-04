@@ -106,15 +106,35 @@ async fn _start_backend(
     _override_arg(&mut args, "--host", "127.0.0.1");
     _override_arg(&mut args, "--port", &port.to_string());
 
-    let backend_path = &backend_config.path;
+    // Resolve the backend binary path: DB takes priority, config.path is fallback.
+    let backend_path = if let Ok(base_dir) = Config::base_dir() {
+        if let Ok(crate::db::OpenResult { conn, .. }) = crate::db::open(&base_dir) {
+            config.resolve_backend_path(&server_config.backend, &conn)?
+        } else {
+            config.resolve_backend_path(
+                &server_config.backend,
+                &rusqlite::Connection::open_in_memory()?,
+            )?
+        }
+    } else {
+        config.resolve_backend_path(
+            &server_config.backend,
+            &rusqlite::Connection::open_in_memory()?,
+        )?
+    };
+
     let health_url = format!("http://127.0.0.1:{}/health", port);
 
-    info!("Executing backend: {} {}", backend_path, args.join(" "));
+    info!(
+        "Executing backend: {} {}",
+        backend_path.display(),
+        args.join(" ")
+    );
 
-    let mut cmd = Command::new(backend_path);
+    let mut cmd = Command::new(&backend_path);
     // Set working directory to the backend's parent dir so Windows can find
     // companion DLLs (ggml-cuda.dll, ggml.dll, etc.) alongside the binary.
-    if let Some(parent) = std::path::Path::new(backend_path).parent() {
+    if let Some(parent) = backend_path.parent() {
         if parent.is_dir() {
             cmd.current_dir(parent);
         }
@@ -124,7 +144,7 @@ async fn _start_backend(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .with_context(|| format!("Failed to spawn backend '{}'", backend_path))?;
+        .with_context(|| format!("Failed to spawn backend '{}'", backend_path.display()))?;
 
     let pid = child
         .id()
@@ -247,7 +267,10 @@ pub async fn run_benchmark(
         model_id: server_config.model.clone(),
         quant: server_config.quant.clone(),
         backend: server_config.backend.clone(),
-        gpu_type: _detect_gpu_type(&backend_config.path, crate::gpu::query_vram().is_some()),
+        gpu_type: _detect_gpu_type(
+            backend_config.path.as_deref().unwrap_or(""),
+            crate::gpu::query_vram().is_some(),
+        ),
         context_length: bench_config.ctx_override.or(server_config.context_length),
         gpu_layers: _extract_gpu_layers(&server_config.args),
     };

@@ -54,7 +54,14 @@ impl ProxyState {
             );
         }
 
-        let backend_path = backend_config.path.clone();
+        // Resolve the backend binary path: DB takes priority, config.path is fallback.
+        let backend_path = if let Some(db_conn) = self.open_db() {
+            config.resolve_backend_path(&server_config.backend, &db_conn)?
+        } else {
+            let fallback_conn = rusqlite::Connection::open_in_memory()
+                .context("Failed to open in-memory DB")?;
+            config.resolve_backend_path(&server_config.backend, &fallback_conn)?
+        };
 
         // Find a free port for this backend.
         // Note: there is a small race window between dropping the listener and the
@@ -80,14 +87,18 @@ impl ProxyState {
         let mut child = tokio::process::Command::new(&backend_path);
         // Set working directory to the backend's parent dir so Windows can find
         // companion DLLs (ggml-cuda.dll, ggml.dll, etc.) alongside the binary.
-        if let Some(parent) = std::path::Path::new(&backend_path).parent() {
+        if let Some(parent) = backend_path.parent() {
             if parent.is_dir() {
                 child.current_dir(parent);
             }
         }
         child.args(&args).env("MODEL_NAME", model_name);
 
-        info!("Executing backend: {} {}", backend_path, args.join(" "));
+        info!(
+            "Executing backend: {} {}",
+            backend_path.display(),
+            args.join(" ")
+        );
 
         let mut child = child.spawn().with_context(|| {
             format!(

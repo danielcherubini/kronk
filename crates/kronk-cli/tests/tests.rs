@@ -257,7 +257,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     config.backends.insert(
         "test".to_string(),
         kronk_core::config::BackendConfig {
-            path: "llama-server".to_string(),
+            path: Some("llama-server".to_string()),
             default_args: vec![],
             health_check_url: None,
         },

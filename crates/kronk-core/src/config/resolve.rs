@@ -326,4 +326,119 @@ impl Config {
     pub fn proxy_url(&self) -> String {
         format!("http://{}:{}", self.proxy.host, self.proxy.port)
     }
+
+    /// Resolve the filesystem path for a named backend binary.
+    ///
+    /// Priority:
+    /// 1. Active installation in the DB (via `get_active_backend`)
+    /// 2. `path` field in `config.toml` [backends] section (for custom/manual installs)
+    ///
+    /// Returns an error if neither source has a path.
+    pub fn resolve_backend_path(
+        &self,
+        name: &str,
+        conn: &rusqlite::Connection,
+    ) -> Result<std::path::PathBuf> {
+        if let Some(record) = crate::db::queries::get_active_backend(conn, name)? {
+            return Ok(std::path::PathBuf::from(record.path));
+        }
+        self.backends
+            .get(name)
+            .and_then(|b| b.path.as_deref())
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Backend '{}' has no installed path. Run `kronk backend install {}` first.",
+                    name,
+                    name
+                )
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::BackendConfig;
+    use crate::db::queries::BackendInstallationRecord;
+    use crate::db::{open_in_memory, queries::insert_backend_installation};
+
+    fn make_test_config(llama_cpp_path: Option<&str>) -> Config {
+        let mut config = Config::default();
+        if let Some(path) = llama_cpp_path {
+            config.backends.insert(
+                "llama_cpp".to_string(),
+                BackendConfig {
+                    path: Some(path.to_string()),
+                    default_args: vec![],
+                    health_check_url: None,
+                },
+            );
+        } else {
+            // Insert with no path
+            config.backends.insert(
+                "llama_cpp".to_string(),
+                BackendConfig {
+                    path: None,
+                    default_args: vec![],
+                    health_check_url: None,
+                },
+            );
+        }
+        config
+    }
+
+    #[test]
+    fn test_resolve_backend_path_from_db() {
+        let crate::db::OpenResult { conn, .. } = open_in_memory().unwrap();
+        let record = BackendInstallationRecord {
+            id: 0,
+            name: "llama_cpp".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: "v1.0.0".to_string(),
+            path: "/usr/local/bin/llama-server".to_string(),
+            installed_at: 1000,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        };
+        insert_backend_installation(&conn, &record).unwrap();
+
+        let config = make_test_config(None);
+        let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+        assert_eq!(
+            result,
+            std::path::PathBuf::from("/usr/local/bin/llama-server")
+        );
+    }
+
+    #[test]
+    fn test_resolve_backend_path_fallback() {
+        let crate::db::OpenResult { conn, .. } = open_in_memory().unwrap();
+        // Empty DB — no installed backend
+
+        let config = make_test_config(Some("/fallback/llama-server"));
+        let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+        assert_eq!(result, std::path::PathBuf::from("/fallback/llama-server"));
+    }
+
+    #[test]
+    fn test_resolve_backend_path_error() {
+        let crate::db::OpenResult { conn, .. } = open_in_memory().unwrap();
+        // Empty DB, path = None
+
+        let config = make_test_config(None);
+        let result = config.resolve_backend_path("llama_cpp", &conn);
+        assert!(
+            result.is_err(),
+            "Expected Err when no DB record and no path in config"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Backend 'llama_cpp' has no installed path"),
+            "Unexpected error: {}",
+            err
+        );
+    }
 }
