@@ -43,6 +43,10 @@ pub enum BackendSubcommand {
     Update {
         /// Name of the backend to update
         name: String,
+
+        /// Force reinstall even if already up to date
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// List installed backends
@@ -70,7 +74,7 @@ pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
             gpu,
             force,
         } => cmd_install(config, &backend_type, version, build, name, gpu, force).await,
-        BackendSubcommand::Update { name } => cmd_update(config, &name).await,
+        BackendSubcommand::Update { name, force } => cmd_update(config, &name, force).await,
         BackendSubcommand::List => cmd_list(config).await,
         BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
         BackendSubcommand::CheckUpdates => cmd_check_updates(config).await,
@@ -358,7 +362,7 @@ async fn cmd_install(
     Ok(())
 }
 
-async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
+async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
     let backend_info = registry.get(name)?.ok_or_else(|| {
@@ -371,7 +375,7 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
     println!("Checking for updates to '{}'...", name);
     let update_check = check_updates(&backend_info).await?;
 
-    if !update_check.update_available {
+    if !update_check.update_available && !force {
         println!(
             "'{}' is already up to date ({})",
             name, backend_info.version
@@ -379,17 +383,26 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
         return Ok(());
     }
 
-    println!("Update available:");
-    println!("  Current: {}", update_check.current_version);
-    println!("  Latest:  {}", update_check.latest_version);
+    if force && !update_check.update_available {
+        println!(
+            "Force reinstalling '{}' (already at latest: {})",
+            name, backend_info.version
+        );
+    } else {
+        println!("Update available:");
+        println!("  Current: {}", update_check.current_version);
+        println!("  Latest:  {}", update_check.latest_version);
+    }
 
-    let confirm = inquire::Confirm::new("Proceed with update?")
-        .with_default(true)
-        .prompt()?;
+    if !force {
+        let confirm = inquire::Confirm::new("Proceed with update?")
+            .with_default(true)
+            .prompt()?;
 
-    if !confirm {
-        println!("Update cancelled.");
-        return Ok(());
+        if !confirm {
+            println!("Update cancelled.");
+            return Ok(());
+        }
     }
 
     let target_dir = backend_info
