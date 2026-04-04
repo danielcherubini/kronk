@@ -740,8 +740,12 @@ pub async fn handle_pull_job_stream(
     let stream = stream::unfold(
         (state.0, job_id, false),
         |(state, job_id, just_done)| async move {
-            // Previous iteration already emitted the done event — close the stream.
+            // Previous iteration already emitted the done event.
+            // Sleep briefly so the runtime can flush the done event's write buffer
+            // before we close the stream — without this the final chunk may not be
+            // sent before the connection drops.
             if just_done {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 return None;
             }
 
