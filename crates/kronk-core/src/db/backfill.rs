@@ -82,7 +82,8 @@ pub async fn run_initial_backfill(conn: &Connection, config: &Config) -> Result<
 /// After migrating all entries, renames the file to `backend_registry.toml.migrated`
 /// so it is not re-imported on subsequent startups.
 ///
-/// Duplicate `(name, version)` entries are skipped with a warning log (not an error).
+/// Duplicate `(name, version)` entries are handled by `INSERT OR REPLACE` — the old row
+/// is deleted and re-inserted with a new `id`.
 pub fn migrate_backend_registry_toml(
     conn: &Connection,
     config_dir: &std::path::Path,
@@ -132,40 +133,10 @@ pub fn migrate_backend_registry_toml(
             is_active: true,
         };
 
-        match insert_backend_installation(conn, &record) {
-            Ok(()) => {
-                count += 1;
-            }
-            Err(e) => {
-                // Check if this is a UNIQUE constraint violation (duplicate entry)
-                let is_unique_violation = e
-                    .downcast_ref::<rusqlite::Error>()
-                    .map(|sql_err| {
-                        matches!(
-                            sql_err,
-                            rusqlite::Error::SqliteFailure(
-                                rusqlite::ffi::Error {
-                                    code: rusqlite::ffi::ErrorCode::ConstraintViolation,
-                                    ..
-                                },
-                                _
-                            )
-                        )
-                    })
-                    .unwrap_or(false);
-                if is_unique_violation {
-                    tracing::warn!(
-                        "Backend '{}' version '{}' already exists in DB — skipping",
-                        name,
-                        info.version
-                    );
-                } else {
-                    return Err(e).with_context(|| {
-                        format!("Failed to insert backend '{}' during migration", name)
-                    });
-                }
-            }
-        }
+        // INSERT OR REPLACE handles duplicate (name, version) by replacing the row
+        insert_backend_installation(conn, &record)
+            .with_context(|| format!("Failed to insert backend '{}' during migration", name))?;
+        count += 1;
     }
 
     let migrated_path = config_dir.join("backend_registry.toml.migrated");

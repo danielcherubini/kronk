@@ -263,8 +263,9 @@ pub struct BackendInstallationRecord {
 /// 1. Inserts (or replaces) the row with `is_active = 1`.
 /// 2. Sets `is_active = 0` for all other rows with the same name.
 ///
-/// Using `INSERT OR REPLACE` makes reinstalling the same `(name, version)` idempotent —
-/// it simply updates the row in-place rather than failing with a UNIQUE constraint error.
+/// When a row with the same `(name, version)` already exists, SQLite's `REPLACE` semantics
+/// delete the old row and re-insert (the row gets a new `id`). All other rows with the same
+/// name are deactivated.
 pub fn insert_backend_installation(
     conn: &Connection,
     record: &BackendInstallationRecord,
