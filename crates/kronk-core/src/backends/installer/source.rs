@@ -245,6 +245,13 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
         // require these kernels — without them they produce inf/NaN logits and
         // crash on the first token.
         if cfg!(target_os = "windows") {
+            // GGML_NATIVE=ON (the default) runs FindSIMD.cmake which detects
+            // CPU features and sets GGML_AVX2 itself — but on MSVC its detection
+            // is unreliable and results in ARCH_FLAGS being empty. Turning off
+            // GGML_NATIVE and setting AVX2/FMA/AVX explicitly ensures /arch:AVX2
+            // is passed to cl.exe, which defines __AVX2__ and activates the IQK
+            // optimized CPU kernels required by hybrid Mamba/attention models.
+            cmake_args.push("-DGGML_NATIVE=OFF".to_string());
             cmake_args.push("-DGGML_AVX2=ON".to_string());
             cmake_args.push("-DGGML_FMA=ON".to_string());
             cmake_args.push("-DGGML_AVX=ON".to_string());
