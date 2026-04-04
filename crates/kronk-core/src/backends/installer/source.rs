@@ -217,6 +217,17 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
         super::super::registry::BackendType::IkLlama
     ) {
         cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
+
+        // On Windows with MSVC, AVX2 is not enabled by default. Without it,
+        // __AVX2__ is not defined and the IQK optimized CPU kernels are
+        // compiled out (HAVE_FANCY_SIMD / IQK_IMPLEMENT not defined).
+        // This causes the SSM (Mamba) layers in hybrid models like Qwen3.5
+        // to fall back to broken scalar code, producing inf/NaN logits and
+        // crashing on the first token.
+        if cfg!(target_os = "windows") {
+            cmake_args.push("-DCMAKE_CXX_FLAGS=/arch:AVX2".to_string());
+            cmake_args.push("-DCMAKE_C_FLAGS=/arch:AVX2".to_string());
+        }
     }
 
     cmake_args
@@ -299,6 +310,27 @@ mod tests {
         let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
         assert!(args.contains(&"-DGGML_CUDA=ON".to_string()));
         assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
+    }
+
+    /// On Windows, ik_llama builds must pass /arch:AVX2 so that MSVC defines
+    /// __AVX2__ and the IQK optimized CPU kernels are compiled in. Without this,
+    /// hybrid Mamba/attention models (e.g. Qwen3.5) crash on the first token
+    /// because the SSM layers fall back to broken scalar code producing inf logits.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_ik_llama_windows_includes_avx2_flags() {
+        let opts = make_options(BackendType::IkLlama, None);
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        assert!(
+            args.contains(&"-DCMAKE_CXX_FLAGS=/arch:AVX2".to_string()),
+            "Windows ik_llama build must include /arch:AVX2 for CXX, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DCMAKE_C_FLAGS=/arch:AVX2".to_string()),
+            "Windows ik_llama build must include /arch:AVX2 for C, got: {:?}",
+            args
+        );
     }
 }
 
