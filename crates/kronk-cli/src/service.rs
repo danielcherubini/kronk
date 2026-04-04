@@ -313,8 +313,19 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                 std::path::PathBuf::from(".")
             });
             let health_check = config.resolve_health_check(&srv);
+            // Resolve backend binary path from DB (priority) or config.path (fallback)
+            let backend_path_str = {
+                let conn = Config::open_db_from(config_dir.as_deref());
+                match config.resolve_backend_path(&srv.backend, &conn) {
+                    Ok(p) => p.to_string_lossy().to_string(),
+                    Err(e) => {
+                        tracing::error!("Failed to resolve backend path: {}", e);
+                        return;
+                    }
+                }
+            };
             let supervisor = ProcessSupervisor::new(
-                backend.path.clone(),
+                backend_path_str,
                 args,
                 health_check,
                 config.supervisor.max_restarts,

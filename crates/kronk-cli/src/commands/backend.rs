@@ -136,9 +136,8 @@ fn parse_gpu_type(gpu_str: &str) -> Result<kronk_core::gpu::GpuType> {
     }
 }
 
-fn registry_path() -> Result<std::path::PathBuf> {
-    let base_dir = Config::base_dir()?;
-    Ok(base_dir.join("backend_registry.toml"))
+fn registry_config_dir() -> Result<std::path::PathBuf> {
+    Config::base_dir()
 }
 
 fn backends_dir() -> Result<std::path::PathBuf> {
@@ -149,8 +148,7 @@ fn backends_dir() -> Result<std::path::PathBuf> {
 fn current_unix_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs() as i64
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 async fn cmd_install(
@@ -312,7 +310,9 @@ async fn cmd_install(
     let git_url = match backend_type {
         BackendType::LlamaCpp => "https://github.com/ggml-org/llama.cpp.git",
         BackendType::IkLlama => "https://github.com/ikawrakow/ik_llama.cpp.git",
-        BackendType::Custom => unreachable!(),
+        BackendType::Custom => {
+            anyhow::bail!("Custom backends cannot be installed via this command");
+        }
     };
 
     let source = if use_source {
@@ -339,7 +339,7 @@ async fn cmd_install(
     let binary_path = install_backend(options).await?;
 
     // Register
-    let mut registry = BackendRegistry::load(&registry_path()?)?;
+    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
     registry.add(BackendInfo {
         name: backend_name.clone(),
         backend_type,
@@ -363,17 +363,14 @@ async fn cmd_install(
 }
 
 async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
-    let mut registry = BackendRegistry::load(&registry_path()?)?;
+    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    let backend_info = registry
-        .get(name)
-        .ok_or_else(|| {
-            anyhow!(
-                "Backend '{}' not found. Run `kronk backend list` to see installed backends.",
-                name
-            )
-        })?
-        .clone();
+    let backend_info = registry.get(name)?.ok_or_else(|| {
+        anyhow!(
+            "Backend '{}' not found. Run `kronk backend list` to see installed backends.",
+            name
+        )
+    })?;
 
     println!("Checking for updates to '{}'...", name);
     let update_check = check_updates(&backend_info).await?;
@@ -448,8 +445,8 @@ async fn cmd_update(_config: &Config, name: &str) -> Result<()> {
 }
 
 async fn cmd_list(_config: &Config) -> Result<()> {
-    let registry = BackendRegistry::load(&registry_path()?)?;
-    let backends = registry.list();
+    let registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let backends = registry.list()?;
 
     if backends.is_empty() {
         println!("No backends installed.");
@@ -474,12 +471,11 @@ async fn cmd_list(_config: &Config) -> Result<()> {
 }
 
 async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
-    let mut registry = BackendRegistry::load(&registry_path()?)?;
+    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
     let backend = registry
-        .get(name)
-        .ok_or_else(|| anyhow!("Backend '{}' not found", name))?
-        .clone();
+        .get(name)?
+        .ok_or_else(|| anyhow!("Backend '{}' not found", name))?;
 
     println!("Removing backend '{}'", name);
     println!("  Path: {}", backend.path.display());
@@ -578,8 +574,8 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
 }
 
 async fn cmd_check_updates(_config: &Config) -> Result<()> {
-    let registry = BackendRegistry::load(&registry_path()?)?;
-    let backends = registry.list();
+    let registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let backends = registry.list()?;
 
     if backends.is_empty() {
         println!("No backends installed.");
@@ -591,7 +587,7 @@ async fn cmd_check_updates(_config: &Config) -> Result<()> {
     for backend in backends {
         print!("  {} ({}): ", backend.name, backend.version);
 
-        match check_updates(backend).await {
+        match check_updates(&backend).await {
             Ok(check) => {
                 if check.update_available {
                     println!("UPDATE AVAILABLE -> {}", check.latest_version);
