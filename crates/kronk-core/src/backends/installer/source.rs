@@ -174,12 +174,10 @@ async fn try_clone_latest_tag(git_url: &str, source_dir: &Path) -> Result<bool> 
     Ok(false)
 }
 
-/// Run CMake configuration step.
-async fn configure_cmake(
-    options: &InstallOptions,
-    source_dir: &Path,
-    build_output: &Path,
-) -> Result<()> {
+/// Build the CMake argument list for the configure step.
+///
+/// Extracted for testability — callers can verify flags without invoking cmake.
+fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &Path) -> Vec<String> {
     let mut cmake_args = vec![
         "-B".to_string(),
         build_output.to_string_lossy().to_string(),
@@ -219,6 +217,17 @@ async fn configure_cmake(
         cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
     }
 
+    cmake_args
+}
+
+/// Run CMake configuration step.
+async fn configure_cmake(
+    options: &InstallOptions,
+    source_dir: &Path,
+    build_output: &Path,
+) -> Result<()> {
+    let cmake_args = build_cmake_args(options, source_dir, build_output);
+
     let status = tokio::process::Command::new("cmake")
         .args(&cmake_args)
         .status()
@@ -231,6 +240,63 @@ async fn configure_cmake(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::registry::{BackendSource, BackendType};
+    use std::path::PathBuf;
+
+    fn make_options(backend_type: BackendType, gpu_type: Option<GpuType>) -> InstallOptions {
+        InstallOptions {
+            backend_type,
+            source: BackendSource::SourceCode {
+                version: "main".to_string(),
+                git_url: "https://example.com/repo.git".to_string(),
+            },
+            target_dir: PathBuf::from("/tmp/test"),
+            gpu_type,
+            allow_overwrite: false,
+        }
+    }
+
+    /// ik_llama source builds must include GGML_IQK_FA_ALL_QUANTS=ON so that
+    /// all KV cache quant types are compiled in. Without it, sub-q8_0 KV cache
+    /// causes NaN crashes on hybrid Mamba/attention models (e.g. Qwen3.5).
+    #[test]
+    fn test_ik_llama_includes_iqk_fa_all_quants() {
+        let opts = make_options(BackendType::IkLlama, None);
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        assert!(
+            args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()),
+            "ik_llama build must include -DGGML_IQK_FA_ALL_QUANTS=ON, got: {:?}",
+            args
+        );
+    }
+
+    /// llama.cpp builds must NOT include the ik_llama-specific flag.
+    #[test]
+    fn test_llama_cpp_excludes_iqk_fa_all_quants() {
+        let opts = make_options(BackendType::LlamaCpp, None);
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        assert!(
+            !args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()),
+            "llama.cpp build must not include -DGGML_IQK_FA_ALL_QUANTS=ON"
+        );
+    }
+
+    /// ik_llama + CUDA should have both the CUDA flag and the quants flag.
+    #[test]
+    fn test_ik_llama_cuda_includes_both_flags() {
+        let opts = make_options(
+            BackendType::IkLlama,
+            Some(GpuType::Cuda { version: "12".to_string() }),
+        );
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        assert!(args.contains(&"-DGGML_CUDA=ON".to_string()));
+        assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
+    }
 }
 
 /// Run CMake build step with parallel jobs.
