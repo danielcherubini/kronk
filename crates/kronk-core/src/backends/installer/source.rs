@@ -245,21 +245,24 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
         // require these kernels — without them they produce inf/NaN logits and
         // crash on the first token.
         if cfg!(target_os = "windows") {
-            // GGML_NATIVE=ON (the default) runs FindSIMD.cmake which detects
-            // CPU features and sets GGML_AVX2 itself — but on MSVC its detection
-            // is unreliable and results in ARCH_FLAGS being empty. Turning off
-            // GGML_NATIVE and setting AVX2/FMA/AVX explicitly ensures /arch:AVX2
-            // is passed to cl.exe, which defines __AVX2__ and activates the IQK
-            // optimized CPU kernels required by hybrid Mamba/attention models.
+            // The MSVC AVX2 flag block in ggml/src/CMakeLists.txt is gated on
+            // CMAKE_GENERATOR_PLATFORM_LWR matching x64/amd64/etc. Without
+            // explicitly setting the platform, CMAKE_GENERATOR_PLATFORM is empty
+            // and the whole MSVC arch block is skipped, leaving ARCH_FLAGS empty
+            // and __AVX2__ undefined. Setting -A x64 fixes this.
+            cmake_args.push("-Ax64".to_string());
+            // GGML_NATIVE=ON runs FindSIMD.cmake which on MSVC still leaves
+            // ARCH_FLAGS empty. Turn it off and set flags explicitly so
+            // /arch:AVX2 is reliably passed to cl.exe, defining __AVX2__ and
+            // activating the IQK optimized CPU kernels required by hybrid
+            // Mamba/attention models like Qwen3.5.
             cmake_args.push("-DGGML_NATIVE=OFF".to_string());
             cmake_args.push("-DGGML_AVX2=ON".to_string());
             cmake_args.push("-DGGML_FMA=ON".to_string());
             cmake_args.push("-DGGML_AVX=ON".to_string());
-            // GGML_NATIVE=OFF also disables the "native" CUDA architecture
-            // detection, causing the fallback list (50;61;70;75;80) to be used.
-            // CUDA 13.x dropped support for compute_50 and below, so we must
-            // set the architecture explicitly. "native" lets nvcc detect the
-            // installed GPU at compile time (requires CUDA >= 11.6 + CMake 3.24).
+            // GGML_NATIVE=OFF disables native CUDA arch detection, causing the
+            // fallback list (50;61;70;75;80) to be used. CUDA 13.x dropped
+            // compute_50, so set it explicitly to "native" for correct detection.
             cmake_args.push("-DCMAKE_CUDA_ARCHITECTURES=native".to_string());
         }
     }
