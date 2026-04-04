@@ -268,6 +268,7 @@ fn spawn_download_job(
     repo_id: String,
     filename: String,
     spec: QuantDownloadSpec,
+    config: crate::config::Config,
 ) {
     let job_id_clone = job_id.clone();
     let repo_id_clone = repo_id.clone();
@@ -305,17 +306,6 @@ fn spawn_download_job(
             }
         }
 
-        let config = match crate::config::Config::load() {
-            Ok(c) => c,
-            Err(e) => {
-                let mut jobs = pull_jobs_arc.write().await;
-                if let Some(job) = jobs.get_mut(&job_id_clone) {
-                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                    job.error = Some(format!("Failed to load config: {}", e));
-                }
-                return;
-            }
-        };
         let models_dir = match config.models_dir() {
             Ok(d) => d,
             Err(e) => {
@@ -402,7 +392,8 @@ fn spawn_download_job(
                     }
                 }
                 // Post-download: auto-create model card and config entries (best-effort)
-                setup_model_after_pull(&repo_id_clone, &spec_clone, &dest_dir).await;
+                setup_model_after_pull(config.clone(), &repo_id_clone, &spec_clone, &dest_dir)
+                    .await;
             }
             Err(e) => {
                 let mut jobs = pull_jobs_arc.write().await;
@@ -435,7 +426,45 @@ pub async fn handle_kronk_pull_model(
                 .into_response();
         }
 
+        // Fetch the HF listing once and validate every requested filename against it.
+        let listing = match crate::models::pull::list_gguf_files(&repo_id).await {
+            Ok(l) => l,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("Failed to fetch file list from HuggingFace: {}", e),
+                            "type": "UpstreamError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        let allowed_filenames: std::collections::HashSet<&str> =
+            listing.files.iter().map(|f| f.filename.as_str()).collect();
+
+        for spec in &request.quants {
+            if !allowed_filenames.contains(spec.filename.as_str()) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!(
+                                "Filename '{}' is not a valid GGUF file for repo '{}'",
+                                spec.filename, repo_id
+                            ),
+                            "type": "ValidationError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+
         let pull_jobs_arc = Arc::clone(&state.pull_jobs);
+        let config = state.config.clone();
         let mut job_entries = Vec::with_capacity(request.quants.len());
 
         for spec in &request.quants {
@@ -462,6 +491,7 @@ pub async fn handle_kronk_pull_model(
                 repo_id.clone(),
                 spec.filename.clone(),
                 spec.clone(),
+                config.clone(),
             );
 
             job_entries.push(serde_json::json!({
@@ -588,6 +618,7 @@ pub async fn handle_kronk_pull_model(
         repo_id.clone(),
         filename.clone(),
         legacy_spec,
+        state.config.clone(),
     );
 
     Json(serde_json::json!({
@@ -857,14 +888,12 @@ async fn _setup_model_after_pull_with_config(
 /// the model card at `<configs_dir>/<repo_slug>.toml`, and adds a `[models.<slug>]`
 /// entry to `config.toml` if one doesn't already exist.
 async fn setup_model_after_pull(
+    mut config: crate::config::Config,
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
 ) {
     let _guard = CONFIG_WRITE_LOCK.lock().await;
-    let Ok(mut config) = crate::config::Config::load() else {
-        return;
-    };
     _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
     // _guard dropped here, releasing the lock
 }

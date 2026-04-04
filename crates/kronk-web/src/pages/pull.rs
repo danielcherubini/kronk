@@ -119,7 +119,11 @@ pub fn Pull() -> impl IntoView {
                         on:click=move |_| {
                             let rid = repo_id.get();
                             if rid.is_empty() { return; }
+                            // Clear any stale per-repo state from a previous search.
                             error_msg.set(None);
+                            selected_filenames.set(std::collections::HashSet::new());
+                            context_lengths.set(std::collections::HashMap::new());
+                            available_quants.set(Vec::new());
                             wizard_step.set(WizardStep::LoadingQuants);
                             wasm_bindgen_futures::spawn_local(async move {
                                 let url = format!("/kronk/v1/hf/{}", rid);
@@ -127,8 +131,15 @@ pub fn Pull() -> impl IntoView {
                                     Ok(resp) => {
                                         match resp.json::<Vec<QuantEntry>>().await {
                                             Ok(quants) => {
-                                                available_quants.set(quants);
-                                                wizard_step.set(WizardStep::SelectQuants);
+                                                if quants.is_empty() {
+                                                    error_msg.set(Some(
+                                                        "No GGUF files found for this repo. Check the repo ID and try again.".to_string()
+                                                    ));
+                                                    wizard_step.set(WizardStep::RepoInput);
+                                                } else {
+                                                    available_quants.set(quants);
+                                                    wizard_step.set(WizardStep::SelectQuants);
+                                                }
                                             }
                                             Err(e) => {
                                                 error_msg.set(Some(format!("Failed to parse response: {e}")));
@@ -350,6 +361,16 @@ pub fn Pull() -> impl IntoView {
                                                     let ws = wizard_step;
                                                     wasm_bindgen_futures::spawn_local(async move {
                                         let url = format!("/kronk/v1/pulls/{}/stream", job_id_str);
+                                        // Helper: check if all jobs have finished and advance wizard.
+                                        let advance_if_done = |dj: RwSignal<Vec<JobProgress>>, ws: RwSignal<WizardStep>| {
+                                            let jobs = dj.get();
+                                            if !jobs.is_empty() && jobs.iter().all(|j| {
+                                                j.status == "completed" || j.status == "failed"
+                                            }) {
+                                                ws.set(WizardStep::Done);
+                                            }
+                                        };
+
                                         let mut es = match EventSource::new(&url) {
                                             Ok(es) => es,
                                             Err(e) => {
@@ -360,6 +381,7 @@ pub fn Pull() -> impl IntoView {
                                                         j.error = Some(format!("Failed to open SSE stream: {msg}"));
                                                     }
                                                 });
+                                                advance_if_done(dj, ws);
                                                 return;
                                             }
                                         };
@@ -374,6 +396,7 @@ pub fn Pull() -> impl IntoView {
                                                     }
                                                 });
                                                 es.close();
+                                                advance_if_done(dj, ws);
                                                 return;
                                             }
                                         };
@@ -388,6 +411,7 @@ pub fn Pull() -> impl IntoView {
                                                     }
                                                 });
                                                 es.close();
+                                                advance_if_done(dj, ws);
                                                 return;
                                             }
                                         };
@@ -424,17 +448,15 @@ pub fn Pull() -> impl IntoView {
                                                                         });
                                                                     }
                                                                     es.close();
-                                                                    // Check if all jobs are done
-                                                                    let all_done = dj.get().iter().all(|j| {
-                                                                        j.status == "completed" || j.status == "failed"
-                                                                    });
-                                                                    if all_done {
-                                                                        ws.set(WizardStep::Done);
-                                                                    }
+                                                                    advance_if_done(dj, ws);
                                                                     break;
                                                                 }
-                                                                // Stream ended or error
-                                                                _ => { es.close(); break; }
+                                                                // Stream ended unexpectedly — close and check if all jobs done.
+                                                                _ => {
+                                                                    es.close();
+                                                                    advance_if_done(dj, ws);
+                                                                    break;
+                                                                }
                                                             }
                                                         }
                                                     });
@@ -499,18 +521,40 @@ pub fn Pull() -> impl IntoView {
 
                     {move || {
                         let jobs = download_jobs.get();
-                        let all_done = !jobs.is_empty() && jobs.iter().all(|j| {
+                        let all_finished = !jobs.is_empty() && jobs.iter().all(|j| {
                             j.status == "completed" || j.status == "failed"
                         });
-                        if all_done {
+                        if !all_finished {
+                            return None;
+                        }
+                        let any_failed = jobs.iter().any(|j| j.status == "failed");
+                        if any_failed {
+                            let failures: Vec<_> = jobs.iter()
+                                .filter(|j| j.status == "failed")
+                                .map(|j| format!(
+                                    "{}: {}",
+                                    j.filename,
+                                    j.error.as_deref().unwrap_or("unknown error")
+                                ))
+                                .collect();
+                            Some(view! {
+                                <div>
+                                    <p style="color:red">"Some downloads failed:"</p>
+                                    <ul>
+                                        {failures.into_iter().map(|msg| view! {
+                                            <li>{msg}</li>
+                                        }).collect::<Vec<_>>()}
+                                    </ul>
+                                    <a href="/models">"Go to Models →"</a>
+                                </div>
+                            }.into_any())
+                        } else {
                             Some(view! {
                                 <div>
                                     <p>"Setup complete!"</p>
                                     <a href="/models">"Go to Models →"</a>
                                 </div>
-                            })
-                        } else {
-                            None
+                            }.into_any())
                         }
                     }}
                 }.into_any(),
