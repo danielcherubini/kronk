@@ -40,14 +40,22 @@ pub async fn install_from_source(
         ));
     }
 
-    let build_dir = tempfile::tempdir()?;
-    let source_dir = build_dir.path().join("source");
+    // Use a persistent build directory inside the target dir so that debug
+    // symbols in the compiled binary point to real paths (not a temp dir that
+    // gets deleted). This also lets users inspect the source if a crash log
+    // references a file path.
+    let build_root = options.target_dir.join("build");
+    let source_dir = build_root.join("source");
+    let build_output = build_root.join("cmake");
+
+    // Clean any previous build attempt
+    if build_root.exists() {
+        std::fs::remove_dir_all(&build_root)?;
+    }
+    std::fs::create_dir_all(&build_output)?;
 
     // Clone repository
     clone_repository(version, git_url, &source_dir).await?;
-
-    let build_output = build_dir.path().join("build");
-    std::fs::create_dir_all(&build_output)?;
 
     // Configure with CMake
     configure_cmake(options, &source_dir, &build_output).await?;
@@ -56,7 +64,18 @@ pub async fn install_from_source(
     build_cmake(&build_output).await?;
 
     // Install binary
-    install_binary(&build_output, options).await
+    let result = install_binary(&build_output, options).await;
+
+    // Clean up build artifacts on success — the binary is installed and the
+    // multi-GB build tree is no longer needed. On failure, leave it in place
+    // so the source paths in any crash logs remain valid for debugging.
+    if result.is_ok() {
+        if let Err(e) = std::fs::remove_dir_all(&build_root) {
+            tracing::warn!("Failed to clean up build directory: {}", e);
+        }
+    }
+
+    result
 }
 
 /// Clone a git repository, with fallback logic for "latest" and "main" tags.
