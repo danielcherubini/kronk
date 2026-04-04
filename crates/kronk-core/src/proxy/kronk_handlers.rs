@@ -264,6 +264,7 @@ fn is_safe_path_component(s: &str) -> bool {
 /// The job is inserted into `pull_jobs` before this function returns.
 fn spawn_download_job(
     pull_jobs_arc: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
+    in_flight: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
     job_id: String,
     repo_id: String,
     filename: String,
@@ -274,6 +275,7 @@ fn spawn_download_job(
     let repo_id_clone = repo_id.clone();
     let filename_clone = filename.clone();
     let spec_clone = spec.clone();
+    let in_flight_clone = Arc::clone(&in_flight);
 
     tokio::spawn(async move {
         // Validate filename and repo_id to prevent path traversal.
@@ -329,6 +331,25 @@ fn spawn_download_job(
         }
 
         let dest_path = dest_dir.join(&filename_clone);
+
+        // In-flight dedup guard: reject if another task is already downloading this path.
+        // This prevents two concurrent tasks from writing to the same temp part files,
+        // which would silently corrupt the assembled output.
+        {
+            let mut inflight = in_flight_clone.lock().await;
+            if !inflight.insert(dest_path.clone()) {
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(format!(
+                        "Another download of '{}' is already in progress",
+                        filename_clone
+                    ));
+                }
+                return;
+            }
+        }
+
         let url = format!(
             "https://huggingface.co/{}/resolve/main/{}",
             repo_id_clone, filename_clone
@@ -391,11 +412,15 @@ fn spawn_download_job(
                         tracing::info!(job_id = %job_id_clone, bytes, "Job transitioned to Completed");
                     }
                 }
+                // Release the in-flight lock before the post-download setup so
+                // a retry of the same file can start immediately if needed.
+                in_flight_clone.lock().await.remove(&dest_path);
                 // Post-download: auto-create model card and config entries (best-effort)
                 setup_model_after_pull(config.clone(), &repo_id_clone, &spec_clone, &dest_dir)
                     .await;
             }
             Err(e) => {
+                in_flight_clone.lock().await.remove(&dest_path);
                 let mut jobs = pull_jobs_arc.write().await;
                 if let Some(job) = jobs.get_mut(&job_id_clone) {
                     job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
@@ -463,7 +488,31 @@ pub async fn handle_kronk_pull_model(
             }
         }
 
+        // Reject if the request contains duplicate filenames — concurrent downloads
+        // to the same dest path would corrupt the shared temp part files.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for spec in &request.quants {
+                if !seen.insert(&spec.filename) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!(
+                                    "Duplicate filename '{}' in request",
+                                    spec.filename
+                                ),
+                                "type": "ValidationError"
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+
         let pull_jobs_arc = Arc::clone(&state.pull_jobs);
+        let in_flight = Arc::clone(&state.in_flight_downloads);
         let config = state.config.clone();
         let mut job_entries = Vec::with_capacity(request.quants.len());
 
@@ -487,6 +536,7 @@ pub async fn handle_kronk_pull_model(
 
             spawn_download_job(
                 Arc::clone(&pull_jobs_arc),
+                Arc::clone(&in_flight),
                 job_id.clone(),
                 repo_id.clone(),
                 spec.filename.clone(),
@@ -614,6 +664,7 @@ pub async fn handle_kronk_pull_model(
     };
     spawn_download_job(
         Arc::clone(&state.pull_jobs),
+        Arc::clone(&state.in_flight_downloads),
         job_id.clone(),
         repo_id.clone(),
         filename.clone(),

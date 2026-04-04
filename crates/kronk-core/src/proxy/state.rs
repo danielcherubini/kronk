@@ -24,6 +24,9 @@ impl ProxyState {
             system_metrics: Arc::new(tokio::sync::RwLock::new(
                 crate::gpu::SystemMetrics::default(),
             )),
+            in_flight_downloads: Arc::new(
+                tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            ),
         }
     }
 
