@@ -1,10 +1,13 @@
 use anyhow::{anyhow, Context, Result};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crate::config::Config;
+use crate::db::queries::{
+    delete_all_backend_versions, get_active_backend, insert_backend_installation,
+    list_active_backends, BackendInstallationRecord,
+};
 use crate::gpu::GpuType;
 
 /// Metadata for an installed backend.
@@ -21,13 +24,6 @@ pub struct BackendInfo {
     pub source: Option<BackendSource>,
 }
 
-/// Registry data structure
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct RegistryData {
-    #[serde(default)]
-    pub backends: HashMap<String, BackendInfo>,
-}
-
 /// Source of a backend installation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "source", content = "content")]
@@ -36,227 +32,66 @@ pub enum BackendSource {
     SourceCode { version: String, git_url: String },
 }
 
-#[derive(Debug)]
 pub struct BackendRegistry {
-    path: PathBuf,
-    base_dir: PathBuf,
-    data: RegistryData,
-    read_only: bool,
+    conn: Connection,
 }
 
 impl BackendRegistry {
-    pub fn load(path: &Path) -> Result<Self> {
-        Self::load_with_base_dir(path, None)
-    }
-
-    pub fn load_with_base_dir(path: &Path, base_dir: Option<&Path>) -> Result<Self> {
-        let canonical_path = Self::canonicalize_path(path)?;
-        let base_dir = Self::canonicalize_base_dir(base_dir)?;
-
-        if !canonical_path.starts_with(&base_dir) {
-            return Err(anyhow!(
-                "Registry path {:?} is outside base directory {:?}",
-                path,
-                base_dir
-            ));
-        }
-
-        let data = if path.exists() {
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read registry at {:?}", path))?;
-            toml::from_str(&content).with_context(|| "Failed to parse registry")?
-        } else {
-            RegistryData::default()
-        };
-
+    /// Open a BackendRegistry backed by SQLite at `<config_dir>/kronk.db`.
+    pub fn open(config_dir: &Path) -> Result<Self> {
+        let open_result = crate::db::open(config_dir)?;
         Ok(Self {
-            path: path.to_path_buf(),
-            base_dir,
-            data,
-            read_only: false,
+            conn: open_result.conn,
         })
     }
 
-    /// Create a new BackendRegistry from a HashMap of backends
-    pub fn from_backends(backends: HashMap<String, BackendInfo>) -> Self {
-        Self {
-            path: PathBuf::from("dynamic"),
-            base_dir: PathBuf::from("/"),
-            data: RegistryData { backends },
-            read_only: true,
-        }
-    }
-
-    /// Create a default BackendRegistry (for tests)
-    #[cfg(test)]
-    pub fn default() -> Self {
-        Self {
-            path: PathBuf::from("/tmp/test-registry.toml"),
-            base_dir: PathBuf::from("/tmp"),
-            data: RegistryData::default(),
-            read_only: false,
-        }
-    }
-
-    pub fn save(&self) -> Result<()> {
-        if self.read_only {
-            return Err(anyhow!("Registry is in read-only mode"));
-        }
-
-        let canonical_path = Self::canonicalize_path(&self.path)?;
-
-        if !canonical_path.starts_with(&self.base_dir) {
-            return Err(anyhow!(
-                "Registry path {:?} is outside base directory {:?}",
-                self.path,
-                self.base_dir
-            ));
-        }
-
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = toml::to_string_pretty(&self.data)?;
-        std::fs::write(&self.path, content)?;
-        Ok(())
-    }
-
-    /// Load registry without path validation (for tests)
-    #[cfg(test)]
-    pub fn load_unchecked(path: &Path) -> Result<Self> {
-        let data = if path.exists() {
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read registry at {:?}", path))?;
-            toml::from_str(&content).with_context(|| "Failed to parse registry")?
-        } else {
-            RegistryData::default()
-        };
-
+    /// Open an in-memory BackendRegistry for testing.
+    pub fn open_in_memory() -> Result<Self> {
+        let open_result = crate::db::open_in_memory()?;
         Ok(Self {
-            path: path.to_path_buf(),
-            base_dir: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
-            data,
-            read_only: false,
+            conn: open_result.conn,
         })
     }
 
-    /// Save without path validation (for tests)
-    #[cfg(test)]
-    pub fn save_unchecked(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = toml::to_string_pretty(&self.data)?;
-        std::fs::write(&self.path, content)?;
-        Ok(())
-    }
-
-    /// Load registry without path validation (for tests) with base_dir
-    #[cfg(test)]
-    pub fn load_unchecked_with_base_dir(path: &Path, base_dir: &Path) -> Result<Self> {
-        let data = if path.exists() {
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read registry at {:?}", path))?;
-            toml::from_str(&content).with_context(|| "Failed to parse registry")?
-        } else {
-            RegistryData::default()
-        };
-
-        Ok(Self {
-            path: path.to_path_buf(),
-            base_dir: base_dir.to_path_buf(),
-            data,
-            read_only: false,
-        })
-    }
-
+    /// Add a new backend installation, marking it as the active version.
     pub fn add(&mut self, backend: BackendInfo) -> Result<()> {
-        if self.read_only {
-            return Err(anyhow!("Registry is in read-only mode"));
-        }
-
-        let original_backends = std::mem::take(&mut self.data.backends);
-        let mut new_backends = original_backends.clone();
-        new_backends.insert(backend.name.clone(), backend);
-        self.data.backends = new_backends;
-        if let Err(e) = self.save() {
-            self.data.backends = original_backends;
-            return Err(e);
-        }
-        Ok(())
+        let record = Self::backend_info_to_record(&backend)?;
+        insert_backend_installation(&self.conn, &record)
+            .with_context(|| format!("Failed to insert backend '{}'", backend.name))
     }
 
+    /// Remove all versions of a backend by name.
     pub fn remove(&mut self, name: &str) -> Result<()> {
-        if self.read_only {
-            return Err(anyhow!("Registry is in read-only mode"));
-        }
-
-        let original_backends = std::mem::take(&mut self.data.backends);
-        let mut new_backends = original_backends.clone();
-        new_backends.remove(name);
-        self.data.backends = new_backends;
-        if let Err(e) = self.save() {
-            self.data.backends = original_backends;
-            return Err(e);
-        }
-        Ok(())
+        delete_all_backend_versions(&self.conn, name)
+            .with_context(|| format!("Failed to remove backend '{}'", name))
     }
 
-    #[cfg(test)]
-    pub fn add_unchecked(&mut self, backend: BackendInfo) {
-        let original_backends = std::mem::take(&mut self.data.backends);
-        let mut new_backends = original_backends.clone();
-        new_backends.insert(backend.name.clone(), backend);
-        self.data.backends = new_backends;
-        if let Err(_) = self.save_unchecked() {
-            self.data.backends = original_backends;
+    /// Get the active backend installation for a given name.
+    ///
+    /// Returns `Ok(None)` if no backend with that name exists.
+    pub fn get(&self, name: &str) -> Result<Option<BackendInfo>> {
+        let record = get_active_backend(&self.conn, name)
+            .with_context(|| format!("Failed to query backend '{}'", name))?;
+        match record {
+            Some(r) => Ok(Some(Self::record_to_backend_info(r)?)),
+            None => Ok(None),
         }
     }
 
-    #[cfg(test)]
-    pub fn remove_unchecked(&mut self, name: &str) {
-        let original_backends = std::mem::take(&mut self.data.backends);
-        let mut new_backends = original_backends.clone();
-        new_backends.remove(name);
-        self.data.backends = new_backends;
-        if let Err(_) = self.save_unchecked() {
-            self.data.backends = original_backends;
-        }
+    /// List all active backend installations.
+    pub fn list(&self) -> Result<Vec<BackendInfo>> {
+        let records =
+            list_active_backends(&self.conn).with_context(|| "Failed to list active backends")?;
+        records
+            .into_iter()
+            .map(Self::record_to_backend_info)
+            .collect()
     }
 
-    pub fn get(&self, name: &str) -> Option<&BackendInfo> {
-        self.data.backends.get(name)
-    }
-
-    pub fn list(&self) -> Vec<&BackendInfo> {
-        self.data.backends.values().collect()
-    }
-
-    /// Accessor methods for private fields
-    pub fn is_read_only(&self) -> bool {
-        self.read_only
-    }
-
-    pub fn set_read_only(&mut self, read_only: bool) {
-        self.read_only = read_only;
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn base_dir(&self) -> &Path {
-        &self.base_dir
-    }
-
-    pub fn data(&self) -> &RegistryData {
-        &self.data
-    }
-
-    pub fn data_mut(&mut self) -> &mut RegistryData {
-        &mut self.data
-    }
-
+    /// Update an installed backend to a new version.
+    ///
+    /// Constructs a new `BackendInfo` with updated fields and calls `add()`,
+    /// which marks the new row active and deactivates the old one.
     pub fn update_version(
         &mut self,
         name: &str,
@@ -264,66 +99,88 @@ impl BackendRegistry {
         new_binary_path: PathBuf,
         new_source: Option<BackendSource>,
     ) -> Result<()> {
-        if self.read_only {
-            return Err(anyhow!("Registry is in read-only mode"));
-        }
+        let existing = self
+            .get(name)?
+            .ok_or_else(|| anyhow!("Backend '{}' not found", name))?;
 
-        let new_binary_path_canonical = Self::canonicalize_path(&new_binary_path)?;
-        if !new_binary_path_canonical.starts_with(&self.base_dir) {
-            return Err(anyhow!(
-                "Backend binary path {:?} is outside managed directory {:?}",
-                new_binary_path,
-                self.base_dir
-            ));
-        }
-
-        let original_backends = std::mem::take(&mut self.data.backends);
-        let mut new_backends = original_backends.clone();
-        if let Some(info) = new_backends.get_mut(name) {
-            info.version = new_version;
-            info.path = new_binary_path;
-            info.installed_at = std::time::SystemTime::now()
+        let updated = BackendInfo {
+            name: existing.name,
+            backend_type: existing.backend_type,
+            version: new_version,
+            path: new_binary_path,
+            installed_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64);
-            info.source = new_source;
-        } else {
-            self.data.backends = original_backends;
-            return Err(anyhow!("Backend '{}' not found", name));
-        }
-        self.data.backends = new_backends;
-        if let Err(e) = self.save() {
-            self.data.backends = original_backends;
-            return Err(e);
-        }
-        Ok(())
+                .map_or(0, |d| d.as_secs() as i64),
+            gpu_type: existing.gpu_type,
+            source: new_source,
+        };
+
+        self.add(updated)
     }
 }
 
 impl BackendRegistry {
-    /// Canonicalize a path, handling both existing and non-existing files
-    fn canonicalize_path(path: &Path) -> Result<PathBuf> {
-        if path.exists() {
-            std::fs::canonicalize(path)
-                .with_context(|| format!("Failed to canonicalize registry path {:?}", path))
-        } else if let Some(parent) = path.parent() {
-            std::fs::canonicalize(parent)
-                .with_context(|| format!("Failed to canonicalize parent directory {:?}", parent))
-                .map(|p| p.join(path.file_name().unwrap_or_default()))
-        } else {
-            Err(anyhow!("Registry path {:?} has no parent directory", path))
-        }
+    /// Convert a `BackendInstallationRecord` to a `BackendInfo`.
+    fn record_to_backend_info(record: BackendInstallationRecord) -> Result<BackendInfo> {
+        let backend_type: BackendType = record
+            .backend_type
+            .parse()
+            .map_err(|e: String| anyhow!("{}", e))?;
+
+        let gpu_type: Option<GpuType> = match record.gpu_type {
+            Some(ref s) => Some(
+                serde_json::from_str(s)
+                    .with_context(|| format!("Failed to deserialize gpu_type: {}", s))?,
+            ),
+            None => None,
+        };
+
+        let source: Option<BackendSource> = match record.source {
+            Some(ref s) => Some(
+                serde_json::from_str(s)
+                    .with_context(|| format!("Failed to deserialize source: {}", s))?,
+            ),
+            None => None,
+        };
+
+        Ok(BackendInfo {
+            name: record.name,
+            backend_type,
+            version: record.version,
+            path: PathBuf::from(&record.path),
+            installed_at: record.installed_at,
+            gpu_type,
+            source,
+        })
     }
 
-    /// Canonicalize base directory
-    fn canonicalize_base_dir(base_dir: Option<&Path>) -> Result<PathBuf> {
-        base_dir
-            .map(|b| {
-                std::fs::canonicalize(b).with_context(|| "Failed to canonicalize base directory")
-            })
-            .unwrap_or_else(|| {
-                std::fs::canonicalize(Config::base_dir()?)
-                    .with_context(|| "Failed to canonicalize base directory")
-            })
+    /// Convert a `BackendInfo` to a `BackendInstallationRecord`.
+    fn backend_info_to_record(backend: &BackendInfo) -> Result<BackendInstallationRecord> {
+        let gpu_type_json: Option<String> = match &backend.gpu_type {
+            Some(g) => {
+                Some(serde_json::to_string(g).with_context(|| "Failed to serialize gpu_type")?)
+            }
+            None => None,
+        };
+
+        let source_json: Option<String> = match &backend.source {
+            Some(s) => {
+                Some(serde_json::to_string(s).with_context(|| "Failed to serialize source")?)
+            }
+            None => None,
+        };
+
+        Ok(BackendInstallationRecord {
+            id: 0,
+            name: backend.name.clone(),
+            backend_type: backend.backend_type.to_string(),
+            version: backend.version.clone(),
+            path: backend.path.to_string_lossy().to_string(),
+            installed_at: backend.installed_at,
+            gpu_type: gpu_type_json,
+            source: source_json,
+            is_active: true,
+        })
     }
 }
 
@@ -363,94 +220,74 @@ impl FromStr for BackendType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+
+    fn make_backend_info(name: &str, version: &str) -> BackendInfo {
+        BackendInfo {
+            name: name.to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: version.to_string(),
+            path: PathBuf::from(format!("/path/to/{}", name)),
+            installed_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            gpu_type: None,
+            source: None,
+        }
+    }
 
     #[test]
     fn test_registry_add_and_list() {
-        let temp_dir = TempDir::new().unwrap();
-        let registry_path = temp_dir.path().join("test_registry.toml");
-        let base_dir = temp_dir.path().to_path_buf();
-        let mut registry =
-            BackendRegistry::load_unchecked_with_base_dir(&registry_path, &base_dir).unwrap();
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
 
-        registry.add_unchecked(BackendInfo {
-            name: "llama_cpp".to_string(),
-            backend_type: BackendType::LlamaCpp,
-            version: "b8407".to_string(),
-            path: "/path/to/llama-server".into(),
-            installed_at: now,
-            gpu_type: None,
-            source: Some(BackendSource::Prebuilt {
-                version: "b8407".to_string(),
-            }),
-        });
-
-        let backends = registry.list();
+        let backends = registry.list().unwrap();
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].name, "llama_cpp");
     }
 
     #[test]
     fn test_registry_remove() {
-        let temp_dir = TempDir::new().unwrap();
-        let registry_path = temp_dir.path().join("test_registry_remove.toml");
-        let base_dir = temp_dir.path().to_path_buf();
-        let mut registry =
-            BackendRegistry::load_unchecked_with_base_dir(&registry_path, &base_dir).unwrap();
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
 
-        registry.add_unchecked(BackendInfo {
-            name: "llama_cpp".to_string(),
-            backend_type: BackendType::LlamaCpp,
-            version: "b8407".to_string(),
-            path: "/path/to/llama-server".into(),
-            installed_at: now,
-            gpu_type: None,
-            source: None,
-        });
+        registry.remove("llama_cpp").unwrap();
 
-        registry.remove_unchecked("llama_cpp");
-        assert_eq!(registry.list().len(), 0);
+        let backends = registry.list().unwrap();
+        assert_eq!(backends.len(), 0);
     }
 
     #[test]
-    fn test_registry_roundtrip_serialization() {
-        let temp_dir = TempDir::new().unwrap();
-        let registry_path = temp_dir.path().join("test_registry_roundtrip.toml");
-        let base_dir = temp_dir.path().to_path_buf();
+    fn test_registry_update_version() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
 
-        {
-            let mut registry =
-                BackendRegistry::load_unchecked_with_base_dir(&registry_path, &base_dir).unwrap();
-            registry.add_unchecked(BackendInfo {
-                name: "test".to_string(),
-                backend_type: BackendType::LlamaCpp,
-                version: "b1234".to_string(),
-                path: "/tmp/test".into(),
-                installed_at: now,
-                gpu_type: Some(crate::gpu::GpuType::Cuda {
-                    version: "12.4".to_string(),
-                }),
-                source: None,
-            });
-        }
+        registry
+            .update_version(
+                "llama_cpp",
+                "b9000".to_string(),
+                PathBuf::from("/path/to/llama_cpp_v2"),
+                None,
+            )
+            .unwrap();
 
-        let registry = BackendRegistry::load_unchecked(&registry_path).unwrap();
-        let backend = registry.get("test").unwrap();
-        assert_eq!(backend.version, "b1234");
+        let backend = registry.get("llama_cpp").unwrap().unwrap();
+        assert_eq!(backend.version, "b9000");
+    }
+
+    #[test]
+    fn test_registry_get_returns_none_for_unknown() {
+        let registry = BackendRegistry::open_in_memory().unwrap();
+        let result = registry.get("nonexistent").unwrap();
+        assert!(result.is_none());
     }
 }
