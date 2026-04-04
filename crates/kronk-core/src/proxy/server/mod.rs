@@ -20,18 +20,24 @@ impl ProxyServer {
         Self::cleanup_stale_processes(&state);
         let handle = Self::start_idle_timeout_checker(state.clone());
 
-        // Spawn background task to refresh system metrics every 5s
+        // Spawn background task to refresh system metrics every 5s.
+        // `sysinfo::System` is created once and moved into the closure so that
+        // CPU-usage deltas are computed correctly across iterations without the
+        // per-call MINIMUM_CPU_UPDATE_INTERVAL sleep.
         let metrics_arc = Arc::clone(&state.system_metrics);
         tokio::spawn(async move {
+            let mut sys = sysinfo::System::new();
             loop {
-                let snapshot =
-                    match tokio::task::spawn_blocking(crate::gpu::collect_system_metrics).await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::warn!("system metrics collection panicked: {}", e);
-                            crate::gpu::SystemMetrics::default()
-                        }
-                    };
+                let (snapshot, returned_sys) = tokio::task::spawn_blocking(move || {
+                    let snapshot = crate::gpu::collect_system_metrics_with(&mut sys);
+                    (snapshot, sys)
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("system metrics collection panicked: {}", e);
+                    (crate::gpu::SystemMetrics::default(), sysinfo::System::new())
+                });
+                sys = returned_sys;
                 *metrics_arc.write().await = snapshot;
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }

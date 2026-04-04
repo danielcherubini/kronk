@@ -61,17 +61,17 @@ pub struct SystemMetrics {
     pub vram: Option<VramInfo>,
 }
 
-/// Collect a snapshot of system metrics (CPU, RAM, GPU util, VRAM).
-/// This function blocks — call via `tokio::task::spawn_blocking`.
-pub fn collect_system_metrics() -> SystemMetrics {
-    // CPU and RAM via sysinfo
-    let mut sys = System::new();
+/// Collect a snapshot of system metrics using a caller-owned `System`.
+///
+/// The caller is responsible for passing a `System` that persists across
+/// calls so that `sysinfo` can compute CPU deltas correctly. This function
+/// calls `refresh_cpu_usage` and `refresh_memory` once — no internal sleep.
+/// It blocks on nvidia-smi subprocesses; call via `tokio::task::spawn_blocking`.
+pub fn collect_system_metrics_with(sys: &mut System) -> SystemMetrics {
     sys.refresh_cpu_usage();
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    sys.refresh_cpu_usage();
-    let cpu_usage_pct = sys.global_cpu_info().cpu_usage();
-
     sys.refresh_memory();
+
+    let cpu_usage_pct = sys.global_cpu_info().cpu_usage();
     let ram_used_mib = sys.used_memory() / 1024 / 1024;
     let ram_total_mib = sys.total_memory() / 1024 / 1024;
 
@@ -88,6 +88,21 @@ pub fn collect_system_metrics() -> SystemMetrics {
         gpu_utilization_pct,
         vram,
     }
+}
+
+/// Collect a snapshot of system metrics (CPU, RAM, GPU util, VRAM).
+///
+/// Creates a temporary `System`, sleeps for `MINIMUM_CPU_UPDATE_INTERVAL`
+/// to get a meaningful CPU reading, then returns the snapshot. Prefer
+/// [`collect_system_metrics_with`] for long-running tasks to avoid the
+/// per-call allocation and sleep.
+///
+/// This function blocks — call via `tokio::task::spawn_blocking`.
+pub fn collect_system_metrics() -> SystemMetrics {
+    let mut sys = System::new();
+    sys.refresh_cpu_usage();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    collect_system_metrics_with(&mut sys)
 }
 
 /// Query GPU utilization percentage via nvidia-smi.
@@ -519,5 +534,24 @@ mod tests {
         println!("ram_total_mib: {}", metrics.ram_total_mib);
         println!("gpu_utilization_pct: {:?}", metrics.gpu_utilization_pct);
         println!("vram: {:?}", metrics.vram);
+    }
+
+    #[test]
+    fn test_collect_system_metrics_with_reuses_system() {
+        // Verify collect_system_metrics_with works when System is reused across calls.
+        let mut sys = System::new();
+        let metrics = collect_system_metrics_with(&mut sys);
+        assert!(
+            metrics.cpu_usage_pct >= 0.0 && metrics.cpu_usage_pct <= 100.0,
+            "cpu_usage_pct out of range: {}",
+            metrics.cpu_usage_pct
+        );
+        assert!(metrics.ram_total_mib > 0, "ram_total_mib should be > 0");
+        assert!(
+            metrics.ram_used_mib <= metrics.ram_total_mib,
+            "ram_used_mib ({}) > ram_total_mib ({})",
+            metrics.ram_used_mib,
+            metrics.ram_total_mib
+        );
     }
 }
