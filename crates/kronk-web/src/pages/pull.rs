@@ -349,19 +349,48 @@ pub fn Pull() -> impl IntoView {
                                                     let dj = download_jobs;
                                                     let ws = wizard_step;
                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                        let url = format!("/kronk/v1/pulls/{}/stream", job_id_str);
-                                                        let mut es = match EventSource::new(&url) {
-                                                            Ok(es) => es,
-                                                            Err(_) => return,
-                                                        };
-                                                        let mut progress_stream = match es.subscribe("progress") {
-                                                            Ok(s) => s,
-                                                            Err(_) => { es.close(); return; }
-                                                        };
-                                                        let mut done_stream = match es.subscribe("done") {
-                                                            Ok(s) => s,
-                                                            Err(_) => { es.close(); return; }
-                                                        };
+                                        let url = format!("/kronk/v1/pulls/{}/stream", job_id_str);
+                                        let mut es = match EventSource::new(&url) {
+                                            Ok(es) => es,
+                                            Err(e) => {
+                                                let msg = format!("{e:?}");
+                                                dj.update(|jobs| {
+                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                        j.status = "failed".to_string();
+                                                        j.error = Some(format!("Failed to open SSE stream: {msg}"));
+                                                    }
+                                                });
+                                                return;
+                                            }
+                                        };
+                                        let mut progress_stream = match es.subscribe("progress") {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                let msg = format!("{e:?}");
+                                                dj.update(|jobs| {
+                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                        j.status = "failed".to_string();
+                                                        j.error = Some(format!("Failed to subscribe to progress events: {msg}"));
+                                                    }
+                                                });
+                                                es.close();
+                                                return;
+                                            }
+                                        };
+                                        let mut done_stream = match es.subscribe("done") {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                let msg = format!("{e:?}");
+                                                dj.update(|jobs| {
+                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                        j.status = "failed".to_string();
+                                                        j.error = Some(format!("Failed to subscribe to done events: {msg}"));
+                                                    }
+                                                });
+                                                es.close();
+                                                return;
+                                            }
+                                        };
 
                                                         loop {
                                                             let next_progress = progress_stream.next();
@@ -436,7 +465,7 @@ pub fn Pull() -> impl IntoView {
                     <div>
                         {move || download_jobs.get().into_iter().map(|job| {
                             let progress_val = job.bytes_downloaded as f64;
-                            let progress_max = job.total_bytes.unwrap_or(100) as f64;
+                            let progress_max = job.total_bytes.map(|b| b as f64);
                             let status_text = if job.status == "completed" {
                                 "completed ✓".to_string()
                             } else if job.status == "failed" {
@@ -453,10 +482,15 @@ pub fn Pull() -> impl IntoView {
                             view! {
                                 <div style="margin-bottom:1em">
                                     <p><strong>{job.filename}</strong></p>
-                                    <progress
-                                        value=progress_val
-                                        max=progress_max
-                                    />
+                                    {if let Some(max) = progress_max {
+                                        view! {
+                                            <progress value=progress_val max=max />
+                                        }.into_any()
+                                    } else {
+                                        // Indeterminate — omit value/max so the browser
+                                        // renders an animated "unknown length" bar.
+                                        view! { <progress /> }.into_any()
+                                    }}
                                     <p>{status_text}</p>
                                 </div>
                             }
