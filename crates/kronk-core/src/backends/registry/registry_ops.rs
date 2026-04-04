@@ -1,8 +1,9 @@
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
 use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use crate::db::queries::{
     delete_all_backend_versions, get_active_backend, insert_backend_installation,

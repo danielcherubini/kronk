@@ -148,8 +148,7 @@ fn backends_dir() -> Result<std::path::PathBuf> {
 fn current_unix_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs() as i64
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 async fn cmd_install(
@@ -311,7 +310,9 @@ async fn cmd_install(
     let git_url = match backend_type {
         BackendType::LlamaCpp => "https://github.com/ggml-org/llama.cpp.git",
         BackendType::IkLlama => "https://github.com/ikawrakow/ik_llama.cpp.git",
-        BackendType::Custom => unreachable!(),
+        BackendType::Custom => {
+            anyhow::bail!("Custom backends cannot be installed via this command");
+        }
     };
 
     let source = if use_source {
