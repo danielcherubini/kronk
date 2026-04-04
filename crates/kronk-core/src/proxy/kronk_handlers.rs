@@ -354,8 +354,42 @@ fn spawn_download_job(
             }
         }
 
-        // Real download
-        match crate::models::download::download_chunked(&url, &dest_path, 8, None).await {
+        // Spawn a task that polls file size every 500ms to update bytes_downloaded
+        let poll_jobs = Arc::clone(&pull_jobs_arc);
+        let poll_job_id = job_id_clone.clone();
+        let poll_dest = dest_path.clone();
+        let poll_handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                // If the job is no longer running, stop polling
+                {
+                    let jobs = poll_jobs.read().await;
+                    if let Some(job) = jobs.get(&poll_job_id) {
+                        if !matches!(job.status, PullJobStatus::Running) {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                // Read file size from disk
+                if let Ok(meta) = tokio::fs::metadata(&poll_dest).await {
+                    let mut jobs = poll_jobs.write().await;
+                    if let Some(job) = jobs.get_mut(&poll_job_id) {
+                        job.bytes_downloaded = meta.len();
+                    }
+                }
+            }
+        });
+
+        // Run the actual download
+        let download_result =
+            crate::models::download::download_chunked(&url, &dest_path, 8, None).await;
+
+        // Stop the polling task
+        poll_handle.abort();
+
+        match download_result {
             Ok(bytes) => {
                 {
                     let mut jobs = pull_jobs_arc.write().await;
