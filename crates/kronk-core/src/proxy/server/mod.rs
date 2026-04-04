@@ -9,6 +9,8 @@ pub struct ProxyServer {
     state: Arc<ProxyState>,
     #[allow(dead_code)]
     idle_timeout_handle: Option<tokio::task::JoinHandle<()>>,
+    #[allow(dead_code)]
+    metrics_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ProxyServer {
@@ -19,9 +21,34 @@ impl ProxyServer {
     pub fn new(state: Arc<ProxyState>) -> Self {
         Self::cleanup_stale_processes(&state);
         let handle = Self::start_idle_timeout_checker(state.clone());
+
+        // Spawn background task to refresh system metrics every 5s.
+        // `sysinfo::System` is created once and moved into the closure so that
+        // CPU-usage deltas are computed correctly across iterations without the
+        // per-call MINIMUM_CPU_UPDATE_INTERVAL sleep.
+        let metrics_arc = Arc::clone(&state.system_metrics);
+        let metrics_handle = tokio::spawn(async move {
+            let mut sys = sysinfo::System::new();
+            loop {
+                let (snapshot, returned_sys) = tokio::task::spawn_blocking(move || {
+                    let snapshot = crate::gpu::collect_system_metrics_with(&mut sys);
+                    (snapshot, sys)
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("system metrics collection panicked: {}", e);
+                    (crate::gpu::SystemMetrics::default(), sysinfo::System::new())
+                });
+                sys = returned_sys;
+                *metrics_arc.write().await = snapshot;
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        });
+
         Self {
             state,
             idle_timeout_handle: Some(handle),
+            metrics_handle: Some(metrics_handle),
         }
     }
 

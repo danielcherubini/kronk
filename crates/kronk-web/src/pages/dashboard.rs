@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 struct SystemHealth {
     status: String,
     service: String,
-    models_loaded: u32,
+    models_loaded: usize,
+    cpu_usage_pct: f32,
+    ram_used_mib: u64,
+    ram_total_mib: u64,
+    gpu_utilization_pct: Option<u8>,
     vram: Option<VramInfo>,
 }
 
@@ -42,8 +46,13 @@ pub fn Dashboard() -> impl IntoView {
                         Some(h) => view! {
                             <p>"Status: " {h.status}</p>
                             <p>"Models loaded: " {h.models_loaded}</p>
+                            <p>{format!("CPU: {:.1}%", h.cpu_usage_pct)}</p>
+                            <p>{format!("RAM: {} / {} MiB", h.ram_used_mib, h.ram_total_mib)}</p>
+                            {h.gpu_utilization_pct.map(|pct| view! {
+                                <p>{format!("GPU: {}%", pct)}</p>
+                            })}
                             {h.vram.map(|v| view! {
-                                <p>"VRAM: " {v.used_mib} " / " {v.total_mib} " MiB"</p>
+                                <p>{format!("VRAM: {} / {} MiB", v.used_mib, v.total_mib)}</p>
                             })}
                         }.into_any(),
                         None => view! { <p>"Failed to load health data"</p> }.into_any(),

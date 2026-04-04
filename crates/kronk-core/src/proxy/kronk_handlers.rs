@@ -8,6 +8,7 @@ use axum::{
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use crate::gpu::VramInfo;
 use crate::proxy::{pull_jobs::PullJob, ProxyState};
 
 /// Request body for pull job.
@@ -412,23 +413,36 @@ pub async fn handle_kronk_get_pull_job(
     }
 }
 
+/// Typed response for the system health endpoint.
+#[derive(Debug, Serialize)]
+pub struct SystemHealthResponse {
+    pub status: &'static str,
+    pub service: &'static str,
+    pub models_loaded: usize,
+    pub cpu_usage_pct: f32,
+    pub ram_used_mib: u64,
+    pub ram_total_mib: u64,
+    pub gpu_utilization_pct: Option<u8>,
+    pub vram: Option<VramInfo>,
+}
+
 /// Handle system health check (Kronk management API).
-pub async fn handle_kronk_system_health(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
+pub async fn handle_kronk_system_health(
+    state: State<Arc<ProxyState>>,
+) -> Json<SystemHealthResponse> {
     let models_loaded = state.models.read().await.len();
+    let metrics = state.system_metrics.read().await;
 
-    let vram = tokio::task::spawn_blocking(crate::gpu::query_vram)
-        .await
-        .unwrap_or(None);
-
-    Json(serde_json::json!({
-        "status": "ok",
-        "service": "kronk",
-        "models_loaded": models_loaded,
-        "vram": vram.map(|v| serde_json::json!({
-            "used_mib": v.used_mib,
-            "total_mib": v.total_mib,
-        }))
-    }))
+    Json(SystemHealthResponse {
+        status: "ok",
+        service: "kronk",
+        models_loaded,
+        cpu_usage_pct: metrics.cpu_usage_pct,
+        ram_used_mib: metrics.ram_used_mib,
+        ram_total_mib: metrics.ram_total_mib,
+        gpu_utilization_pct: metrics.gpu_utilization_pct,
+        vram: metrics.vram.clone(),
+    })
 }
 
 /// Handle system restart (Kronk management API).
@@ -438,4 +452,43 @@ pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Resp
         "message": "Restarting kronk..."
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.
+    #[test]
+    fn test_system_health_response_serializes() {
+        let response = SystemHealthResponse {
+            status: "ok",
+            service: "kronk",
+            models_loaded: 2,
+            cpu_usage_pct: 42.5,
+            ram_used_mib: 1024,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: Some(75),
+            vram: Some(crate::gpu::VramInfo {
+                used_mib: 4000,
+                total_mib: 8000,
+            }),
+        };
+
+        let value = serde_json::to_value(&response).expect("serialization failed");
+        assert!(
+            value.get("cpu_usage_pct").is_some(),
+            "missing cpu_usage_pct"
+        );
+        assert!(value.get("ram_used_mib").is_some(), "missing ram_used_mib");
+        assert!(
+            value.get("ram_total_mib").is_some(),
+            "missing ram_total_mib"
+        );
+        assert!(
+            value.get("gpu_utilization_pct").is_some(),
+            "missing gpu_utilization_pct"
+        );
+        assert!(value.get("vram").is_some(), "missing vram");
+    }
 }

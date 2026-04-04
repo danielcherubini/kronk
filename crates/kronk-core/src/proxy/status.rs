@@ -11,9 +11,7 @@ impl ProxyState {
     pub async fn build_status_response(&self) -> serde_json::Value {
         use std::sync::atomic::Ordering::Relaxed;
 
-        let vram = tokio::task::spawn_blocking(crate::gpu::query_vram)
-            .await
-            .unwrap_or(None);
+        let sys_metrics = self.system_metrics.read().await.clone();
 
         let idle_timeout_secs = self.config.proxy.idle_timeout_secs;
         let models = self.models.read().await;
@@ -113,7 +111,11 @@ impl ProxyState {
         let metrics = &self.metrics;
 
         serde_json::json!({
-            "vram": vram.map(|v| serde_json::json!({
+            "cpu_usage_pct": sys_metrics.cpu_usage_pct,
+            "ram_used_mib": sys_metrics.ram_used_mib,
+            "ram_total_mib": sys_metrics.ram_total_mib,
+            "gpu_utilization_pct": sys_metrics.gpu_utilization_pct,
+            "vram": sys_metrics.vram.map(|v| serde_json::json!({
                 "used_mib": v.used_mib,
                 "total_mib": v.total_mib,
             })),
