@@ -19,6 +19,9 @@ use crate::proxy::{
     ProxyState,
 };
 
+/// Maximum number of quants that can be downloaded in a single pull request.
+const MAX_CONCURRENT_PULLS: usize = 4;
+
 /// A single quantisation variant available for a HuggingFace GGUF repo.
 #[derive(Debug, Serialize)]
 pub struct QuantEntry {
@@ -385,6 +388,16 @@ pub async fn handle_kronk_pull_model(
 
     // Multi-quant path: when `quants` is non-empty, spawn one job per entry.
     if !request.quants.is_empty() {
+        if request.quants.len() > MAX_CONCURRENT_PULLS {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Too many quants requested. Maximum is {}.", MAX_CONCURRENT_PULLS)
+                })),
+            )
+                .into_response();
+        }
+
         let pull_jobs_arc = Arc::clone(&state.pull_jobs);
         let mut job_entries = Vec::with_capacity(request.quants.len());
 
