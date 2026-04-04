@@ -349,7 +349,7 @@ async fn cmd_install(
     registry.add(BackendInfo {
         name: backend_name.clone(),
         backend_type,
-        version,
+        version: version.clone(),
         path: binary_path.clone(),
         installed_at: current_unix_timestamp(),
         gpu_type: Some(gpu_type),
@@ -357,13 +357,16 @@ async fn cmd_install(
     })?;
 
     println!("\nInstallation complete!");
-    println!("  Name:   {}", backend_name);
-    println!("  Binary: {}", binary_path.display());
-    println!("\nTo use this backend:");
+    println!("  Name:    {}", backend_name);
+    println!("  Version: {}", version);
+    println!("  Binary:  {}", binary_path.display());
     println!(
-        "  kronk server add my-server {} --host 0.0.0.0 -m model.gguf -ngl 999",
-        binary_path.display()
+        "\nThe backend is already referenced in config.toml as '{}'.",
+        backend_name
     );
+    println!("To pin this exact version, add to config.toml:");
+    println!("  [backends.{}]", backend_name);
+    println!("  version = \"{}\"", version);
 
     Ok(())
 }
@@ -463,14 +466,20 @@ async fn cmd_list(_config: &Config) -> Result<()> {
     }
 
     println!("Installed backends:\n");
-    for backend in backends {
-        println!("  {} ({:?})", backend.name, backend.backend_type);
-        println!("    Version: {}", backend.version);
-        println!("    Path:    {}", backend.path.display());
+    for backend in &backends {
+        println!("  {}  [{}]", backend.name, backend.backend_type);
+        println!("    Version:  {}", backend.version);
+        println!("    Path:     {}", backend.path.display());
         if let Some(ref gpu) = backend.gpu_type {
-            println!("    GPU:     {:?}", gpu);
+            println!("    GPU:      {:?}", gpu);
         }
         println!();
+    }
+    // Tip using first backend as example
+    if let Some(first) = backends.first() {
+        println!("To pin a version in config.toml, add:");
+        println!("  [backends.{}]", first.name);
+        println!("  version = \"{}\"", first.version);
     }
 
     Ok(())
