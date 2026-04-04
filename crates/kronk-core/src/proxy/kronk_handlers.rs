@@ -11,6 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::gpu::VramInfo;
 use crate::proxy::{pull_jobs::PullJob, ProxyState};
 
+/// A single quantisation variant available for a HuggingFace GGUF repo.
+#[derive(Debug, Serialize)]
+pub struct QuantEntry {
+    pub filename: String,
+    pub quant: Option<String>,
+    pub size_bytes: Option<i64>,
+}
+
 /// Request body for pull job.
 #[derive(Debug, Deserialize)]
 pub struct PullRequest {
@@ -445,6 +453,32 @@ pub async fn handle_kronk_system_health(
     })
 }
 
+/// Handle listing available GGUF quants for a HuggingFace repo (Kronk management API).
+///
+/// `repo_id` is captured as a wildcard path segment (e.g. `bartowski/Qwen3-8B-GGUF`)
+/// because HF repo IDs contain a `/`. Registered as `GET /kronk/v1/hf/*repo_id`.
+pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
+    match crate::models::pull::fetch_blob_metadata(&repo_id).await {
+        Ok(blobs) => {
+            let mut quants: Vec<QuantEntry> = blobs
+                .into_values()
+                .map(|b| QuantEntry {
+                    quant: crate::models::pull::infer_quant_from_filename(&b.filename),
+                    filename: b.filename,
+                    size_bytes: b.size,
+                })
+                .collect();
+            quants.sort_by(|a, b| a.filename.cmp(&b.filename));
+            (StatusCode::OK, Json(quants)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// Handle system restart (Kronk management API).
 /// TODO: Implement actual restart logic using ProxyState methods
 pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Response {
@@ -457,6 +491,24 @@ pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Resp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies that `QuantEntry` serializes to JSON with all expected keys.
+    #[test]
+    fn test_quant_entry_serializes() {
+        let entry = QuantEntry {
+            filename: "Model-Q4_K_M.gguf".to_string(),
+            quant: Some("Q4_K_M".to_string()),
+            size_bytes: Some(4_200_000_000),
+        };
+
+        let value = serde_json::to_value(&entry).expect("serialization failed");
+        assert!(value.get("filename").is_some(), "missing filename");
+        assert!(value.get("quant").is_some(), "missing quant");
+        assert!(value.get("size_bytes").is_some(), "missing size_bytes");
+        assert_eq!(value["filename"], "Model-Q4_K_M.gguf");
+        assert_eq!(value["quant"], "Q4_K_M");
+        assert_eq!(value["size_bytes"], 4_200_000_000_i64);
+    }
 
     /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.
     #[test]

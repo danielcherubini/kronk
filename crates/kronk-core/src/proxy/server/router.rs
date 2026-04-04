@@ -10,9 +10,10 @@ use crate::proxy::handlers::{
     handle_metrics, handle_status, handle_stream_chat_completions,
 };
 use crate::proxy::kronk_handlers::{
-    handle_kronk_get_model as handle_kronk_get_model_fn, handle_kronk_get_pull_job,
-    handle_kronk_list_models, handle_kronk_load_model, handle_kronk_pull_model,
-    handle_kronk_system_health, handle_kronk_system_restart, handle_kronk_unload_model,
+    handle_hf_list_quants, handle_kronk_get_model as handle_kronk_get_model_fn,
+    handle_kronk_get_pull_job, handle_kronk_list_models, handle_kronk_load_model,
+    handle_kronk_pull_model, handle_kronk_system_health, handle_kronk_system_restart,
+    handle_kronk_unload_model,
 };
 use crate::proxy::ProxyState;
 
@@ -43,6 +44,8 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         // Pull jobs live under /kronk/v1/pulls/ to avoid path conflict with /models/:id
         .route("/kronk/v1/pulls", post(handle_kronk_pull_model))
         .route("/kronk/v1/pulls/:job_id", get(handle_kronk_get_pull_job))
+        // HuggingFace quant listing — wildcard captures `owner/repo` with embedded slash
+        .route("/kronk/v1/hf/*repo_id", get(handle_hf_list_quants))
         // System
         .route("/kronk/v1/system/health", get(handle_kronk_system_health))
         .route(
