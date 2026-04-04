@@ -107,20 +107,9 @@ async fn _start_backend(
     _override_arg(&mut args, "--port", &port.to_string());
 
     // Resolve the backend binary path: DB takes priority, config.path is fallback.
-    let backend_path = if let Ok(base_dir) = Config::base_dir() {
-        if let Ok(crate::db::OpenResult { conn, .. }) = crate::db::open(&base_dir) {
-            config.resolve_backend_path(&server_config.backend, &conn)?
-        } else {
-            config.resolve_backend_path(
-                &server_config.backend,
-                &rusqlite::Connection::open_in_memory()?,
-            )?
-        }
-    } else {
-        config.resolve_backend_path(
-            &server_config.backend,
-            &rusqlite::Connection::open_in_memory()?,
-        )?
+    let backend_path = {
+        let conn = Config::open_db();
+        config.resolve_backend_path(&server_config.backend, &conn)?
     };
 
     let health_url = format!("http://127.0.0.1:{}/health", port);

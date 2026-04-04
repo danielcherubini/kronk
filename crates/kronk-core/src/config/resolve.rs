@@ -320,6 +320,51 @@ impl Config {
         format!("kronk-{}", server_name)
     }
 
+    /// Open the application database, falling back to an in-memory connection on error.
+    ///
+    /// Tries `crate::db::open(&Config::base_dir()?)`. On failure, emits a `tracing::warn!`
+    /// and returns a freshly-initialised in-memory connection so callers always get a
+    /// usable `rusqlite::Connection` without duplicating the fallback boilerplate.
+    pub fn open_db() -> rusqlite::Connection {
+        match Config::base_dir().and_then(|dir| crate::db::open(&dir)) {
+            Ok(crate::db::OpenResult { conn, .. }) => conn,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to open DB, falling back to in-memory connection: {}",
+                    e
+                );
+                crate::db::open_in_memory()
+                    .expect("in-memory DB must always open")
+                    .conn
+            }
+        }
+    }
+
+    /// Open the application database from an explicit directory, with fallback.
+    ///
+    /// Tries `crate::db::open(explicit_dir)` if `explicit_dir` is `Some`, then
+    /// falls back to `Config::base_dir()`, and finally to an in-memory connection.
+    /// Emits a `tracing::warn!` only when all on-disk attempts fail.
+    pub fn open_db_from(explicit_dir: Option<&std::path::Path>) -> rusqlite::Connection {
+        // 1. Explicit dir
+        if let Some(dir) = explicit_dir {
+            if let Ok(crate::db::OpenResult { conn, .. }) = crate::db::open(dir) {
+                return conn;
+            }
+        }
+        // 2. Default base dir
+        if let Ok(base_dir) = Config::base_dir() {
+            if let Ok(crate::db::OpenResult { conn, .. }) = crate::db::open(&base_dir) {
+                return conn;
+            }
+        }
+        // 3. In-memory fallback
+        tracing::warn!("Failed to open DB, falling back to in-memory connection");
+        crate::db::open_in_memory()
+            .expect("in-memory DB must always open")
+            .conn
+    }
+
     /// Build the proxy base URL from config, e.g. `http://0.0.0.0:11411`.
     /// Always returns a URL since the proxy may be running even if not
     /// marked as enabled in config (e.g. started manually via `kronk serve`).

@@ -58,8 +58,8 @@ impl ProxyState {
         let backend_path = if let Some(db_conn) = self.open_db() {
             config.resolve_backend_path(&server_config.backend, &db_conn)?
         } else {
-            let fallback_conn = rusqlite::Connection::open_in_memory()
-                .context("Failed to open in-memory DB")?;
+            let fallback_conn =
+                rusqlite::Connection::open_in_memory().context("Failed to open in-memory DB")?;
             config.resolve_backend_path(&server_config.backend, &fallback_conn)?
         };
 
