@@ -96,6 +96,7 @@ pub(super) fn resolve_backend(config: &mut Config, exe_path: &str) -> Result<(St
                     path: Some(exe_str.clone()),
                     default_args: vec![],
                     health_check_url: None,
+                    version: None,
                 },
             );
             key

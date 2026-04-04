@@ -1,7 +1,16 @@
 [general]
 log_level = "info"
 
-[backends]
+[backends.llama_cpp]
+# version = "b8407"         # pin a specific version; omit to use the latest installed
+# path = "/custom/path/llama-server"  # or point directly to a binary (custom installs)
+# default_args = []         # extra CLI args passed to every invocation
+health_check_url = "http://localhost:8080/health"
+
+[backends.ik_llama]
+# version = "main@abc1234"  # for source builds, use the git hash logged at install
+# path = "/custom/path/ik-llama-server"
+health_check_url = "http://localhost:8080/health"
 
 [models]
 

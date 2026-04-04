@@ -257,20 +257,22 @@ pub struct BackendInstallationRecord {
     pub is_active: bool,
 }
 
-/// Insert a new backend installation record, marking it as active.
+/// Insert or replace a backend installation record, marking it as active.
 ///
 /// In a single transaction:
-/// 1. Inserts the new row with `is_active = 1`.
+/// 1. Inserts (or replaces) the row with `is_active = 1`.
 /// 2. Sets `is_active = 0` for all other rows with the same name.
 ///
-/// Returns an error if the `(name, version)` pair already exists (UNIQUE constraint violation).
+/// When a row with the same `(name, version)` already exists, SQLite's `REPLACE` semantics
+/// delete the old row and re-insert (the row gets a new `id`). All other rows with the same
+/// name are deactivated.
 pub fn insert_backend_installation(
     conn: &Connection,
     record: &BackendInstallationRecord,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO backend_installations
+        "INSERT OR REPLACE INTO backend_installations
              (name, backend_type, version, path, installed_at, gpu_type, source, is_active)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
         (
@@ -370,6 +372,37 @@ pub fn list_backend_versions(
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+/// Get a specific backend installation by (name, version).
+/// Returns Ok(None) if no row matches.
+pub fn get_backend_by_version(
+    conn: &Connection,
+    name: &str,
+    version: &str,
+) -> Result<Option<BackendInstallationRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+         FROM backend_installations
+         WHERE name = ?1 AND version = ?2",
+    )?;
+    let mut rows = stmt.query_map((name, version), |row| {
+        Ok(BackendInstallationRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            backend_type: row.get(2)?,
+            version: row.get(3)?,
+            path: row.get(4)?,
+            installed_at: row.get(5)?,
+            gpu_type: row.get(6)?,
+            source: row.get(7)?,
+            is_active: row.get::<_, i64>(8)? != 0,
+        })
+    })?;
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        None => Ok(None),
+    }
 }
 
 /// Delete a specific `(name, version)` backend installation row.
@@ -791,18 +824,82 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_duplicate_version_fails() {
+    fn test_get_backend_by_version() {
         let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        // Insert two versions of llama_cpp with distinct paths
+        let r1 = BackendInstallationRecord {
+            id: 0,
+            name: "llama_cpp".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: "v1.0.0".to_string(),
+            path: "/v1/llama-server".to_string(),
+            installed_at: 1000,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        };
         insert_backend_installation(&conn, &r1).unwrap();
 
-        // Same (name, version) — should fail with UNIQUE constraint error
-        let r2 = make_record("llama_cpp", "v1.0.0", 2000);
+        let r2 = BackendInstallationRecord {
+            id: 0,
+            name: "llama_cpp".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: "v2.0.0".to_string(),
+            path: "/v2/llama-server".to_string(),
+            installed_at: 2000,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        };
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        // v1.0.0 should be found with path /v1/llama-server
+        let found = get_backend_by_version(&conn, "llama_cpp", "v1.0.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.path, "/v1/llama-server");
+        assert_eq!(found.version, "v1.0.0");
+
+        // v2.0.0 should be found with path /v2/llama-server
+        let found = get_backend_by_version(&conn, "llama_cpp", "v2.0.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.path, "/v2/llama-server");
+        assert_eq!(found.version, "v2.0.0");
+
+        // unknown version should return Ok(None)
+        let not_found = get_backend_by_version(&conn, "llama_cpp", "unknown").unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_insert_same_version_is_idempotent() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "b8407", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        // Same (name, version) — should succeed (INSERT OR REPLACE), not error
+        let r2 = make_record("llama_cpp", "b8407", 2000);
         let result = insert_backend_installation(&conn, &r2);
         assert!(
-            result.is_err(),
-            "inserting a duplicate (name, version) should return Err"
+            result.is_ok(),
+            "reinstalling the same (name, version) should be idempotent, got: {:?}",
+            result
+        );
+
+        // Only one row should exist for this (name, version)
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backend_installations WHERE name = 'llama_cpp' AND version = 'b8407'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "only one row should exist after idempotent insert"
         );
     }
 }

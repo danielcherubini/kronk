@@ -375,8 +375,10 @@ impl Config {
     /// Resolve the filesystem path for a named backend binary.
     ///
     /// Priority:
-    /// 1. Active installation in the DB (via `get_active_backend`)
-    /// 2. `path` field in `config.toml` [backends] section (for custom/manual installs)
+    /// 1. If `config.backends[name].version` is `Some(v)`, look up that exact `(name, version)`
+    ///    in the DB. If found, return its path. If not found, return a descriptive error.
+    /// 2. Otherwise, use the active (latest) installation from the DB.
+    /// 3. Fallback to `path` field in `config.toml` [backends] section (for custom/manual installs).
     ///
     /// Returns an error if neither source has a path.
     pub fn resolve_backend_path(
@@ -384,9 +386,25 @@ impl Config {
         name: &str,
         conn: &rusqlite::Connection,
     ) -> Result<std::path::PathBuf> {
+        // Check if a specific version is pinned in config
+        if let Some(pinned_version) = self.backends.get(name).and_then(|b| b.version.as_deref()) {
+            return match crate::db::queries::get_backend_by_version(conn, name, pinned_version)? {
+                Some(record) => Ok(std::path::PathBuf::from(record.path)),
+                None => anyhow::bail!(
+                    "Backend '{}' version '{}' not found in DB. Run `kronk backend install {}` first.",
+                    name,
+                    pinned_version,
+                    name
+                ),
+            };
+        }
+
+        // No version pin — use the active (latest) installation
         if let Some(record) = crate::db::queries::get_active_backend(conn, name)? {
             return Ok(std::path::PathBuf::from(record.path));
         }
+
+        // Fallback to config path (for custom/manual installs)
         self.backends
             .get(name)
             .and_then(|b| b.path.as_deref())
@@ -417,6 +435,7 @@ mod tests {
                     path: Some(path.to_string()),
                     default_args: vec![],
                     health_check_url: None,
+                    version: None,
                 },
             );
         } else {
@@ -427,6 +446,7 @@ mod tests {
                     path: None,
                     default_args: vec![],
                     health_check_url: None,
+                    version: None,
                 },
             );
         }
@@ -483,6 +503,83 @@ mod tests {
             err.to_string()
                 .contains("Backend 'llama_cpp' has no installed path"),
             "Unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_backend_path_version_pin() {
+        let crate::db::OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // Insert v1.0.0 and v2.0.0 (v2.0.0 will be active)
+        let r1 = BackendInstallationRecord {
+            id: 0,
+            name: "llama_cpp".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: "v1.0.0".to_string(),
+            path: "/v1/llama-server".to_string(),
+            installed_at: 1000,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        };
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = BackendInstallationRecord {
+            id: 0,
+            name: "llama_cpp".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: "v2.0.0".to_string(),
+            path: "/v2/llama-server".to_string(),
+            installed_at: 2000,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        };
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        // Pin config to v1.0.0
+        let mut config = make_test_config(None);
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: Some("v1.0.0".to_string()),
+            },
+        );
+
+        let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+        // Should return v1 path, not v2 (which is active)
+        assert_eq!(result, std::path::PathBuf::from("/v1/llama-server"));
+    }
+
+    #[test]
+    fn test_resolve_backend_path_version_pin_not_found() {
+        let crate::db::OpenResult { conn, .. } = open_in_memory().unwrap();
+        // Empty DB — version pin won't find anything
+
+        let mut config = make_test_config(None);
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: Some("nonexistent".to_string()),
+            },
+        );
+
+        let result = config.resolve_backend_path("llama_cpp", &conn);
+        assert!(
+            result.is_err(),
+            "Expected Err when pinned version not in DB"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("not found in DB"),
+            "Expected 'not found in DB' in error message, got: {}",
             err
         );
     }

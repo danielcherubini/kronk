@@ -260,6 +260,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             path: Some("llama-server".to_string()),
             default_args: vec![],
             health_check_url: None,
+            version: None,
         },
     );
     let result: anyhow::Result<()> = cmd_server_edit(

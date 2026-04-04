@@ -127,6 +127,7 @@ impl Default for Config {
                 path: None,
                 default_args: vec![],
                 health_check_url: Some("http://localhost:8080/health".to_string()),
+                version: None,
             },
         );
         backends.insert(
@@ -135,6 +136,7 @@ impl Default for Config {
                 path: None,
                 default_args: vec![],
                 health_check_url: Some("http://localhost:8080/health".to_string()),
+                version: None,
             },
         );
 
