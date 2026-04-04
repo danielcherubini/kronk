@@ -206,10 +206,12 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
         }
     }
 
-    // Enable all flash-attention KV cache quant types for ik_llama.
-    // Without this flag only Q8_0 and Q6_0 are compiled in, causing NaN
-    // crashes when using sub-q8_0 KV cache with hybrid Mamba/attention
-    // models such as Qwen3.5.
+    // Explicitly enable all IQK FlashAttention KV cache quant types for ik_llama.
+    // This defaults to ON in current ik_llama.cpp main, but we set it explicitly
+    // to guard against any future default change. Without it, sub-q8_0 KV cache
+    // types cause NaN crashes on hybrid Mamba/attention models (e.g. Qwen3.5).
+    // Note: this is GGML_IQK_FA_ALL_QUANTS (CPU IQK kernels), distinct from
+    // GGML_CUDA_FA_ALL_QUANTS (CUDA FlashAttention kernels, defaults OFF).
     if matches!(
         options.backend_type,
         super::super::registry::BackendType::IkLlama
@@ -261,8 +263,9 @@ mod tests {
         }
     }
 
-    /// ik_llama source builds must include GGML_IQK_FA_ALL_QUANTS=ON so that
-    /// all KV cache quant types are compiled in. Without it, sub-q8_0 KV cache
+    /// ik_llama source builds must explicitly set GGML_IQK_FA_ALL_QUANTS=ON.
+    /// It defaults to ON in current ik_llama.cpp main, but we set it explicitly
+    /// to guard against any future default change. Without it, sub-q8_0 KV cache
     /// causes NaN crashes on hybrid Mamba/attention models (e.g. Qwen3.5).
     #[test]
     fn test_ik_llama_includes_iqk_fa_all_quants() {
