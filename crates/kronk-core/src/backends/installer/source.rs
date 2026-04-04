@@ -237,37 +237,123 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
     ) {
         cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
 
-        // On Windows with MSVC, GGML_NATIVE=ON uses -march=native which MSVC
-        // does not support, so AVX2 is silently not enabled. Without GGML_AVX2=ON,
-        // __AVX2__ is not defined and the IQK optimized CPU kernels are compiled
-        // out (IQK_IMPLEMENT / HAVE_FANCY_SIMD not defined). For hybrid
-        // Mamba/attention models like Qwen3.5 the SSM layers run on CPU and
-        // require these kernels — without them they produce inf/NaN logits and
-        // crash on the first token.
+        // On Windows, use the Ninja + clang-cl approach recommended by the
+        // ik_llama.cpp official build docs. This sidesteps all MSVC AVX2
+        // detection issues: clang-cl accepts -march=native directly (via
+        // /clang:-march=native), which reliably defines __AVX2__ and activates
+        // the IQK optimized CPU kernels required by hybrid Mamba/attention
+        // models like Qwen3.5. Without these kernels, SSM layers produce
+        // inf/NaN logits and crash on the first token.
         if cfg!(target_os = "windows") {
-            // The MSVC AVX2 flag block in ggml/src/CMakeLists.txt is gated on
-            // CMAKE_GENERATOR_PLATFORM_LWR matching x64/amd64/etc. Without
-            // explicitly setting the platform, CMAKE_GENERATOR_PLATFORM is empty
-            // and the whole MSVC arch block is skipped, leaving ARCH_FLAGS empty
-            // and __AVX2__ undefined. Setting -A x64 fixes this.
-            cmake_args.push("-Ax64".to_string());
-            // GGML_NATIVE=ON runs FindSIMD.cmake which on MSVC still leaves
-            // ARCH_FLAGS empty. Turn it off and set flags explicitly so
-            // /arch:AVX2 is reliably passed to cl.exe, defining __AVX2__ and
-            // activating the IQK optimized CPU kernels required by hybrid
-            // Mamba/attention models like Qwen3.5.
-            cmake_args.push("-DGGML_NATIVE=OFF".to_string());
-            cmake_args.push("-DGGML_AVX2=ON".to_string());
-            cmake_args.push("-DGGML_FMA=ON".to_string());
-            cmake_args.push("-DGGML_AVX=ON".to_string());
-            // GGML_NATIVE=OFF disables native CUDA arch detection, causing the
-            // fallback list (50;61;70;75;80) to be used. CUDA 13.x dropped
-            // compute_50, so set it explicitly to "native" for correct detection.
+            // Use Ninja generator so clang-cl works correctly (it doesn't
+            // integrate well with the Visual Studio MSBuild generator).
+            cmake_args.push("-GNinja".to_string());
+            // clang-cl: LLVM's CL-compatible driver. Supports -march=native
+            // unlike MSVC cl.exe, so __AVX2__ is reliably defined.
+            cmake_args.push("-DCMAKE_C_COMPILER=clang-cl".to_string());
+            cmake_args.push("-DCMAKE_CXX_COMPILER=clang-cl".to_string());
+            // Pass -march=native through clang-cl's /clang: prefix so it
+            // reaches the underlying clang compiler. This enables all CPU
+            // features the host supports (AVX2, FMA, etc.) and defines
+            // __AVX2__, which activates the IQK optimized CPU kernels.
+            let cpu_flags =
+                "/clang:-march=native /clang:-fvectorize /clang:-ffp-model=fast /clang:-fno-finite-math-only";
+            cmake_args.push(format!("-DCMAKE_C_FLAGS={}", cpu_flags));
+            cmake_args.push(format!("-DCMAKE_CXX_FLAGS=/EHsc {}", cpu_flags));
+            // CUDA arch: "native" lets nvcc detect the installed GPU at compile
+            // time. Required because without it CUDA 13.x would use the fallback
+            // list which includes compute_50 (dropped in CUDA 13.x).
             cmake_args.push("-DCMAKE_CUDA_ARCHITECTURES=native".to_string());
         }
     }
 
     cmake_args
+}
+
+/// Find the vcvarsall.bat script for MSVC environment setup.
+/// Searches known Visual Studio Build Tools installation paths.
+#[cfg(target_os = "windows")]
+fn find_vcvarsall() -> Option<std::path::PathBuf> {
+    // VS year-named installs (2022, 2019, ...) and numeric (18, 17, ...)
+    let vs_base = std::path::Path::new(r"C:\Program Files (x86)\Microsoft Visual Studio");
+    let editions = ["BuildTools", "Enterprise", "Professional", "Community"];
+    let subdirs = ["18", "2026", "17", "2022", "16", "2019"];
+
+    for subdir in &subdirs {
+        for edition in &editions {
+            let candidate = vs_base
+                .join(subdir)
+                .join(edition)
+                .join(r"VC\Auxiliary\Build\vcvarsall.bat");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// On Windows, run cmake inside a vcvars-activated environment so that
+/// nvcc can locate the MSVC host compiler headers and libs.
+///
+/// We invoke: cmd /c ""C:\...\vcvarsall.bat" x64 && cmake <args>"
+///
+/// The double-outer-quote trick is required by cmd.exe: when the first
+/// argument to /c is itself quoted, cmd wraps the whole compound command
+/// in an additional outer pair of quotes so that the inner quotes are
+/// preserved correctly (see `cmd /?`).
+#[cfg(target_os = "windows")]
+async fn configure_cmake_windows(cmake_args: &[String]) -> Result<()> {
+    // Build the cmake portion of the compound command. Each arg that
+    // contains spaces is wrapped in double-quotes for cmd.exe.
+    let cmake_invocation = std::iter::once("cmake".to_string())
+        .chain(cmake_args.iter().cloned())
+        .map(|a| {
+            if a.contains(' ') {
+                format!("\"{}\"", a)
+            } else {
+                a
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let (shell_cmd, shell_args) = match find_vcvarsall() {
+        Some(vcvarsall) => {
+            tracing::info!("Using vcvarsall: {:?}", vcvarsall);
+            // cmd /c requires the outer double-double-quote when the command
+            // itself starts with a quoted token (path with spaces).
+            // Form: cmd /c ""path\vcvarsall.bat" x64 && cmake ..."
+            let full_cmd = format!(
+                "\"\"{}\" x64 && {}\"",
+                vcvarsall.to_string_lossy(),
+                cmake_invocation
+            );
+            ("cmd".to_string(), vec!["/c".to_string(), full_cmd])
+        }
+        None => {
+            tracing::warn!(
+                "vcvarsall.bat not found; running cmake without MSVC environment. \
+                 CUDA builds may fail if MSVC headers are not already on PATH."
+            );
+            // Fall back to plain cmake without vcvars
+            ("cmake".to_string(), cmake_args.to_vec())
+        }
+    };
+
+    let status = tokio::process::Command::new(&shell_cmd)
+        .args(&shell_args)
+        .status()
+        .await?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "CMake configuration failed. Check that all build dependencies are installed \
+             (clang-cl, ninja, CUDA toolkit, Visual Studio Build Tools)."
+        ));
+    }
+
+    Ok(())
 }
 
 /// Run CMake configuration step.
@@ -278,18 +364,26 @@ async fn configure_cmake(
 ) -> Result<()> {
     let cmake_args = build_cmake_args(options, source_dir, build_output);
 
-    let status = tokio::process::Command::new("cmake")
-        .args(&cmake_args)
-        .status()
-        .await?;
-
-    if !status.success() {
-        return Err(anyhow!(
-            "CMake configuration failed. Check that all build dependencies are installed."
-        ));
+    #[cfg(target_os = "windows")]
+    {
+        return configure_cmake_windows(&cmake_args).await;
     }
 
-    Ok(())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = tokio::process::Command::new("cmake")
+            .args(&cmake_args)
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(anyhow!(
+                "CMake configuration failed. Check that all build dependencies are installed."
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -349,23 +443,36 @@ mod tests {
         assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
     }
 
-    /// On Windows, ik_llama builds must pass /arch:AVX2 so that MSVC defines
-    /// __AVX2__ and the IQK optimized CPU kernels are compiled in. Without this,
-    /// hybrid Mamba/attention models (e.g. Qwen3.5) crash on the first token
-    /// because the SSM layers fall back to broken scalar code producing inf logits.
+    /// On Windows, ik_llama builds must use the Ninja + clang-cl approach so
+    /// that -march=native is reliably passed via /clang:-march=native. This
+    /// defines __AVX2__ and activates the IQK optimized CPU kernels required by
+    /// hybrid Mamba/attention models (e.g. Qwen3.5). Without these kernels, SSM
+    /// layers produce inf/NaN logits and crash on the first token.
     #[test]
     #[cfg(target_os = "windows")]
-    fn test_ik_llama_windows_includes_avx2_flags() {
+    fn test_ik_llama_windows_uses_ninja_clang_cl() {
         let opts = make_options(BackendType::IkLlama, None);
         let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
         assert!(
-            args.contains(&"-DGGML_AVX2=ON".to_string()),
-            "Windows ik_llama build must include -DGGML_AVX2=ON, got: {:?}",
+            args.contains(&"-GNinja".to_string()),
+            "Windows ik_llama build must use -GNinja, got: {:?}",
             args
         );
         assert!(
-            args.contains(&"-DGGML_FMA=ON".to_string()),
-            "Windows ik_llama build must include -DGGML_FMA=ON, got: {:?}",
+            args.contains(&"-DCMAKE_C_COMPILER=clang-cl".to_string()),
+            "Windows ik_llama build must set CMAKE_C_COMPILER=clang-cl, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DCMAKE_CXX_COMPILER=clang-cl".to_string()),
+            "Windows ik_llama build must set CMAKE_CXX_COMPILER=clang-cl, got: {:?}",
+            args
+        );
+        // CPU flags must include /clang:-march=native to enable AVX2/FMA
+        let has_march = args.iter().any(|a| a.contains("/clang:-march=native"));
+        assert!(
+            has_march,
+            "Windows ik_llama build must include /clang:-march=native in C/CXX flags, got: {:?}",
             args
         );
     }
