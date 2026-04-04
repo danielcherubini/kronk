@@ -1,4 +1,5 @@
 /target
 /dist
+crates/kronk-web/dist/
 *.log
 VP_VULKANINFO_*.json

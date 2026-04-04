@@ -138,6 +138,7 @@ pub struct ProxyState {
     pub metrics: Arc<ProxyMetrics>,
     pub db_dir: Option<std::path::PathBuf>,
     pub pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
+    pub system_metrics: Arc<tokio::sync::RwLock<crate::gpu::SystemMetrics>>,
 }
 
 impl ProxyState {

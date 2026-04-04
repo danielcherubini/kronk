@@ -21,6 +21,9 @@ impl ProxyState {
             metrics: Arc::new(ProxyMetrics::default()),
             db_dir,
             pull_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            system_metrics: Arc::new(tokio::sync::RwLock::new(
+                crate::gpu::SystemMetrics::default(),
+            )),
         }
     }
 
