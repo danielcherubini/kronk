@@ -139,6 +139,10 @@ pub struct ProxyState {
     pub db_dir: Option<std::path::PathBuf>,
     pub pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
     pub system_metrics: Arc<tokio::sync::RwLock<crate::gpu::SystemMetrics>>,
+    /// Set of destination paths currently being downloaded. Used to prevent
+    /// concurrent downloads writing to the same temp files, which would silently
+    /// corrupt the assembled output.
+    pub in_flight_downloads: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
 }
 
 impl ProxyState {

@@ -1,23 +1,59 @@
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
+use futures_util::stream::{self, Stream};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::gpu::VramInfo;
-use crate::proxy::{pull_jobs::PullJob, ProxyState};
+use crate::proxy::{
+    pull_jobs::{PullJob, PullJobStatus},
+    ProxyState,
+};
+
+/// Maximum number of quants that can be downloaded in a single pull request.
+const MAX_CONCURRENT_PULLS: usize = 4;
+
+/// Global mutex serialising post-pull config writes to prevent concurrent-completion races.
+static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// A single quantisation variant available for a HuggingFace GGUF repo.
+#[derive(Debug, Serialize)]
+pub struct QuantEntry {
+    pub filename: String,
+    pub quant: Option<String>,
+    pub size_bytes: Option<i64>,
+}
+
+/// A single quantisation variant to download (used in multi-quant wizard format).
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuantDownloadSpec {
+    pub filename: String,
+    pub quant: Option<String>,
+    pub context_length: Option<u32>,
+}
 
 /// Request body for pull job.
 #[derive(Debug, Deserialize)]
 pub struct PullRequest {
     pub repo_id: String,
     /// Quant to download, e.g. "Q4_K_M". Required — omitting returns a 422 with available quants.
+    /// Legacy single-quant support (kept for backward compat).
     #[serde(default)]
     pub quant: Option<String>,
+    /// New multi-quant wizard format: list of quants to download.
+    #[serde(default)]
+    pub quants: Vec<QuantDownloadSpec>,
+    #[serde(default)]
+    pub context_length: Option<u32>,
 }
 
 /// Response for a pull job.
@@ -214,12 +250,311 @@ pub async fn handle_kronk_unload_model(
     }
 }
 
+/// Returns `false` if the path component contains traversal sequences or invalid characters.
+fn is_safe_path_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains("..")
+        && !s.starts_with('/')
+        && !s.starts_with('\\')
+        && !s.contains('\0')
+}
+
+/// Spawn a real download task for a single file and return the created `PullJob`.
+///
+/// The job is inserted into `pull_jobs` before this function returns.
+fn spawn_download_job(
+    pull_jobs_arc: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
+    in_flight: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
+    job_id: String,
+    repo_id: String,
+    filename: String,
+    spec: QuantDownloadSpec,
+    config: crate::config::Config,
+) {
+    let job_id_clone = job_id.clone();
+    let repo_id_clone = repo_id.clone();
+    let filename_clone = filename.clone();
+    let spec_clone = spec.clone();
+    let in_flight_clone = Arc::clone(&in_flight);
+
+    tokio::spawn(async move {
+        // Validate filename and repo_id to prevent path traversal.
+        if !is_safe_path_component(&filename_clone) {
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                job.error = Some("Invalid filename".to_string());
+            }
+            return;
+        }
+        if !repo_id_clone.split('/').all(is_safe_path_component) {
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                job.error = Some("Invalid repo_id".to_string());
+            }
+            return;
+        }
+
+        // Update status to Running
+        {
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Running;
+                tracing::info!(job_id = %job_id_clone, "Job transitioned to Running");
+            } else {
+                tracing::warn!(job_id = %job_id_clone, "Job not found when setting Running");
+                return;
+            }
+        }
+
+        let models_dir = match config.models_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(format!("Failed to get models dir: {}", e));
+                }
+                return;
+            }
+        };
+        let repo_slug = repo_id_clone.replace('/', "--");
+        let dest_dir = models_dir.join(&repo_slug);
+        if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                job.error = Some(format!("Failed to create dest dir: {}", e));
+            }
+            return;
+        }
+
+        let dest_path = dest_dir.join(&filename_clone);
+
+        // In-flight dedup guard: reject if another task is already downloading this path.
+        // This prevents two concurrent tasks from writing to the same temp part files,
+        // which would silently corrupt the assembled output.
+        {
+            let mut inflight = in_flight_clone.lock().await;
+            if !inflight.insert(dest_path.clone()) {
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(format!(
+                        "Another download of '{}' is already in progress",
+                        filename_clone
+                    ));
+                }
+                return;
+            }
+        }
+
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            repo_id_clone, filename_clone
+        );
+
+        // HEAD request to get total_bytes upfront
+        let client = reqwest::Client::new();
+        if let Ok(resp) = client.head(&url).send().await {
+            let total = crate::models::download::parse_content_length(resp.headers());
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.total_bytes = total;
+            }
+        }
+
+        // Spawn a task that polls file size every 500ms to update bytes_downloaded
+        let poll_jobs = Arc::clone(&pull_jobs_arc);
+        let poll_job_id = job_id_clone.clone();
+        let poll_dest = dest_path.clone();
+        let poll_handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                // If the job is no longer running, stop polling
+                {
+                    let jobs = poll_jobs.read().await;
+                    if let Some(job) = jobs.get(&poll_job_id) {
+                        if !matches!(job.status, PullJobStatus::Running) {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                // Read file size from disk
+                if let Ok(meta) = tokio::fs::metadata(&poll_dest).await {
+                    let mut jobs = poll_jobs.write().await;
+                    if let Some(job) = jobs.get_mut(&poll_job_id) {
+                        job.bytes_downloaded = meta.len();
+                    }
+                }
+            }
+        });
+
+        // Run the actual download
+        let download_result =
+            crate::models::download::download_chunked(&url, &dest_path, 8, None).await;
+
+        // Stop the polling task
+        poll_handle.abort();
+
+        match download_result {
+            Ok(bytes) => {
+                {
+                    let mut jobs = pull_jobs_arc.write().await;
+                    if let Some(job) = jobs.get_mut(&job_id_clone) {
+                        job.bytes_downloaded = bytes;
+                        job.total_bytes = Some(bytes);
+                        job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
+                        job.completed_at = Some(std::time::Instant::now());
+                        tracing::info!(job_id = %job_id_clone, bytes, "Job transitioned to Completed");
+                    }
+                }
+                // Release the in-flight lock before the post-download setup so
+                // a retry of the same file can start immediately if needed.
+                in_flight_clone.lock().await.remove(&dest_path);
+                // Post-download: auto-create model card and config entries (best-effort)
+                setup_model_after_pull(config.clone(), &repo_id_clone, &spec_clone, &dest_dir)
+                    .await;
+            }
+            Err(e) => {
+                in_flight_clone.lock().await.remove(&dest_path);
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(e.to_string());
+                    tracing::error!(job_id = %job_id_clone, error = %e, "Job failed");
+                }
+            }
+        }
+    });
+}
+
 /// Handle starting a pull job (Kronk management API).
 pub async fn handle_kronk_pull_model(
     state: State<Arc<ProxyState>>,
     Json(request): Json<PullRequest>,
 ) -> Response {
     let repo_id = request.repo_id.clone();
+
+    // Multi-quant path: when `quants` is non-empty, spawn one job per entry.
+    if !request.quants.is_empty() {
+        if request.quants.len() > MAX_CONCURRENT_PULLS {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Too many quants requested. Maximum is {}.", MAX_CONCURRENT_PULLS)
+                })),
+            )
+                .into_response();
+        }
+
+        // Fetch the HF listing once and validate every requested filename against it.
+        let listing = match crate::models::pull::list_gguf_files(&repo_id).await {
+            Ok(l) => l,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("Failed to fetch file list from HuggingFace: {}", e),
+                            "type": "UpstreamError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        let allowed_filenames: std::collections::HashSet<&str> =
+            listing.files.iter().map(|f| f.filename.as_str()).collect();
+
+        for spec in &request.quants {
+            if !allowed_filenames.contains(spec.filename.as_str()) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!(
+                                "Filename '{}' is not a valid GGUF file for repo '{}'",
+                                spec.filename, repo_id
+                            ),
+                            "type": "ValidationError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+
+        // Reject if the request contains duplicate filenames — concurrent downloads
+        // to the same dest path would corrupt the shared temp part files.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for spec in &request.quants {
+                if !seen.insert(&spec.filename) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!(
+                                    "Duplicate filename '{}' in request",
+                                    spec.filename
+                                ),
+                                "type": "ValidationError"
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+
+        let pull_jobs_arc = Arc::clone(&state.pull_jobs);
+        let in_flight = Arc::clone(&state.in_flight_downloads);
+        let config = state.config.clone();
+        let mut job_entries = Vec::with_capacity(request.quants.len());
+
+        for spec in &request.quants {
+            let job_id = format!("pull-{}", uuid::Uuid::new_v4().hyphenated());
+            let pull_job = PullJob {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+                filename: spec.filename.clone(),
+                status: crate::proxy::pull_jobs::PullJobStatus::Pending,
+                bytes_downloaded: 0,
+                total_bytes: None,
+                error: None,
+                completed_at: None,
+            };
+
+            {
+                let mut jobs = pull_jobs_arc.write().await;
+                jobs.insert(job_id.clone(), pull_job);
+            }
+
+            spawn_download_job(
+                Arc::clone(&pull_jobs_arc),
+                Arc::clone(&in_flight),
+                job_id.clone(),
+                repo_id.clone(),
+                spec.filename.clone(),
+                spec.clone(),
+                config.clone(),
+            );
+
+            job_entries.push(serde_json::json!({
+                "job_id": job_id,
+                "filename": spec.filename,
+                "status": "pending"
+            }));
+        }
+
+        return Json(serde_json::Value::Array(job_entries)).into_response();
+    }
+
+    // Legacy single-quant path.
 
     // Quant is required — if missing, fetch the available quants from HF and return them.
     let quant = match request.quant {
@@ -321,44 +656,21 @@ pub async fn handle_kronk_pull_model(
         jobs.insert(job_id.clone(), pull_job);
     }
 
-    // Clone job_id before moving into the spawn task
-    let job_id_for_task = job_id.clone();
-    let state_clone = Arc::clone(&state.0);
-
-    // Spawn download task – hold the write lock only for short mutations,
-    // never across an await point.
-    tokio::spawn(async move {
-        // 1. Transition job state to Running (short-lived lock, dropped immediately).
-        {
-            let mut jobs = state_clone.pull_jobs.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_for_task) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Running;
-                tracing::info!(job_id = %job_id_for_task, "Job transitioned to Running");
-            } else {
-                tracing::warn!(job_id = %job_id_for_task, "Job not found when setting Running");
-                return;
-            }
-        } // write lock dropped here
-
-        // 2. Perform download work (no lock held during the await).
-        // In a real scenario this is where the download helper would be called.
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        // 3. Transition job state to Completed (new short-lived lock).
-        let total_bytes: u64 = 1024 * 1024; // Simulated total
-        {
-            let mut jobs = state_clone.pull_jobs.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_for_task) {
-                job.bytes_downloaded = total_bytes;
-                job.total_bytes = Some(total_bytes);
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
-                job.completed_at = Some(std::time::Instant::now());
-                tracing::info!(job_id = %job_id_for_task, "Job transitioned to Completed");
-            } else {
-                tracing::warn!(job_id = %job_id_for_task, "Job not found when setting Completed");
-            }
-        } // write lock dropped here
-    });
+    // Spawn real download task
+    let legacy_spec = QuantDownloadSpec {
+        filename: filename.clone(),
+        quant: Some(quant.clone()),
+        context_length: request.context_length,
+    };
+    spawn_download_job(
+        Arc::clone(&state.pull_jobs),
+        Arc::clone(&state.in_flight_downloads),
+        job_id.clone(),
+        repo_id.clone(),
+        filename.clone(),
+        legacy_spec,
+        state.config.clone(),
+    );
 
     Json(serde_json::json!({
         "job_id": job_id,
@@ -413,6 +725,50 @@ pub async fn handle_kronk_get_pull_job(
     }
 }
 
+/// Stream `PullJob` snapshots as SSE events every 500 ms until the job reaches a terminal state.
+///
+/// Events:
+/// - `progress`: emitted while the job is pending or running
+/// - `done`: emitted once when the job completes or fails, then the stream closes
+///
+/// Registered as `GET /kronk/v1/pulls/:job_id/stream`.
+pub async fn handle_pull_job_stream(
+    state: State<Arc<ProxyState>>,
+    Path(job_id): Path<String>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // State tuple: (proxy_state, job_id, just_emitted_done)
+    let stream = stream::unfold(
+        (state.0, job_id, false),
+        |(state, job_id, just_done)| async move {
+            // Previous iteration already emitted the done event — close the stream.
+            if just_done {
+                return None;
+            }
+
+            // Poll every 500 ms.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            let jobs = state.pull_jobs.read().await;
+            let Some(job) = jobs.get(&job_id).cloned() else {
+                // Job not found — close the stream.
+                return None;
+            };
+            drop(jobs);
+
+            let is_terminal =
+                matches!(job.status, PullJobStatus::Completed | PullJobStatus::Failed);
+            let event_name = if is_terminal { "done" } else { "progress" };
+            let data = serde_json::to_string(&job).unwrap_or_default();
+            let event = Event::default().event(event_name).data(data);
+
+            // If terminal, set just_done=true so the next iteration closes the stream.
+            Some((Ok(event), (state, job_id, is_terminal)))
+        },
+    );
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 /// Typed response for the system health endpoint.
 #[derive(Debug, Serialize)]
 pub struct SystemHealthResponse {
@@ -445,6 +801,154 @@ pub async fn handle_kronk_system_health(
     })
 }
 
+/// Handle listing available GGUF quants for a HuggingFace repo (Kronk management API).
+///
+/// `repo_id` is captured as a wildcard path segment (e.g. `bartowski/Qwen3-8B-GGUF`)
+/// because HF repo IDs contain a `/`. Registered as `GET /kronk/v1/hf/*repo_id`.
+pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
+    // Reject repo_id segments containing traversal sequences or null bytes (SSRF mitigation).
+    if !repo_id.split('/').all(is_safe_path_component) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid repo_id" })),
+        )
+            .into_response();
+    }
+
+    match crate::models::pull::fetch_blob_metadata(&repo_id).await {
+        Ok(blobs) => {
+            let mut quants: Vec<QuantEntry> = blobs
+                .into_values()
+                .map(|b| QuantEntry {
+                    quant: crate::models::pull::infer_quant_from_filename(&b.filename),
+                    filename: b.filename,
+                    size_bytes: b.size,
+                })
+                .collect();
+            quants.sort_by(|a, b| a.filename.cmp(&b.filename));
+            (StatusCode::OK, Json(quants)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Inner implementation of post-download setup, accepting an explicit config.
+/// Separated for testability — `setup_model_after_pull` delegates to this.
+async fn _setup_model_after_pull_with_config(
+    config: &mut crate::config::Config,
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let configs_dir = match config.configs_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let repo_slug = repo_id.replace('/', "--");
+    let card_path = configs_dir.join(format!("{}.toml", repo_slug));
+
+    // Load existing or build a new card
+    let mut card = crate::models::card::ModelCard::load(&card_path).unwrap_or_else(|_| {
+        crate::models::card::ModelCard {
+            model: crate::models::card::ModelMeta {
+                name: repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(repo_id)
+                    .to_string(),
+                source: repo_id.to_string(),
+                default_context_length: None,
+                default_gpu_layers: None,
+            },
+            sampling: std::collections::HashMap::new(),
+            quants: std::collections::HashMap::new(),
+        }
+    });
+
+    // Try community card for name + sampling (best-effort, no network in tests)
+    if let Some(community) = crate::models::pull::fetch_community_card(repo_id).await {
+        if !community.model.name.is_empty() {
+            card.model.name = community.model.name;
+        }
+        for (k, v) in community.sampling {
+            card.sampling.entry(k).or_insert(v);
+        }
+        if card.model.default_context_length.is_none() {
+            card.model.default_context_length = community.model.default_context_length;
+        }
+    }
+
+    // Determine the quant key
+    let quant_key = spec.quant.clone().unwrap_or_else(|| {
+        crate::models::pull::infer_quant_from_filename(&spec.filename)
+            .unwrap_or_else(|| spec.filename.trim_end_matches(".gguf").to_string())
+    });
+
+    // Get actual file size from disk
+    let size_bytes = std::fs::metadata(dest_dir.join(&spec.filename))
+        .ok()
+        .map(|m| m.len());
+
+    // Insert/update quant entry in card
+    card.quants.insert(
+        quant_key.clone(),
+        crate::models::card::QuantInfo {
+            file: spec.filename.clone(),
+            size_bytes,
+            context_length: spec.context_length,
+        },
+    );
+
+    // Derive model config key: e.g. "bartowski--qwen3-8b-gguf-q4-k-m"
+    let model_key = format!(
+        "{}-{}",
+        repo_slug.to_lowercase(),
+        quant_key.to_lowercase().replace('_', "-")
+    );
+
+    // Insert model config entry (only if not already present)
+    config
+        .models
+        .entry(model_key)
+        .or_insert_with(|| crate::config::ModelConfig {
+            backend: "llama_cpp".to_string(),
+            model: Some(repo_id.to_string()),
+            quant: Some(quant_key),
+            context_length: spec.context_length,
+            enabled: true,
+            args: vec![],
+            profile: None,
+            sampling: None,
+            port: None,
+            health_check: None,
+        });
+
+    // Save card and config (best-effort — download is already marked Completed)
+    let _ = std::fs::create_dir_all(&configs_dir);
+    let _ = card.save(&card_path);
+    let _ = config.save();
+}
+
+/// Post-download: auto-create model card and config entries.
+///
+/// Called after a quant download completes. Loads the config, creates/updates
+/// the model card at `<configs_dir>/<repo_slug>.toml`, and adds a `[models.<slug>]`
+/// entry to `config.toml` if one doesn't already exist.
+async fn setup_model_after_pull(
+    mut config: crate::config::Config,
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
+    _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+    // _guard dropped here, releasing the lock
+}
+
 /// Handle system restart (Kronk management API).
 /// TODO: Implement actual restart logic using ProxyState methods
 pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Response {
@@ -457,6 +961,116 @@ pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Resp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
+
+    /// Verifies that `setup_model_after_pull` creates a model card and config entry.
+    #[tokio::test]
+    async fn test_setup_model_creates_card() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().to_path_buf();
+        let configs_dir = config_dir.join("configs");
+        let models_dir = config_dir.join("models");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+
+        let repo_id = "bartowski/Qwen3-8B-GGUF";
+        let filename = "Qwen3-8B-Q4_K_M.gguf";
+        let repo_slug = repo_id.replace('/', "--");
+        let dest_dir = models_dir.join(&repo_slug);
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Write a dummy GGUF file
+        std::fs::write(dest_dir.join(filename), b"dummy gguf content").unwrap();
+
+        // Build a config with loaded_from pointing to our temp dir
+        let mut config = crate::config::Config {
+            loaded_from: Some(config_dir.clone()),
+            ..Default::default()
+        };
+        // Save it so Config::load_from can find it
+        config.save_to(&config_dir).unwrap();
+
+        let spec = QuantDownloadSpec {
+            filename: filename.to_string(),
+            quant: Some("Q4_K_M".to_string()),
+            context_length: Some(8192),
+        };
+
+        // Call the inner helper directly (avoids relying on system Config::load())
+        _setup_model_after_pull_with_config(&mut config, repo_id, &spec, &dest_dir).await;
+
+        // Assert the card file exists
+        let card_path = configs_dir.join(format!("{}.toml", repo_slug));
+        assert!(
+            card_path.exists(),
+            "Expected card file at {}",
+            card_path.display()
+        );
+
+        // Load and inspect the card
+        let card =
+            crate::models::card::ModelCard::load(&card_path).expect("Card should be loadable");
+        assert!(
+            card.quants.contains_key("Q4_K_M"),
+            "Expected Q4_K_M quant in card, got: {:?}",
+            card.quants.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(card.quants["Q4_K_M"].file, filename);
+        assert_eq!(card.quants["Q4_K_M"].context_length, Some(8192));
+
+        // Assert model config entry was added
+        let model_key = format!("{}-{}", repo_slug.to_lowercase(), "q4-k-m");
+        assert!(
+            config.models.contains_key(&model_key),
+            "Expected model key '{}' in config, got: {:?}",
+            model_key,
+            config.models.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
+    #[test]
+    fn test_pull_job_serializes_for_sse() {
+        let job = PullJob {
+            job_id: "pull-test-123".to_string(),
+            repo_id: "bartowski/Qwen3-8B-GGUF".to_string(),
+            filename: "Qwen3-8B-Q4_K_M.gguf".to_string(),
+            status: PullJobStatus::Running,
+            bytes_downloaded: 1_234_567,
+            total_bytes: Some(4_800_000_000),
+            error: None,
+            completed_at: None,
+        };
+
+        let json = serde_json::to_string(&job).expect("PullJob serialization failed");
+        assert!(
+            json.contains("\"bytes_downloaded\""),
+            "missing bytes_downloaded in: {json}"
+        );
+        assert!(json.contains("\"status\""), "missing status in: {json}");
+        assert!(
+            json.contains("\"running\""),
+            "missing running status value in: {json}"
+        );
+        assert!(json.contains("\"job_id\""), "missing job_id in: {json}");
+    }
+
+    /// Verifies that `QuantEntry` serializes to JSON with all expected keys.
+    #[test]
+    fn test_quant_entry_serializes() {
+        let entry = QuantEntry {
+            filename: "Model-Q4_K_M.gguf".to_string(),
+            quant: Some("Q4_K_M".to_string()),
+            size_bytes: Some(4_200_000_000),
+        };
+
+        let value = serde_json::to_value(&entry).expect("serialization failed");
+        assert!(value.get("filename").is_some(), "missing filename");
+        assert!(value.get("quant").is_some(), "missing quant");
+        assert!(value.get("size_bytes").is_some(), "missing size_bytes");
+        assert_eq!(value["filename"], "Model-Q4_K_M.gguf");
+        assert_eq!(value["quant"], "Q4_K_M");
+        assert_eq!(value["size_bytes"], 4_200_000_000_i64);
+    }
 
     /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.
     #[test]

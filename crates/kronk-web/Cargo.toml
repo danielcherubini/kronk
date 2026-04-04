@@ -14,6 +14,7 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "
 gloo-net.workspace = true
 gloo-timers.workspace = true
 wasm-bindgen-futures.workspace = true
+futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 # Backend-only deps (not needed for WASM, gated behind the `ssr` feature)
