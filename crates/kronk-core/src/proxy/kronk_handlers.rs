@@ -252,10 +252,12 @@ fn spawn_download_job(
     job_id: String,
     repo_id: String,
     filename: String,
+    spec: QuantDownloadSpec,
 ) {
     let job_id_clone = job_id.clone();
     let repo_id_clone = repo_id.clone();
     let filename_clone = filename.clone();
+    let spec_clone = spec.clone();
 
     tokio::spawn(async move {
         // Update status to Running
@@ -322,14 +324,18 @@ fn spawn_download_job(
         // Real download
         match crate::models::download::download_chunked(&url, &dest_path, 8, None).await {
             Ok(bytes) => {
-                let mut jobs = pull_jobs_arc.write().await;
-                if let Some(job) = jobs.get_mut(&job_id_clone) {
-                    job.bytes_downloaded = bytes;
-                    job.total_bytes = Some(bytes);
-                    job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
-                    job.completed_at = Some(std::time::Instant::now());
-                    tracing::info!(job_id = %job_id_clone, bytes, "Job transitioned to Completed");
+                {
+                    let mut jobs = pull_jobs_arc.write().await;
+                    if let Some(job) = jobs.get_mut(&job_id_clone) {
+                        job.bytes_downloaded = bytes;
+                        job.total_bytes = Some(bytes);
+                        job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
+                        job.completed_at = Some(std::time::Instant::now());
+                        tracing::info!(job_id = %job_id_clone, bytes, "Job transitioned to Completed");
+                    }
                 }
+                // Post-download: auto-create model card and config entries (best-effort)
+                setup_model_after_pull(&repo_id_clone, &spec_clone, &dest_dir).await;
             }
             Err(e) => {
                 let mut jobs = pull_jobs_arc.write().await;
@@ -378,6 +384,7 @@ pub async fn handle_kronk_pull_model(
                 job_id.clone(),
                 repo_id.clone(),
                 spec.filename.clone(),
+                spec.clone(),
             );
 
             job_entries.push(serde_json::json!({
@@ -493,11 +500,17 @@ pub async fn handle_kronk_pull_model(
     }
 
     // Spawn real download task
+    let legacy_spec = QuantDownloadSpec {
+        filename: filename.clone(),
+        quant: Some(quant.clone()),
+        context_length: request.context_length,
+    };
     spawn_download_job(
         Arc::clone(&state.pull_jobs),
         job_id.clone(),
         repo_id.clone(),
         filename.clone(),
+        legacy_spec,
     );
 
     Json(serde_json::json!({
@@ -655,6 +668,119 @@ pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
     }
 }
 
+/// Inner implementation of post-download setup, accepting an explicit config.
+/// Separated for testability — `setup_model_after_pull` delegates to this.
+async fn _setup_model_after_pull_with_config(
+    config: &mut crate::config::Config,
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let configs_dir = match config.configs_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let repo_slug = repo_id.replace('/', "--");
+    let card_path = configs_dir.join(format!("{}.toml", repo_slug));
+
+    // Load existing or build a new card
+    let mut card = crate::models::card::ModelCard::load(&card_path).unwrap_or_else(|_| {
+        crate::models::card::ModelCard {
+            model: crate::models::card::ModelMeta {
+                name: repo_id
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(repo_id)
+                    .to_string(),
+                source: repo_id.to_string(),
+                default_context_length: None,
+                default_gpu_layers: None,
+            },
+            sampling: std::collections::HashMap::new(),
+            quants: std::collections::HashMap::new(),
+        }
+    });
+
+    // Try community card for name + sampling (best-effort, no network in tests)
+    if let Some(community) = crate::models::pull::fetch_community_card(repo_id).await {
+        if !community.model.name.is_empty() {
+            card.model.name = community.model.name;
+        }
+        for (k, v) in community.sampling {
+            card.sampling.entry(k).or_insert(v);
+        }
+        if card.model.default_context_length.is_none() {
+            card.model.default_context_length = community.model.default_context_length;
+        }
+    }
+
+    // Determine the quant key
+    let quant_key = spec.quant.clone().unwrap_or_else(|| {
+        crate::models::pull::infer_quant_from_filename(&spec.filename)
+            .unwrap_or_else(|| spec.filename.trim_end_matches(".gguf").to_string())
+    });
+
+    // Get actual file size from disk
+    let size_bytes = std::fs::metadata(dest_dir.join(&spec.filename))
+        .ok()
+        .map(|m| m.len());
+
+    // Insert/update quant entry in card
+    card.quants.insert(
+        quant_key.clone(),
+        crate::models::card::QuantInfo {
+            file: spec.filename.clone(),
+            size_bytes,
+            context_length: spec.context_length,
+        },
+    );
+
+    // Derive model config key: e.g. "bartowski--qwen3-8b-gguf-q4-k-m"
+    let model_key = format!(
+        "{}-{}",
+        repo_slug.to_lowercase(),
+        quant_key.to_lowercase().replace('_', "-")
+    );
+
+    // Insert model config entry (only if not already present)
+    config
+        .models
+        .entry(model_key)
+        .or_insert_with(|| crate::config::ModelConfig {
+            backend: "llama_cpp".to_string(),
+            model: Some(repo_id.to_string()),
+            quant: Some(quant_key),
+            context_length: spec.context_length,
+            enabled: true,
+            args: vec![],
+            profile: None,
+            sampling: None,
+            port: None,
+            health_check: None,
+        });
+
+    // Save card and config (best-effort — download is already marked Completed)
+    let _ = std::fs::create_dir_all(&configs_dir);
+    let _ = card.save(&card_path);
+    let _ = config.save();
+}
+
+/// Post-download: auto-create model card and config entries.
+///
+/// Called after a quant download completes. Loads the config, creates/updates
+/// the model card at `<configs_dir>/<repo_slug>.toml`, and adds a `[models.<slug>]`
+/// entry to `config.toml` if one doesn't already exist.
+async fn setup_model_after_pull(
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let Ok(mut config) = crate::config::Config::load() else {
+        return;
+    };
+    _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+}
+
 /// Handle system restart (Kronk management API).
 /// TODO: Implement actual restart logic using ProxyState methods
 pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Response {
@@ -668,6 +794,70 @@ pub async fn handle_kronk_system_restart(_state: State<Arc<ProxyState>>) -> Resp
 mod tests {
     use super::*;
     use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
+
+    /// Verifies that `setup_model_after_pull` creates a model card and config entry.
+    #[tokio::test]
+    async fn test_setup_model_creates_card() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().to_path_buf();
+        let configs_dir = config_dir.join("configs");
+        let models_dir = config_dir.join("models");
+        std::fs::create_dir_all(&configs_dir).unwrap();
+
+        let repo_id = "bartowski/Qwen3-8B-GGUF";
+        let filename = "Qwen3-8B-Q4_K_M.gguf";
+        let repo_slug = repo_id.replace('/', "--");
+        let dest_dir = models_dir.join(&repo_slug);
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Write a dummy GGUF file
+        std::fs::write(dest_dir.join(filename), b"dummy gguf content").unwrap();
+
+        // Build a config with loaded_from pointing to our temp dir
+        let mut config = crate::config::Config {
+            loaded_from: Some(config_dir.clone()),
+            ..Default::default()
+        };
+        // Save it so Config::load_from can find it
+        config.save_to(&config_dir).unwrap();
+
+        let spec = QuantDownloadSpec {
+            filename: filename.to_string(),
+            quant: Some("Q4_K_M".to_string()),
+            context_length: Some(8192),
+        };
+
+        // Call the inner helper directly (avoids relying on system Config::load())
+        _setup_model_after_pull_with_config(&mut config, repo_id, &spec, &dest_dir).await;
+
+        // Assert the card file exists
+        let card_path = configs_dir.join(format!("{}.toml", repo_slug));
+        assert!(
+            card_path.exists(),
+            "Expected card file at {}",
+            card_path.display()
+        );
+
+        // Load and inspect the card
+        let card =
+            crate::models::card::ModelCard::load(&card_path).expect("Card should be loadable");
+        assert!(
+            card.quants.contains_key("Q4_K_M"),
+            "Expected Q4_K_M quant in card, got: {:?}",
+            card.quants.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(card.quants["Q4_K_M"].file, filename);
+        assert_eq!(card.quants["Q4_K_M"].context_length, Some(8192));
+
+        // Assert model config entry was added
+        let model_key = format!("{}-{}", repo_slug.to_lowercase(), "q4-k-m");
+        assert!(
+            config.models.contains_key(&model_key),
+            "Expected model key '{}' in config, got: {:?}",
+            model_key,
+            config.models.keys().collect::<Vec<_>>()
+        );
+    }
 
     /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
     #[test]
