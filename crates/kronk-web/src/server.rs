@@ -75,11 +75,28 @@ async fn proxy_kronk(
         Ok(resp) => {
             let status =
                 StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-            let headers = resp.headers().clone();
-            let body = resp.bytes().await.unwrap_or_default();
-            let mut response = Response::new(Body::from(body));
+            let resp_headers = resp.headers().clone();
+
+            // For SSE (and any streaming response), stream the body directly rather than
+            // buffering it — resp.bytes().await would block until the stream closes, making
+            // SSE appear broken from the browser's perspective.
+            let is_sse = resp_headers
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.starts_with("text/event-stream"))
+                .unwrap_or(false);
+
+            let body = if is_sse {
+                let stream = resp.bytes_stream();
+                Body::from_stream(stream)
+            } else {
+                let bytes = resp.bytes().await.unwrap_or_default();
+                Body::from(bytes)
+            };
+
+            let mut response = Response::new(body);
             *response.status_mut() = status;
-            for (k, v) in &headers {
+            for (k, v) in &resp_headers {
                 response.headers_mut().insert(k, v.clone());
             }
             response
