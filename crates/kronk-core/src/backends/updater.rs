@@ -107,6 +107,11 @@ pub async fn update_backend(
     options: InstallOptions,
     latest_version: String,
 ) -> Result<()> {
+    // Validate backend exists before installing to prevent orphaned files
+    registry
+        .get(backend_name)?
+        .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
+
     // Clone source before install_backend moves options
     let source = options.source.clone();
     // Clone backend_type before install_backend moves options
@@ -124,11 +129,6 @@ pub async fn update_backend(
     } else {
         latest_version
     };
-
-    // Validate backend exists before installing to prevent orphaned files
-    registry
-        .get(backend_name)?
-        .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
     registry.update_version(
         backend_name,
