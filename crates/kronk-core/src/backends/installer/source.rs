@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+#[cfg(target_os = "windows")]
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 use super::extract::find_backend_binary;
@@ -296,16 +298,14 @@ fn find_vcvarsall() -> Option<std::path::PathBuf> {
 /// On Windows, run cmake inside a vcvars-activated environment so that
 /// nvcc can locate the MSVC host compiler headers and libs.
 ///
-/// We invoke: cmd /c ""C:\...\vcvarsall.bat" x64 && cmake <args>"
-///
-/// The double-outer-quote trick is required by cmd.exe: when the first
-/// argument to /c is itself quoted, cmd wraps the whole compound command
-/// in an additional outer pair of quotes so that the inner quotes are
-/// preserved correctly (see `cmd /?`).
+/// We write a temporary .bat file containing the vcvarsall + cmake calls,
+/// then execute it with `cmd /c <bat_path>`. This avoids all cmd.exe inline
+/// quoting complexity (the "network path not found" class of errors that
+/// occur when trying to inline a quoted UNC-like path after `cmd /c`).
 #[cfg(target_os = "windows")]
-async fn configure_cmake_windows(cmake_args: &[String]) -> Result<()> {
-    // Build the cmake portion of the compound command. Each arg that
-    // contains spaces is wrapped in double-quotes for cmd.exe.
+async fn configure_cmake_windows(cmake_args: &[String], build_output: &Path) -> Result<()> {
+    // Build the cmake invocation line for inside the .bat file.
+    // Each arg containing spaces gets double-quoted (safe in .bat context).
     let cmake_invocation = std::iter::once("cmake".to_string())
         .chain(cmake_args.iter().cloned())
         .map(|a| {
@@ -318,31 +318,30 @@ async fn configure_cmake_windows(cmake_args: &[String]) -> Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    let (shell_cmd, shell_args) = match find_vcvarsall() {
+    let bat_contents = match find_vcvarsall() {
         Some(vcvarsall) => {
             tracing::info!("Using vcvarsall: {:?}", vcvarsall);
-            // cmd /c requires the outer double-double-quote when the command
-            // itself starts with a quoted token (path with spaces).
-            // Form: cmd /c ""path\vcvarsall.bat" x64 && cmake ..."
-            let full_cmd = format!(
-                "\"\"{}\" x64 && {}\"",
-                vcvarsall.to_string_lossy(),
-                cmake_invocation
-            );
-            ("cmd".to_string(), vec!["/c".to_string(), full_cmd])
+            format!(
+                "@echo off\r\ncall \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                vcvarsall = vcvarsall.to_string_lossy(),
+                cmake = cmake_invocation,
+            )
         }
         None => {
             tracing::warn!(
                 "vcvarsall.bat not found; running cmake without MSVC environment. \
                  CUDA builds may fail if MSVC headers are not already on PATH."
             );
-            // Fall back to plain cmake without vcvars
-            ("cmake".to_string(), cmake_args.to_vec())
+            format!("@echo off\r\n{}\r\n", cmake_invocation)
         }
     };
 
-    let status = tokio::process::Command::new(&shell_cmd)
-        .args(&shell_args)
+    let bat_path = build_output.join("kronk_cmake_configure.bat");
+    std::fs::write(&bat_path, &bat_contents)
+        .with_context(|| format!("Failed to write cmake bat file: {:?}", bat_path))?;
+
+    let status = tokio::process::Command::new("cmd")
+        .args(["/c", &bat_path.to_string_lossy()])
         .status()
         .await?;
 
@@ -366,7 +365,7 @@ async fn configure_cmake(
 
     #[cfg(target_os = "windows")]
     {
-        return configure_cmake_windows(&cmake_args).await;
+        return configure_cmake_windows(&cmake_args, build_output).await;
     }
 
     #[cfg(not(target_os = "windows"))]
