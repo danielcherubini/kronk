@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 2;
+pub const LATEST_VERSION: i32 = 3;
 
 /// Run all applicable migrations on the database
 ///
@@ -76,6 +76,24 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
                     loaded_at TEXT NOT NULL,        -- ISO 8601 timestamp
                     last_accessed TEXT NOT NULL     -- ISO 8601 timestamp, updated periodically
                 );
+                "#,
+        ),
+        (
+            3,
+            r#"
+                CREATE TABLE IF NOT EXISTS backend_installations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,             -- backend key, e.g. "llama_cpp", "ik_llama"
+                    backend_type TEXT NOT NULL,     -- serialized enum, e.g. "llama_cpp", "ik_llama", "custom"
+                    version TEXT NOT NULL,          -- version string, e.g. "b8407", "main@abc12345"
+                    path TEXT NOT NULL,             -- absolute path to installed binary
+                    installed_at INTEGER NOT NULL,  -- unix timestamp (i64)
+                    gpu_type TEXT,                  -- JSON string (nullable, serialized GpuType)
+                    source TEXT,                    -- JSON string (nullable, serialized BackendSource)
+                    is_active INTEGER NOT NULL DEFAULT 0, -- 1 = current active version for this name
+                    UNIQUE(name, version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_backend_installations_name ON backend_installations(name);
                 "#,
         ),
     ];
