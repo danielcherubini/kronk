@@ -1,7 +1,8 @@
-use crate::config::Config;
-use crate::models::registry::ModelRegistry;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+
+use crate::config::Config;
+use crate::models::registry::ModelRegistry;
 
 /// Run the initial DB backfill for all installed models.
 ///
@@ -138,9 +139,20 @@ pub fn migrate_backend_registry_toml(
             Err(e) => {
                 // Check if this is a UNIQUE constraint violation (duplicate entry)
                 let is_unique_violation = e
-                    .to_string()
-                    .to_lowercase()
-                    .contains("unique constraint failed");
+                    .downcast_ref::<rusqlite::Error>()
+                    .map(|sql_err| {
+                        matches!(
+                            sql_err,
+                            rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error {
+                                    code: rusqlite::ffi::ErrorCode::ConstraintViolation,
+                                    ..
+                                },
+                                _
+                            )
+                        )
+                    })
+                    .unwrap_or(false);
                 if is_unique_violation {
                     tracing::warn!(
                         "Backend '{}' version '{}' already exists in DB — skipping",
