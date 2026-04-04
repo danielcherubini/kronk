@@ -257,20 +257,21 @@ pub struct BackendInstallationRecord {
     pub is_active: bool,
 }
 
-/// Insert a new backend installation record, marking it as active.
+/// Insert or replace a backend installation record, marking it as active.
 ///
 /// In a single transaction:
-/// 1. Inserts the new row with `is_active = 1`.
+/// 1. Inserts (or replaces) the row with `is_active = 1`.
 /// 2. Sets `is_active = 0` for all other rows with the same name.
 ///
-/// Returns an error if the `(name, version)` pair already exists (UNIQUE constraint violation).
+/// Using `INSERT OR REPLACE` makes reinstalling the same `(name, version)` idempotent —
+/// it simply updates the row in-place rather than failing with a UNIQUE constraint error.
 pub fn insert_backend_installation(
     conn: &Connection,
     record: &BackendInstallationRecord,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO backend_installations
+        "INSERT OR REPLACE INTO backend_installations
              (name, backend_type, version, path, installed_at, gpu_type, source, is_active)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
         (
@@ -791,18 +792,32 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_duplicate_version_fails() {
+    fn test_insert_same_version_is_idempotent() {
         let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        let r1 = make_record("llama_cpp", "b8407", 1000);
         insert_backend_installation(&conn, &r1).unwrap();
 
-        // Same (name, version) — should fail with UNIQUE constraint error
-        let r2 = make_record("llama_cpp", "v1.0.0", 2000);
+        // Same (name, version) — should succeed (INSERT OR REPLACE), not error
+        let r2 = make_record("llama_cpp", "b8407", 2000);
         let result = insert_backend_installation(&conn, &r2);
         assert!(
-            result.is_err(),
-            "inserting a duplicate (name, version) should return Err"
+            result.is_ok(),
+            "reinstalling the same (name, version) should be idempotent, got: {:?}",
+            result
+        );
+
+        // Only one row should exist for this (name, version)
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backend_installations WHERE name = 'llama_cpp' AND version = 'b8407'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "only one row should exist after idempotent insert"
         );
     }
 }

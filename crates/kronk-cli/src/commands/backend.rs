@@ -151,6 +151,19 @@ fn current_unix_timestamp() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// Return the canonical, stable name for a backend type used as the default
+/// install directory name (e.g. `~/.config/kronk/backends/llama_cpp/`).
+///
+/// Users may override this with `--name` to install multiple side-by-side
+/// (e.g. a CPU build and a CUDA build under different names).
+fn default_backend_name(bt: &BackendType) -> String {
+    match bt {
+        BackendType::LlamaCpp => "llama_cpp".to_string(),
+        BackendType::IkLlama => "ik_llama".to_string(),
+        BackendType::Custom => "custom".to_string(),
+    }
+}
+
 async fn cmd_install(
     _config: &Config,
     backend_type_str: &str,
@@ -295,14 +308,7 @@ async fn cmd_install(
     };
 
     // Determine install directory
-    let backend_name = name.unwrap_or_else(|| {
-        let type_str = match backend_type {
-            BackendType::LlamaCpp => "llama_cpp",
-            BackendType::IkLlama => "ik_llama",
-            BackendType::Custom => "custom",
-        };
-        format!("{}_{}", type_str, version)
-    });
+    let backend_name = name.unwrap_or_else(|| default_backend_name(&backend_type));
 
     let target_dir = backends_dir()?.join(&backend_name);
 
@@ -602,4 +608,16 @@ async fn cmd_check_updates(_config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_backend_name() {
+        assert_eq!(default_backend_name(&BackendType::LlamaCpp), "llama_cpp");
+        assert_eq!(default_backend_name(&BackendType::IkLlama), "ik_llama");
+        assert_eq!(default_backend_name(&BackendType::Custom), "custom");
+    }
 }
