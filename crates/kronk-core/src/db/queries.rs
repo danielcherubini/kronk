@@ -239,6 +239,155 @@ pub fn touch_active_model(conn: &Connection, server_name: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Backend installations record type and query functions
+// ---------------------------------------------------------------------------
+
+/// A stored installation record for a backend binary.
+#[derive(Debug, Clone)]
+pub struct BackendInstallationRecord {
+    /// Set to 0 when constructing a record for INSERT (DB assigns the real id via AUTOINCREMENT).
+    pub id: i64,
+    pub name: String,
+    pub backend_type: String,
+    pub version: String,
+    pub path: String,
+    pub installed_at: i64,
+    pub gpu_type: Option<String>,
+    pub source: Option<String>,
+    pub is_active: bool,
+}
+
+/// Insert a new backend installation record, marking it as active.
+///
+/// In a single transaction:
+/// 1. Inserts the new row with `is_active = 1`.
+/// 2. Sets `is_active = 0` for all other rows with the same name.
+///
+/// Returns an error if the `(name, version)` pair already exists (UNIQUE constraint violation).
+pub fn insert_backend_installation(
+    conn: &Connection,
+    record: &BackendInstallationRecord,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO backend_installations
+             (name, backend_type, version, path, installed_at, gpu_type, source, is_active)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+        (
+            &record.name,
+            &record.backend_type,
+            &record.version,
+            &record.path,
+            record.installed_at,
+            record.gpu_type.as_deref(),
+            record.source.as_deref(),
+        ),
+    )?;
+    tx.execute(
+        "UPDATE backend_installations SET is_active = 0 WHERE name = ?1 AND version != ?2",
+        (&record.name, &record.version),
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Get the active backend installation for a given name.
+pub fn get_active_backend(
+    conn: &Connection,
+    name: &str,
+) -> Result<Option<BackendInstallationRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+         FROM backend_installations
+         WHERE name = ?1 AND is_active = 1",
+    )?;
+    let mut rows = stmt.query_map([name], |row| {
+        Ok(BackendInstallationRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            backend_type: row.get(2)?,
+            version: row.get(3)?,
+            path: row.get(4)?,
+            installed_at: row.get(5)?,
+            gpu_type: row.get(6)?,
+            source: row.get(7)?,
+            is_active: row.get::<_, i64>(8)? != 0,
+        })
+    })?;
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        None => Ok(None),
+    }
+}
+
+/// Return all active backend installations (one per backend name).
+pub fn list_active_backends(conn: &Connection) -> Result<Vec<BackendInstallationRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+         FROM backend_installations
+         WHERE is_active = 1",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(BackendInstallationRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            backend_type: row.get(2)?,
+            version: row.get(3)?,
+            path: row.get(4)?,
+            installed_at: row.get(5)?,
+            gpu_type: row.get(6)?,
+            source: row.get(7)?,
+            is_active: row.get::<_, i64>(8)? != 0,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Return all versions of a backend, ordered by `installed_at DESC` (newest first).
+pub fn list_backend_versions(
+    conn: &Connection,
+    name: &str,
+) -> Result<Vec<BackendInstallationRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+         FROM backend_installations
+         WHERE name = ?1
+         ORDER BY installed_at DESC",
+    )?;
+    let rows = stmt.query_map([name], |row| {
+        Ok(BackendInstallationRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            backend_type: row.get(2)?,
+            version: row.get(3)?,
+            path: row.get(4)?,
+            installed_at: row.get(5)?,
+            gpu_type: row.get(6)?,
+            source: row.get(7)?,
+            is_active: row.get::<_, i64>(8)? != 0,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Delete a specific `(name, version)` backend installation row.
+pub fn delete_backend_installation(conn: &Connection, name: &str, version: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM backend_installations WHERE name = ?1 AND version = ?2",
+        (name, version),
+    )?;
+    Ok(())
+}
+
+/// Delete all installation rows for a backend name (used by `backend remove`).
+pub fn delete_all_backend_versions(conn: &Connection, name: &str) -> Result<()> {
+    conn.execute("DELETE FROM backend_installations WHERE name = ?1", [name])?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -542,5 +691,118 @@ mod tests {
 
         let models = get_active_models(&conn).unwrap();
         assert_ne!(models[0].last_accessed, loaded_at1);
+    }
+
+    // -----------------------------------------------------------------------
+    // backend_installations tests
+    // -----------------------------------------------------------------------
+
+    fn make_record(name: &str, version: &str, installed_at: i64) -> BackendInstallationRecord {
+        BackendInstallationRecord {
+            id: 0,
+            name: name.to_string(),
+            backend_type: "llama_cpp".to_string(),
+            version: version.to_string(),
+            path: format!("/opt/backends/{name}/{version}"),
+            installed_at,
+            gpu_type: None,
+            source: None,
+            is_active: false,
+        }
+    }
+
+    #[test]
+    fn test_insert_and_get_active_backend() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        let active = get_active_backend(&conn, "llama_cpp").unwrap().unwrap();
+        assert_eq!(active.version, "v2.0.0");
+        assert!(active.is_active);
+    }
+
+    #[test]
+    fn test_list_active_backends() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = make_record("ik_llama", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        let active = list_active_backends(&conn).unwrap();
+        assert_eq!(active.len(), 2);
+    }
+
+    #[test]
+    fn test_list_backend_versions() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        let versions = list_backend_versions(&conn, "llama_cpp").unwrap();
+        assert_eq!(versions.len(), 2);
+        // Ordered newest first (installed_at DESC)
+        assert_eq!(versions[0].version, "v2.0.0");
+        assert_eq!(versions[1].version, "v1.0.0");
+    }
+
+    #[test]
+    fn test_delete_single_backend_version() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        delete_backend_installation(&conn, "llama_cpp", "v1.0.0").unwrap();
+
+        let versions = list_backend_versions(&conn, "llama_cpp").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, "v2.0.0");
+    }
+
+    #[test]
+    fn test_delete_all_backend_versions() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+        insert_backend_installation(&conn, &r2).unwrap();
+
+        delete_all_backend_versions(&conn, "llama_cpp").unwrap();
+
+        let versions = list_backend_versions(&conn, "llama_cpp").unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn test_insert_duplicate_version_fails() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+        insert_backend_installation(&conn, &r1).unwrap();
+
+        // Same (name, version) — should fail with UNIQUE constraint error
+        let r2 = make_record("llama_cpp", "v1.0.0", 2000);
+        let result = insert_backend_installation(&conn, &r2);
+        assert!(
+            result.is_err(),
+            "inserting a duplicate (name, version) should return Err"
+        );
     }
 }
