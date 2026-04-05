@@ -80,6 +80,27 @@ struct QuantRequest {
     context_length: u32,
 }
 
+// ── Wizard step indicator helper ─────────────────────────────────────────────
+
+fn step_class(current: &WizardStep, target: &WizardStep, target_idx: usize) -> &'static str {
+    let order = [
+        WizardStep::RepoInput,
+        WizardStep::LoadingQuants,
+        WizardStep::SelectQuants,
+        WizardStep::SetContext,
+        WizardStep::Downloading,
+        WizardStep::Done,
+    ];
+    let current_idx = order.iter().position(|s| s == current).unwrap_or(0);
+    if current == target {
+        "wizard-step active"
+    } else if current_idx > target_idx {
+        "wizard-step completed"
+    } else {
+        "wizard-step"
+    }
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 #[component]
@@ -95,15 +116,46 @@ pub fn Pull() -> impl IntoView {
 
     // ── Step dispatch ─────────────────────────────────────────────────────────
     view! {
-        <div class="pull-wizard">
+        <div class="page-header">
+            <h1>"Pull Model"</h1>
+        </div>
+
+        // Wizard step indicator
+        <div class="wizard-steps mb-3">
+            {move || {
+                let step = wizard_step.get();
+                view! {
+                    <div class=step_class(&step, &WizardStep::RepoInput, 0)>"1. Repo"</div>
+                    <div class=step_class(&step, &WizardStep::SelectQuants, 2)>"2. Select"</div>
+                    <div class=step_class(&step, &WizardStep::SetContext, 3)>"3. Context"</div>
+                    <div class=step_class(&step, &WizardStep::Downloading, 4)>"4. Download"</div>
+                }
+            }}
+        </div>
+
+        <div class="form-card card">
             {move || match wizard_step.get() {
                 // ── Step 1: Repo Input ────────────────────────────────────────
                 WizardStep::RepoInput => view! {
-                    <h1>"Pull Model"</h1>
-                    <p>"Enter a HuggingFace repo ID to search for available quantisations."</p>
-                    <div>
-                        <label>"Repo ID: "</label>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Enter Repository"</h2>
+                        <p class="form-card__desc text-muted">
+                            "Enter a HuggingFace repo ID to search for available quantisations."
+                        </p>
+                    </div>
+
+                    {move || error_msg.get().map(|e| view! {
+                        <div class="alert alert--error mb-2">
+                            <span class="alert__icon">"✕"</span>
+                            <span>{e}</span>
+                        </div>
+                    })}
+
+                    <div class="form-group">
+                        <label class="form-label" for="repo-id">"Repo ID"</label>
                         <input
+                            id="repo-id"
+                            class="form-input"
                             type="text"
                             prop:value=move || repo_id.get()
                             on:input=move |e| repo_id.set(event_target_value(&e))
@@ -111,65 +163,74 @@ pub fn Pull() -> impl IntoView {
                         />
                     </div>
 
-                    {move || error_msg.get().map(|e| view! {
-                        <p style="color:red">"Error: " {e}</p>
-                    })}
-
-                    <button
-                        on:click=move |_| {
-                            let rid = repo_id.get();
-                            if rid.is_empty() { return; }
-                            // Clear any stale per-repo state from a previous search.
-                            error_msg.set(None);
-                            selected_filenames.set(std::collections::HashSet::new());
-                            context_lengths.set(std::collections::HashMap::new());
-                            available_quants.set(Vec::new());
-                            wizard_step.set(WizardStep::LoadingQuants);
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let url = format!("/kronk/v1/hf/{}", rid);
-                                match gloo_net::http::Request::get(&url).send().await {
-                                    Ok(resp) => {
-                                        match resp.json::<Vec<QuantEntry>>().await {
-                                            Ok(quants) => {
-                                                if quants.is_empty() {
-                                                    error_msg.set(Some(
-                                                        "No GGUF files found for this repo. Check the repo ID and try again.".to_string()
-                                                    ));
+                    <div class="form-actions mt-3">
+                        <button
+                            class="btn btn-primary"
+                            on:click=move |_| {
+                                let rid = repo_id.get();
+                                if rid.is_empty() { return; }
+                                // Clear any stale per-repo state from a previous search.
+                                error_msg.set(None);
+                                selected_filenames.set(std::collections::HashSet::new());
+                                context_lengths.set(std::collections::HashMap::new());
+                                available_quants.set(Vec::new());
+                                wizard_step.set(WizardStep::LoadingQuants);
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    let url = format!("/kronk/v1/hf/{}", rid);
+                                    match gloo_net::http::Request::get(&url).send().await {
+                                        Ok(resp) => {
+                                            match resp.json::<Vec<QuantEntry>>().await {
+                                                Ok(quants) => {
+                                                    if quants.is_empty() {
+                                                        error_msg.set(Some(
+                                                            "No GGUF files found for this repo. Check the repo ID and try again.".to_string()
+                                                        ));
+                                                        wizard_step.set(WizardStep::RepoInput);
+                                                    } else {
+                                                        available_quants.set(quants);
+                                                        wizard_step.set(WizardStep::SelectQuants);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error_msg.set(Some(format!("Failed to parse response: {e}")));
                                                     wizard_step.set(WizardStep::RepoInput);
-                                                } else {
-                                                    available_quants.set(quants);
-                                                    wizard_step.set(WizardStep::SelectQuants);
                                                 }
                                             }
-                                            Err(e) => {
-                                                error_msg.set(Some(format!("Failed to parse response: {e}")));
-                                                wizard_step.set(WizardStep::RepoInput);
-                                            }
+                                        }
+                                        Err(e) => {
+                                            error_msg.set(Some(format!("Request failed: {e}")));
+                                            wizard_step.set(WizardStep::RepoInput);
                                         }
                                     }
-                                    Err(e) => {
-                                        error_msg.set(Some(format!("Request failed: {e}")));
-                                        wizard_step.set(WizardStep::RepoInput);
-                                    }
-                                }
-                            });
-                        }
-                    >"Search"</button>
+                                });
+                            }
+                        >"Search"</button>
+                    </div>
                 }.into_any(),
 
                 // ── Step 2: Loading ───────────────────────────────────────────
                 WizardStep::LoadingQuants => view! {
-                    <h1>"Searching HuggingFace..."</h1>
-                    <p class="spinner">"⏳ Fetching available quants, please wait..."</p>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Searching HuggingFace..."</h2>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+                        <span class="spinner"></span>
+                        <span class="text-muted">"Fetching available quants, please wait..."</span>
+                    </div>
                 }.into_any(),
 
                 // ── Step 3: Select Quants ─────────────────────────────────────
                 WizardStep::SelectQuants => view! {
-                    <h1>"Select Quants"</h1>
-                    <h2>{move || repo_id.get()}</h2>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Select Quantisations"</h2>
+                        <p class="form-card__desc text-muted">
+                            "Choose one or more quantisation files to download from "
+                            <code>{move || repo_id.get()}</code>"."
+                        </p>
+                    </div>
 
-                    <div style="margin-bottom:0.5em">
-                        <button on:click=move |_| {
+                    <div class="form-actions mb-2">
+                        <button class="btn btn-secondary btn-sm" on:click=move |_| {
                             let all: HashSet<String> = available_quants
                                 .get()
                                 .iter()
@@ -177,16 +238,15 @@ pub fn Pull() -> impl IntoView {
                                 .collect();
                             selected_filenames.set(all);
                         }>"Select All"</button>
-                        {" "}
-                        <button on:click=move |_| {
+                        <button class="btn btn-secondary btn-sm" on:click=move |_| {
                             selected_filenames.set(HashSet::new());
                         }>"Deselect All"</button>
                     </div>
 
-                    <table>
+                    <table class="data-table">
                         <thead>
                             <tr>
-                                <th></th>
+                                <th style="width:2.5rem"></th>
                                 <th>"Quant"</th>
                                 <th>"Filename"</th>
                                 <th>"Size"</th>
@@ -218,21 +278,23 @@ pub fn Pull() -> impl IntoView {
                                                 }
                                             />
                                         </td>
-                                        <td>{label}</td>
+                                        <td>
+                                            <span class="badge badge-info">{label}</span>
+                                        </td>
                                         <td><code>{q.filename.clone()}</code></td>
-                                        <td>{size_str}</td>
+                                        <td class="text-muted">{size_str}</td>
                                     </tr>
                                 }
                             }).collect::<Vec<_>>()}
                         </tbody>
                     </table>
 
-                    <div style="margin-top:1em">
-                        <button on:click=move |_| {
+                    <div class="form-actions mt-3">
+                        <button class="btn btn-secondary" on:click=move |_| {
                             wizard_step.set(WizardStep::RepoInput);
                         }>"Back"</button>
-                        {" "}
                         <button
+                            class="btn btn-primary"
                             prop:disabled=move || selected_filenames.get().is_empty()
                             on:click=move |_| {
                                 // Pre-fill context_lengths with 32768 for each selected filename
@@ -244,16 +306,20 @@ pub fn Pull() -> impl IntoView {
                                 context_lengths.set(ctx);
                                 wizard_step.set(WizardStep::SetContext);
                             }
-                        >"Next"</button>
+                        >"Next →"</button>
                     </div>
                 }.into_any(),
 
                 // ── Step 4: Set Context ───────────────────────────────────────
                 WizardStep::SetContext => view! {
-                    <h1>"Set Context Length"</h1>
-                    <p>"Set the context length for each selected quant."</p>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Set Context Length"</h2>
+                        <p class="form-card__desc text-muted">
+                            "Configure the context window size for each selected quantisation."
+                        </p>
+                    </div>
 
-                    <table>
+                    <table class="data-table">
                         <thead>
                             <tr>
                                 <th>"Quant"</th>
@@ -276,10 +342,14 @@ pub fn Pull() -> impl IntoView {
                                             .unwrap_or(32768);
                                         view! {
                                             <tr>
-                                                <td>{label}</td>
+                                                <td>
+                                                    <span class="badge badge-info">{label}</span>
+                                                </td>
                                                 <td><code>{q.filename.clone()}</code></td>
                                                 <td>
                                                     <input
+                                                        class="form-input"
+                                                        style="max-width:140px"
                                                         type="number"
                                                         min="512"
                                                         step="512"
@@ -300,12 +370,11 @@ pub fn Pull() -> impl IntoView {
                         </tbody>
                     </table>
 
-                    <div style="margin-top:1em">
-                        <button on:click=move |_| {
+                    <div class="form-actions mt-3">
+                        <button class="btn btn-secondary" on:click=move |_| {
                             wizard_step.set(WizardStep::SelectQuants);
                         }>"Back"</button>
-                        {" "}
-                        <button on:click=move |_| {
+                        <button class="btn btn-primary" on:click=move |_| {
                             let rid = repo_id.get();
                             let sel = selected_filenames.get();
                             let quants_list = available_quants.get();
@@ -478,42 +547,58 @@ pub fn Pull() -> impl IntoView {
 
                 // ── Step 5: Downloading ───────────────────────────────────────
                 WizardStep::Downloading => view! {
-                    <h1>"Downloading..."</h1>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Downloading"</h2>
+                        <p class="form-card__desc text-muted">"Tracking download progress for each file."</p>
+                    </div>
 
                     {move || error_msg.get().map(|e| view! {
-                        <p style="color:red">"Error: " {e}</p>
+                        <div class="alert alert--error mb-2">
+                            <span class="alert__icon">"✕"</span>
+                            <span>{e}</span>
+                        </div>
                     })}
 
-                    <div>
+                    <div class="download-jobs">
                         {move || download_jobs.get().into_iter().map(|job| {
-                            let progress_val = job.bytes_downloaded as f64;
-                            let progress_max = job.total_bytes.map(|b| b as f64);
-                            let status_text = if job.status == "completed" {
-                                "completed ✓".to_string()
+                            let progress_pct = job.total_bytes
+                                .filter(|&total| total > 0)
+                                .map(|total| (job.bytes_downloaded as f64 / total as f64 * 100.0) as u32);
+
+                            let (status_class, status_text) = if job.status == "completed" {
+                                ("badge badge-success", "Completed ✓".to_string())
                             } else if job.status == "failed" {
-                                format!("failed: {}", job.error.unwrap_or_default())
+                                ("badge badge-error", format!("Failed: {}", job.error.clone().unwrap_or_default()))
                             } else if job.status == "running" {
                                 let dl = format_bytes(job.bytes_downloaded as i64);
                                 let total = job.total_bytes
                                     .map(|b| format_bytes(b as i64))
                                     .unwrap_or_else(|| "?".to_string());
-                                format!("running: {dl} / {total}")
+                                ("badge badge-info", format!("{dl} / {total}"))
                             } else {
-                                job.status.clone()
+                                ("badge badge-muted", job.status.clone())
                             };
+
                             view! {
-                                <div style="margin-bottom:1em">
-                                    <p><strong>{job.filename}</strong></p>
-                                    {if let Some(max) = progress_max {
-                                        view! {
-                                            <progress value=progress_val max=max />
-                                        }.into_any()
-                                    } else {
-                                        // Indeterminate — omit value/max so the browser
-                                        // renders an animated "unknown length" bar.
-                                        view! { <progress /> }.into_any()
-                                    }}
-                                    <p>{status_text}</p>
+                                <div class="download-job-card card mb-2">
+                                    <div class="flex-between mb-1">
+                                        <span class="text-mono" style="font-size:0.9rem">{job.filename.clone()}</span>
+                                        <span class=status_class>{status_text}</span>
+                                    </div>
+                                    <div class="progress-bar">
+                                        {if let Some(pct) = progress_pct {
+                                            view! {
+                                                <div
+                                                    class="progress-bar-fill"
+                                                    style=format!("width:{}%", pct)
+                                                />
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <div class="progress-bar-fill indeterminate" />
+                                            }.into_any()
+                                        }}
+                                    </div>
                                 </div>
                             }
                         }).collect::<Vec<_>>()}
@@ -538,21 +623,27 @@ pub fn Pull() -> impl IntoView {
                                 ))
                                 .collect();
                             Some(view! {
-                                <div>
-                                    <p style="color:red">"Some downloads failed:"</p>
-                                    <ul>
-                                        {failures.into_iter().map(|msg| view! {
-                                            <li>{msg}</li>
-                                        }).collect::<Vec<_>>()}
-                                    </ul>
-                                    <a href="/models">"Go to Models →"</a>
+                                <div class="alert alert--error mt-3">
+                                    <span class="alert__icon">"✕"</span>
+                                    <div>
+                                        <p>"Some downloads failed:"</p>
+                                        <ul style="margin-top:0.5rem; padding-left:1.25rem;">
+                                            {failures.into_iter().map(|msg| view! {
+                                                <li>{msg}</li>
+                                            }).collect::<Vec<_>>()}
+                                        </ul>
+                                        <a href="/models" class="mt-2" style="display:inline-block">"Go to Models →"</a>
+                                    </div>
                                 </div>
                             }.into_any())
                         } else {
                             Some(view! {
-                                <div>
-                                    <p>"Setup complete!"</p>
-                                    <a href="/models">"Go to Models →"</a>
+                                <div class="alert alert--success mt-3">
+                                    <span class="alert__icon">"✓"</span>
+                                    <div>
+                                        <p>"All downloads completed successfully!"</p>
+                                        <a href="/models" class="mt-1" style="display:inline-block">"Go to Models →"</a>
+                                    </div>
                                 </div>
                             }.into_any())
                         }
@@ -561,13 +652,34 @@ pub fn Pull() -> impl IntoView {
 
                 // ── Step 6: Done ──────────────────────────────────────────────
                 WizardStep::Done => view! {
-                    <h1>"All downloads complete!"</h1>
-                    <ul>
-                        {move || download_jobs.get().into_iter().map(|job| view! {
-                            <li>{job.filename}</li>
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"All Downloads Complete!"</h2>
+                        <p class="form-card__desc text-muted">"The following models are now available."</p>
+                    </div>
+
+                    <div class="download-jobs mt-2">
+                        {move || download_jobs.get().into_iter().map(|job| {
+                            let badge_class = if job.status == "completed" {
+                                "badge badge-success"
+                            } else {
+                                "badge badge-error"
+                            };
+                            view! {
+                                <div class="flex-between card mb-1" style="padding:0.75rem 1rem;">
+                                    <span class="text-mono" style="font-size:0.9rem">{job.filename}</span>
+                                    <span class=badge_class>
+                                        {if job.status == "completed" { "Done ✓" } else { "Failed" }}
+                                    </span>
+                                </div>
+                            }
                         }).collect::<Vec<_>>()}
-                    </ul>
-                    <a href="/models">"View Models →"</a>
+                    </div>
+
+                    <div class="form-actions mt-3">
+                        <a href="/models">
+                            <button class="btn btn-primary">"View Models →"</button>
+                        </a>
+                    </div>
                 }.into_any(),
             }}
         </div>
