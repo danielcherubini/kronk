@@ -3,6 +3,7 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -391,12 +392,11 @@ pub fn ModelEditor() -> impl IntoView {
         }
     });
 
-    let templates_for_action = templates.get().and_then(|g| g.as_ref().cloned());
     let load_preset_action: Action<String, (), LocalStorage> =
         Action::new_unsync(move |preset_name: &String| {
             let preset_name_clone = preset_name.clone();
-            let templates_map = templates_for_action.clone();
             async move {
+                let templates_map = templates.get().and_then(|g| g.as_ref().cloned());
                 if let Some(templates_map) = templates_map {
                     if let Some(preset) = templates_map.get(&preset_name_clone) {
                         if let Some(obj) = preset.as_object() {
@@ -567,7 +567,25 @@ pub fn ModelEditor() -> impl IntoView {
                     original_id.set(form_id);
                     model_status.set(Some((true, "Saved.".into())));
                 }
-                Err(e) => model_status.set(Some((false, format!("Error: {}", e)))),
+                Err(e) => {
+                    if old_id != new_id && !old_id.is_empty() {
+                        match rename_model(&new_id, &old_id).await {
+                            Ok(()) => {
+                                original_id.set(old_id.clone());
+                                model_status
+                                    .set(Some((false, format!("Save failed, rolled back: {}", e))));
+                            }
+                            Err(_) => {
+                                model_status.set(Some((
+                                    false,
+                                    format!("Save failed, rollback also failed: {}", e),
+                                )));
+                            }
+                        }
+                    } else {
+                        model_status.set(Some((false, format!("Error: {}", e))));
+                    }
+                }
             }
         }
     });
@@ -764,9 +782,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("temperature") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("temperature".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -785,9 +803,9 @@ pub fn ModelEditor() -> impl IntoView {
                                     }
                                     on:input=move |e| {
                                         sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("temperature") {
-                                                f.value = event_target_value(&e);
-                                            }
+                                            fields.entry("temperature".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
                                         });
                                     }
                                 />
@@ -805,9 +823,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("top_k") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("top_k".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -823,13 +841,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     prop:disabled=move || {
                                         sampling_fields.get().get("top_k").map(|f| !f.enabled).unwrap_or(true)
                                     }
-                                    on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("top_k") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                  on:input=move |e| {
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("top_k".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
 
                                 <label class="form-label">
@@ -845,9 +863,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("top_p") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("top_p".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -864,13 +882,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     prop:disabled=move || {
                                         sampling_fields.get().get("top_p").map(|f| !f.enabled).unwrap_or(true)
                                     }
-                                    on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("top_p") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                  on:input=move |e| {
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("top_p".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
 
                                 <label class="form-label">
@@ -886,9 +904,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("min_p") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("min_p".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -905,13 +923,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     prop:disabled=move || {
                                         sampling_fields.get().get("min_p").map(|f| !f.enabled).unwrap_or(true)
                                     }
-                                    on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("min_p") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                 on:input=move |e| {
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("min_p".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
 
                                 <label class="form-label">
@@ -927,9 +945,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("presence_penalty") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("presence_penalty".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -946,13 +964,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     prop:disabled=move || {
                                         sampling_fields.get().get("presence_penalty").map(|f| !f.enabled).unwrap_or(true)
                                     }
-                                    on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("presence_penalty") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                   on:input=move |e| {
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("presence_penalty".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
 
                                 <label class="form-label">
@@ -968,9 +986,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("frequency_penalty") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("frequency_penalty".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -988,12 +1006,12 @@ pub fn ModelEditor() -> impl IntoView {
                                         sampling_fields.get().get("frequency_penalty").map(|f| !f.enabled).unwrap_or(true)
                                     }
                                     on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("frequency_penalty") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("frequency_penalty".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
 
                                 <label class="form-label">
@@ -1009,9 +1027,9 @@ pub fn ModelEditor() -> impl IntoView {
                                                 .map(|el| el.checked())
                                                 .unwrap_or(false);
                                             sampling_fields.update(|fields| {
-                                                if let Some(f) = fields.get_mut("repeat_penalty") {
-                                                    f.enabled = checked;
-                                                }
+                                                fields.entry("repeat_penalty".into())
+                                                    .or_insert(SamplingField::default())
+                                                    .enabled = checked;
                                             });
                                         }
                                     />
@@ -1028,13 +1046,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     prop:disabled=move || {
                                         sampling_fields.get().get("repeat_penalty").map(|f| !f.enabled).unwrap_or(true)
                                     }
-                                    on:input=move |e| {
-                                        sampling_fields.update(|fields| {
-                                            if let Some(f) = fields.get_mut("repeat_penalty") {
-                                                f.value = event_target_value(&e);
-                                            }
-                                        });
-                                    }
+                                 on:input=move |e| {
+                                         sampling_fields.update(|fields| {
+                                             fields.entry("repeat_penalty".into())
+                                                 .or_insert(SamplingField::default())
+                                                 .value = event_target_value(&e);
+                                         });
+                                     }
                                 />
                             </div>
 
@@ -1050,67 +1068,93 @@ pub fn ModelEditor() -> impl IntoView {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <For
+                                   <For
                                         each=move || quants.get().into_iter().enumerate()
-                                        key=|(i, _)| *i
-                                        children=move |(i, (name, q))| {
+                                        key=|(_i, (name, _))| name.clone()
+                                        children=move |(_i, (name, q))| {
+                                            let name_arc = Arc::new(name.clone());
                                             view! {
                                                 <tr>
                                                     <td>{name.clone()}</td>
                                                     <td>
                                                         <input
-                                                            class="form-input"
-                                                            type="text"
-                                                            placeholder="model-Q4_K_M.gguf"
-                                                            prop:value=move || q.file.clone()
-                                                            on:input=move |e| {
-                                                                quants.update(|rows| {
-                                                                    if let Some((_, ref mut qq)) = rows.get_mut(i) {
-                                                                        qq.file = event_target_value(&e);
-                                                                    }
-                                                                });
-                                                            }
-                                                        />
+                                                             class="form-input"
+                                                             type="text"
+                                                             placeholder="model-Q4_K_M.gguf"
+                                                             prop:value=move || q.file.clone()
+                                                             on:input={
+                                                                 let name_ref = Arc::clone(&name_arc);
+                                                                 move |e| {
+                                                                     let file = event_target_value(&e);
+                                                                     quants.update(|rows| {
+                                                                         if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
+                                                                             if let Some((_, ref mut qq)) = rows.get_mut(pos) {
+                                                                                 qq.file = file;
+                                                                             }
+                                                                         }
+                                                                     });
+                                                                 }
+                                                             }
+                                                         />
                                                     </td>
                                                     <td>
                                                         <input
-                                                            class="form-input"
-                                                            type="number"
-                                                            placeholder="optional"
-                                                            prop:value=move || q.size_bytes.map(|v| v.to_string()).unwrap_or_default()
-                                                            on:input=move |e| {
-                                                                quants.update(|rows| {
-                                                                    if let Some((_, ref mut qq)) = rows.get_mut(i) {
-                                                                        qq.size_bytes = event_target_value(&e).parse::<u64>().ok();
-                                                                    }
-                                                                });
-                                                            }
-                                                        />
+                                                             class="form-input"
+                                                             type="number"
+                                                             placeholder="optional"
+                                                             prop:value=move || q.size_bytes.map(|v| v.to_string()).unwrap_or_default()
+                                                             on:input={
+                                                                 let name_ref = Arc::clone(&name_arc);
+                                                                 move |e| {
+                                                                     let size = event_target_value(&e).parse::<u64>().ok();
+                                                                     quants.update(|rows| {
+                                                                         if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
+                                                                             if let Some((_, ref mut qq)) = rows.get_mut(pos) {
+                                                                                 qq.size_bytes = size;
+                                                                             }
+                                                                         }
+                                                                     });
+                                                                 }
+                                                             }
+                                                         />
                                                     </td>
-                                                    <td>
+                                                   <td>
                                                         <input
-                                                            class="form-input"
-                                                            type="number"
-                                                            placeholder="optional"
-                                                            prop:value=move || q.context_length.map(|v| v.to_string()).unwrap_or_default()
-                                                            on:input=move |e| {
-                                                                quants.update(|rows| {
-                                                                    if let Some((_, ref mut qq)) = rows.get_mut(i) {
-                                                                        qq.context_length = event_target_value(&e).parse::<u32>().ok();
-                                                                    }
-                                                                });
-                                                            }
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <button
-                                                            type="button"
-                                                            class="btn btn-danger btn-sm"
-                                                            on:click=move |_| {
-                                                                quants.update(|rows| { rows.remove(i); });
-                                                            }
-                                                        >"✕"</button>
-                                                    </td>
+                                                             class="form-input"
+                                                             type="number"
+                                                             placeholder="optional"
+                                                             prop:value=move || q.context_length.map(|v| v.to_string()).unwrap_or_default()
+                                                             on:input={
+                                                                 let name_ref = Arc::clone(&name_arc);
+                                                                 move |e| {
+                                                                     let ctx = event_target_value(&e).parse::<u32>().ok();
+                                                                     quants.update(|rows| {
+                                                                         if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
+                                                                             if let Some((_, ref mut qq)) = rows.get_mut(pos) {
+                                                                                 qq.context_length = ctx;
+                                                                             }
+                                                                         }
+                                                                     });
+                                                                 }
+                                                             }
+                                                         />
+                                                     </td>
+                                                     <td>
+                                                          <button
+                                                              type="button"
+                                                              class="btn btn-danger btn-sm"
+                                                              on:click={
+                                                                  let name_ref = Arc::clone(&name_arc);
+                                                                  move |_| {
+                                                                      quants.update(|rows| {
+                                                                          if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
+                                                                              rows.remove(pos);
+                                                                          }
+                                                                      });
+                                                                  }
+                                                              }
+                                                          >"✕"</button>
+                                                      </td>
                                                 </tr>
                                             }
                                         }
@@ -1140,27 +1184,22 @@ pub fn ModelEditor() -> impl IntoView {
 
                             <hr class="section-divider" />
 
-                            <form on:submit={move |e| {
-                                e.prevent_default();
-                                _save_action.dispatch(());
-                            }}>
-                                <div class="form-actions">
-                                     <button type="submit" class="btn btn-primary">"Save Model"</button>
-                                     <A href="/models"><button type="button" class="btn btn-secondary">"Cancel"</button></A>
-                                {move || (!is_new()).then(|| view! {
-                                    <button
-                                        type="button"
-                                        class="btn btn-danger ml-auto"
-                                        on:click=move |_| {
-                                            let confirmed = web_sys::window()
-                                                .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
-                                                .unwrap_or(false);
-                                            if confirmed { delete_action.dispatch(()); }
-                                        }
-                                    >"Delete Model"</button>
-                                })}
-                                </div>
-                            </form>
+                             <div class="form-actions">
+                                  <button type="submit" class="btn btn-primary">"Save Model"</button>
+                                  <A href="/models"><button type="button" class="btn btn-secondary">"Cancel"</button></A>
+                             {move || (!is_new()).then(|| view! {
+                                 <button
+                                     type="button"
+                                     class="btn btn-danger ml-auto"
+                                     on:click=move |_| {
+                                         let confirmed = web_sys::window()
+                                             .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
+                                             .unwrap_or(false);
+                                         if confirmed { delete_action.dispatch(()); }
+                                     }
+                                 >"Delete Model"</button>
+                             })}
+                             </div>
 
                              {move || model_status.get().map(|(ok, msg)| {
                                 let cls = if ok { "alert alert--success mt-2" } else { "alert alert--error mt-2" };
