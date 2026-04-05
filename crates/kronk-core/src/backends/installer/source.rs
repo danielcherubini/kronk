@@ -1,7 +1,8 @@
+use std::path::{Path, PathBuf};
+
 #[cfg(target_os = "windows")]
 use anyhow::Context;
 use anyhow::{anyhow, Result};
-use std::path::{Path, PathBuf};
 
 use super::extract::find_backend_binary;
 use super::prebuilt::prepare_target_dir;
