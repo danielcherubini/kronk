@@ -374,8 +374,58 @@ label {
     border: 1px solid var(--border-color);
     max-height: 600px;
     overflow-y: auto;
+    line-height: 1.6;
+}
+
+.log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.log-line {
+    display: block;
     white-space: pre-wrap;
-    line-height: 1.5;
+    word-break: break-all;
+    padding: 0.1rem 0;
+}
+
+.log-line--error {
+    color: var(--accent-red);
+}
+
+.log-line--warn {
+    color: var(--accent-yellow);
+}
+
+.log-line--info {
+    color: var(--text-primary);
+}
+
+.log-line--debug {
+    color: var(--text-muted);
+}
+
+/* 14b. Code editor */
+.code-editor {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    width: 100%;
+    min-height: 480px;
+    resize: vertical;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.code-editor:focus {
+    border-color: var(--accent-blue);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
 }
 
 /* 15. Spinner */
