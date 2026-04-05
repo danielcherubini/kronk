@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
 // Helper function to determine the color class based on percentage
 fn color_for_pct(pct: f32) -> &'static str {
@@ -43,10 +44,21 @@ struct VramInfo {
 pub fn Dashboard() -> impl IntoView {
     let refresh = RwSignal::new(0u32);
 
-    // Auto-refresh every 3 seconds: leak the interval to keep it running for the page's lifetime.
-    std::mem::forget(gloo_timers::callback::Interval::new(3_000, move || {
+    // Auto-refresh every 3 seconds using web_sys interval; clear on cleanup to prevent leaks.
+    let cb = Closure::<dyn Fn()>::new(move || {
         refresh.update(|n| *n += 1);
-    }));
+    });
+    let interval_id = web_sys::window()
+        .unwrap()
+        .set_interval_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 3_000)
+        .unwrap();
+    cb.forget(); // keep closure alive
+
+    on_cleanup(move || {
+        web_sys::window()
+            .unwrap()
+            .clear_interval_with_handle(interval_id);
+    });
 
     // Re-fetch when refresh signal changes.
     let health = LocalResource::new(move || async move {
@@ -72,11 +84,23 @@ pub fn Dashboard() -> impl IntoView {
     view! {
         <div class="page-header">
             <h1>"Dashboard"</h1>
-            <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
+            <Suspense>
+                {move || {
+                    health.get().map(|guard| {
+                        let h = guard.take();
+                        h.map(|h| view! {
+                            <div class="flex-between gap-1">
+                                <span class={format!("badge {}", status_badge_class(&h.status))}>{h.status.clone()}</span>
+                                <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
+                            </div>
+                        })
+                    })
+                }}
+            </Suspense>
         </div>
 
         <Suspense fallback=|| view! {
-            <div class="card" style="text-align:center; padding:3rem;">
+            <div class="card card--centered">
                 <span class="spinner">"Loading dashboard..."</span>
             </div>
         }>
@@ -85,10 +109,6 @@ pub fn Dashboard() -> impl IntoView {
                     let h = guard.take();
                     match h {
                         Some(h) => view! {
-                            <div class="page-header" style="margin-bottom:1rem;">
-                                <span></span>
-                                <span class={format!("badge {}", status_badge_class(&h.status))}>{h.status.clone()}</span>
-                            </div>
                             <div class="grid-stats">
                                 <div class="card">
                                     <div class="card-header">"CPU Usage"</div>
@@ -102,7 +122,7 @@ pub fn Dashboard() -> impl IntoView {
                                     <div class="card-header">"Memory"</div>
                                     <div class="card-value">{format!("{} / {} MiB", h.ram_used_mib, h.ram_total_mib)}</div>
                                     <div class="gauge">
-                                        <div class="gauge-fill" style={format!("width:{}%; background:var(--accent-blue)", (h.ram_used_mib as f32 / h.ram_total_mib as f32) * 100.0)} />
+                                        <div class="gauge-fill" style={format!("width:{}%; background:var(--accent-blue)", if h.ram_total_mib > 0 { (h.ram_used_mib as f32 / h.ram_total_mib as f32) * 100.0 } else { 0.0 })} />
                                     </div>
                                 </div>
 
@@ -117,7 +137,7 @@ pub fn Dashboard() -> impl IntoView {
                                 })}
 
                                 {h.vram.map(|v| {
-                                    let usage_pct = (v.used_mib as f32 / v.total_mib as f32) * 100.0;
+                                    let usage_pct = if v.total_mib > 0 { (v.used_mib as f32 / v.total_mib as f32) * 100.0 } else { 0.0 };
                                     view! {
                                         <div class="card">
                                             <div class="card-header">"VRAM"</div>

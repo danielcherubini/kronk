@@ -163,10 +163,10 @@ main {
     border-bottom: 1px solid var(--border-color);
     font-family: var(--font-mono);
 }
-tr:hover td {
+.data-table tr:hover td {
     background-color: rgba(56, 139, 253, 0.05);
 }
-tr:last-child td {
+.data-table tr:last-child td {
     border-bottom: none;
 }
 
@@ -755,4 +755,43 @@ label {
 .quants-table .form-input {
     font-size: 0.85rem;
     padding: 0.35rem 0.5rem;
+}
+
+/* 23. Additional utility classes */
+.card--centered {
+    text-align: center;
+    padding: 3rem;
+}
+.icon-sm {
+    width: 2.5rem;
+}
+.input-narrow {
+    max-width: 140px;
+}
+.text-sm {
+    font-size: 0.9rem;
+}
+.error-list {
+    margin-top: 0.5rem;
+    padding-left: 1.25rem;
+}
+.d-inline {
+    display: inline-block;
+}
+.p-cell {
+    padding: 0.75rem 1rem;
+}
+.ml-auto {
+    margin-left: auto;
+}
+.spinner-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 2rem 0;
+}
+.card-subtitle {
+    font-size: 0.8rem;
+    font-weight: 400;
+    margin-left: 0.5rem;
 }

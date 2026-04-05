@@ -401,7 +401,7 @@ pub fn ModelEditor() -> impl IntoView {
         })}
 
         <Suspense fallback=|| view! {
-            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+            <div class="spinner-container">
                 <span class="spinner"></span>
                 <span class="text-muted">"Loading model..."</span>
             </div>
@@ -421,7 +421,7 @@ pub fn ModelEditor() -> impl IntoView {
                             </div>
 
                             <form on:submit=move |e| { e.prevent_default(); save_model_action.dispatch(()); }>
-                                <div class="form-group">
+                                <div class="form-grid mb-3">
                                     <label class="form-label" for="field-id">"ID"</label>
                                     <input
                                         id="field-id"
@@ -432,9 +432,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:disabled=move || !is_new()
                                         on:input=move |e| form_id.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-backend">"Backend"</label>
                                     <select
                                         id="field-backend"
@@ -447,9 +445,7 @@ pub fn ModelEditor() -> impl IntoView {
                                             view! { <option value=b selected=selected>{b2}</option> }
                                         }).collect::<Vec<_>>()}
                                     </select>
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-model">"Model (HF repo)"</label>
                                     <input
                                         id="field-model"
@@ -459,9 +455,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || form_model.get()
                                         on:input=move |e| form_model.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-quant">"Quant"</label>
                                     <input
                                         id="field-quant"
@@ -471,9 +465,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || form_quant.get()
                                         on:input=move |e| form_quant.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-profile">"Profile"</label>
                                     <select
                                         id="field-profile"
@@ -489,9 +481,7 @@ pub fn ModelEditor() -> impl IntoView {
                                             }
                                         }).collect::<Vec<_>>()}
                                     </select>
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-ctx">"Context length"</label>
                                     <input
                                         id="field-ctx"
@@ -501,9 +491,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || form_context_length.get()
                                         on:input=move |e| form_context_length.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-port">"Port override"</label>
                                     <input
                                         id="field-port"
@@ -513,9 +501,8 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || form_port.get()
                                         on:input=move |e| form_port.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
+                                    <label class="form-label">"Enabled"</label>
                                     <div class="form-check">
                                         <input
                                             id="field-enabled"
@@ -532,19 +519,19 @@ pub fn ModelEditor() -> impl IntoView {
                                         />
                                         <label class="form-check-label" for="field-enabled">"Enabled"</label>
                                     </div>
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="field-args">"Extra args"</label>
-                                    <textarea
-                                        id="field-args"
-                                        class="form-textarea"
-                                        rows="6"
-                                        placeholder="One flag per line, e.g.:\n-ctk\nq4_0"
-                                        prop:value=move || form_args.get()
-                                        on:input=move |e| form_args.set(event_target_value(&e))
-                                    />
-                                    <span class="form-hint">"One argument per line (same as TOML args array)"</span>
+                                    <div>
+                                        <textarea
+                                            id="field-args"
+                                            class="form-textarea"
+                                            rows="6"
+                                            placeholder="One flag per line, e.g.:\n-ctk\nq4_0"
+                                            prop:value=move || form_args.get()
+                                            on:input=move |e| form_args.set(event_target_value(&e))
+                                        />
+                                        <span class="form-hint">"One argument per line (same as TOML args array)"</span>
+                                    </div>
                                 </div>
 
                                 <hr class="section-divider mb-3" />
@@ -555,8 +542,7 @@ pub fn ModelEditor() -> impl IntoView {
                                     {move || (!is_new()).then(|| view! {
                                         <button
                                             type="button"
-                                            class="btn btn-danger"
-                                            style="margin-left: auto;"
+                                            class="btn btn-danger ml-auto"
                                             on:click=move |_| {
                                                 let confirmed = web_sys::window()
                                                     .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
@@ -588,13 +574,13 @@ pub fn ModelEditor() -> impl IntoView {
                                     {move || if has_card.get() {
                                         let filename = form_model.get().replace('/', "--");
                                         view! {
-                                            <span class="text-muted" style="font-size:0.8rem; font-weight:400; margin-left:0.5rem;">
+                                            <span class="text-muted card-subtitle">
                                                 "(configs/" {filename} ".toml)"
                                             </span>
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <span class="text-muted" style="font-size:0.8rem; font-weight:400; margin-left:0.5rem;">
+                                            <span class="text-muted card-subtitle">
                                                 "(none — fill in to create)"
                                             </span>
                                         }.into_any()
@@ -606,7 +592,7 @@ pub fn ModelEditor() -> impl IntoView {
                             </div>
 
                             <form on:submit=move |e| { e.prevent_default(); save_card_action.dispatch(()); }>
-                                <div class="form-group">
+                                <div class="form-grid mb-3">
                                     <label class="form-label" for="card-name">"Name"</label>
                                     <input
                                         id="card-name"
@@ -616,9 +602,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || card_name.get()
                                         on:input=move |e| card_name.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="card-source">"Source (HF repo)"</label>
                                     <input
                                         id="card-source"
@@ -628,9 +612,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || card_source.get()
                                         on:input=move |e| card_source.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="card-ctx">"Default context length"</label>
                                     <input
                                         id="card-ctx"
@@ -640,9 +622,7 @@ pub fn ModelEditor() -> impl IntoView {
                                         prop:value=move || card_default_ctx.get()
                                         on:input=move |e| card_default_ctx.set(event_target_value(&e))
                                     />
-                                </div>
 
-                                <div class="form-group">
                                     <label class="form-label" for="card-gpu">"Default GPU layers"</label>
                                     <input
                                         id="card-gpu"

@@ -126,9 +126,11 @@ pub fn Pull() -> impl IntoView {
                 let step = wizard_step.get();
                 view! {
                     <div class=step_class(&step, &WizardStep::RepoInput, 0)>"1. Repo"</div>
-                    <div class=step_class(&step, &WizardStep::SelectQuants, 2)>"2. Select"</div>
-                    <div class=step_class(&step, &WizardStep::SetContext, 3)>"3. Context"</div>
-                    <div class=step_class(&step, &WizardStep::Downloading, 4)>"4. Download"</div>
+                    <div class=step_class(&step, &WizardStep::LoadingQuants, 1)>"2. Loading"</div>
+                    <div class=step_class(&step, &WizardStep::SelectQuants, 2)>"3. Select"</div>
+                    <div class=step_class(&step, &WizardStep::SetContext, 3)>"4. Context"</div>
+                    <div class=step_class(&step, &WizardStep::Downloading, 4)>"5. Download"</div>
+                    <div class=step_class(&step, &WizardStep::Done, 5)>"6. Done"</div>
                 }
             }}
         </div>
@@ -213,7 +215,7 @@ pub fn Pull() -> impl IntoView {
                     <div class="form-card__header">
                         <h2 class="form-card__title">"Searching HuggingFace..."</h2>
                     </div>
-                    <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+                    <div class="spinner-container">
                         <span class="spinner"></span>
                         <span class="text-muted">"Fetching available quants, please wait..."</span>
                     </div>
@@ -246,7 +248,7 @@ pub fn Pull() -> impl IntoView {
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th style="width:2.5rem"></th>
+                                <th class="icon-sm"></th>
                                 <th>"Quant"</th>
                                 <th>"Filename"</th>
                                 <th>"Size"</th>
@@ -347,10 +349,9 @@ pub fn Pull() -> impl IntoView {
                                                 </td>
                                                 <td><code>{q.filename.clone()}</code></td>
                                                 <td>
-                                                    <input
-                                                        class="form-input"
-                                                        style="max-width:140px"
-                                                        type="number"
+                                    <input
+                                        class="form-input input-narrow"
+                                        type="number"
                                                         min="512"
                                                         step="512"
                                                         prop:value=current_ctx
@@ -582,7 +583,7 @@ pub fn Pull() -> impl IntoView {
                             view! {
                                 <div class="download-job-card card mb-2">
                                     <div class="flex-between mb-1">
-                                        <span class="text-mono" style="font-size:0.9rem">{job.filename.clone()}</span>
+                                        <span class="text-mono text-sm">{job.filename.clone()}</span>
                                         <span class=status_class>{status_text}</span>
                                     </div>
                                     <div class="progress-bar">
@@ -627,12 +628,12 @@ pub fn Pull() -> impl IntoView {
                                     <span class="alert__icon">"✕"</span>
                                     <div>
                                         <p>"Some downloads failed:"</p>
-                                        <ul style="margin-top:0.5rem; padding-left:1.25rem;">
+                                        <ul class="error-list">
                                             {failures.into_iter().map(|msg| view! {
                                                 <li>{msg}</li>
                                             }).collect::<Vec<_>>()}
                                         </ul>
-                                        <a href="/models" class="mt-2" style="display:inline-block">"Go to Models →"</a>
+                                        <a href="/models" class="mt-2 d-inline">"Go to Models →"</a>
                                     </div>
                                 </div>
                             }.into_any())
@@ -642,7 +643,7 @@ pub fn Pull() -> impl IntoView {
                                     <span class="alert__icon">"✓"</span>
                                     <div>
                                         <p>"All downloads completed successfully!"</p>
-                                        <a href="/models" class="mt-1" style="display:inline-block">"Go to Models →"</a>
+                                        <a href="/models" class="mt-1 d-inline">"Go to Models →"</a>
                                     </div>
                                 </div>
                             }.into_any())
@@ -665,8 +666,8 @@ pub fn Pull() -> impl IntoView {
                                 "badge badge-error"
                             };
                             view! {
-                                <div class="flex-between card mb-1" style="padding:0.75rem 1rem;">
-                                    <span class="text-mono" style="font-size:0.9rem">{job.filename}</span>
+                                <div class="flex-between card mb-1 p-cell">
+                                    <span class="text-mono text-sm">{job.filename}</span>
                                     <span class=badge_class>
                                         {if job.status == "completed" { "Done ✓" } else { "Failed" }}
                                     </span>

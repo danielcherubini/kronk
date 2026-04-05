@@ -9,11 +9,11 @@ struct LogsResponse {
 /// Classify a log line and return the CSS modifier class suffix.
 fn log_level_class(line: &str) -> &'static str {
     let upper = line.to_uppercase();
-    if upper.contains("ERROR") || upper.contains("[ERROR]") {
+    if upper.contains("ERROR") {
         "log-line--error"
-    } else if upper.contains("WARN") || upper.contains("[WARN]") {
+    } else if upper.contains("WARN") {
         "log-line--warn"
-    } else if upper.contains("DEBUG") || upper.contains("[DEBUG]") {
+    } else if upper.contains("DEBUG") {
         "log-line--debug"
     } else {
         "log-line--info"
@@ -47,7 +47,7 @@ pub fn Logs() -> impl IntoView {
         </div>
 
         <Suspense fallback=|| view! {
-            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+            <div class="spinner-container">
                 <span class="spinner"></span>
                 <span class="text-muted">"Loading logs..."</span>
             </div>

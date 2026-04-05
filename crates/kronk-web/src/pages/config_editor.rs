@@ -63,11 +63,25 @@ pub fn ConfigEditor() -> impl IntoView {
 
     view! {
         <div class="page-header">
-            <h1>"Config Editor"</h1>
+            <h1>"Config"</h1>
+            <div class="form-actions">
+                <button
+                    class="btn btn-primary"
+                    on:click=move |_| { save.dispatch(()); }
+                >
+                    "Save"
+                </button>
+                <button
+                    class="btn btn-secondary"
+                    on:click=move |_| { load_trigger.update(|n| *n += 1); }
+                >
+                    "↺ Reload"
+                </button>
+            </div>
         </div>
 
         <Suspense fallback=|| view! {
-            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+            <div class="spinner-container">
                 <span class="spinner"></span>
                 <span class="text-muted">"Loading config..."</span>
             </div>
@@ -91,21 +105,6 @@ pub fn ConfigEditor() -> impl IntoView {
                                 prop:value=move || editor_content.get()
                                 on:input=move |e| editor_content.set(event_target_value(&e))
                             />
-                        </div>
-
-                        <div class="form-actions">
-                            <button
-                                class="btn btn-primary"
-                                on:click=move |_| { save.dispatch(()); }
-                            >
-                                "Save"
-                            </button>
-                            <button
-                                class="btn btn-secondary"
-                                on:click=move |_| { load_trigger.update(|n| *n += 1); }
-                            >
-                                "↺ Reload"
-                            </button>
                         </div>
 
                         {move || status_msg.get().map(|(ok, msg)| {

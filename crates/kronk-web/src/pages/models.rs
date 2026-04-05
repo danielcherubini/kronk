@@ -59,7 +59,7 @@ pub fn Models() -> impl IntoView {
             </A>
         </div>
         <Suspense fallback=|| view! {
-            <div class="card" style="text-align:center; padding:3rem;">
+            <div class="card card--centered">
                 <span class="spinner">"Loading models..."</span>
             </div>
         }>
@@ -67,14 +67,20 @@ pub fn Models() -> impl IntoView {
                 models.get().map(|guard| {
                     let result = guard.take();
                     match result {
+                        Some(data) if data.models.is_empty() => view! {
+                            <div class="card card--centered">
+                                <p class="text-muted">"No models configured yet."</p>
+                                <a href="/pull"><button class="btn btn-primary mt-2">"Pull a Model"</button></a>
+                            </div>
+                        }.into_any(),
                         Some(data) => view! {
                             <div class="models-grid">
                                 {data.models.into_iter().map(|m| {
                                     let id_load = m.id.clone();
                                     let id_unload = m.id.clone();
                                     let id_edit = m.id.clone();
-                                    let enabled_class = if m.enabled { "badge badge-success" } else { "badge badge-muted" };
-                                    let loaded_class = if m.loaded { "badge badge-info" } else { "badge badge-muted" };
+                                    let enabled_class = if m.enabled { "badge badge-success" } else { "badge badge-warning" };
+                                    let loaded_class = if m.loaded { "badge badge-success" } else { "badge badge-muted" };
                                     view! {
                                         <div class="model-card card">
                                             <div class="model-card__header">
@@ -83,9 +89,9 @@ pub fn Models() -> impl IntoView {
                                                     <span class=enabled_class>
                                                         {if m.enabled { "Enabled" } else { "Disabled" }}
                                                     </span>
-                                                    <span class=loaded_class>
-                                                        {if m.loaded { "Loaded" } else { "Unloaded" }}
-                                                    </span>
+                                    <span class=loaded_class>
+                                        {if m.loaded { "Loaded" } else { "Idle" }}
+                                    </span>
                                                 </div>
                                             </div>
                                             <div class="model-card__body">
