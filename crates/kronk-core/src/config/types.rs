@@ -1,4 +1,4 @@
-use crate::profiles::{Profile, SamplingParams};
+use crate::profiles::SamplingParams;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -119,8 +119,6 @@ pub struct ModelConfig {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub profile: Option<Profile>,
-    #[serde(default)]
     pub sampling: Option<SamplingParams>,
     /// Model card reference in "company/modelname" format.
     #[serde(default)]
@@ -139,6 +137,15 @@ pub struct ModelConfig {
     /// Context length for this model
     #[serde(default)]
     pub context_length: Option<u32>,
+    /// Display name for UI
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Default GPU layers
+    #[serde(default)]
+    pub gpu_layers: Option<u32>,
+    /// Available quantizations
+    #[serde(default)]
+    pub quants: std::collections::BTreeMap<String, crate::models::card::QuantInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
