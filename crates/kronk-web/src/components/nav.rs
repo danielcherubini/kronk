@@ -4,16 +4,13 @@ use leptos_router::components::A;
 #[component]
 pub fn Nav() -> impl IntoView {
     view! {
-        <nav>
-            <A href="/">"Dashboard"</A>
-            " | "
-            <A href="/models">"Models"</A>
-            " | "
-            <A href="/pull">"Pull Model"</A>
-            " | "
-            <A href="/logs">"Logs"</A>
-            " | "
-            <A href="/config">"Config"</A>
+        <nav class="topbar">
+            <span class="logo">"⚡ Kronk"</span>
+            <A href="/" attr:class="nav-link">"Dashboard"</A>
+            <A href="/models" attr:class="nav-link">"Models"</A>
+            <A href="/pull" attr:class="nav-link">"Pull Model"</A>
+            <A href="/logs" attr:class="nav-link">"Logs"</A>
+            <A href="/config" attr:class="nav-link">"Config"</A>
         </nav>
     }
 }

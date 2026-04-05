@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Result};
+use std::path::{Path, PathBuf};
+
 #[cfg(target_os = "windows")]
 use anyhow::Context;
-use std::path::{Path, PathBuf};
+use anyhow::{anyhow, Result};
 
 use super::extract::find_backend_binary;
 use super::prebuilt::prepare_target_dir;
@@ -252,7 +253,11 @@ async fn try_clone_latest_tag(git_url: &str, source_dir: &Path) -> Result<bool> 
 /// Build the CMake argument list for the configure step.
 ///
 /// Extracted for testability — callers can verify flags without invoking cmake.
-fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &Path) -> Vec<String> {
+fn build_cmake_args(
+    options: &InstallOptions,
+    source_dir: &Path,
+    build_output: &Path,
+) -> Vec<String> {
     let mut cmake_args = vec![
         "-B".to_string(),
         build_output.to_string_lossy().to_string(),
@@ -527,7 +532,9 @@ mod tests {
     fn test_ik_llama_cuda_includes_both_flags() {
         let opts = make_options(
             BackendType::IkLlama,
-            Some(GpuType::Cuda { version: "12".to_string() }),
+            Some(GpuType::Cuda {
+                version: "12".to_string(),
+            }),
         );
         let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
         assert!(args.contains(&"-DGGML_CUDA=ON".to_string()));
