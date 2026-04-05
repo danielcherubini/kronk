@@ -388,110 +388,138 @@ pub fn ModelEditor() -> impl IntoView {
     // ── View ──────────────────────────────────────────────────────────────────
 
     view! {
-        <h1>{move || if is_new() { "New Model".to_string() } else { format!("Edit: {}", model_id()) }}</h1>
+        <div class="page-header">
+            <h1>{move || if is_new() { "New Model".to_string() } else { format!("Edit: {}", model_id()) }}</h1>
+            <a href="/models" class="btn btn-secondary btn-sm">"← Back to Models"</a>
+        </div>
 
         {move || deleted.get().then(|| view! {
-            <p style="color: green">
-                "Model deleted. " <A href="/models">"← Back to Models"</A>
-            </p>
+            <div class="alert alert--success mb-3">
+                <span class="alert__icon">"✓"</span>
+                <span>"Model deleted. " <A href="/models">"← Back to Models"</A></span>
+            </div>
         })}
 
-        <Suspense fallback=|| view! { <p>"Loading..."</p> }>
+        <Suspense fallback=|| view! {
+            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+                <span class="spinner"></span>
+                <span class="text-muted">"Loading model..."</span>
+            </div>
+        }>
             {move || {
                 let _ = detail.get();
                 view! {
-                    <div>
+                    <div class="editor-layout">
 
                         // ── Model Config ──────────────────────────────────────
-                        <h2>"Model Config"</h2>
-                        <form on:submit=move |e| { e.prevent_default(); save_model_action.dispatch(()); }>
-                            <table style="border-collapse: collapse; width: 100%;">
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold; width: 160px;">"ID"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="text" style="width: 100%;"
-                                            placeholder="e.g. my-model"
-                                            prop:value=move || form_id.get()
-                                            prop:disabled=move || !is_new()
-                                            on:input=move |e| form_id.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Backend"</td>
-                                    <td style="padding: 6px;">
-                                        <select style="width: 100%;"
-                                            on:change=move |e| form_backend.set(event_target_value(&e))
-                                        >
-                                            {move || backends.get().into_iter().map(|b| {
-                                                let selected = b == form_backend.get();
-                                                let b2 = b.clone();
-                                                view! { <option value=b selected=selected>{b2}</option> }
-                                            }).collect::<Vec<_>>()}
-                                        </select>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Model (HF repo)"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="text" style="width: 100%;"
-                                            placeholder="e.g. unsloth/gemma-4-26B-A4B-it-GGUF"
-                                            prop:value=move || form_model.get()
-                                            on:input=move |e| form_model.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Quant"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="text" style="width: 100%;"
-                                            placeholder="e.g. Q4_K_M"
-                                            prop:value=move || form_quant.get()
-                                            on:input=move |e| form_quant.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Profile"</td>
-                                    <td style="padding: 6px;">
-                                        <select style="width: 100%;"
-                                            on:change=move |e| form_profile.set(event_target_value(&e))
-                                        >
-                                            {["", "coding", "chat", "analysis", "creative"].into_iter().map(|p| {
-                                                let selected = p == form_profile.get();
-                                                view! {
-                                                    <option value=p selected=selected>
-                                                        {if p.is_empty() { "(none)" } else { p }}
-                                                    </option>
-                                                }
-                                            }).collect::<Vec<_>>()}
-                                        </select>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Context length"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="number" style="width: 100%;"
-                                            placeholder="leave blank for default"
-                                            prop:value=move || form_context_length.get()
-                                            on:input=move |e| form_context_length.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Port override"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="number" style="width: 100%;"
-                                            placeholder="leave blank for default"
-                                            prop:value=move || form_port.get()
-                                            on:input=move |e| form_port.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Enabled"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="checkbox"
+                        <div class="form-card--wide card">
+                            <div class="form-card__header">
+                                <h2 class="form-card__title">"Model Config"</h2>
+                                <p class="form-card__desc text-muted">
+                                    "Configure backend, model source, and runtime parameters."
+                                </p>
+                            </div>
+
+                            <form on:submit=move |e| { e.prevent_default(); save_model_action.dispatch(()); }>
+                                <div class="form-group">
+                                    <label class="form-label" for="field-id">"ID"</label>
+                                    <input
+                                        id="field-id"
+                                        class="form-input"
+                                        type="text"
+                                        placeholder="e.g. my-model"
+                                        prop:value=move || form_id.get()
+                                        prop:disabled=move || !is_new()
+                                        on:input=move |e| form_id.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-backend">"Backend"</label>
+                                    <select
+                                        id="field-backend"
+                                        class="form-select"
+                                        on:change=move |e| form_backend.set(event_target_value(&e))
+                                    >
+                                        {move || backends.get().into_iter().map(|b| {
+                                            let selected = b == form_backend.get();
+                                            let b2 = b.clone();
+                                            view! { <option value=b selected=selected>{b2}</option> }
+                                        }).collect::<Vec<_>>()}
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-model">"Model (HF repo)"</label>
+                                    <input
+                                        id="field-model"
+                                        class="form-input"
+                                        type="text"
+                                        placeholder="e.g. unsloth/gemma-4-26B-A4B-it-GGUF"
+                                        prop:value=move || form_model.get()
+                                        on:input=move |e| form_model.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-quant">"Quant"</label>
+                                    <input
+                                        id="field-quant"
+                                        class="form-input"
+                                        type="text"
+                                        placeholder="e.g. Q4_K_M"
+                                        prop:value=move || form_quant.get()
+                                        on:input=move |e| form_quant.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-profile">"Profile"</label>
+                                    <select
+                                        id="field-profile"
+                                        class="form-select"
+                                        on:change=move |e| form_profile.set(event_target_value(&e))
+                                    >
+                                        {["", "coding", "chat", "analysis", "creative"].into_iter().map(|p| {
+                                            let selected = p == form_profile.get();
+                                            view! {
+                                                <option value=p selected=selected>
+                                                    {if p.is_empty() { "(none)" } else { p }}
+                                                </option>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-ctx">"Context length"</label>
+                                    <input
+                                        id="field-ctx"
+                                        class="form-input"
+                                        type="number"
+                                        placeholder="leave blank for default"
+                                        prop:value=move || form_context_length.get()
+                                        on:input=move |e| form_context_length.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="field-port">"Port override"</label>
+                                    <input
+                                        id="field-port"
+                                        class="form-input"
+                                        type="number"
+                                        placeholder="leave blank for default"
+                                        prop:value=move || form_port.get()
+                                        on:input=move |e| form_port.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input
+                                            id="field-enabled"
+                                            type="checkbox"
                                             prop:checked=move || form_enabled.get()
                                             on:change=move |e| {
                                                 use wasm_bindgen::JsCast;
@@ -502,185 +530,233 @@ pub fn ModelEditor() -> impl IntoView {
                                                 form_enabled.set(checked);
                                             }
                                         />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold; vertical-align: top;">"Extra args"</td>
-                                    <td style="padding: 6px;">
-                                        <textarea rows="6" style="width: 100%; font-family: monospace; font-size: 0.85em;"
-                                            placeholder="One flag per line, e.g.:\n-ctk\nq4_0"
-                                            prop:value=move || form_args.get()
-                                            on:input=move |e| form_args.set(event_target_value(&e))
-                                        />
-                                        <small>"One argument per line (same as TOML args array)"</small>
-                                    </td>
-                                </tr>
-                            </table>
+                                        <label class="form-check-label" for="field-enabled">"Enabled"</label>
+                                    </div>
+                                </div>
 
-                            <div style="margin-top: 0.75em; display: flex; gap: 0.5em; align-items: center;">
-                                <button type="submit">"Save Model Config"</button>
-                                <A href="/models"><button type="button">"Cancel"</button></A>
-                                {move || (!is_new()).then(|| view! {
-                                    <button type="button"
-                                        style="margin-left: auto; background: #c0392b; color: white; border: none; padding: 0.4em 1em; cursor: pointer;"
-                                        on:click=move |_| {
-                                            let confirmed = web_sys::window()
-                                                .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
-                                                .unwrap_or(false);
-                                            if confirmed { delete_action.dispatch(()); }
-                                        }
-                                    >"Delete Model"</button>
+                                <div class="form-group">
+                                    <label class="form-label" for="field-args">"Extra args"</label>
+                                    <textarea
+                                        id="field-args"
+                                        class="form-textarea"
+                                        rows="6"
+                                        placeholder="One flag per line, e.g.:\n-ctk\nq4_0"
+                                        prop:value=move || form_args.get()
+                                        on:input=move |e| form_args.set(event_target_value(&e))
+                                    />
+                                    <span class="form-hint">"One argument per line (same as TOML args array)"</span>
+                                </div>
+
+                                <hr class="section-divider mb-3" />
+
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn-primary">"Save Model Config"</button>
+                                    <A href="/models"><button type="button" class="btn btn-secondary">"Cancel"</button></A>
+                                    {move || (!is_new()).then(|| view! {
+                                        <button
+                                            type="button"
+                                            class="btn btn-danger"
+                                            style="margin-left: auto;"
+                                            on:click=move |_| {
+                                                let confirmed = web_sys::window()
+                                                    .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
+                                                    .unwrap_or(false);
+                                                if confirmed { delete_action.dispatch(()); }
+                                            }
+                                        >"Delete Model"</button>
+                                    })}
+                                </div>
+
+                                {move || model_status.get().map(|(ok, msg)| {
+                                    let cls = if ok { "alert alert--success mt-2" } else { "alert alert--error mt-2" };
+                                    let icon = if ok { "✓" } else { "✕" };
+                                    view! {
+                                        <div class=cls>
+                                            <span class="alert__icon">{icon}</span>
+                                            <span>{msg}</span>
+                                        </div>
+                                    }
                                 })}
-                            </div>
-
-                            {move || model_status.get().map(|(ok, msg)| {
-                                let color = if ok { "green" } else { "red" };
-                                view! { <p style=format!("color: {}", color)>{msg}</p> }
-                            })}
-                        </form>
+                            </form>
+                        </div>
 
                         // ── Model Card ────────────────────────────────────────
-                        <hr style="margin: 2em 0;" />
-                        <h2>
-                            "Model Card "
-                            {move || if has_card.get() {
-                                let filename = form_model.get().replace('/', "--");
-                                view! {
-                                    <small style="font-weight: normal; color: #666;">
-                                        "(configs/" {filename} ".toml)"
-                                    </small>
-                                }.into_any()
-                            } else {
-                                view! {
-                                    <small style="font-weight: normal; color: #999;">
-                                        "(none — fill in to create)"
-                                    </small>
-                                }.into_any()
-                            }}
-                        </h2>
+                        <div class="form-card--wide card">
+                            <div class="form-card__header">
+                                <h2 class="form-card__title">
+                                    "Model Card"
+                                    {move || if has_card.get() {
+                                        let filename = form_model.get().replace('/', "--");
+                                        view! {
+                                            <span class="text-muted" style="font-size:0.8rem; font-weight:400; margin-left:0.5rem;">
+                                                "(configs/" {filename} ".toml)"
+                                            </span>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <span class="text-muted" style="font-size:0.8rem; font-weight:400; margin-left:0.5rem;">
+                                                "(none — fill in to create)"
+                                            </span>
+                                        }.into_any()
+                                    }}
+                                </h2>
+                                <p class="form-card__desc text-muted">
+                                    "Store display name, source repo, and available quantisations."
+                                </p>
+                            </div>
 
-                        <form on:submit=move |e| { e.prevent_default(); save_card_action.dispatch(()); }>
-                            <table style="border-collapse: collapse; width: 100%;">
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold; width: 160px;">"Name"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="text" style="width: 100%;"
-                                            placeholder="e.g. Gemma 4"
-                                            prop:value=move || card_name.get()
-                                            on:input=move |e| card_name.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Source (HF repo)"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="text" style="width: 100%;"
-                                            placeholder="e.g. unsloth/gemma-4-26B-A4B-it-GGUF"
-                                            prop:value=move || card_source.get()
-                                            on:input=move |e| card_source.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Default context"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="number" style="width: 100%;"
-                                            placeholder="e.g. 8192"
-                                            prop:value=move || card_default_ctx.get()
-                                            on:input=move |e| card_default_ctx.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 6px; font-weight: bold;">"Default GPU layers"</td>
-                                    <td style="padding: 6px;">
-                                        <input type="number" style="width: 100%;"
-                                            placeholder="e.g. 999"
-                                            prop:value=move || card_default_gpu.get()
-                                            on:input=move |e| card_default_gpu.set(event_target_value(&e))
-                                        />
-                                    </td>
-                                </tr>
-                            </table>
-
-                            // ── Quants table ──────────────────────────────────
-                            <h3 style="margin-top: 1.25em;">"Quants"</h3>
-                            <table style="border-collapse: collapse; width: 100%;">
-                                <thead>
-                                    <tr style="text-align: left;">
-                                        <th style="padding: 4px 8px;">"Name"</th>
-                                        <th style="padding: 4px 8px;">"File"</th>
-                                        <th style="padding: 4px 8px;">"Size (bytes)"</th>
-                                        <th style="padding: 4px 8px;">"Context length"</th>
-                                        <th></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <For
-                                        each=move || quant_rows.get().into_iter().enumerate()
-                                        key=|(i, _)| *i
-                                        children=move |(i, row_signal)| {
-                                            view! {
-                                                <tr>
-                                                    <td style="padding: 4px;">
-                                                        <input type="text" style="width: 8em; font-family: monospace;"
-                                                            placeholder="Q4_K_M"
-                                                            prop:value=move || row_signal.get().name.clone()
-                                                            on:input=move |e| row_signal.update(|r| r.name = event_target_value(&e))
-                                                        />
-                                                    </td>
-                                                    <td style="padding: 4px;">
-                                                        <input type="text" style="width: 100%; font-family: monospace;"
-                                                            placeholder="model-Q4_K_M.gguf"
-                                                            prop:value=move || row_signal.get().file.clone()
-                                                            on:input=move |e| row_signal.update(|r| r.file = event_target_value(&e))
-                                                        />
-                                                    </td>
-                                                    <td style="padding: 4px;">
-                                                        <input type="number" style="width: 9em;"
-                                                            placeholder="optional"
-                                                            prop:value=move || row_signal.get().size_bytes.clone()
-                                                            on:input=move |e| row_signal.update(|r| r.size_bytes = event_target_value(&e))
-                                                        />
-                                                    </td>
-                                                    <td style="padding: 4px;">
-                                                        <input type="number" style="width: 7em;"
-                                                            placeholder="optional"
-                                                            prop:value=move || row_signal.get().context_length.clone()
-                                                            on:input=move |e| row_signal.update(|r| r.context_length = event_target_value(&e))
-                                                        />
-                                                    </td>
-                                                    <td style="padding: 4px;">
-                                                        <button type="button"
-                                                            style="color: #c0392b; background: none; border: 1px solid #c0392b; cursor: pointer; padding: 2px 6px;"
-                                                            on:click=move |_| {
-                                                                quant_rows.update(|rows| { rows.remove(i); });
-                                                            }
-                                                        >"✕"</button>
-                                                    </td>
-                                                </tr>
-                                            }
-                                        }
+                            <form on:submit=move |e| { e.prevent_default(); save_card_action.dispatch(()); }>
+                                <div class="form-group">
+                                    <label class="form-label" for="card-name">"Name"</label>
+                                    <input
+                                        id="card-name"
+                                        class="form-input"
+                                        type="text"
+                                        placeholder="e.g. Gemma 4"
+                                        prop:value=move || card_name.get()
+                                        on:input=move |e| card_name.set(event_target_value(&e))
                                     />
-                                </tbody>
-                            </table>
-                            <div style="margin-top: 0.5em;">
-                                <button type="button"
-                                    on:click=move |_| {
-                                        quant_rows.update(|rows| rows.push(RwSignal::new(QuantRow::default())));
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="card-source">"Source (HF repo)"</label>
+                                    <input
+                                        id="card-source"
+                                        class="form-input"
+                                        type="text"
+                                        placeholder="e.g. unsloth/gemma-4-26B-A4B-it-GGUF"
+                                        prop:value=move || card_source.get()
+                                        on:input=move |e| card_source.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="card-ctx">"Default context length"</label>
+                                    <input
+                                        id="card-ctx"
+                                        class="form-input"
+                                        type="number"
+                                        placeholder="e.g. 8192"
+                                        prop:value=move || card_default_ctx.get()
+                                        on:input=move |e| card_default_ctx.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="form-label" for="card-gpu">"Default GPU layers"</label>
+                                    <input
+                                        id="card-gpu"
+                                        class="form-input"
+                                        type="number"
+                                        placeholder="e.g. 999"
+                                        prop:value=move || card_default_gpu.get()
+                                        on:input=move |e| card_default_gpu.set(event_target_value(&e))
+                                    />
+                                </div>
+
+                                // ── Quants table ──────────────────────────────
+                                <div class="form-group">
+                                    <label class="form-label">"Quants"</label>
+                                    <table class="quants-table">
+                                        <thead>
+                                            <tr>
+                                                <th>"Name"</th>
+                                                <th>"File"</th>
+                                                <th>"Size (bytes)"</th>
+                                                <th>"Context length"</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <For
+                                                each=move || quant_rows.get().into_iter().enumerate()
+                                                key=|(i, _)| *i
+                                                children=move |(i, row_signal)| {
+                                                    view! {
+                                                        <tr>
+                                                            <td>
+                                                                <input
+                                                                    class="form-input"
+                                                                    type="text"
+                                                                    style="width:8em;"
+                                                                    placeholder="Q4_K_M"
+                                                                    prop:value=move || row_signal.get().name.clone()
+                                                                    on:input=move |e| row_signal.update(|r| r.name = event_target_value(&e))
+                                                                />
+                                                            </td>
+                                                            <td>
+                                                                <input
+                                                                    class="form-input"
+                                                                    type="text"
+                                                                    placeholder="model-Q4_K_M.gguf"
+                                                                    prop:value=move || row_signal.get().file.clone()
+                                                                    on:input=move |e| row_signal.update(|r| r.file = event_target_value(&e))
+                                                                />
+                                                            </td>
+                                                            <td>
+                                                                <input
+                                                                    class="form-input"
+                                                                    type="number"
+                                                                    style="width:9em;"
+                                                                    placeholder="optional"
+                                                                    prop:value=move || row_signal.get().size_bytes.clone()
+                                                                    on:input=move |e| row_signal.update(|r| r.size_bytes = event_target_value(&e))
+                                                                />
+                                                            </td>
+                                                            <td>
+                                                                <input
+                                                                    class="form-input"
+                                                                    type="number"
+                                                                    style="width:7em;"
+                                                                    placeholder="optional"
+                                                                    prop:value=move || row_signal.get().context_length.clone()
+                                                                    on:input=move |e| row_signal.update(|r| r.context_length = event_target_value(&e))
+                                                                />
+                                                            </td>
+                                                            <td>
+                                                                <button
+                                                                    type="button"
+                                                                    class="btn btn-danger btn-sm"
+                                                                    on:click=move |_| {
+                                                                        quant_rows.update(|rows| { rows.remove(i); });
+                                                                    }
+                                                                >"✕"</button>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            />
+                                        </tbody>
+                                    </table>
+                                    <div class="mt-1">
+                                        <button
+                                            type="button"
+                                            class="btn btn-secondary btn-sm"
+                                            on:click=move |_| {
+                                                quant_rows.update(|rows| rows.push(RwSignal::new(QuantRow::default())));
+                                            }
+                                        >"+ Add Quant"</button>
+                                    </div>
+                                </div>
+
+                                <hr class="section-divider mb-3" />
+
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn-primary">"Save Model Card"</button>
+                                </div>
+
+                                {move || card_status.get().map(|(ok, msg)| {
+                                    let cls = if ok { "alert alert--success mt-2" } else { "alert alert--error mt-2" };
+                                    let icon = if ok { "✓" } else { "✕" };
+                                    view! {
+                                        <div class=cls>
+                                            <span class="alert__icon">{icon}</span>
+                                            <span>{msg}</span>
+                                        </div>
                                     }
-                                >"+ Add Quant"</button>
-                            </div>
-
-                            <div style="margin-top: 1em;">
-                                <button type="submit">"Save Model Card"</button>
-                            </div>
-
-                            {move || card_status.get().map(|(ok, msg)| {
-                                let color = if ok { "green" } else { "red" };
-                                view! { <p style=format!("color: {}", color)>{msg}</p> }
-                            })}
-                        </form>
+                                })}
+                            </form>
+                        </div>
 
                     </div>
                 }.into_any()
