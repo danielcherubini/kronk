@@ -320,8 +320,9 @@ fn spawn_download_job(
                 return;
             }
         };
-        let repo_slug = repo_id_clone.replace('/', "--");
-        let dest_dir = models_dir.join(&repo_slug);
+        // Use the two-level org/repo directory structure (e.g. "unsloth/Qwen3.5-35B-A3B-GGUF")
+        // to match the convention expected by ModelRegistry (models_dir/org/repo).
+        let dest_dir = models_dir.join(&repo_id_clone);
         if let Err(e) = std::fs::create_dir_all(&dest_dir) {
             let mut jobs = pull_jobs_arc.write().await;
             if let Some(job) = jobs.get_mut(&job_id_clone) {
@@ -873,16 +874,19 @@ async fn _setup_model_after_pull_with_config(
         }
     });
 
-    // Try community card for name + sampling (best-effort, no network in tests)
+    // Try community card for sampling presets and context defaults (best-effort, no network in tests).
+    // We intentionally do NOT overwrite card.model.name from the community card — community cards
+    // often have the GGUF suffix stripped (e.g. "OmniCoder-9B" instead of "OmniCoder-9B-GGUF"),
+    // which loses information. The name is derived from the repo_id above and kept as-is.
     if let Some(community) = crate::models::pull::fetch_community_card(repo_id).await {
-        if !community.model.name.is_empty() {
-            card.model.name = community.model.name;
-        }
         for (k, v) in community.sampling {
             card.sampling.entry(k).or_insert(v);
         }
         if card.model.default_context_length.is_none() {
             card.model.default_context_length = community.model.default_context_length;
+        }
+        if card.model.default_gpu_layers.is_none() {
+            card.model.default_gpu_layers = community.model.default_gpu_layers;
         }
     }
 
@@ -981,7 +985,8 @@ mod tests {
         let repo_id = "bartowski/Qwen3-8B-GGUF";
         let filename = "Qwen3-8B-Q4_K_M.gguf";
         let repo_slug = repo_id.replace('/', "--");
-        let dest_dir = models_dir.join(&repo_slug);
+        // dest_dir uses the two-level org/repo structure (matches production behaviour)
+        let dest_dir = models_dir.join(repo_id);
         std::fs::create_dir_all(&dest_dir).unwrap();
 
         // Write a dummy GGUF file

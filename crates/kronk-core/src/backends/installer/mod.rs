@@ -33,8 +33,10 @@ pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
     let source = options.source.clone();
     match source {
         BackendSource::Prebuilt { version } => prebuilt::install_prebuilt(&options, &version).await,
-        BackendSource::SourceCode { version, git_url } => {
-            source::install_from_source(&options, &version, &git_url).await
-        }
+        BackendSource::SourceCode {
+            version,
+            git_url,
+            commit,
+        } => source::install_from_source(&options, &version, &git_url, commit.as_deref()).await,
     }
 }

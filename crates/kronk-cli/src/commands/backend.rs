@@ -26,6 +26,11 @@ pub enum BackendSubcommand {
         #[arg(long)]
         build: bool,
 
+        /// Pin to a specific git commit hash (implies --build).
+        /// Example: --commit 61fad8b0940af2bfda9c2708b899c1fe16f9455b
+        #[arg(long)]
+        commit: Option<String>,
+
         /// Custom name for this backend installation
         #[arg(short, long)]
         name: Option<String>,
@@ -70,10 +75,11 @@ pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
             backend_type,
             version,
             build,
+            commit,
             name,
             gpu,
             force,
-        } => cmd_install(config, &backend_type, version, build, name, gpu, force).await,
+        } => cmd_install(config, &backend_type, version, build, commit, name, gpu, force).await,
         BackendSubcommand::Update { name, force } => cmd_update(config, &name, force).await,
         BackendSubcommand::List => cmd_list(config).await,
         BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
@@ -160,6 +166,7 @@ async fn cmd_install(
     backend_type_str: &str,
     version: Option<String>,
     force_build: bool,
+    commit: Option<String>,
     name: Option<String>,
     gpu_flag: Option<String>,
     force: bool,
@@ -275,6 +282,9 @@ async fn cmd_install(
         }
     };
 
+    // --commit implies --build (can't pin a commit to a pre-built binary)
+    let force_build = force_build || commit.is_some();
+
     // Determine installation method.
     // ik_llama has no pre-built binaries, so source is the only option.
     let use_source = match backend_type {
@@ -316,6 +326,7 @@ async fn cmd_install(
         BackendSource::SourceCode {
             version: version.clone(),
             git_url: git_url.to_string(),
+            commit: commit.clone(),
         }
     } else {
         BackendSource::Prebuilt {
@@ -411,7 +422,8 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
         .ok_or_else(|| anyhow!("Invalid backend path: {}", backend_info.path.display()))?
         .to_path_buf();
 
-    // Preserve the original installation method, but update the version
+    // Preserve the original installation method, but update the version.
+    // On update we always go to latest, so we clear any pinned commit.
     let source = match backend_info.source.clone() {
         Some(source) => match source {
             BackendSource::Prebuilt { version: _ } => BackendSource::Prebuilt {
@@ -420,9 +432,11 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
             BackendSource::SourceCode {
                 version: _,
                 git_url,
+                commit: _,
             } => BackendSource::SourceCode {
                 version: update_check.latest_version.clone(),
                 git_url,
+                commit: None,
             },
         },
         None => {
@@ -431,6 +445,7 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
                 BackendType::IkLlama => BackendSource::SourceCode {
                     version: update_check.latest_version.clone(),
                     git_url: "https://github.com/ikawrakow/ik_llama.cpp.git".to_string(),
+                    commit: None,
                 },
                 BackendType::LlamaCpp => BackendSource::Prebuilt {
                     version: update_check.latest_version.clone(),

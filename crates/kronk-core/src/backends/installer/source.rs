@@ -13,6 +13,7 @@ pub async fn install_from_source(
     options: &InstallOptions,
     version: &str,
     git_url: &str,
+    commit: Option<&str>,
 ) -> Result<PathBuf> {
     tracing::info!("Building from source: {} version {}", git_url, version);
 
@@ -57,7 +58,7 @@ pub async fn install_from_source(
     std::fs::create_dir_all(&build_output)?;
 
     // Clone repository
-    clone_repository(version, git_url, &source_dir).await?;
+    clone_repository(version, git_url, &source_dir, commit).await?;
 
     // Configure with CMake
     configure_cmake(options, &source_dir, &build_output).await?;
@@ -81,7 +82,60 @@ pub async fn install_from_source(
 }
 
 /// Clone a git repository, with fallback logic for "latest" and "main" tags.
-async fn clone_repository(version: &str, git_url: &str, source_dir: &Path) -> Result<()> {
+///
+/// When `commit` is `Some`, clones the `main` branch with a sufficient depth
+/// to reach the target commit, then runs `git checkout <commit>`.
+async fn clone_repository(
+    version: &str,
+    git_url: &str,
+    source_dir: &Path,
+    commit: Option<&str>,
+) -> Result<()> {
+    // When a specific commit is requested, do a deeper clone of main then checkout.
+    if let Some(commit_hash) = commit {
+        println!(
+            "Cloning repository for commit {} (depth 500)...",
+            commit_hash
+        );
+        let clone_status = tokio::process::Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "500",
+                "--branch",
+                "main",
+                git_url,
+                &source_dir.to_string_lossy(),
+            ])
+            .status()
+            .await?;
+
+        if !clone_status.success() {
+            return Err(anyhow!(
+                "Failed to clone repository from {} (depth 500)",
+                git_url
+            ));
+        }
+
+        println!("Checking out commit {}...", commit_hash);
+        let checkout_status = tokio::process::Command::new("git")
+            .args(["-C", &source_dir.to_string_lossy(), "checkout", commit_hash])
+            .status()
+            .await?;
+
+        if !checkout_status.success() {
+            return Err(anyhow!(
+                "Failed to checkout commit {}. \
+                 The commit may be older than the clone depth (500). \
+                 Try a more recent commit.",
+                commit_hash
+            ));
+        }
+
+        println!("Checked out commit {}.", commit_hash);
+        return Ok(());
+    }
+
     println!("Cloning repository (shallow)...");
 
     // For "latest", resolve the most recent tag first before trying branch clone
@@ -250,18 +304,22 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
             // Use Ninja generator so clang-cl works correctly (it doesn't
             // integrate well with the Visual Studio MSBuild generator).
             cmake_args.push("-GNinja".to_string());
-            // clang-cl: LLVM's CL-compatible driver. Supports -march=native
-            // unlike MSVC cl.exe, so __AVX2__ is reliably defined.
+            // clang-cl: LLVM's CL-compatible driver. Supports /arch:AVX2
+            // reliably, unlike plain MSVC cl.exe where AVX2 detection is broken.
             cmake_args.push("-DCMAKE_C_COMPILER=clang-cl".to_string());
             cmake_args.push("-DCMAKE_CXX_COMPILER=clang-cl".to_string());
-            // Pass -march=native through clang-cl's /clang: prefix so it
-            // reaches the underlying clang compiler. This enables all CPU
-            // features the host supports (AVX2, FMA, etc.) and defines
-            // __AVX2__, which activates the IQK optimized CPU kernels.
-            let cpu_flags =
-                "/clang:-march=native /clang:-fvectorize /clang:-ffp-model=fast /clang:-fno-finite-math-only";
-            cmake_args.push(format!("-DCMAKE_C_FLAGS={}", cpu_flags));
-            cmake_args.push(format!("-DCMAKE_CXX_FLAGS=/EHsc {}", cpu_flags));
+            // clang-cl identifies itself as MSVC to CMake, so ggml's CMakeLists
+            // takes the MSVC branch for ARCH_FLAGS. In that branch:
+            //   - GGML_NATIVE=ON  → runs FindSIMD.cmake which leaves ARCH_FLAGS
+            //     empty for clang-cl (it only sets flags for true cl.exe)
+            //   - GGML_AVX2=OFF   → skips /arch:AVX2 (default is OFF when NATIVE=ON)
+            // Fix: disable NATIVE and explicitly enable AVX2/FMA/AVX so the MSVC
+            // branch adds /arch:AVX2 to ARCH_FLAGS, which defines __AVX2__ and
+            // activates the IQK optimized CPU kernels required by Qwen3.5/Mamba.
+            cmake_args.push("-DGGML_NATIVE=OFF".to_string());
+            cmake_args.push("-DGGML_AVX2=ON".to_string());
+            cmake_args.push("-DGGML_AVX=ON".to_string());
+            cmake_args.push("-DGGML_FMA=ON".to_string());
             // CUDA arch: "native" lets nvcc detect the installed GPU at compile
             // time. Required because without it CUDA 13.x would use the fallback
             // list which includes compute_50 (dropped in CUDA 13.x).
@@ -397,6 +455,7 @@ mod tests {
             source: BackendSource::SourceCode {
                 version: "main".to_string(),
                 git_url: "https://example.com/repo.git".to_string(),
+                commit: None,
             },
             target_dir: PathBuf::from("/tmp/test"),
             gpu_type,
@@ -449,7 +508,7 @@ mod tests {
     /// layers produce inf/NaN logits and crash on the first token.
     #[test]
     #[cfg(target_os = "windows")]
-    fn test_ik_llama_windows_uses_ninja_clang_cl() {
+    fn test_ik_llama_windows_uses_ninja_clang_cl_avx2() {
         let opts = make_options(BackendType::IkLlama, None);
         let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
         assert!(
@@ -462,16 +521,21 @@ mod tests {
             "Windows ik_llama build must set CMAKE_C_COMPILER=clang-cl, got: {:?}",
             args
         );
+        // clang-cl acts as MSVC to CMake, so we must explicitly set AVX2/FMA/AVX
+        // and disable NATIVE so ggml's MSVC branch adds /arch:AVX2 to ARCH_FLAGS.
         assert!(
-            args.contains(&"-DCMAKE_CXX_COMPILER=clang-cl".to_string()),
-            "Windows ik_llama build must set CMAKE_CXX_COMPILER=clang-cl, got: {:?}",
+            args.contains(&"-DGGML_NATIVE=OFF".to_string()),
+            "Windows ik_llama build must set GGML_NATIVE=OFF, got: {:?}",
             args
         );
-        // CPU flags must include /clang:-march=native to enable AVX2/FMA
-        let has_march = args.iter().any(|a| a.contains("/clang:-march=native"));
         assert!(
-            has_march,
-            "Windows ik_llama build must include /clang:-march=native in C/CXX flags, got: {:?}",
+            args.contains(&"-DGGML_AVX2=ON".to_string()),
+            "Windows ik_llama build must set GGML_AVX2=ON, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DGGML_FMA=ON".to_string()),
+            "Windows ik_llama build must set GGML_FMA=ON, got: {:?}",
             args
         );
     }

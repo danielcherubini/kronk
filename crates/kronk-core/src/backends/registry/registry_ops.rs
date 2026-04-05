@@ -29,8 +29,18 @@ pub struct BackendInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "source", content = "content")]
 pub enum BackendSource {
-    Prebuilt { version: String },
-    SourceCode { version: String, git_url: String },
+    Prebuilt {
+        version: String,
+    },
+    SourceCode {
+        version: String,
+        git_url: String,
+        /// Optional specific commit hash to check out after cloning.
+        /// When set, the clone uses enough depth to reach the commit and
+        /// then runs `git checkout <commit>`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+    },
 }
 
 pub struct BackendRegistry {
