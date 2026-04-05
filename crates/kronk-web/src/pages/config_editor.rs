@@ -62,26 +62,61 @@ pub fn ConfigEditor() -> impl IntoView {
     });
 
     view! {
-        <h1>"Config Editor"</h1>
-        <Suspense fallback=|| view! { <p>"Loading..."</p> }>
+        <div class="page-header">
+            <h1>"Config Editor"</h1>
+        </div>
+
+        <Suspense fallback=|| view! {
+            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+                <span class="spinner"></span>
+                <span class="text-muted">"Loading config..."</span>
+            </div>
+        }>
             {move || {
                 // Just trigger the resource read so Suspense knows when loading is done
                 let _ = config.get();
                 view! {
-                    <div>
-                        <textarea
-                            rows="30"
-                            style="width: 100%; font-family: monospace; font-size: 0.9em;"
-                            prop:value=move || editor_content.get()
-                            on:input=move |e| editor_content.set(event_target_value(&e))
-                        />
-                        <div>
-                            <button on:click=move |_| { save.dispatch(()); }>"Save"</button>
-                            <button on:click=move |_| { load_trigger.update(|n| *n += 1); } style="margin-left: 0.5em;">"Reload"</button>
+                    <div class="form-card card">
+                        <div class="form-card__header">
+                            <h2 class="form-card__title">"kronk.toml"</h2>
+                            <p class="form-card__desc text-muted">
+                                "Edit the raw TOML configuration. Changes take effect after saving and reloading the service."
+                            </p>
                         </div>
+
+                        <div class="form-group">
+                            <textarea
+                                class="code-editor"
+                                rows="30"
+                                prop:value=move || editor_content.get()
+                                on:input=move |e| editor_content.set(event_target_value(&e))
+                            />
+                        </div>
+
+                        <div class="form-actions">
+                            <button
+                                class="btn btn-primary"
+                                on:click=move |_| { save.dispatch(()); }
+                            >
+                                "Save"
+                            </button>
+                            <button
+                                class="btn btn-secondary"
+                                on:click=move |_| { load_trigger.update(|n| *n += 1); }
+                            >
+                                "↺ Reload"
+                            </button>
+                        </div>
+
                         {move || status_msg.get().map(|(ok, msg)| {
-                            let color = if ok { "green" } else { "red" };
-                            view! { <p style=format!("color: {}", color)>{msg}</p> }
+                            let cls = if ok { "alert alert--success mt-2" } else { "alert alert--error mt-2" };
+                            let icon = if ok { "✓" } else { "✕" };
+                            view! {
+                                <div class=cls>
+                                    <span class="alert__icon">{icon}</span>
+                                    <span>{msg}</span>
+                                </div>
+                            }
                         })}
                     </div>
                 }.into_any()

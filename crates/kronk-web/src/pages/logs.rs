@@ -6,6 +6,20 @@ struct LogsResponse {
     lines: Vec<String>,
 }
 
+/// Classify a log line and return the CSS modifier class suffix.
+fn log_level_class(line: &str) -> &'static str {
+    let upper = line.to_uppercase();
+    if upper.contains("ERROR") || upper.contains("[ERROR]") {
+        "log-line--error"
+    } else if upper.contains("WARN") || upper.contains("[WARN]") {
+        "log-line--warn"
+    } else if upper.contains("DEBUG") || upper.contains("[DEBUG]") {
+        "log-line--debug"
+    } else {
+        "log-line--info"
+    }
+}
+
 #[component]
 pub fn Logs() -> impl IntoView {
     let refresh = RwSignal::new(0u32);
@@ -20,22 +34,46 @@ pub fn Logs() -> impl IntoView {
     });
 
     view! {
-        <h1>"Log Viewer"</h1>
-        <button on:click=move |_| { refresh.update(|n| *n += 1); }>"Refresh"</button>
-        <Suspense fallback=|| view! { <p>"Loading..."</p> }>
+        <div class="page-header">
+            <h1>"Log Viewer"</h1>
+            <div class="log-toolbar">
+                <button
+                    class="btn btn-secondary btn-sm"
+                    on:click=move |_| { refresh.update(|n| *n += 1); }
+                >
+                    "↻ Refresh"
+                </button>
+            </div>
+        </div>
+
+        <Suspense fallback=|| view! {
+            <div style="display:flex; align-items:center; gap:0.75rem; padding:2rem 0;">
+                <span class="spinner"></span>
+                <span class="text-muted">"Loading logs..."</span>
+            </div>
+        }>
             {move || {
                 logs.get().map(|guard| {
                     let result = guard.take();
                     match result {
                         Some(data) => {
-                            let text = data.lines.join("\n");
+                            let lines = data.lines.clone();
                             view! {
-                                <pre style="overflow: auto; max-height: 600px; background: #1e1e1e; color: #d4d4d4; padding: 1em; font-size: 0.85em;">
-                                    {text}
-                                </pre>
+                                <div class="log-viewer card">
+                                    {lines.into_iter().map(|line| {
+                                        let level_cls = log_level_class(&line);
+                                        let cls = format!("log-line {}", level_cls);
+                                        view! { <div class=cls>{line}</div> }
+                                    }).collect::<Vec<_>>()}
+                                </div>
                             }.into_any()
                         }
-                        None => view! { <p>"Failed to load logs (is logs_dir configured?)"</p> }.into_any(),
+                        None => view! {
+                            <div class="alert alert--warning mt-2">
+                                <span class="alert__icon">"⚠"</span>
+                                <span>"Failed to load logs (is " <code>"logs_dir"</code> " configured?)"</span>
+                            </div>
+                        }.into_any(),
                     }
                 })
             }}
