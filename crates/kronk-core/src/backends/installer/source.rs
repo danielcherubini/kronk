@@ -330,6 +330,23 @@ fn build_cmake_args(options: &InstallOptions, source_dir: &Path, build_output: &
     cmake_args
 }
 
+/// Find the LLVM bin directory containing clang-cl.
+/// Searches well-known install locations on Windows.
+#[cfg(target_os = "windows")]
+fn find_llvm_bin() -> Option<std::path::PathBuf> {
+    let candidates = [
+        r"C:\Program Files\LLVM\bin",
+        r"C:\Program Files (x86)\LLVM\bin",
+    ];
+    for candidate in &candidates {
+        let p = std::path::Path::new(candidate);
+        if p.join("clang-cl.exe").exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    None
+}
+
 /// Find the vcvarsall.bat script for MSVC environment setup.
 /// Searches known Visual Studio Build Tools installation paths.
 #[cfg(target_os = "windows")]
@@ -376,11 +393,27 @@ async fn configure_cmake_windows(cmake_args: &[String], build_output: &Path) -> 
         .collect::<Vec<_>>()
         .join(" ");
 
+    // Prepend LLVM bin dir to PATH if found, so clang-cl is discoverable by cmake.
+    let llvm_path_line = match find_llvm_bin() {
+        Some(llvm_bin) => {
+            tracing::info!("Found LLVM bin: {:?}", llvm_bin);
+            format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy())
+        }
+        None => {
+            tracing::warn!(
+                "LLVM bin dir not found; clang-cl may not be on PATH. \
+                 Install LLVM from https://releases.llvm.org/"
+            );
+            String::new()
+        }
+    };
+
     let bat_contents = match find_vcvarsall() {
         Some(vcvarsall) => {
             tracing::info!("Using vcvarsall: {:?}", vcvarsall);
             format!(
-                "@echo off\r\ncall \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                llvm_path = llvm_path_line,
                 vcvarsall = vcvarsall.to_string_lossy(),
                 cmake = cmake_invocation,
             )
@@ -390,7 +423,7 @@ async fn configure_cmake_windows(cmake_args: &[String], build_output: &Path) -> 
                 "vcvarsall.bat not found; running cmake without MSVC environment. \
                  CUDA builds may fail if MSVC headers are not already on PATH."
             );
-            format!("@echo off\r\n{}\r\n", cmake_invocation)
+            format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_invocation)
         }
     };
 
@@ -563,13 +596,18 @@ async fn build_cmake(build_output: &Path) -> Result<()> {
             build_output.to_string_lossy(),
             num_jobs
         );
+        let llvm_path_line = match find_llvm_bin() {
+            Some(llvm_bin) => format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy()),
+            None => String::new(),
+        };
         let bat_contents = match find_vcvarsall() {
             Some(vcvarsall) => format!(
-                "@echo off\r\ncall \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                llvm_path = llvm_path_line,
                 vcvarsall = vcvarsall.to_string_lossy(),
                 cmake = cmake_build_cmd,
             ),
-            None => format!("@echo off\r\n{}\r\n", cmake_build_cmd),
+            None => format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_build_cmd),
         };
         let bat_path = build_output.join("kronk_cmake_build.bat");
         std::fs::write(&bat_path, &bat_contents)
