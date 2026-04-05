@@ -79,7 +79,19 @@ pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
             name,
             gpu,
             force,
-        } => cmd_install(config, &backend_type, version, build, commit, name, gpu, force).await,
+        } => {
+            cmd_install(
+                config,
+                &backend_type,
+                version,
+                build,
+                commit,
+                name,
+                gpu,
+                force,
+            )
+            .await
+        }
         BackendSubcommand::Update { name, force } => cmd_update(config, &name, force).await,
         BackendSubcommand::List => cmd_list(config).await,
         BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
@@ -161,6 +173,7 @@ fn current_unix_timestamp() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_install(
     _config: &Config,
     backend_type_str: &str,
