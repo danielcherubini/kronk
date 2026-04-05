@@ -19,7 +19,7 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
     }
 
     // 3. Read ALL card files into memory first
-    let mut card_data = HashMap::new();
+    let mut card_data: HashMap<String, ModelCard> = HashMap::new();
     for entry in fs::read_dir(&configs_dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -398,7 +398,7 @@ top_k = 40
             backends: HashMap::new(),
             models: {
                 let mut m = HashMap::new();
-                let mut model = crate::config::ModelConfig {
+                let model = crate::config::ModelConfig {
                     backend: "llama_cpp".to_string(),
                     args: vec![],
                     sampling: None,
@@ -507,7 +507,7 @@ top_k = 40
             backends: HashMap::new(),
             models: {
                 let mut m = HashMap::new();
-                let mut model = crate::config::ModelConfig {
+                let model = crate::config::ModelConfig {
                     backend: "llama_cpp".to_string(),
                     args: vec![],
                     sampling: None,
@@ -608,7 +608,7 @@ size_bytes = 8000000000
             backends: HashMap::new(),
             models: {
                 let mut m = HashMap::new();
-                let mut model = crate::config::ModelConfig {
+                let model = crate::config::ModelConfig {
                     backend: "llama_cpp".to_string(),
                     args: vec![],
                     sampling: None,
