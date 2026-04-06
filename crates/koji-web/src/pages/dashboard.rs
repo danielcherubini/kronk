@@ -278,13 +278,21 @@ pub fn Dashboard() -> impl IntoView {
                     // Active Models section — replaces the old single-value
                     // "Models Loaded" card. Shows a summary line of how many
                     // models are loaded, and either an empty-state card or a
-                    // grid of model entries (entries themselves are filled in
-                    // by a follow-up task).
-                    <section class="active-models">
-                        <h2>"Active Models"</h2>
-                        <span class="text-muted">
-                            {format!("{} loaded", loaded_model_count(&h.models))}
-                        </span>
+                    // grid of model entries.
+                    //
+                    // The wrapping `.dashboard-models` class hooks into the
+                    // CSS in `style.css` (section 24) for vertical spacing
+                    // between this section and the system metrics grid above.
+                    // The inner `.page-header` reuses the global header layout
+                    // (title on the left, status on the right) so the section
+                    // visually matches every other page header in the app.
+                    <section class="dashboard-models">
+                        <div class="page-header">
+                            <h2>"Active Models"</h2>
+                            <span class="text-muted">
+                                {format!("{} loaded", loaded_model_count(&h.models))}
+                            </span>
+                        </div>
                         {
                             if h.models.is_empty() {
                                 view! {
