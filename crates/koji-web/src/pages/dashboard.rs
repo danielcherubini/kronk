@@ -13,12 +13,32 @@ struct MetricSample {
     gpu_utilization_pct: Option<u8>,
     vram: Option<VramInfo>,
     models_loaded: u64,
+    /// Per-model loaded/idle status mirrored from `koji_core::gpu::MetricSample.models`.
+    ///
+    /// `#[serde(default)]` keeps the dashboard resilient if the backend is
+    /// slightly out of sync (e.g. during a partial rollout) or if older cached
+    /// payloads without this field are encountered — missing arrays decode as
+    /// an empty `Vec` rather than failing the whole sample.
+    #[serde(default)]
+    pub models: Vec<ModelStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VramInfo {
     used_mib: u64,
     total_mib: u64,
+}
+
+/// Frontend mirror of `koji_core::gpu::ModelStatus`.
+///
+/// Kept private to this module so the dashboard owns its wire shape; the only
+/// contract with the backend is the JSON field names, which must match the
+/// server-side struct exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModelStatus {
+    id: String,
+    backend: String,
+    loaded: bool,
 }
 
 #[component]
@@ -187,5 +207,76 @@ pub fn Dashboard() -> impl IntoView {
                 }.into_any(),
             }
         }}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `MetricSample` must deserialize a payload that has no `models` field at
+    /// all (older backend builds, cached responses) by defaulting to an empty
+    /// `Vec`. The `#[serde(default)]` attribute on the field is what makes this
+    /// work — without it, deserialization would fail with a `missing field`
+    /// error and break the dashboard during a partial rollout.
+    #[test]
+    fn metric_sample_deserializes_without_models_field() {
+        let json = r#"{
+            "ts_unix_ms": 1700000000000,
+            "cpu_usage_pct": 12.5,
+            "ram_used_mib": 2048,
+            "ram_total_mib": 16384,
+            "gpu_utilization_pct": null,
+            "vram": null,
+            "models_loaded": 0
+        }"#;
+
+        let sample: MetricSample = serde_json::from_str(json)
+            .expect("MetricSample without `models` must deserialize via #[serde(default)]");
+
+        assert_eq!(sample.ts_unix_ms, 1_700_000_000_000);
+        assert_eq!(sample.cpu_usage_pct, 12.5);
+        assert_eq!(sample.ram_used_mib, 2048);
+        assert_eq!(sample.ram_total_mib, 16_384);
+        assert!(sample.gpu_utilization_pct.is_none());
+        assert!(sample.vram.is_none());
+        assert_eq!(sample.models_loaded, 0);
+        assert!(
+            sample.models.is_empty(),
+            "missing `models` field must default to an empty Vec"
+        );
+    }
+
+    /// When the backend includes a populated `models` array, every `ModelStatus`
+    /// must round-trip with its `id`, `backend`, and `loaded` fields preserved.
+    /// This is the wire format the dashboard's UI rendering depends on.
+    #[test]
+    fn metric_sample_deserializes_models_field() {
+        let json = r#"{
+            "ts_unix_ms": 1700000000000,
+            "cpu_usage_pct": 0.0,
+            "ram_used_mib": 0,
+            "ram_total_mib": 0,
+            "gpu_utilization_pct": null,
+            "vram": null,
+            "models_loaded": 1,
+            "models": [
+                { "id": "alpha", "backend": "llama_cpp", "loaded": true },
+                { "id": "beta",  "backend": "ik_llama",  "loaded": false }
+            ]
+        }"#;
+
+        let sample: MetricSample =
+            serde_json::from_str(json).expect("MetricSample with `models` must deserialize");
+
+        assert_eq!(sample.models.len(), 2);
+
+        assert_eq!(sample.models[0].id, "alpha");
+        assert_eq!(sample.models[0].backend, "llama_cpp");
+        assert!(sample.models[0].loaded);
+
+        assert_eq!(sample.models[1].id, "beta");
+        assert_eq!(sample.models[1].backend, "ik_llama");
+        assert!(!sample.models[1].loaded);
     }
 }
