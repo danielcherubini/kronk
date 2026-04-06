@@ -148,13 +148,13 @@ impl Config {
     /// `server.sampling.to_args()`. Each later layer's flags fully replace
     /// the same flag in the earlier layers via `merge_args`.
     pub fn build_args(&self, server: &ModelConfig, backend: &BackendConfig) -> Vec<String> {
-        let mut args = crate::config::merge_args(&backend.default_args, &server.args);
+        let mut grouped = crate::config::merge_args(&backend.default_args, &server.args);
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
-                args = crate::config::merge_args(&args, &sampling.to_args());
+                grouped = crate::config::merge_args(&grouped, &sampling.to_args());
             }
         }
-        crate::config::flatten_args(&args).expect("flatten_args failed")
+        crate::config::flatten_args(&grouped)
     }
 
     /// Build the full argument list for a model, including model config args
@@ -185,12 +185,9 @@ impl Config {
             if let Some(quant_entry) = server.quants.get(quant_name.as_str()) {
                 let models_dir = self.models_dir()?;
                 let model_path = models_dir.join(model_id).join(&quant_entry.file);
-                let already_has_m = grouped.iter().any(|e| {
-                    crate::config::flag_name(e)
-                        .ok()
-                        .map(|s| s == "m" || s == "model")
-                        .unwrap_or(false)
-                });
+                let already_has_m = grouped
+                    .iter()
+                    .any(|e| matches!(crate::config::flag_name(e), Some("-m") | Some("--model")));
                 if !already_has_m {
                     let path_str = model_path.to_string_lossy();
                     let quoted = crate::config::quote_value(&path_str);
@@ -213,12 +210,9 @@ impl Config {
                 .and_then(|q| server.quants.get(q).and_then(|qe| qe.context_length))
         });
         if let Some(ctx) = ctx {
-            let already_has_c = grouped.iter().any(|e| {
-                crate::config::flag_name(e)
-                    .ok()
-                    .map(|s| s == "c" || s == "ctx-size")
-                    .unwrap_or(false)
-            });
+            let already_has_c = grouped
+                .iter()
+                .any(|e| matches!(crate::config::flag_name(e), Some("-c") | Some("--ctx-size")));
             if !already_has_c {
                 grouped.push(format!("-c {}", ctx));
             }
@@ -227,10 +221,10 @@ impl Config {
         // Inject -ngl only if not already present.
         if let Some(ngl) = server.gpu_layers {
             let already_has_ngl = grouped.iter().any(|e| {
-                crate::config::flag_name(e)
-                    .ok()
-                    .map(|s| s == "ngl" || s == "n-gpu-layers")
-                    .unwrap_or(false)
+                matches!(
+                    crate::config::flag_name(e),
+                    Some("-ngl") | Some("--n-gpu-layers")
+                )
             });
             if !already_has_ngl {
                 grouped.push(format!("-ngl {}", ngl));
@@ -245,7 +239,7 @@ impl Config {
             }
         }
 
-        let flat = crate::config::flatten_args(&grouped)?;
+        let flat = crate::config::flatten_args(&grouped);
         // INVARIANT: build_full_args returns flat tokens. Callers like
         // proxy/lifecycle.rs::override_arg depend on this. The check
         // catches the failure mode where a *grouped* entry (e.g.
@@ -254,7 +248,8 @@ impl Config {
         // like "system: hi" or "/path with space/m.gguf" contain
         // whitespace but do NOT start with '-', so they pass.
         debug_assert!(
-            flat.iter().all(|t| !(t.starts_with('-') && t.contains(' '))),
+            flat.iter()
+                .all(|t| !(t.starts_with('-') && t.contains(char::is_whitespace))),
             "build_full_args invariant violated: element looks like a grouped entry (flag + space + value): {:?}",
             flat
         );
@@ -1006,8 +1001,6 @@ mod tests {
             "expected path with spaces preserved as a single token, got {:?}",
             path_token
         );
-        // Strip quotes if present and check the actual filename
-        let path_stripped = path_token.trim_matches('"').trim_matches('\'');
-        assert!(path_stripped.ends_with("model.gguf"));
+        assert!(path_token.ends_with("model.gguf"));
     }
 }
