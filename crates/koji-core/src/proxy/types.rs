@@ -154,4 +154,36 @@ impl ProxyState {
             .as_ref()
             .and_then(|dir| crate::db::open(dir).ok().map(|r| r.conn))
     }
+
+    /// Gracefully shut down the proxy state.
+    ///
+    /// This method is called during a hard restart to clean up resources:
+    /// - Closes the metrics broadcast channel to stop metrics streaming
+    /// - Clears all loaded models from the models map
+    /// - Clears active pull jobs
+    /// - Clears in-flight downloads
+    pub async fn shutdown(&self) {
+        // Close the metrics broadcast channel to stop the metrics stream
+        let _ = self.metrics_tx.send(crate::gpu::MetricSample {
+            ts_unix_ms: 0,
+            cpu_usage_pct: 0.0,
+            ram_used_mib: 0,
+            ram_total_mib: 0,
+            gpu_utilization_pct: None,
+            vram: None,
+            models_loaded: 0,
+        });
+
+        // Clear all loaded models
+        let mut models = self.models.write().await;
+        models.clear();
+
+        // Clear active pull jobs
+        let mut pull_jobs = self.pull_jobs.write().await;
+        pull_jobs.clear();
+
+        // Clear in-flight downloads
+        let mut in_flight = self.in_flight_downloads.lock().await;
+        in_flight.clear();
+    }
 }
