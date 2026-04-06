@@ -41,6 +41,16 @@ struct ModelStatus {
     loaded: bool,
 }
 
+/// Count how many models in `models` are currently loaded.
+///
+/// Extracted as a free function so the dashboard view and the unit tests can
+/// share a single implementation — the view formats the result into the
+/// "Active Models" summary line, and the tests assert the counting logic
+/// without needing to render Leptos components.
+fn loaded_model_count(models: &[ModelStatus]) -> usize {
+    models.iter().filter(|m| m.loaded).count()
+}
+
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let history = RwSignal::new(Vec::<MetricSample>::new());
@@ -193,12 +203,32 @@ pub fn Dashboard() -> impl IntoView {
                             }
                         })}
 
-                        // Models Loaded — keep as simple number, no chart
-                        <div class="card">
-                            <div class="card-header">"Models Loaded"</div>
-                            <div class="card-value">{h.models_loaded}</div>
-                        </div>
                     </div>
+
+                    // Active Models section — replaces the old single-value
+                    // "Models Loaded" card. Shows a summary line of how many
+                    // models are loaded, and either an empty-state card or a
+                    // grid of model entries (entries themselves are filled in
+                    // by a follow-up task).
+                    <section class="active-models">
+                        <h2>"Active Models"</h2>
+                        <span class="text-muted">
+                            {format!("{} loaded", loaded_model_count(&h.models))}
+                        </span>
+                        {
+                            if h.models.is_empty() {
+                                view! {
+                                    <div class="card card--centered">
+                                        <p class="text-muted">"No models configured yet."</p>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="models-grid"></div>
+                                }.into_any()
+                            }
+                        }
+                    </section>
                 }.into_any(),
                 None => view! {
                     <div class="card card--centered">
@@ -245,6 +275,45 @@ mod tests {
             sample.models.is_empty(),
             "missing `models` field must default to an empty Vec"
         );
+    }
+
+    /// The dashboard's "Active Models" summary line shows how many of the
+    /// configured models are currently loaded. The helper that backs that line
+    /// must only count entries whose `loaded` flag is `true`, regardless of
+    /// backend or id.
+    #[test]
+    fn loaded_model_count_only_counts_loaded_entries() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                backend: "llama_cpp".into(),
+                loaded: true,
+            },
+            ModelStatus {
+                id: "b".into(),
+                backend: "llama_cpp".into(),
+                loaded: false,
+            },
+            ModelStatus {
+                id: "c".into(),
+                backend: "ik_llama".into(),
+                loaded: true,
+            },
+            ModelStatus {
+                id: "d".into(),
+                backend: "ik_llama".into(),
+                loaded: false,
+            },
+        ];
+
+        assert_eq!(loaded_model_count(&models), 2);
+    }
+
+    /// With no models configured the helper returns `0`, which is what the
+    /// empty-state UI renders alongside the "No models configured yet." copy.
+    #[test]
+    fn loaded_model_count_is_zero_for_empty_slice() {
+        assert_eq!(loaded_model_count(&[]), 0);
     }
 
     /// When the backend includes a populated `models` array, every `ModelStatus`
