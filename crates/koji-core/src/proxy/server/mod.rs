@@ -22,14 +22,15 @@ impl ProxyServer {
         Self::cleanup_stale_processes(&state);
         let handle = Self::start_idle_timeout_checker(state.clone());
 
-        // Spawn background task to refresh system metrics every 5s.
-        // `sysinfo::System` is created once and moved into the closure so that
-        // CPU-usage deltas are computed correctly across iterations without the
-        // per-call MINIMUM_CPU_UPDATE_INTERVAL sleep.
-        let metrics_arc = Arc::clone(&state.system_metrics);
+        // Spawn background task to refresh system metrics every 2s.
+        // Each tick: collect metrics, update the cached snapshot, persist to SQLite
+        // (best-effort, with inline pruning), and broadcast to SSE subscribers.
+        let metrics_state = Arc::clone(&state);
         let metrics_handle = tokio::spawn(async move {
+            use std::time::{SystemTime, UNIX_EPOCH};
             let mut sys = sysinfo::System::new();
             loop {
+                // Collect metrics on a blocking thread.
                 let (snapshot, returned_sys) = tokio::task::spawn_blocking(move || {
                     let snapshot = crate::gpu::collect_system_metrics_with(&mut sys);
                     (snapshot, sys)
@@ -40,8 +41,61 @@ impl ProxyServer {
                     (crate::gpu::SystemMetrics::default(), sysinfo::System::new())
                 });
                 sys = returned_sys;
-                *metrics_arc.write().await = snapshot;
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                // Update the cached snapshot read by /koji/v1/system/health.
+                *metrics_state.system_metrics.write().await = snapshot.clone();
+
+                // Build a timestamped MetricSample.
+                let ts_unix_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let models_loaded = metrics_state.models.read().await.len() as u64;
+                let sample = crate::gpu::MetricSample {
+                    ts_unix_ms,
+                    cpu_usage_pct: snapshot.cpu_usage_pct,
+                    ram_used_mib: snapshot.ram_used_mib,
+                    ram_total_mib: snapshot.ram_total_mib,
+                    gpu_utilization_pct: snapshot.gpu_utilization_pct,
+                    vram: snapshot.vram.clone(),
+                    models_loaded,
+                };
+
+                // Persist to SQLite (best-effort). Read retention from config.
+                let retention_secs = metrics_state
+                    .config
+                    .read()
+                    .await
+                    .proxy
+                    .metrics_retention_secs;
+                if let Some(conn) = metrics_state.open_db() {
+                    let row = crate::db::queries::SystemMetricsRow {
+                        ts_unix_ms: sample.ts_unix_ms,
+                        cpu_usage_pct: sample.cpu_usage_pct,
+                        ram_used_mib: sample.ram_used_mib as i64,
+                        ram_total_mib: sample.ram_total_mib as i64,
+                        gpu_utilization_pct: sample.gpu_utilization_pct.map(|v| v as i64),
+                        vram_used_mib: sample.vram.as_ref().map(|v| v.used_mib as i64),
+                        vram_total_mib: sample.vram.as_ref().map(|v| v.total_mib as i64),
+                        models_loaded: sample.models_loaded as i64,
+                    };
+                    let cutoff_ms = sample.ts_unix_ms - (retention_secs as i64 * 1000);
+                    // Run the blocking SQLite call off the runtime.
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Err(e) =
+                            crate::db::queries::insert_system_metric(&conn, &row, cutoff_ms)
+                        {
+                            tracing::warn!("failed to persist system metric: {}", e);
+                        }
+                    })
+                    .await;
+                }
+
+                // Broadcast to any live SSE subscribers. SendError just means there are
+                // no subscribers; that is the normal idle case.
+                let _ = metrics_state.metrics_tx.send(sample);
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
         });
 
@@ -159,5 +213,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_task_persists_to_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(
+            config,
+            Some(tmp.path().to_path_buf()),
+        ));
+
+        let _server = ProxyServer::new(state.clone());
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        let conn = state.open_db().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM system_metrics_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(
+            count >= 1,
+            "Expected at least 1 row in system_metrics_history after 2s, got {}",
+            count
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metrics_task_broadcasts_samples() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(
+            config,
+            Some(tmp.path().to_path_buf()),
+        ));
+
+        let mut rx = state.metrics_tx.subscribe();
+
+        let _server = ProxyServer::new(state.clone());
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv()).await;
+        assert!(
+            result.is_ok(),
+            "Expected to receive a MetricSample within 4s, but timeout occurred"
+        );
+        let sample = result.unwrap().unwrap();
+        assert!(sample.ts_unix_ms > 0, "ts_unix_ms should be positive");
+        assert!(
+            sample.cpu_usage_pct >= 0.0,
+            "cpu_usage_pct should be non-negative"
+        );
+        assert!(sample.ram_total_mib > 0, "ram_total_mib should be positive");
     }
 }
