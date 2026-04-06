@@ -10,6 +10,9 @@ mod state;
 mod status;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 pub use forward::forward_request;
 pub use handlers::{
     handle_chat_completions, handle_fallback, handle_get_model, handle_health, handle_list_models,
