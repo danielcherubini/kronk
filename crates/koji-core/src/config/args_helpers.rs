@@ -214,6 +214,25 @@ pub fn merge_args(args_list: &[Vec<String>]) -> Result<Vec<String>> {
     Ok(result)
 }
 
+/// Merge two arg lists with override semantics.
+/// Later arguments fully replace earlier arguments with the same flag.
+/// Returns a flat list suitable for `Command::args`.
+pub fn merge_args_override(base: &[String], override_args: &[String]) -> Vec<String> {
+    let mut result = base.to_vec();
+
+    for arg in override_args {
+        if arg.starts_with('-') {
+            // Extract flag name (the part before the space)
+            let flag_name = arg.split_whitespace().next().unwrap_or(arg);
+            // Remove previous occurrence of this flag (by flag name, not full string)
+            result.retain(|a| !a.starts_with('-') || !a.starts_with(flag_name));
+            result.push(arg.clone());
+        }
+    }
+
+    result
+}
+
 /// Group legacy flat arguments into structured form.
 ///
 /// Takes a flat list of arguments and groups related ones together based on

@@ -103,37 +103,32 @@ impl SamplingParams {
         }
     }
 
-    /// Convert to CLI args for llama.cpp backend.
-    /// Only emits flags for fields that are Some.
+    /// Convert to grouped CLI args for llama.cpp backend.
+    /// Each returned `String` is one logical flag, e.g. `"--temp 0.30"`.
+    /// Run `flatten_args` on the result to get the flat token list that
+    /// `Command::args` expects.
     pub fn to_args(&self) -> Vec<String> {
         let mut args = Vec::new();
         if let Some(v) = self.temperature {
-            args.push("--temp".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--temp {:.2}", v));
         }
         if let Some(v) = self.top_k {
-            args.push("--top-k".to_string());
-            args.push(v.to_string());
+            args.push(format!("--top-k {}", v));
         }
         if let Some(v) = self.top_p {
-            args.push("--top-p".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--top-p {:.2}", v));
         }
         if let Some(v) = self.min_p {
-            args.push("--min-p".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--min-p {:.2}", v));
         }
         if let Some(v) = self.presence_penalty {
-            args.push("--presence-penalty".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--presence-penalty {:.2}", v));
         }
         if let Some(v) = self.frequency_penalty {
-            args.push("--frequency-penalty".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--frequency-penalty {:.2}", v));
         }
         if let Some(v) = self.repeat_penalty {
-            args.push("--repeat-penalty".to_string());
-            args.push(format!("{:.2}", v));
+            args.push(format!("--repeat-penalty {:.2}", v));
         }
         args
     }
@@ -221,7 +216,7 @@ mod tests {
             ..Default::default()
         };
         let args = params.to_args();
-        assert_eq!(args, vec!["--temp", "0.30", "--top-k", "50"]);
+        assert_eq!(args, vec!["--temp 0.30", "--top-k 50"]);
     }
 
     #[test]

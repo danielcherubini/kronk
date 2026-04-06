@@ -141,43 +141,20 @@ impl Config {
         }
     }
 
+    /// Build the merged arg list for a server, returning **flat tokens**
+    /// suitable for `Command::args`.
+    ///
+    /// Merging order: `backend.default_args` → `server.args` →
+    /// `server.sampling.to_args()`. Each later layer's flags fully replace
+    /// the same flag in the earlier layers via `merge_args_override`.
     pub fn build_args(&self, server: &ModelConfig, backend: &BackendConfig) -> Vec<String> {
-        let mut args = backend.default_args.clone();
-        args.extend(server.args.clone());
-
-        // Append sampling params from server.sampling as CLI flags, filtering out any duplicates
+        let mut args = crate::config::merge_args_override(&backend.default_args, &server.args);
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
-                let sampling_args = sampling.to_args();
-                let sampling_flags: std::collections::HashSet<&str> = sampling_args
-                    .iter()
-                    .filter(|a| a.starts_with("--"))
-                    .map(|a| a.as_str())
-                    .collect();
-
-                // Remove existing sampling flags to avoid duplicates
-                if !sampling_flags.is_empty() {
-                    let mut filtered = Vec::with_capacity(args.len());
-                    let mut skip_next = false;
-                    for arg in &args {
-                        if skip_next {
-                            skip_next = false;
-                            continue;
-                        }
-                        if sampling_flags.contains(arg.as_str()) {
-                            skip_next = true;
-                            continue;
-                        }
-                        filtered.push(arg.clone());
-                    }
-                    args = filtered;
-                }
-
-                args.extend(sampling_args);
+                args = crate::config::merge_args_override(&args, &sampling.to_args());
             }
         }
-
-        args
+        crate::config::flatten_args(&args).expect("flatten_args failed")
     }
 
     /// Build the full argument list for a model, including model config args (-m, -c, -ngl).
@@ -610,9 +587,9 @@ mod tests {
         assert!(args.contains(&"-ngl".to_string()));
         assert!(args.contains(&"99".to_string()));
 
-        // Verify sampling args
-        assert!(args.contains(&"--temp".to_string()));
-        assert!(args.contains(&"0.30".to_string()));
+        // Verify sampling args (grouped form now)
+        assert!(args.iter().any(|a| a.starts_with("--temp")));
+        assert!(args.iter().any(|a| a == "--temp 0.30"));
     }
 
     #[test]
@@ -771,5 +748,107 @@ mod tests {
         // Should not emit -m arg when quant lookup fails
         let args = args.expect("build_full_args failed");
         assert!(!args.iter().any(|a| a == "-m"));
+    }
+
+    #[test]
+    fn build_args_dedupes_backend_vs_model_flags() {
+        let mut config = Config::default();
+        config.backends.insert(
+            "test_backend".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![
+                    "-b 2048".to_string(),
+                    "-ub 512".to_string(),
+                    "-t 14".to_string(),
+                ],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let server = ModelConfig {
+            backend: "test_backend".to_string(),
+            args: vec!["-b 4096".to_string(), "-ub 4096".to_string()],
+            sampling: None,
+            model: None,
+            quant: None,
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: std::collections::BTreeMap::new(),
+        };
+
+        let backend = config.backends.get("test_backend").unwrap().clone();
+        let flat = config.build_args(&server, &backend);
+
+        // -t 14 from base must survive (grouped form)
+        assert!(flat.iter().any(|t| *t == "-t 14"));
+        // -b appears exactly once with value 4096
+        let b_count = flat.iter().filter(|t| t.starts_with("-b")).count();
+        assert_eq!(b_count, 1, "expected exactly one -b flag, got {:?}", flat);
+        assert!(flat.iter().any(|t| t.starts_with("-b 4096")));
+        // -ub appears exactly once with value 4096
+        let ub_count = flat.iter().filter(|t| t.starts_with("-ub")).count();
+        assert_eq!(ub_count, 1, "expected exactly one -ub flag, got {:?}", flat);
+        assert!(flat.iter().any(|t| t.starts_with("-ub 4096")));
+        // 2048 and 512 must NOT appear
+        assert!(!flat.iter().any(|t| t.contains("2048")));
+        assert!(!flat.iter().any(|t| t.contains("512")));
+    }
+
+    #[test]
+    fn build_args_sampling_overrides_inline_temp_in_args() {
+        // Requires SamplingParams::to_args to already be in grouped form
+        // (done earlier in this same task, section 2a.1). If this test
+        // fails with a flat-token mismatch instead of a dedup failure,
+        // the to_args rewrite was skipped.
+        let mut config = Config::default();
+        config.backends.insert(
+            "test_backend".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let server = ModelConfig {
+            backend: "test_backend".to_string(),
+            // inline --temp in args should be overridden by sampling.temperature
+            args: vec!["--temp 0.10".to_string()],
+            sampling: Some(crate::profiles::SamplingParams {
+                temperature: Some(0.5),
+                ..Default::default()
+            }),
+            model: None,
+            quant: None,
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: std::collections::BTreeMap::new(),
+        };
+
+        let backend = config.backends.get("test_backend").unwrap().clone();
+        let flat = config.build_args(&server, &backend);
+
+        // --temp appears exactly once with value 0.50 (grouped form)
+        let temp_count = flat.iter().filter(|t| t.starts_with("--temp")).count();
+        assert_eq!(
+            temp_count, 1,
+            "expected exactly one --temp flag, got {:?}",
+            flat
+        );
+        assert!(flat.iter().any(|t| t.starts_with("--temp 0.50")));
+        assert!(!flat.iter().any(|t| t.contains("0.10")));
     }
 }

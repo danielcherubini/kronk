@@ -7,7 +7,8 @@ mod resolve;
 mod types;
 
 pub use args_helpers::{
-    flag_name, flatten_args, group_legacy_flat_args, merge_args, quote_value, split_arg_entry,
+    flag_name, flatten_args, group_legacy_flat_args, merge_args, merge_args_override, quote_value,
+    split_arg_entry,
 };
 pub use migrate::migrate_cards_to_unified_config;
 pub use rename_legacy::{migrate_legacy_data_dir, Migration};
