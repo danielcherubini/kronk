@@ -44,7 +44,7 @@ pub struct ExtractedFlags {
 /// # Quant without model
 /// If `--quant` is provided without `--model`, it's still extracted (no error).
 /// The call site handles the warning about quant without model.
-pub fn extract_kronk_flags(args: Vec<String>) -> Result<ExtractedFlags> {
+pub fn extract_koji_flags(args: Vec<String>) -> Result<ExtractedFlags> {
     let mut model: Option<String> = None;
     let mut quant: Option<String> = None;
     let mut profile: Option<String> = None;

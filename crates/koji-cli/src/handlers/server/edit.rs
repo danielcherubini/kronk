@@ -17,7 +17,7 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     let (backend_key, exe_str) = super::resolve_backend(config, exe_path)?;
 
     // Extract kronk flags from args
-    let extracted = crate::flags::extract_kronk_flags(args)?;
+    let extracted = crate::flags::extract_koji_flags(args)?;
 
     // Mutate via get_mut in a block so the borrow is dropped before save()
     {

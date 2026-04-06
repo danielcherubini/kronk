@@ -20,7 +20,7 @@ pub async fn cmd_server_add(
     let (backend_key, exe_str) = super::resolve_backend(&mut config, exe_path)?;
 
     // Extract kronk flags from args
-    let extracted = crate::flags::extract_kronk_flags(args)?;
+    let extracted = crate::flags::extract_koji_flags(args)?;
 
     // Check for duplicate server
     if config.models.contains_key(name) && !overwrite {
