@@ -20,6 +20,7 @@ pub struct AppState {
     pub client: reqwest::Client,
     pub logs_dir: Option<std::path::PathBuf>,
     pub config_path: Option<std::path::PathBuf>,
+    pub proxy_config: Option<Arc<tokio::sync::RwLock<kronk_core::config::Config>>>,
 }
 
 /// Serve a static file from the embedded `dist/` directory.
@@ -141,12 +142,14 @@ pub async fn run_with_opts(
     proxy_base_url: String,
     logs_dir: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
+    proxy_config: Option<Arc<tokio::sync::RwLock<kronk_core::config::Config>>>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
         client: reqwest::Client::new(),
         logs_dir,
         config_path,
+        proxy_config,
     });
     let app = build_router(state);
     tracing::info!("Kronk web UI listening on http://{}", addr);
@@ -157,5 +160,5 @@ pub async fn run_with_opts(
 
 /// Convenience wrapper with no logs_dir/config_path.
 pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
-    run_with_opts(addr, proxy_base_url, None, None).await
+    run_with_opts(addr, proxy_base_url, None, None, None).await
 }

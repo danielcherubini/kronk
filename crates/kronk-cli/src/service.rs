@@ -244,6 +244,9 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                 .clone()
                 .or_else(|| kronk_core::config::Config::config_dir().ok());
             let state = Arc::new(ProxyState::new(config.clone(), db_dir));
+            // Clone the config Arc before state is moved into ProxyServer.
+            #[cfg(feature = "web-ui")]
+            let proxy_config = Some(Arc::clone(&state.config));
             let server = ProxyServer::new(state);
 
             // Spawn the web control plane alongside the proxy.
@@ -265,6 +268,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         proxy_base_url,
                         logs_dir,
                         config_path,
+                        proxy_config,
                     )
                     .await
                     {

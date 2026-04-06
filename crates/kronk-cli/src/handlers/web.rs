@@ -7,5 +7,5 @@ pub async fn cmd_web(
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    kronk_web::server::run_with_opts(addr, proxy_url, logs_dir, config_path).await
+    kronk_web::server::run_with_opts(addr, proxy_url, logs_dir, config_path, None).await
 }
