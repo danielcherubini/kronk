@@ -1,5 +1,38 @@
 use leptos::prelude::*;
 
+/// A responsive SVG area chart component for displaying time-series data.
+///
+/// Renders a filled area chart with a stroke line, suitable for system metrics
+/// like CPU usage, memory, GPU utilization, and VRAM. The chart automatically
+/// scales to fill its container width and maintains a fixed aspect ratio.
+///
+/// ## Parameters
+///
+/// * `data`: Slice of sample values to plot. Each value is expected to be in
+///   the range `[0, max_value]`. Empty vectors are handled gracefully (renders
+///   an empty SVG). NaN values will produce invalid SVG paths.
+/// * `max_value`: The maximum expected Y-axis value. Used to normalize data.
+///   Must be greater than 0.0; if 0.0, defaults to 1.0 internally.
+/// * `color`: CSS color string for the chart (e.g., `"var(--accent-green)"`,
+///   `"#34d399"`, `"green"`). Used for both fill and stroke.
+/// * `height`: SVG height in pixels. Recommended range: 30–150.
+///
+/// ## Returns
+///
+/// An `IntoView` that renders an SVG element containing:
+/// - A filled area path (15% opacity) representing the area under the data line
+/// - A stroke path (1.5px width) tracing the data points
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// <SparklineChart
+///     data=vec![10.0, 25.0, 30.0, 20.0, 45.0]
+///     max_value=100.0
+///     color="var(--accent-green)"
+///     height=60.0
+/// />
+/// ```
 #[component]
 pub fn SparklineChart(data: Vec<f32>, max_value: f32, color: String, height: f32) -> impl IntoView {
     // Handle empty data case
