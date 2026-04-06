@@ -249,10 +249,16 @@ pub fn merge_args_override(base: &[String], override_args: &[String]) -> Vec<Str
 
     for arg in override_args {
         if arg.starts_with('-') {
-            // Extract flag name (the part before the space)
+            // Extract flag name (the part before the space or equals)
             let flag_name = arg.split_whitespace().next().unwrap_or(arg);
-            // Remove previous occurrence of this flag (by flag name, not full string)
-            result.retain(|a| !a.starts_with('-') || !a.starts_with(flag_name));
+            // Remove previous occurrence of this flag by comparing flag names
+            result.retain(|a| {
+                if !a.starts_with('-') {
+                    return true;
+                }
+                let a_flag = a.split_whitespace().next().unwrap_or(&a);
+                a_flag != flag_name
+            });
             result.push(arg.clone());
         }
     }
