@@ -21,8 +21,12 @@ pub use types::{ModelState, ProxyMetrics, ProxyState};
 
 #[cfg(test)]
 mod tests {
+    mod restart_test;
+
     use super::*;
     use crate::config::Config;
+    use crate::proxy::pull_jobs::PullJob;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_proxy_state_new() {
@@ -268,5 +272,77 @@ mod tests {
             result.unwrap_err().to_string(),
             "old name and new name must differ"
         );
+    }
+
+    #[tokio::test]
+    async fn test_proxy_state_shutdown_clears_models() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add a model to the state
+        let mut models = state.models.write().await;
+        models.insert(
+            "test-model".to_string(),
+            crate::proxy::types::ModelState::Ready {
+                model_name: "test-model".to_string(),
+                backend: "llama_cpp".to_string(),
+                backend_pid: 1234,
+                backend_url: "http://localhost:8080".to_string(),
+                load_time: std::time::SystemTime::now(),
+                last_accessed: std::time::Instant::now(),
+                consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                failure_timestamp: None,
+            },
+        );
+        drop(models);
+
+        // Verify the model exists
+        let models = state.models.read().await;
+        assert!(models.contains_key("test-model"));
+        drop(models);
+
+        // Shutdown should clear all models
+        state.shutdown().await;
+
+        // Verify the model is gone
+        let models = state.models.read().await;
+        assert!(models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_state_shutdown_clears_pull_jobs() {
+        use crate::proxy::pull_jobs::PullJobStatus;
+
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add a pull job
+        let mut pull_jobs = state.pull_jobs.write().await;
+        pull_jobs.insert(
+            "test-job".to_string(),
+            PullJob {
+                job_id: "test-job".to_string(),
+                repo_id: "test/repo".to_string(),
+                filename: "test.gguf".to_string(),
+                status: PullJobStatus::Running,
+                bytes_downloaded: 1000,
+                total_bytes: Some(2000),
+                error: None,
+                completed_at: None,
+            },
+        );
+        drop(pull_jobs);
+
+        // Verify the job exists
+        let jobs = state.pull_jobs.read().await;
+        assert!(jobs.contains_key("test-job"));
+        drop(jobs);
+
+        // Shutdown should clear all pull jobs
+        state.shutdown().await;
+
+        // Verify the job is gone
+        let jobs = state.pull_jobs.read().await;
+        assert!(jobs.is_empty());
     }
 }
