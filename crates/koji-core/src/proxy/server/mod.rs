@@ -413,4 +413,158 @@ mod tests {
             "Expected to receive a sample event within 4s, but none was found"
         );
     }
+
+    /// Round-trip test: the SSE `sample` events emitted by
+    /// `/koji/v1/system/metrics/stream` must serialize the new
+    /// `MetricSample.models` field in a wire format that the client-side
+    /// `crate::gpu::MetricSample` Deserialize impl can read back without
+    /// error.
+    ///
+    /// We configure the proxy with exactly one known model so the assertions
+    /// over the deserialized `Vec<ModelStatus>` are deterministic, then
+    /// connect to the SSE endpoint, wait for an `event: sample`, parse the
+    /// `data:` payload as a `MetricSample`, and assert that
+    /// `sample.models` is a `Vec<crate::gpu::ModelStatus>` carrying the
+    /// configured model.
+    #[tokio::test]
+    async fn test_system_metrics_stream_sample_models_round_trip() {
+        use crate::config::ModelConfig;
+        use bytes::Bytes;
+        use std::collections::BTreeMap;
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Build a Config with exactly one known model so the deserialized
+        // `sample.models` Vec has a deterministic shape we can assert on.
+        let mut config = crate::config::Config::default();
+        config.models.clear();
+        config.models.insert(
+            "alpha".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: BTreeMap::new(),
+            },
+        );
+
+        let state = Arc::new(crate::proxy::ProxyState::new(
+            config,
+            Some(tmp.path().to_path_buf()),
+        ));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+
+        let server = ProxyServer::new(state.clone());
+        let app = server.into_router();
+        let _handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!(
+                "http://{}/koji/v1/system/metrics/stream",
+                bound_addr
+            ))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(content_type.contains("text/event-stream"));
+
+        let mut stream = response.bytes_stream();
+        let mut parsed_sample: Option<crate::gpu::MetricSample> = None;
+        let mut buf = String::new();
+        while let Some(chunk) =
+            tokio::time::timeout(std::time::Duration::from_secs(4), stream.next())
+                .await
+                .unwrap()
+        {
+            let chunk: Bytes = chunk.unwrap();
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+
+            // SSE events are delimited by a blank line. Iterate over each
+            // complete event currently in the buffer.
+            while let Some(idx) = buf.find("\n\n") {
+                let event_block = buf[..idx].to_string();
+                buf = buf[idx + 2..].to_string();
+
+                let mut event_name: Option<&str> = None;
+                let mut data_line: Option<&str> = None;
+                for line in event_block.lines() {
+                    if let Some(rest) = line.strip_prefix("event: ") {
+                        event_name = Some(rest);
+                    } else if let Some(rest) = line.strip_prefix("data: ") {
+                        data_line = Some(rest);
+                    }
+                }
+
+                if event_name == Some("sample") {
+                    let data_line = data_line
+                        .expect("sample event must include a data: line carrying the JSON payload");
+                    // The critical assertion: the JSON produced by the
+                    // server must deserialize cleanly into MetricSample,
+                    // including the new `models` field.
+                    let sample: crate::gpu::MetricSample = serde_json::from_str(data_line)
+                        .expect("MetricSample JSON from SSE stream must deserialize without error");
+                    parsed_sample = Some(sample);
+                    break;
+                }
+            }
+
+            if parsed_sample.is_some() {
+                break;
+            }
+        }
+
+        let sample = parsed_sample
+            .expect("Expected to receive a sample event within 4s, but none was found");
+
+        // Statically prove `sample.models` is a `Vec<crate::gpu::ModelStatus>`.
+        // If the field's type ever changes, this binding will fail to
+        // type-check, which is exactly the regression we want to catch.
+        let models: &Vec<crate::gpu::ModelStatus> = &sample.models;
+
+        // The configured model must round-trip through JSON serialization
+        // unchanged. We picked a deterministic single-model config above so
+        // we can assert on the exact contents.
+        assert_eq!(
+            models.len(),
+            1,
+            "Expected exactly one model in sample.models after JSON round-trip, got: {:?}",
+            models
+        );
+        assert_eq!(models[0].id, "alpha");
+        assert_eq!(models[0].backend, "llama_cpp");
+        assert!(
+            !models[0].loaded,
+            "Expected the configured model to be reported as loaded == false since no backend was started, got: {:?}",
+            models[0]
+        );
+        assert_eq!(
+            sample.models_loaded, 0,
+            "Expected models_loaded counter to be 0 when no model is loaded"
+        );
+    }
 }
