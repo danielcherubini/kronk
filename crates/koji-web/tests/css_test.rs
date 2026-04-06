@@ -125,3 +125,44 @@ fn rule_body_finds_top_level_rules_and_ignores_comments() {
 
     assert!(rule_body(&css, ".missing").is_none());
 }
+
+/// The `.model-section` container wraps each section of model cards.
+/// It needs vertical spacing (`margin-bottom`) to separate sections visually.
+#[test]
+fn style_css_defines_model_section_spacing() {
+    let css = strip_css_comments(STYLE_CSS);
+    let body =
+        rule_body(&css, ".model-section").expect("style.css must define a `.model-section` rule");
+    assert!(
+        body.contains("margin-bottom"),
+        "`.model-section` rule must set `margin-bottom` to separate sections; got: {body}"
+    );
+}
+
+/// The last `.model-section` should not have extra bottom margin.
+#[test]
+fn style_css_defines_model_section_last_child_spacing() {
+    let css = strip_css_comments(STYLE_CSS);
+    let body = rule_body(&css, ".model-section:last-child")
+        .expect("style.css must define a `.model-section:last-child` rule");
+    assert!(
+        body.contains("margin-bottom: 0"),
+        "`.model-section:last-child` rule must set `margin-bottom: 0`; got: {body}"
+    );
+}
+
+/// The `.model-section__title` element styles the section header.
+/// It needs appropriate typography and a bottom border for visual separation.
+#[test]
+fn style_css_defines_model_section_title_styling() {
+    let css = strip_css_comments(STYLE_CSS);
+    let body = rule_body(&css, ".model-section__title")
+        .expect("style.css must define a `.model-section__title` rule");
+    assert!(
+        body.contains("font-size")
+            && body.contains("font-weight")
+            && body.contains("border-bottom")
+            && body.contains("padding-bottom"),
+        "`.model-section__title` rule must set typography and border styles; got: {body}"
+    );
+}
