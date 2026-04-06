@@ -51,6 +51,47 @@ fn loaded_model_count(models: &[ModelStatus]) -> usize {
     models.iter().filter(|m| m.loaded).count()
 }
 
+/// CSS class string used for the per-model status badge in the
+/// "Active Models" grid. Loaded models get the success colour, idle ones
+/// get the muted colour. Extracted so the rendering branch and the unit
+/// tests share a single source of truth.
+fn model_status_badge_class(loaded: bool) -> &'static str {
+    if loaded {
+        "badge badge-success"
+    } else {
+        "badge badge-muted"
+    }
+}
+
+/// Human-readable label that pairs with [`model_status_badge_class`].
+fn model_status_badge_label(loaded: bool) -> &'static str {
+    if loaded {
+        "Loaded"
+    } else {
+        "Idle"
+    }
+}
+
+/// CSS class string for the load/unload action button in a model card.
+/// Loaded models render a destructive "Unload" button (`btn-danger`),
+/// idle models render an affirmative "Load" button (`btn-success`).
+fn model_action_button_class(loaded: bool) -> &'static str {
+    if loaded {
+        "btn btn-danger btn-sm"
+    } else {
+        "btn btn-success btn-sm"
+    }
+}
+
+/// Human-readable label that pairs with [`model_action_button_class`].
+fn model_action_button_label(loaded: bool) -> &'static str {
+    if loaded {
+        "Unload"
+    } else {
+        "Load"
+    }
+}
+
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let history = RwSignal::new(Vec::<MetricSample>::new());
@@ -112,6 +153,35 @@ pub fn Dashboard() -> impl IntoView {
             .send()
             .await;
     });
+
+    // Per-model load/unload actions wired to the same REST endpoints used by
+    // the `/models` page. Both actions are unsync because `gloo_net::Request`
+    // returns `!Send` futures in the WASM target. We deliberately do **not**
+    // refresh anything on completion: the dashboard's SSE stream pushes a new
+    // `MetricSample` every tick, so the freshly toggled `loaded` flag flows
+    // back into the UI without us having to manage cache invalidation here.
+    let load_action: Action<String, (), LocalStorage> = Action::new_unsync(|id: &String| {
+        let id = id.clone();
+        async move {
+            let _ = gloo_net::http::Request::post(&format!("/koji/v1/models/{}/load", id))
+                .send()
+                .await;
+        }
+    });
+    let unload_action: Action<String, (), LocalStorage> = Action::new_unsync(|id: &String| {
+        let id = id.clone();
+        async move {
+            let _ = gloo_net::http::Request::post(&format!("/koji/v1/models/{}/unload", id))
+                .send()
+                .await;
+        }
+    });
+
+    // Capture the pending signals once so the per-card buttons can disable
+    // themselves while a load/unload request is in flight — this prevents
+    // double-clicks from queuing duplicate requests against the proxy.
+    let load_pending = load_action.pending();
+    let unload_pending = unload_action.pending();
 
     view! {
         <div class="page-header">
@@ -224,7 +294,57 @@ pub fn Dashboard() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! {
-                                    <div class="models-grid"></div>
+                                    <div class="models-grid">
+                                        {h.models.into_iter().map(|m| {
+                                            // Clone the id once for the click handler. The closure
+                                            // is `Fn` (event listeners may fire repeatedly), so it
+                                            // can't move the original — the inner `.clone()` on each
+                                            // dispatch supplies a fresh owned String per click.
+                                            let id_for_action = m.id.clone();
+                                            let badge_class = model_status_badge_class(m.loaded);
+                                            let badge_label = model_status_badge_label(m.loaded);
+                                            let button_class = model_action_button_class(m.loaded);
+                                            let button_label = model_action_button_label(m.loaded);
+                                            let loaded = m.loaded;
+                                            view! {
+                                                <div class="model-card card">
+                                                    <div class="model-card__header">
+                                                        <span class="model-card__id text-mono">{m.id.clone()}</span>
+                                                        <span class={badge_class}>{badge_label}</span>
+                                                    </div>
+                                                    <div class="model-card__body">
+                                                        <div class="model-card__field">
+                                                            <span class="model-card__label">"Backend"</span>
+                                                            <span class="model-card__value text-mono">{m.backend}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="model-card__actions">
+                                                        {if loaded {
+                                                            view! {
+                                                                <button
+                                                                    class={button_class}
+                                                                    prop:disabled=move || unload_pending.get()
+                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
+                                                                >
+                                                                    {button_label}
+                                                                </button>
+                                                            }.into_any()
+                                                        } else {
+                                                            view! {
+                                                                <button
+                                                                    class={button_class}
+                                                                    prop:disabled=move || load_pending.get()
+                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
+                                                                >
+                                                                    {button_label}
+                                                                </button>
+                                                            }.into_any()
+                                                        }}
+                                                    </div>
+                                                </div>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
                                 }.into_any()
                             }
                         }
@@ -314,6 +434,53 @@ mod tests {
     #[test]
     fn loaded_model_count_is_zero_for_empty_slice() {
         assert_eq!(loaded_model_count(&[]), 0);
+    }
+
+    /// Loaded models must use the success badge class so they visually pop
+    /// against idle entries in the Active Models grid.
+    #[test]
+    fn model_status_badge_class_uses_success_when_loaded() {
+        assert_eq!(model_status_badge_class(true), "badge badge-success");
+    }
+
+    /// Idle models must use the muted badge class so they recede compared to
+    /// loaded entries — matching the convention used elsewhere on the
+    /// `/models` page.
+    #[test]
+    fn model_status_badge_class_uses_muted_when_idle() {
+        assert_eq!(model_status_badge_class(false), "badge badge-muted");
+    }
+
+    /// Badge text mirrors the badge colour: "Loaded" for loaded models,
+    /// "Idle" for everything else. Tests both branches so a future renaming
+    /// can't silently drift one of them.
+    #[test]
+    fn model_status_badge_label_distinguishes_loaded_and_idle() {
+        assert_eq!(model_status_badge_label(true), "Loaded");
+        assert_eq!(model_status_badge_label(false), "Idle");
+    }
+
+    /// Loaded models surface an Unload action — destructive styling so the
+    /// user understands clicking it tears down a running server.
+    #[test]
+    fn model_action_button_class_uses_danger_when_loaded() {
+        assert_eq!(model_action_button_class(true), "btn btn-danger btn-sm");
+    }
+
+    /// Idle models surface a Load action — affirmative styling so the user
+    /// understands clicking it spins up a server.
+    #[test]
+    fn model_action_button_class_uses_success_when_idle() {
+        assert_eq!(model_action_button_class(false), "btn btn-success btn-sm");
+    }
+
+    /// Action button labels must match their visual styling: "Unload" for
+    /// loaded models, "Load" for idle ones. Tests both branches so the
+    /// label and class helpers stay in lockstep.
+    #[test]
+    fn model_action_button_label_distinguishes_loaded_and_idle() {
+        assert_eq!(model_action_button_label(true), "Unload");
+        assert_eq!(model_action_button_label(false), "Load");
     }
 
     /// When the backend includes a populated `models` array, every `ModelStatus`
