@@ -49,9 +49,9 @@ pub fn SparklineChart(data: Vec<f32>, max_value: f32, color: String, height: f32
             preserveAspectRatio="none"
         >
             {/* Fill area - area under the line */}
-            <path d=fill_path stroke="none" fill={color.clone()} fill_opacity="0.15"/>
+            <path d=fill_path stroke="none" fill={color.clone()} fill-opacity="0.15"/>
             {/* Line stroke - the actual data line */}
-            <path d=line_path fill="none" stroke={color.clone()} stroke_width="1.5"/>
+            <path d=line_path fill="none" stroke={color.clone()} stroke-width="1.5"/>
         </svg>
     }
     .into_any()
