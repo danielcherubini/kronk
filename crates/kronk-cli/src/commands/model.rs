@@ -578,10 +578,10 @@ async fn cmd_create(
         println!("  Quant:     {}", q);
     }
     if let Some(mc) = config.models.get(&server_name) {
-        if mc.sampling.is_some() {
+        if let Some(sampling) = &mc.sampling {
             println!(
                 "  Profile:   {}",
-                mc.sampling.as_ref().unwrap().preset_label()
+                sampling.preset_label()
             );
         } else if let Some(p) = &mc.profile {
             println!("  Profile:   {}", p);
