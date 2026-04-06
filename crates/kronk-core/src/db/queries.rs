@@ -238,6 +238,15 @@ pub fn touch_active_model(conn: &Connection, server_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rename an active model by updating its primary key (server_name).
+pub fn rename_active_model(conn: &Connection, old_name: &str, new_name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE active_models SET server_name = ?2 WHERE server_name = ?1",
+        [old_name, new_name],
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Backend installations record type and query functions
 // ---------------------------------------------------------------------------
@@ -724,6 +733,50 @@ mod tests {
 
         let models = get_active_models(&conn).unwrap();
         assert_ne!(models[0].last_accessed, loaded_at1);
+    }
+
+    #[test]
+    fn test_rename_active_model() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // Insert an active model with old name
+        insert_active_model(
+            &conn,
+            "old-name",
+            "test-model",
+            "llama-server",
+            12345,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Rename
+        rename_active_model(&conn, "old-name", "new-name").unwrap();
+
+        // Verify old name is gone and new name exists
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].server_name, "new-name");
+
+        // Verify old name is gone
+        let old_model = conn
+            .query_row(
+                "SELECT COUNT(*) FROM active_models WHERE server_name = ?",
+                ["old-name"],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(old_model, 0);
+    }
+
+    #[test]
+    fn test_rename_active_model_not_found() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // Rename a name that doesn't exist — should succeed (0 rows affected is OK)
+        let result = rename_active_model(&conn, "non-existent", "new-name");
+        assert!(result.is_ok());
     }
 
     // -----------------------------------------------------------------------

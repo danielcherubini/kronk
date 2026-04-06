@@ -256,10 +256,13 @@ fn print_offline_status(config: &Config) {
         }
         println!(
             "  Profile:  {}",
-            srv.profile
-                .as_ref()
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "none".to_string())
+            if let Some(sampling) = &srv.sampling {
+                sampling.preset_label().to_string()
+            } else if let Some(ref profile) = srv.profile {
+                profile.clone()
+            } else {
+                "none".to_string()
+            }
         );
         println!("  Backend:  {} ({})", srv.backend, backend_path);
         if !srv.enabled {

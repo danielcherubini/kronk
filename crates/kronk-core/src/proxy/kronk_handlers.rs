@@ -929,10 +929,13 @@ async fn _setup_model_after_pull_with_config(
             context_length: spec.context_length,
             enabled: true,
             args: vec![],
-            profile: None,
             sampling: None,
             port: None,
             health_check: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: std::collections::BTreeMap::new(),
         });
 
     // Save card and config (best-effort — download is already marked Completed)

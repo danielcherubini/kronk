@@ -1,5 +1,4 @@
 use super::types::{BackendConfig, Config, HealthCheck, ModelConfig};
-use crate::profiles::SamplingParams;
 use anyhow::Result;
 
 impl Config {
@@ -146,174 +145,128 @@ impl Config {
         let mut args = backend.default_args.clone();
         args.extend(server.args.clone());
 
-        // Append sampling params as CLI flags, filtering out any duplicates
-        // that may already be in server.args
-        if let Some(sampling) = self.effective_sampling(server) {
-            let sampling_args = sampling.to_args();
-            let sampling_flags: std::collections::HashSet<&str> = sampling_args
-                .iter()
-                .filter(|a| a.starts_with("--"))
-                .map(|a| a.as_str())
-                .collect();
+        // Append sampling params from server.sampling as CLI flags, filtering out any duplicates
+        if let Some(sampling) = &server.sampling {
+            if !sampling.is_empty() {
+                let sampling_args = sampling.to_args();
+                let sampling_flags: std::collections::HashSet<&str> = sampling_args
+                    .iter()
+                    .filter(|a| a.starts_with("--"))
+                    .map(|a| a.as_str())
+                    .collect();
 
-            // Remove existing sampling flags and their values from args
-            if !sampling_flags.is_empty() {
-                let mut filtered = Vec::with_capacity(args.len());
-                let mut skip_next = false;
-                for arg in &args {
-                    if skip_next {
-                        skip_next = false;
-                        continue;
+                // Remove existing sampling flags to avoid duplicates
+                if !sampling_flags.is_empty() {
+                    let mut filtered = Vec::with_capacity(args.len());
+                    let mut skip_next = false;
+                    for arg in &args {
+                        if skip_next {
+                            skip_next = false;
+                            continue;
+                        }
+                        if sampling_flags.contains(arg.as_str()) {
+                            skip_next = true;
+                            continue;
+                        }
+                        filtered.push(arg.clone());
                     }
-                    if sampling_flags.contains(arg.as_str()) {
-                        skip_next = true; // skip the flag and its following value
-                        continue;
-                    }
-                    filtered.push(arg.clone());
+                    args = filtered;
                 }
-                args = filtered;
-            }
 
-            args.extend(sampling_args);
+                args.extend(sampling_args);
+            }
         }
 
         args
     }
 
-    /// Build the full argument list for a model, including model card args (-m, -c, -ngl).
+    /// Build the full argument list for a model, including model config args (-m, -c, -ngl).
     /// This is the complete arg set needed to start a backend for a given model config.
+    /// Reads from unified ModelConfig fields instead of ModelRegistry/ModelCard.
     pub fn build_full_args(
         &self,
         server: &ModelConfig,
         backend: &BackendConfig,
         ctx_override: Option<u32>,
     ) -> Result<Vec<String>> {
-        let mut args = self.build_args(server, backend);
+        let mut args = backend.default_args.clone();
+        args.extend(server.args.clone());
 
-        // Inject model card args: -m, -c, -ngl
+        // Inject model path from ModelConfig
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
-            let models_dir = self
-                .models_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("models"));
-            let configs_dir = self.configs_dir().unwrap_or_else(|_| {
-                // Fallback: derive from models_dir if configs_dir is not available
-                self.models_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("configs"))
-            });
-            let registry =
-                crate::models::ModelRegistry::new(models_dir.clone(), configs_dir.clone());
-            if let Some(installed) = registry.find(model_id)? {
-                if let Some(q) = installed.card.quants.get(quant_name.as_str()) {
-                    if !args.iter().any(|a| a == "-m" || a == "--model") {
-                        args.push("-m".to_string());
-                        args.push(installed.dir.join(&q.file).to_string_lossy().to_string());
-                    }
-                }
-                // Context size: cli override > config override > model card
-                let ctx = ctx_override
-                    .or(server.context_length)
-                    .or_else(|| installed.card.context_length_for(quant_name));
-                if let Some(ctx) = ctx {
-                    if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
-                        args.push("-c".to_string());
-                        args.push(ctx.to_string());
-                    }
-                }
-                if let Some(ngl) = installed.card.model.default_gpu_layers {
-                    if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
-                        args.push("-ngl".to_string());
-                        args.push(ngl.to_string());
-                    }
-                }
+            if let Some(quant_entry) = server.quants.get(quant_name.as_str()) {
+                let models_dir = self.models_dir()?;
+                let model_path = models_dir.join(model_id).join(&quant_entry.file);
 
-                // 3-layer sampling merge with model card
-                if let Some(sampling) =
-                    self.effective_sampling_with_card(server, Some(&installed.card))
-                {
-                    // Remove any existing sampling args to avoid duplicates
-                    let sampling_args = sampling.to_args();
-                    let sampling_flags: std::collections::HashSet<&str> = sampling_args
-                        .iter()
-                        .filter(|a| a.starts_with("--"))
-                        .map(|a| a.as_str())
-                        .collect();
-
-                    if !sampling_flags.is_empty() {
-                        let mut filtered = Vec::with_capacity(args.len());
-                        let mut skip_next = false;
-                        for arg in &args {
-                            if skip_next {
-                                skip_next = false;
-                                continue;
-                            }
-                            if sampling_flags.contains(arg.as_str()) {
-                                skip_next = true;
-                                continue;
-                            }
-                            filtered.push(arg.clone());
-                        }
-                        args = filtered;
-                    }
-                    args.extend(sampling_args);
+                if !args.iter().any(|a| a == "-m" || a == "--model") {
+                    args.push("-m".to_string());
+                    args.push(model_path.to_string_lossy().to_string());
                 }
             } else {
                 tracing::warn!(
-                    "Model card for '{}' not found in registry (searched in: models={}, configs={})",
-                    model_id,
-                    models_dir.display(),
-                    configs_dir.display()
+                    "Quant '{}' not found in ModelConfig for model '{}'",
+                    quant_name,
+                    model_id
                 );
             }
         }
 
+        // Context length: ctx_override > server.context_length > quant.context_length
+        let ctx = ctx_override.or(server.context_length).or_else(|| {
+            server
+                .quant
+                .as_ref()
+                .and_then(|q| server.quants.get(q).and_then(|qe| qe.context_length))
+        });
+
+        if let Some(ctx) = ctx {
+            if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
+                args.push("-c".to_string());
+                args.push(ctx.to_string());
+            }
+        }
+
+        // GPU layers from ModelConfig
+        if let Some(ngl) = server.gpu_layers {
+            if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
+                args.push("-ngl".to_string());
+                args.push(ngl.to_string());
+            }
+        }
+
+        // Sampling args from ModelConfig (no profile/template merge)
+        if let Some(sampling) = &server.sampling {
+            if !sampling.is_empty() {
+                let sampling_args = sampling.to_args();
+                let sampling_flags: std::collections::HashSet<&str> = sampling_args
+                    .iter()
+                    .filter(|a| a.starts_with("--"))
+                    .map(|a| a.as_str())
+                    .collect();
+
+                // Remove existing sampling flags to avoid duplicates
+                if !sampling_flags.is_empty() {
+                    let mut filtered = Vec::with_capacity(args.len());
+                    let mut skip_next = false;
+                    for arg in &args {
+                        if skip_next {
+                            skip_next = false;
+                            continue;
+                        }
+                        if sampling_flags.contains(arg.as_str()) {
+                            skip_next = true;
+                            continue;
+                        }
+                        filtered.push(arg.clone());
+                    }
+                    args = filtered;
+                }
+
+                args.extend(sampling_args);
+            }
+        }
+
         Ok(args)
-    }
-
-    /// Resolve effective sampling for a server (no model card).
-    /// Looks up sampling_templates by profile name, then merges server overrides.
-    pub fn effective_sampling(&self, server: &ModelConfig) -> Option<SamplingParams> {
-        let base = server
-            .profile
-            .as_ref()
-            .and_then(|p| self.sampling_templates.get(&p.to_string()).cloned());
-
-        match (base, &server.sampling) {
-            (Some(base), Some(overrides)) => Some(base.merge(overrides)),
-            (Some(base), None) => Some(base),
-            (None, Some(sampling)) => Some(sampling.clone()),
-            (None, None) => None,
-        }
-    }
-
-    /// Resolve effective sampling with a 2-layer merge chain:
-    /// 1. Model card `[sampling.<profile>]` (the single source of truth)
-    /// 2. Server-level sampling overrides
-    ///
-    /// Falls back to `sampling_templates` if the card has no entry for the profile.
-    pub fn effective_sampling_with_card(
-        &self,
-        server: &ModelConfig,
-        card: Option<&crate::models::card::ModelCard>,
-    ) -> Option<SamplingParams> {
-        let profile_name = server.profile.as_ref().map(|p| p.to_string());
-
-        // Layer 1: Model card sampling for this profile, falling back to templates
-        let base = match (card, &profile_name) {
-            (Some(card), Some(pname)) => card
-                .sampling_for(pname)
-                .cloned()
-                .or_else(|| self.sampling_templates.get(pname).cloned()),
-            (None, Some(pname)) => self.sampling_templates.get(pname).cloned(),
-            _ => None,
-        };
-
-        // Layer 2: Server-level overrides
-        match (base, &server.sampling) {
-            (Some(base), Some(overrides)) => Some(base.merge(overrides)),
-            (Some(base), None) => Some(base),
-            (None, Some(sampling)) => Some(sampling.clone()),
-            (None, None) => None,
-        }
     }
 
     pub fn service_name(server_name: &str) -> String {
@@ -422,9 +375,12 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::types::QuantEntry;
     use crate::config::BackendConfig;
     use crate::db::queries::BackendInstallationRecord;
     use crate::db::{open_in_memory, queries::insert_backend_installation};
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
 
     fn make_test_config(llama_cpp_path: Option<&str>) -> Config {
         let mut config = Config::default();
@@ -582,5 +538,238 @@ mod tests {
             "Expected 'not found in DB' in error message, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_build_full_args_unified() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models");
+        let org_dir = models_dir.join("org").join("repo");
+        let quant_file = org_dir.join("model-Q4_K_M.gguf");
+
+        // Create the model directory structure and file
+        std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+        std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+        let mut quants = BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            QuantEntry {
+                file: "model-Q4_K_M.gguf".to_string(),
+                size_bytes: None,
+                context_length: Some(8192),
+            },
+        );
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec![],
+            sampling: Some(crate::profiles::SamplingParams {
+                temperature: Some(0.3),
+                ..Default::default()
+            }),
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: Some(4096),
+            profile: None,
+            display_name: None,
+            gpu_layers: Some(99),
+            quants,
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![],
+            health_check_url: None,
+            version: None,
+        };
+
+        let args = config
+            .build_full_args(&server, &backend, None)
+            .expect("build_full_args failed");
+
+        // Verify model path arg
+        assert!(
+            args.iter().any(|a| a.contains("model-Q4_K_M.gguf")),
+            "Args should contain model path: {:?}",
+            args
+        );
+
+        // Verify context length from server
+        assert!(args.contains(&"-c".to_string()));
+        assert!(args.contains(&"4096".to_string()));
+
+        // Verify gpu_layers
+        assert!(args.contains(&"-ngl".to_string()));
+        assert!(args.contains(&"99".to_string()));
+
+        // Verify sampling args
+        assert!(args.contains(&"--temp".to_string()));
+        assert!(args.contains(&"0.30".to_string()));
+    }
+
+    #[test]
+    fn test_build_full_args_ctx_override() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models");
+        let org_dir = models_dir.join("org").join("repo");
+        let quant_file = org_dir.join("model-Q4_K_M.gguf");
+
+        std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+        std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+        let mut quants = BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            QuantEntry {
+                file: "model-Q4_K_M.gguf".to_string(),
+                size_bytes: None,
+                context_length: Some(8192),
+            },
+        );
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec![],
+            sampling: Some(crate::profiles::SamplingParams {
+                temperature: Some(0.3),
+                ..Default::default()
+            }),
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: Some(4096),
+            profile: None,
+            display_name: None,
+            gpu_layers: Some(99),
+            quants,
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![],
+            health_check_url: None,
+            version: None,
+        };
+
+        // ctx_override should take priority over server.context_length
+        let args = config
+            .build_full_args(&server, &backend, Some(2048))
+            .expect("build_full_args failed");
+
+        assert!(args.contains(&"-c".to_string()));
+        assert!(args.contains(&"2048".to_string()));
+        assert!(!args.contains(&"4096".to_string()));
+    }
+
+    #[test]
+    fn test_build_full_args_no_sampling() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models");
+        let org_dir = models_dir.join("org").join("repo");
+        let quant_file = org_dir.join("model-Q4_K_M.gguf");
+
+        std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+        std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+        let mut quants = BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            QuantEntry {
+                file: "model-Q4_K_M.gguf".to_string(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec![],
+            sampling: None, // No sampling params
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: Some(99),
+            quants,
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![],
+            health_check_url: None,
+            version: None,
+        };
+
+        let args = config
+            .build_full_args(&server, &backend, None)
+            .expect("build_full_args failed");
+
+        // Verify no sampling args
+        assert!(!args.iter().any(|a| a.starts_with("--temp")));
+        assert!(!args.iter().any(|a| a.starts_with("--top-k")));
+        assert!(!args.iter().any(|a| a.starts_with("--top-p")));
+    }
+
+    #[test]
+    fn test_build_full_args_no_quants() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models");
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec![],
+            sampling: None,
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: Some(99),
+            quants: BTreeMap::new(), // Empty quants map
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![],
+            health_check_url: None,
+            version: None,
+        };
+
+        // Should not crash when quants is empty
+        let args = config.build_full_args(&server, &backend, None);
+        assert!(args.is_ok());
+
+        // Should not emit -m arg when quant lookup fails
+        let args = args.expect("build_full_args failed");
+        assert!(!args.iter().any(|a| a == "-m"));
     }
 }

@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{any, get},
+    routing::{any, get, post},
     Router,
 };
 use include_dir::{include_dir, Dir};
@@ -125,10 +125,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .put(api::update_model)
                 .delete(api::delete_model),
         )
-        .route(
-            "/api/models/:id/card",
-            get(api::get_model_card).put(api::save_model_card),
-        )
+        .route("/api/models/:id/rename", post(api::rename_model))
         .route("/kronk/v1/*path", any(proxy_kronk))
         .route("/", get(serve_index))
         .route(

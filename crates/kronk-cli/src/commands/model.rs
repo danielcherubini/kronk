@@ -554,7 +554,7 @@ async fn cmd_create(
         kronk_core::config::ModelConfig {
             backend: resolved_backend_key.clone(),
             args,
-            profile: resolved_profile,
+            profile: resolved_profile.map(|p| p.to_string()),
             sampling: None,
             model: Some(model_id_arg.to_string()),
             quant: quant_name.clone(),
@@ -562,6 +562,9 @@ async fn cmd_create(
             health_check: None,
             enabled: true,
             context_length: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: std::collections::BTreeMap::new(),
         },
     );
 
@@ -574,12 +577,15 @@ async fn cmd_create(
     if let Some(ref q) = quant_name {
         println!("  Quant:     {}", q);
     }
-    if let Some(p) = &config
-        .models
-        .get(&server_name)
-        .and_then(|mc| mc.profile.as_ref())
-    {
-        println!("  Profile:   {}", p);
+    if let Some(mc) = config.models.get(&server_name) {
+        if mc.sampling.is_some() {
+            println!(
+                "  Profile:   {}",
+                mc.sampling.as_ref().unwrap().preset_label()
+            );
+        } else if let Some(p) = &mc.profile {
+            println!("  Profile:   {}", p);
+        }
     }
     println!();
     println!("Enable it:   kronk model enable {}", server_name);

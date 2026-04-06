@@ -20,11 +20,13 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
     for (name, srv) in &config.models {
         // Backend lookup kept for potential future use
         let _unused_backend = config.backends.get(&srv.backend);
-        let profile_name = srv
-            .profile
-            .as_ref()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "none".to_string());
+        let profile_name = if let Some(sampling) = &srv.sampling {
+            sampling.preset_label().to_string()
+        } else if let Some(ref profile) = srv.profile {
+            profile.clone()
+        } else {
+            "none".to_string()
+        };
 
         let service_name = Config::service_name(name);
         let service_status = {

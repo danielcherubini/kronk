@@ -148,6 +148,29 @@ impl SamplingParams {
             && self.frequency_penalty.is_none()
             && self.repeat_penalty.is_none()
     }
+
+    /// Returns the preset name based on sampling parameters.
+    ///
+    /// Matches the canonical values for built-in profiles:
+    /// - analysis: temp=0.3, top_p=0.9, top_k=20
+    /// - coding: temp=0.3, top_p=0.9
+    /// - chat: temp=0.7, top_p=0.95
+    /// - creative: temp=0.9, top_p=0.95
+    ///
+    /// Returns `"custom"` if no preset matches.
+    pub fn preset_label(&self) -> &'static str {
+        if self.temperature == Some(0.3) && self.top_p == Some(0.9) && self.top_k == Some(20) {
+            "analysis"
+        } else if self.temperature == Some(0.3) && self.top_p == Some(0.9) {
+            "coding"
+        } else if self.temperature == Some(0.7) && self.top_p == Some(0.95) {
+            "chat"
+        } else if self.temperature == Some(0.9) && self.top_p == Some(0.95) {
+            "creative"
+        } else {
+            "custom"
+        }
+    }
 }
 
 #[cfg(test)]
@@ -220,5 +243,103 @@ mod tests {
         assert_eq!(json, "\"coding\"");
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Profile::Coding);
+    }
+
+    #[test]
+    fn test_preset_label_analysis() {
+        // Canonical analysis: temp=0.3, top_p=0.9, top_k=20
+        let params = SamplingParams {
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            top_k: Some(20),
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "analysis");
+    }
+
+    #[test]
+    fn test_preset_label_coding() {
+        // Coding: temp=0.3, top_p=0.9 (no top_k)
+        let params = SamplingParams {
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            top_k: None,
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "coding");
+    }
+
+    #[test]
+    fn test_preset_label_chat() {
+        // Chat: temp=0.7, top_p=0.95
+        let params = SamplingParams {
+            temperature: Some(0.7),
+            top_p: Some(0.95),
+            top_k: None,
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "chat");
+    }
+
+    #[test]
+    fn test_preset_label_creative() {
+        // Creative: temp=0.9, top_p=0.95
+        let params = SamplingParams {
+            temperature: Some(0.9),
+            top_p: Some(0.95),
+            top_k: None,
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "creative");
+    }
+
+    #[test]
+    fn test_preset_label_custom() {
+        // Custom: non-standard values
+        let params = SamplingParams {
+            temperature: Some(0.5),
+            top_p: Some(0.8),
+            top_k: None,
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "custom");
+    }
+
+    #[test]
+    fn test_preset_label_partial_match() {
+        // Partial match (has temp=0.3 and top_p=0.9, but has top_k=50)
+        // Should fall back to "coding" because analysis requires top_k=20
+        let params = SamplingParams {
+            temperature: Some(0.3),
+            top_p: Some(0.9),
+            top_k: Some(50),
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        assert_eq!(params.preset_label(), "coding");
+    }
+
+    #[test]
+    fn test_preset_label_empty() {
+        // Empty params should return "custom"
+        let params = SamplingParams::default();
+        assert_eq!(params.preset_label(), "custom");
     }
 }

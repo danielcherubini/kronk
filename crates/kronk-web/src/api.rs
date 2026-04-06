@@ -144,68 +144,26 @@ fn load_config_from_state(
     Ok((cfg, config_dir))
 }
 
-/// Derive the model card file path from a HF repo id ("org/model") and the configs dir.
-/// Format: `<configs_dir>/<org>--<model>.toml`
-fn card_path(configs_dir: &std::path::Path, repo_id: &str) -> std::path::PathBuf {
-    let filename = match repo_id.split_once('/') {
-        Some((org, model)) => format!("{}--{}.toml", org, model),
-        None => format!("{}.toml", repo_id),
-    };
-    configs_dir.join(filename)
-}
-
-/// Try to load a model card for the given repo_id. Returns None if not found.
-fn load_card(
-    configs_dir: &std::path::Path,
-    repo_id: &str,
-) -> Option<kronk_core::models::card::ModelCard> {
-    let path = card_path(configs_dir, repo_id);
-    kronk_core::models::card::ModelCard::load(&path).ok()
-}
-
-/// Serialise a ModelCard to a serde_json::Value for API responses.
-fn card_to_json(card: &kronk_core::models::card::ModelCard) -> serde_json::Value {
-    serde_json::json!({
-        "model": {
-            "name": card.model.name,
-            "source": card.model.source,
-            "default_context_length": card.model.default_context_length,
-            "default_gpu_layers": card.model.default_gpu_layers,
-        },
-        "quants": card.quants.iter().map(|(name, q)| {
-            (name.clone(), serde_json::json!({
-                "file": q.file,
-                "size_bytes": q.size_bytes,
-                "context_length": q.context_length,
-            }))
-        }).collect::<serde_json::Map<_, _>>(),
-        "sampling": card.sampling,
-    })
-}
-
-/// Build the full JSON for a model config entry, optionally merging its card.
+/// Build the full JSON for a model config entry, including all unified fields.
 fn model_entry_json(
     id: &str,
     m: &kronk_core::config::ModelConfig,
-    configs_dir: &std::path::Path,
+    _configs_dir: &std::path::Path,
     backends: Option<&[String]>,
 ) -> serde_json::Value {
-    let card = m
-        .model
-        .as_deref()
-        .and_then(|repo| load_card(configs_dir, repo));
-
     let mut val = serde_json::json!({
         "id": id,
         "backend": m.backend,
         "model": m.model,
         "quant": m.quant,
         "args": m.args,
-        "profile": m.profile,
+        "sampling": m.sampling,
         "enabled": m.enabled,
         "context_length": m.context_length,
         "port": m.port,
-        "card": card.as_ref().map(card_to_json),
+        "display_name": m.display_name,
+        "gpu_layers": m.gpu_layers,
+        "quants": m.quants,
     });
 
     if let Some(backends) = backends {
@@ -227,7 +185,14 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 .iter()
                 .map(|(id, m)| model_entry_json(id, m, &configs_dir, None))
                 .collect();
-            Json(serde_json::json!({ "models": models, "backends": backends })).into_response()
+            let sampling_templates: serde_json::Value =
+                serde_json::to_value(&cfg.sampling_templates).unwrap_or_default();
+            Json(serde_json::json!({
+                "models": models,
+                "backends": backends,
+                "sampling_templates": sampling_templates
+            }))
+            .into_response()
         }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
@@ -238,7 +203,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
     }
 }
 
-/// GET /api/models/:id — get a single model config (with card if present).
+/// GET /api/models/:id — get a single model config.
 pub async fn get_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -280,24 +245,29 @@ pub struct ModelBody {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub profile: Option<String>,
+    pub sampling: Option<kronk_core::profiles::SamplingParams>,
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
     pub context_length: Option<u32>,
     #[serde(default)]
     pub port: Option<u16>,
+    // NEW:
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub gpu_layers: Option<u32>,
+    #[serde(default)]
+    pub quants: Option<std::collections::BTreeMap<String, kronk_core::config::QuantEntry>>,
 }
 
 fn apply_model_body(
     body: ModelBody,
     existing: Option<kronk_core::config::ModelConfig>,
 ) -> kronk_core::config::ModelConfig {
-    use kronk_core::profiles::Profile;
     let base = existing.unwrap_or_else(|| kronk_core::config::ModelConfig {
         backend: String::new(),
         args: vec![],
-        profile: None,
         sampling: None,
         model: None,
         quant: None,
@@ -305,27 +275,43 @@ fn apply_model_body(
         health_check: None,
         enabled: true,
         context_length: None,
+        profile: None,
+        display_name: None,
+        gpu_layers: None,
+        quants: std::collections::BTreeMap::new(),
     });
 
-    let profile = body.profile.as_deref().and_then(|p| match p {
-        "coding" => Some(Profile::Coding),
-        "chat" => Some(Profile::Chat),
-        "analysis" => Some(Profile::Analysis),
-        "creative" => Some(Profile::Creative),
-        _ => None,
-    });
+    // Handle sampling from body
+    let sampling = body.sampling;
 
     kronk_core::config::ModelConfig {
         backend: body.backend,
         model: body.model,
         quant: body.quant,
         args: body.args,
-        profile,
+        sampling,
         enabled: body.enabled.unwrap_or(base.enabled),
         context_length: body.context_length,
         port: body.port,
-        sampling: base.sampling,
         health_check: base.health_check,
+        profile: None,
+        display_name: body.display_name,
+        gpu_layers: body.gpu_layers,
+        quants: body
+            .quants
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    kronk_core::config::QuantEntry {
+                        file: v.file,
+                        size_bytes: v.size_bytes,
+                        context_length: v.context_length,
+                    },
+                )
+            })
+            .collect(),
     }
 }
 
@@ -415,148 +401,60 @@ pub async fn create_model(
     }
 }
 
-// ── Model Card CRUD ───────────────────────────────────────────────────────────
+/// Body for rename endpoint.
+#[derive(serde::Deserialize)]
+pub struct RenameBody {
+    pub new_id: String,
+}
 
-/// GET /api/models/:id/card — fetch the model card for the model referenced by config entry `id`.
-pub async fn get_model_card(
+/// POST /api/models/:id/rename — rename a model config entry.
+pub async fn rename_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
     match tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state)?;
-        let configs_dir = config_dir.join("configs");
-        let m = cfg.models.get(&id).ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model config not found"}),
-            )
-        })?;
-        let repo_id = m.model.clone().ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model config has no 'model' (repo id) field — cannot locate card"}),
-            )
-        })?;
-        let card_path = card_path(&configs_dir, &repo_id);
-        let card = kronk_core::models::card::ModelCard::load(&card_path).map_err(|_| {
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": format!("No model card found for '{}'", repo_id)}),
-            )
-        })?;
-        Ok((repo_id, card))
-    })
-    .await
-    {
-        Ok(Ok((repo_id, card))) => Json(serde_json::json!({
-            "repo_id": repo_id,
-            "card": card_to_json(&card),
-        }))
-        .into_response(),
-        Ok(Err((status, body))) => (status, Json(body)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
-}
+        let (mut cfg, config_dir) = load_config_from_state(&state)?;
 
-/// Request body for PUT /api/models/:id/card
-#[derive(serde::Deserialize)]
-pub struct CardBody {
-    /// ModelMeta fields
-    pub name: String,
-    pub source: String,
-    #[serde(default)]
-    pub default_context_length: Option<u32>,
-    #[serde(default)]
-    pub default_gpu_layers: Option<u32>,
-    /// quants map: key → {file, size_bytes, context_length}
-    #[serde(default)]
-    pub quants: std::collections::HashMap<String, CardQuantBody>,
-    /// sampling map: profile → params (passed through as-is)
-    #[serde(default)]
-    pub sampling: std::collections::HashMap<String, kronk_core::profiles::SamplingParams>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct CardQuantBody {
-    pub file: String,
-    #[serde(default)]
-    pub size_bytes: Option<u64>,
-    #[serde(default)]
-    pub context_length: Option<u32>,
-}
-
-/// PUT /api/models/:id/card — create or update the model card for config entry `id`.
-pub async fn save_model_card(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(body): Json<CardBody>,
-) -> impl IntoResponse {
-    match tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state)?;
-        let configs_dir = config_dir.join("configs");
-        let m = cfg.models.get(&id).ok_or_else(|| {
-            (
+        // Check source ID exists
+        if !cfg.models.contains_key(&id) {
+            return Err((
                 StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model config not found"}),
-            )
-        })?;
-        let repo_id = m.model.clone().ok_or_else(|| {
-            (
+                serde_json::json!({"error": "Model not found"}),
+            ));
+        }
+
+        let new_id = body.new_id.trim().to_string();
+        if new_id.is_empty() {
+            return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::json!({"error": "Model config has no 'model' (repo id) — set it first"}),
-            )
-        })?;
+                serde_json::json!({"error": "New model id cannot be empty"}),
+            ));
+        }
 
-        let quants = body
-            .quants
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    k,
-                    kronk_core::models::card::QuantInfo {
-                        file: v.file,
-                        size_bytes: v.size_bytes,
-                        context_length: v.context_length,
-                    },
-                )
-            })
-            .collect();
+        // Check target ID doesn't exist
+        if cfg.models.contains_key(&new_id) {
+            return Err((
+                StatusCode::CONFLICT,
+                serde_json::json!({"error": format!("Model '{}' already exists", new_id)}),
+            ));
+        }
 
-        let card = kronk_core::models::card::ModelCard {
-            model: kronk_core::models::card::ModelMeta {
-                name: body.name,
-                source: body.source,
-                default_context_length: body.default_context_length,
-                default_gpu_layers: body.default_gpu_layers,
-            },
-            quants,
-            sampling: body.sampling,
-        };
-
-        std::fs::create_dir_all(&configs_dir).map_err(|e| {
+        // Rename the entry
+        let entry = cfg.models.remove(&id).unwrap();
+        cfg.models.insert(new_id.clone(), entry);
+        cfg.save_to(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
 
-        let path = card_path(&configs_dir, &repo_id);
-        card.save(&path).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": e.to_string()}),
-            )
-        })?;
-
-        Ok(repo_id)
+        Ok(serde_json::json!({ "ok": true, "id": new_id }))
     })
     .await
     {
-        Ok(Ok(repo_id)) => Json(serde_json::json!({ "ok": true, "repo_id": repo_id })).into_response(),
+        Ok(Ok(val)) => Json(val).into_response(),
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

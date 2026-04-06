@@ -116,28 +116,38 @@ pub async fn cmd_server_add(
         }
     }
 
-    // Parse profile if provided
-    let profile = extracted
-        .profile
-        .as_ref()
-        .map(|s| {
-            s.parse::<kronk_core::profiles::Profile>()
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .transpose()?;
+    // Parse profile if provided and look up sampling template
+    let sampling = if let Some(ref profile_name) = extracted.profile {
+        config
+            .sampling_templates
+            .get(profile_name)
+            .cloned()
+            .or_else(|| {
+                tracing::warn!(
+                    "Unknown profile '{}' not found in sampling_templates",
+                    profile_name
+                );
+                None
+            })
+    } else {
+        None
+    };
 
     // Build ModelConfig
     let model_config = kronk_core::config::ModelConfig {
         backend: backend_key.clone(),
         args: extracted.remaining_args.clone(),
-        profile,
-        sampling: None,
+        profile: extracted.profile.clone(), // Keep for migration compatibility
+        sampling,
         model: extracted.model.clone(),
         quant: quant_name,
         port: extracted.port,
         health_check: None,
         enabled: true,
         context_length: extracted.context_length,
+        display_name: None,
+        gpu_layers: None,
+        quants: std::collections::BTreeMap::new(),
     };
 
     config.models.insert(name.to_string(), model_config.clone());
@@ -154,8 +164,11 @@ pub async fn cmd_server_add(
         println!("  Model:    {} ({})", model, quant);
     }
 
-    if let Some(ref profile) = model_config.profile {
-        println!("  Profile:  {}", profile);
+    if model_config.sampling.is_some() {
+        println!(
+            "  Profile:  {}",
+            model_config.sampling.as_ref().unwrap().preset_label()
+        );
     }
 
     // Use single registry for both lookups

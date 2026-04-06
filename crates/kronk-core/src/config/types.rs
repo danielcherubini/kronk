@@ -1,6 +1,19 @@
-use crate::profiles::{Profile, SamplingParams};
+use crate::profiles::SamplingParams;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QuantEntry {
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u32>,
+}
+
+fn is_btreemap_empty<K, V>(map: &BTreeMap<K, V>) -> bool {
+    map.is_empty()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -119,8 +132,6 @@ pub struct ModelConfig {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub profile: Option<Profile>,
-    #[serde(default)]
     pub sampling: Option<SamplingParams>,
     /// Model card reference in "company/modelname" format.
     #[serde(default)]
@@ -139,6 +150,21 @@ pub struct ModelConfig {
     /// Context length for this model
     #[serde(default)]
     pub context_length: Option<u32>,
+    /// DEPRECATED — kept for migration deserialization only.
+    /// When present in an old config.toml, the migration reads this, resolves it to
+    /// concrete SamplingParams, writes those into `sampling`, and clears this field.
+    /// Must NOT be serialized back (skip_serializing).
+    #[serde(default, skip_serializing)]
+    pub profile: Option<String>,
+    /// Display name for UI
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Default GPU layers
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_layers: Option<u32>,
+    /// Available quantizations
+    #[serde(default, skip_serializing_if = "is_btreemap_empty")]
+    pub quants: BTreeMap<String, QuantEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

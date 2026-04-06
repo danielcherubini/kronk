@@ -4,6 +4,7 @@ pub mod kronk_handlers;
 mod lifecycle;
 pub mod process;
 pub mod pull_jobs;
+mod rename;
 pub mod server;
 mod state;
 mod status;
@@ -89,6 +90,183 @@ mod tests {
         assert_eq!(
             first_model.get("loaded").and_then(|v| v.as_bool()),
             Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_model_success() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+        config.models.insert(
+            "old-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        let state = ProxyState::new(config, None);
+
+        // Rename should succeed
+        state.rename_model("old-name", "new-name").await.unwrap();
+
+        // Verify old name is gone, new name exists
+        let config = state.config.read().await;
+        assert!(!config.models.contains_key("old-name"));
+        assert!(config.models.contains_key("new-name"));
+    }
+
+    #[tokio::test]
+    async fn test_rename_model_new_name_taken() {
+        let mut config = Config::default();
+        config.models.insert(
+            "old-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        config.models.insert(
+            "new-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        let state = ProxyState::new(config, None);
+
+        // Rename should fail because new name is taken
+        let result = state.rename_model("old-name", "new-name").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "model name 'new-name' already taken"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_model_old_name_not_found() {
+        let mut config = Config::default();
+        config.models.insert(
+            "existing-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        let state = ProxyState::new(config, None);
+
+        // Rename should fail because old name doesn't exist
+        let result = state.rename_model("non-existent", "new-name").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "model 'non-existent' does not exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_model_empty_name() {
+        let mut config = Config::default();
+        config.models.insert(
+            "old-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        let state = ProxyState::new(config, None);
+
+        // Rename should fail because new name is empty
+        let result = state.rename_model("old-name", "").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "new name cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn test_rename_model_same_name() {
+        let mut config = Config::default();
+        config.models.insert(
+            "same-name".to_string(),
+            crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            },
+        );
+        let state = ProxyState::new(config, None);
+
+        // Rename should fail because old and new name are the same
+        let result = state.rename_model("same-name", "same-name").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "old name and new name must differ"
         );
     }
 }

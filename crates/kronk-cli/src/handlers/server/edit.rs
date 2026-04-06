@@ -31,10 +31,12 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
             srv.quant = Some(quant.clone());
         }
         if let Some(ref profile) = extracted.profile {
-            let p = profile
-                .parse::<kronk_core::profiles::Profile>()
-                .map_err(|e| anyhow::anyhow!(e))?;
-            srv.profile = Some(p);
+            // Set profile for migration compatibility
+            srv.profile = Some(profile.clone());
+            // Look up sampling template
+            if let Some(template) = config.sampling_templates.get(profile) {
+                srv.sampling = Some(template.clone());
+            }
         }
         if let Some(port) = extracted.port {
             srv.port = Some(port);
@@ -61,8 +63,27 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
         let quant = srv.quant.as_deref().unwrap_or("?");
         println!("  Model:    {} ({})", model, quant);
     }
-    if let Some(ref profile) = srv.profile {
-        println!("  Profile:  {}", profile);
+    if srv.sampling.is_some() {
+        // Show which profile was used based on sampling values
+        if srv.sampling.as_ref().unwrap().temperature == Some(0.3)
+            && srv.sampling.as_ref().unwrap().top_p == Some(0.9)
+        {
+            println!("  Profile:  coding");
+        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.7)
+            && srv.sampling.as_ref().unwrap().top_p == Some(0.95)
+        {
+            println!("  Profile:  chat");
+        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.2)
+            && srv.sampling.as_ref().unwrap().top_p == Some(0.5)
+        {
+            println!("  Profile:  analysis");
+        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.9)
+            && srv.sampling.as_ref().unwrap().top_p == Some(0.95)
+        {
+            println!("  Profile:  creative");
+        } else {
+            println!("  Profile:  custom");
+        }
     }
 
     println!();
