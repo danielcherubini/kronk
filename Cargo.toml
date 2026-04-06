@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "crates/kronk-core",
-    "crates/kronk-cli",
-    "crates/kronk-mock",
-    "crates/kronk-web",
+    "crates/koji-core",
+    "crates/koji-cli",
+    "crates/koji-mock",
+    "crates/koji-web",
 ]
 resolver = "2"
 

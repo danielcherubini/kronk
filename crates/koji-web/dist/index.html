@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kronk Control Plane</title>
+    <link rel="stylesheet" href="/style-a4a19fa4141b947.css" integrity="sha384-Ljd6Ystv//zS5JeBaoAENAFKlqahDbFvEUls+OJw7g2aqr8kHv5mM+gyP2yPJTV/"/>
+  <link rel="modulepreload" href="/kronk-web-8b6d7caa9bbd8862.js" crossorigin="anonymous" integrity="sha384-RePqvxuwi8tgWhjlKEt4ZdwhUHniW+QpnrIf4qT/YTf8fN5hxy5iLvVKXdy1A7i0"><link rel="preload" href="/kronk-web-8b6d7caa9bbd8862_bg.wasm" crossorigin="anonymous" integrity="sha384-ODaJDytYko/tQLN8inaSRBfaN9j6pUFbLGuZ/n+duSqNVn//vvq/6fLP1rua6hVl" as="fetch" type="application/wasm"></head>
+  <body>
+<script type="module">
+import init, * as bindings from '/kronk-web-8b6d7caa9bbd8862.js';
+const wasm = await init({ module_or_path: '/kronk-web-8b6d7caa9bbd8862_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>
