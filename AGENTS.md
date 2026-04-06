@@ -1,6 +1,6 @@
-# AGENTS.md - Kronk Development Guide
+# AGENTS.md - Koji Development Guide
 
-This file documents build commands, code style, and conventions for the Kronk project.
+This file documents build commands, code style, and conventions for the Koji project.
 
 ## Build & Testing
 
@@ -17,16 +17,16 @@ cargo build --release --workspace
 cargo test --workspace
 
 # Run tests for a specific crate
-cargo test --package kronk-core
+cargo test --package koji-core
 
 # Run a single test
-cargo test --package kronk-core test_function_name
+cargo test --package koji-core test_function_name
 
 # Run a single test with full output
-cargo test --package kronk-core test_function_name -- --nocapture
+cargo test --package koji-core test_function_name -- --nocapture
 
 # Run tests with filtering
-cargo test --package kronk-core -- backends::registry::tests::test_add
+cargo test --package koji-core -- backends::registry::tests::test_add
 
 # Check formatting, clippy, and tests
 cargo check --workspace
@@ -142,11 +142,11 @@ fn test_concurrent_access() {
 ## Project Structure
 
 ```text
-kronk/
+koji/
 ├── crates/
-│   ├── kronk-core/      # Core library (types, models, logic)
-│   ├── kronk-cli/       # CLI application
-│   └── kronk-mock/      # Mock utilities for testing
+│   ├── koji-core/      # Core library (types, models, logic)
+│   ├── koji-cli/       # CLI application
+│   └── koji-mock/      # Mock utilities for testing
 ├── config/              # Configuration templates
 ├── docs/                # Documentation
 ├── installer/           # Windows installer scripts

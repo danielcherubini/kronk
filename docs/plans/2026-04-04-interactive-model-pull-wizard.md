@@ -3,16 +3,16 @@
 **Goal:** Replace the bare-bones pull form with a multi-step interactive wizard that lets users browse HF quants, select what to download, set context per quant, watch real download progress via SSE, and automatically get a model card + config entries on completion — all from the web UI without touching the terminal.
 
 **Architecture:**
-Three new proxy endpoints provide the data layer: `GET /kronk/v1/hf/:repo_id/quants` lists available quants from HuggingFace, `POST /kronk/v1/pulls` is extended to accept multiple quants and context lengths per quant, and `GET /kronk/v1/pulls/:job_id/stream` streams `text/event-stream` events with live `bytes_downloaded` / `total_bytes` updates. Downloads are wired to the real `download_chunked` function with an `Arc<AtomicU64>` progress counter. On completion the handler writes/updates the model card (`configs/<repo>--<model>.toml`) and inserts `[models.*]` entries into `config.toml`. The Leptos pull page is replaced with a 6-step wizard component.
+Three new proxy endpoints provide the data layer: `GET /koji/v1/hf/:repo_id/quants` lists available quants from HuggingFace, `POST /koji/v1/pulls` is extended to accept multiple quants and context lengths per quant, and `GET /koji/v1/pulls/:job_id/stream` streams `text/event-stream` events with live `bytes_downloaded` / `total_bytes` updates. Downloads are wired to the real `download_chunked` function with an `Arc<AtomicU64>` progress counter. On completion the handler writes/updates the model card (`configs/<repo>--<model>.toml`) and inserts `[models.*]` entries into `config.toml`. The Leptos pull page is replaced with a 6-step wizard component.
 
 **Tech Stack:** Rust, Axum (`text/event-stream` via `axum::response::Sse`), `tokio::sync::watch`, Leptos (WASM), `gloo-net` for SSE, existing `download_chunked`, `ModelCard`, `Config::save`.
 
 ---
 
-## Task 1: Add `GET /kronk/v1/hf/:repo_id/quants` endpoint
+## Task 1: Add `GET /koji/v1/hf/:repo_id/quants` endpoint
 
 **Context:**
-The web wizard needs to fetch available GGUF quants for a given HuggingFace repo before the user selects what to download. A new endpoint wraps the existing `fetch_blob_metadata` / `parse_blob_siblings` logic in `crates/kronk-core/src/models/pull.rs` and returns a JSON array of quant objects with filename, inferred quant name, and size in bytes.
+The web wizard needs to fetch available GGUF quants for a given HuggingFace repo before the user selects what to download. A new endpoint wraps the existing `fetch_blob_metadata` / `parse_blob_siblings` logic in `crates/koji-core/src/models/pull.rs` and returns a JSON array of quant objects with filename, inferred quant name, and size in bytes.
 
 `fetch_blob_metadata(repo_id)` returns `HashMap<String, BlobInfo>` where `BlobInfo` has:
 - `filename: String`
@@ -23,12 +23,12 @@ The web wizard needs to fetch available GGUF quants for a given HuggingFace repo
 `infer_quant_from_filename(filename)` returns `Option<String>` (e.g. `"Q4_K_M"`, `"IQ3_S"`).
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/kronk_handlers.rs` — add handler + response type
-- Modify: `crates/kronk-core/src/proxy/server/router.rs` — register new route
+- Modify: `crates/koji-core/src/proxy/koji_handlers.rs` — add handler + response type
+- Modify: `crates/koji-core/src/proxy/server/router.rs` — register new route
 
 **What to implement:**
 
-Add this response type near the top of `kronk_handlers.rs`:
+Add this response type near the top of `koji_handlers.rs`:
 ```rust
 #[derive(Debug, Serialize)]
 pub struct QuantEntry {
@@ -65,27 +65,27 @@ pub async fn handle_hf_list_quants(
 }
 ```
 
-Note: `handle_hf_list_quants` does NOT take `State<Arc<ProxyState>>` — it makes a direct HF API call and needs no server state. The `Path` extractor uses `repo_id` as a **path segment**, but HF repo IDs contain a `/` (e.g. `bartowski/Qwen3-8B-GGUF`). Use a wildcard route `"/kronk/v1/hf/*repo_id"` in the router so that the slash is captured, and strip any leading `/` from `repo_id` in the handler:
+Note: `handle_hf_list_quants` does NOT take `State<Arc<ProxyState>>` — it makes a direct HF API call and needs no server state. The `Path` extractor uses `repo_id` as a **path segment**, but HF repo IDs contain a `/` (e.g. `bartowski/Qwen3-8B-GGUF`). Use a wildcard route `"/koji/v1/hf/*repo_id"` in the router so that the slash is captured, and strip any leading `/` from `repo_id` in the handler:
 ```rust
 // In router.rs:
-.route("/kronk/v1/hf/*repo_id", get(handle_hf_list_quants))
+.route("/koji/v1/hf/*repo_id", get(handle_hf_list_quants))
 
 // In handler, Path(repo_id) arrives as "bartowski/Qwen3-8B-GGUF" (no leading slash with Axum wildcard)
 ```
 
 **Steps:**
-- [ ] Read `crates/kronk-core/src/proxy/kronk_handlers.rs` (imports section, lines 1–25) and `crates/kronk-core/src/proxy/server/router.rs` fully before making changes.
-- [ ] Write a failing test `test_quant_entry_serializes` in the `#[cfg(test)]` block of `kronk_handlers.rs`: construct a `QuantEntry`, serialize to JSON, assert `"filename"`, `"quant"`, and `"size_bytes"` keys are present.
-- [ ] Run `cargo test --package kronk-core test_quant_entry_serializes` — expect failure.
-- [ ] Add `QuantEntry` struct and `handle_hf_list_quants` to `kronk_handlers.rs`.
-- [ ] Register the route in `router.rs`: `.route("/kronk/v1/hf/*repo_id", get(handle_hf_list_quants))`.
-- [ ] Run `cargo test --package kronk-core test_quant_entry_serializes` — must pass.
+- [ ] Read `crates/koji-core/src/proxy/koji_handlers.rs` (imports section, lines 1–25) and `crates/koji-core/src/proxy/server/router.rs` fully before making changes.
+- [ ] Write a failing test `test_quant_entry_serializes` in the `#[cfg(test)]` block of `koji_handlers.rs`: construct a `QuantEntry`, serialize to JSON, assert `"filename"`, `"quant"`, and `"size_bytes"` keys are present.
+- [ ] Run `cargo test --package koji-core test_quant_entry_serializes` — expect failure.
+- [ ] Add `QuantEntry` struct and `handle_hf_list_quants` to `koji_handlers.rs`.
+- [ ] Register the route in `router.rs`: `.route("/koji/v1/hf/*repo_id", get(handle_hf_list_quants))`.
+- [ ] Run `cargo test --package koji-core test_quant_entry_serializes` — must pass.
 - [ ] Run `cargo build --workspace` — must succeed.
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`.
-- [ ] Commit: `"feat: add GET /kronk/v1/hf/*repo_id endpoint to list HF quants"`
+- [ ] Commit: `"feat: add GET /koji/v1/hf/*repo_id endpoint to list HF quants"`
 
 **Acceptance criteria:**
-- [ ] `GET /kronk/v1/hf/bartowski/Qwen3-8B-GGUF` returns a JSON array of `{ filename, quant, size_bytes }` objects
+- [ ] `GET /koji/v1/hf/bartowski/Qwen3-8B-GGUF` returns a JSON array of `{ filename, quant, size_bytes }` objects
 - [ ] Returns `502` with `{ "error": "..." }` if HF API fails
 - [ ] `cargo build --workspace` succeeds
 
@@ -94,7 +94,7 @@ Note: `handle_hf_list_quants` does NOT take `State<Arc<ProxyState>>` — it make
 ## Task 2: Wire up real downloads with progress tracking
 
 **Context:**
-`handle_kronk_pull_model` in `crates/kronk-core/src/proxy/kronk_handlers.rs` currently spawns a stub task that sleeps 2 seconds then marks the job `Completed`. The real `download_chunked` function exists in `crates/kronk-core/src/models/download/mod.rs` but is never called. `PullJob` has `bytes_downloaded: u64` and `total_bytes: Option<u64>` fields that are never updated.
+`handle_koji_pull_model` in `crates/koji-core/src/proxy/koji_handlers.rs` currently spawns a stub task that sleeps 2 seconds then marks the job `Completed`. The real `download_chunked` function exists in `crates/koji-core/src/models/download/mod.rs` but is never called. `PullJob` has `bytes_downloaded: u64` and `total_bytes: Option<u64>` fields that are never updated.
 
 The `download_chunked` function signature:
 ```rust
@@ -140,8 +140,8 @@ When `quants` is non-empty, spawn a separate `PullJob` per entry and return a **
 The destination directory for downloads: `config.models_dir()? / repo_id_slug` where `repo_id_slug` replaces `/` with `--` (consistent with how card files are named). To get the config, load it fresh inside the spawn task: `crate::config::Config::load()`.
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/kronk_handlers.rs` — extend `PullRequest`, replace stub with real download, add `QuantDownloadSpec`
-- Modify: `crates/kronk-core/src/proxy/pull_jobs.rs` — no struct changes needed
+- Modify: `crates/koji-core/src/proxy/koji_handlers.rs` — extend `PullRequest`, replace stub with real download, add `QuantDownloadSpec`
+- Modify: `crates/koji-core/src/proxy/pull_jobs.rs` — no struct changes needed
 
 **What to implement:**
 
@@ -206,11 +206,11 @@ tokio::spawn(async move {
 });
 ```
 
-`parse_content_length` is already public in `crates/kronk-core/src/models/download/mod.rs`.
+`parse_content_length` is already public in `crates/koji-core/src/models/download/mod.rs`.
 
 **Steps:**
-- [ ] Read `crates/kronk-core/src/proxy/kronk_handlers.rs` (the full `handle_kronk_pull_model` function) and `crates/kronk-core/src/models/download/mod.rs` fully.
-- [ ] Read `crates/kronk-core/src/proxy/pull_jobs.rs` fully.
+- [ ] Read `crates/koji-core/src/proxy/koji_handlers.rs` (the full `handle_koji_pull_model` function) and `crates/koji-core/src/models/download/mod.rs` fully.
+- [ ] Read `crates/koji-core/src/proxy/pull_jobs.rs` fully.
 - [ ] Add `QuantDownloadSpec` struct and extend `PullRequest` to include `quants: Vec<QuantDownloadSpec>` and `context_length: Option<u32>`.
 - [ ] Replace the stub `tokio::spawn` body with the real download logic shown above.
 - [ ] When `request.quants` is non-empty: iterate, spawn one job per entry, return a JSON array of `{ job_id, filename, status }` objects.
@@ -221,7 +221,7 @@ tokio::spawn(async move {
 - [ ] Commit: `"feat: wire up real downloads in pull handler with multi-quant support"`
 
 **Acceptance criteria:**
-- [ ] `POST /kronk/v1/pulls` with `{ repo_id, quants: [{ filename, quant, context_length }] }` creates one `PullJob` per quant
+- [ ] `POST /koji/v1/pulls` with `{ repo_id, quants: [{ filename, quant, context_length }] }` creates one `PullJob` per quant
 - [ ] Real `download_chunked` is called; files land in `models_dir/<repo_slug>/`
 - [ ] `total_bytes` is set from a HEAD request before download starts
 - [ ] `bytes_downloaded` equals `total_bytes` when job is `Completed`
@@ -233,7 +233,7 @@ tokio::spawn(async move {
 ## Task 3: Add SSE streaming for pull job progress
 
 **Context:**
-The current polling approach (`GET /kronk/v1/pulls/:job_id` every 1s) works but SSE is cleaner for streaming progress. Axum supports SSE via `axum::response::Sse` and the `futures_util::stream` machinery. We add a new endpoint `GET /kronk/v1/pulls/:job_id/stream` that streams `PullJob` snapshots as `text/event-stream` events every 500ms until the job reaches a terminal state (`Completed` or `Failed`), then sends a final event and closes.
+The current polling approach (`GET /koji/v1/pulls/:job_id` every 1s) works but SSE is cleaner for streaming progress. Axum supports SSE via `axum::response::Sse` and the `futures_util::stream` machinery. We add a new endpoint `GET /koji/v1/pulls/:job_id/stream` that streams `PullJob` snapshots as `text/event-stream` events every 500ms until the job reaches a terminal state (`Completed` or `Failed`), then sends a final event and closes.
 
 The SSE event format:
 ```
@@ -285,11 +285,11 @@ pub async fn handle_pull_job_stream(
 }
 ```
 
-Note: `futures_util` is already a workspace dependency (`futures-util.workspace = true` in `kronk-core/Cargo.toml`).
+Note: `futures_util` is already a workspace dependency (`futures-util.workspace = true` in `koji-core/Cargo.toml`).
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/kronk_handlers.rs` — add `handle_pull_job_stream`
-- Modify: `crates/kronk-core/src/proxy/server/router.rs` — add route `.route("/kronk/v1/pulls/:job_id/stream", get(handle_pull_job_stream))`
+- Modify: `crates/koji-core/src/proxy/koji_handlers.rs` — add `handle_pull_job_stream`
+- Modify: `crates/koji-core/src/proxy/server/router.rs` — add route `.route("/koji/v1/pulls/:job_id/stream", get(handle_pull_job_stream))`
 
 **What to implement:**
 
@@ -304,19 +304,19 @@ The `stream::unfold` state machine carries `(state, job_id, just_done: bool)`:
 6. Otherwise: emit `progress` event, `just_done = false`, continue
 
 **Steps:**
-- [ ] Read `crates/kronk-core/src/proxy/kronk_handlers.rs` (imports section) and `crates/kronk-core/src/proxy/server/router.rs` fully.
+- [ ] Read `crates/koji-core/src/proxy/koji_handlers.rs` (imports section) and `crates/koji-core/src/proxy/server/router.rs` fully.
 - [ ] Write a failing test `test_pull_job_serializes_for_sse` in the `#[cfg(test)]` block: construct a `PullJob`, call `serde_json::to_string`, assert `"bytes_downloaded"` and `"status"` are present in the output.
-- [ ] Run `cargo test --package kronk-core test_pull_job_serializes_for_sse` — expect failure.
-- [ ] Add `handle_pull_job_stream` to `kronk_handlers.rs`. Add necessary imports: `use axum::response::sse::{Event, KeepAlive, Sse}; use futures_util::stream;`.
+- [ ] Run `cargo test --package koji-core test_pull_job_serializes_for_sse` — expect failure.
+- [ ] Add `handle_pull_job_stream` to `koji_handlers.rs`. Add necessary imports: `use axum::response::sse::{Event, KeepAlive, Sse}; use futures_util::stream;`.
 - [ ] Add `use std::convert::Infallible;` if not already present.
 - [ ] Register route in `router.rs`.
-- [ ] Run `cargo test --package kronk-core test_pull_job_serializes_for_sse` — must pass.
+- [ ] Run `cargo test --package koji-core test_pull_job_serializes_for_sse` — must pass.
 - [ ] Run `cargo build --workspace` — must succeed.
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`.
-- [ ] Commit: `"feat: add SSE streaming endpoint GET /kronk/v1/pulls/:job_id/stream"`
+- [ ] Commit: `"feat: add SSE streaming endpoint GET /koji/v1/pulls/:job_id/stream"`
 
 **Acceptance criteria:**
-- [ ] `GET /kronk/v1/pulls/:job_id/stream` returns `Content-Type: text/event-stream`
+- [ ] `GET /koji/v1/pulls/:job_id/stream` returns `Content-Type: text/event-stream`
 - [ ] Emits `progress` events every 500ms while job is running
 - [ ] Emits a final `done` event when job reaches `Completed` or `Failed`, then closes
 - [ ] Returns no events (stream closes immediately) if `job_id` not found
@@ -355,12 +355,12 @@ ModelConfig {
 
 The key in `config.models` HashMap: derive a slug from the repo + quant, e.g. `format!("{}-{}", repo_slug.to_lowercase(), quant.to_lowercase())` with `/` and `_` replaced by `-`.
 
-This post-download logic should live in a new private async function `setup_model_after_pull(repo_id, downloaded_specs, config_dir)` called at the end of the `tokio::spawn` task in `handle_kronk_pull_model` (after all downloads for a repo complete).
+This post-download logic should live in a new private async function `setup_model_after_pull(repo_id, downloaded_specs, config_dir)` called at the end of the `tokio::spawn` task in `handle_koji_pull_model` (after all downloads for a repo complete).
 
 `fetch_community_card` returns `Option<ModelCard>` — it's best-effort. If it returns `None`, skip it silently. If it returns `Some`, only copy `model.name` and `sampling` entries to the new card (do not overwrite `quants`).
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/kronk_handlers.rs` — add `setup_model_after_pull`, call it from the spawn task
+- Modify: `crates/koji-core/src/proxy/koji_handlers.rs` — add `setup_model_after_pull`, call it from the spawn task
 
 **What to implement:**
 
@@ -447,11 +447,11 @@ Call `setup_model_after_pull` from the spawn task after all downloads for the ba
 Since each `PullJob` is independent and there is no batch coordination yet, for the multi-quant case: call `setup_model_after_pull` inside each individual job's spawn task, passing only its own `spec`. This means each quant triggers its own card update (which is idempotent since we `or_insert`).
 
 **Steps:**
-- [ ] Read the full current `handle_kronk_pull_model` function and `crates/kronk-core/src/config/types.rs` (ModelConfig struct + Default impl).
+- [ ] Read the full current `handle_koji_pull_model` function and `crates/koji-core/src/config/types.rs` (ModelConfig struct + Default impl).
 - [ ] Check if `ModelConfig` implements `Default` — if not, add `#[derive(Default)]` or use field initialization as shown above.
 - [ ] Write a failing test `test_setup_model_creates_card` in `#[cfg(test)]` block: use `tempfile::tempdir()` as config dir, call `setup_model_after_pull` with a mock spec, assert the card TOML is created at the expected path.
 - [ ] Run test — expect failure.
-- [ ] Add `setup_model_after_pull` to `kronk_handlers.rs`.
+- [ ] Add `setup_model_after_pull` to `koji_handlers.rs`.
 - [ ] Call it from the download spawn task for each completed job.
 - [ ] Run the test — must pass.
 - [ ] Run `cargo build --workspace && cargo test --workspace`.
@@ -471,17 +471,17 @@ Since each `PullJob` is independent and there is no batch coordination yet, for 
 ## Task 5: Replace pull page with interactive wizard UI
 
 **Context:**
-The current `crates/kronk-web/src/pages/pull.rs` is a 142-line bare form. Replace it entirely with a 6-step wizard:
+The current `crates/koji-web/src/pages/pull.rs` is a 142-line bare form. Replace it entirely with a 6-step wizard:
 
 **Step 1 — Enter repo ID:** Text input + "Search" button. Validates non-empty.
 
-**Step 2 — Loading quants:** Shows a spinner while `GET /kronk/v1/hf/*repo_id` is in flight.
+**Step 2 — Loading quants:** Shows a spinner while `GET /koji/v1/hf/*repo_id` is in flight.
 
 **Step 3 — Select quants:** Renders a list of quants from the API response as checkboxes. Each row shows: checkbox | quant name | filename | size (human-readable). "Select All" convenience button. "Next" disabled until at least one is checked.
 
 **Step 4 — Set context lengths:** For each selected quant, shows a number input labelled with the quant name. Pre-fills `32768` as default. "Start Download" button.
 
-**Step 5 — Downloading:** For each quant being downloaded, shows a progress row: filename | progress bar | bytes/total | status badge. Uses SSE (`GET /kronk/v1/pulls/:job_id/stream`) for live updates. When all jobs reach terminal state, shows "Setup complete ✓" and "Go to Models" link.
+**Step 5 — Downloading:** For each quant being downloaded, shows a progress row: filename | progress bar | bytes/total | status badge. Uses SSE (`GET /koji/v1/pulls/:job_id/stream`) for live updates. When all jobs reach terminal state, shows "Setup complete ✓" and "Go to Models" link.
 
 **Step 6 — Done:** Summary of what was downloaded + links to `/models`.
 
@@ -521,7 +521,7 @@ struct JobProgress {
 For SSE in Leptos/WASM, use `gloo-net`'s `EventSource`:
 ```rust
 use gloo_net::eventsource::futures::EventSource;
-let mut es = EventSource::new(&format!("/kronk/v1/pulls/{}/stream", job_id)).unwrap();
+let mut es = EventSource::new(&format!("/koji/v1/pulls/{}/stream", job_id)).unwrap();
 let stream = es.subscribe("progress").unwrap();
 // spawn_local + for_each to update JobProgress signal
 ```
@@ -529,7 +529,7 @@ let stream = es.subscribe("progress").unwrap();
 For formatting file sizes: add a helper `fn format_bytes(bytes: i64) -> String` that formats to MiB/GiB with one decimal place.
 
 **Files:**
-- Rewrite: `crates/kronk-web/src/pages/pull.rs`
+- Rewrite: `crates/koji-web/src/pages/pull.rs`
 
 **What to implement:**
 
@@ -540,11 +540,11 @@ Full replacement of `pull.rs`. Key sections:
 3. **Step 1 view:** `<input>` bound to `repo_id`, "Search" button that sets `wizard_step = LoadingQuants` and triggers a `spawn_local` to call the quants endpoint.
 4. **Step 2 view:** Loading spinner `<p>"Searching HuggingFace..."</p>`.
 5. **Step 3 view:** List of checkboxes. Use `For` component over `available_quants`. "Next" button → `wizard_step = SetContext`.
-6. **Step 4 view:** `For` over selected quants, each with a `<input type="number">` for context. "Start Download" → `spawn_local` that POSTs `{ repo_id, quants: [...] }` to `/kronk/v1/pulls`, collects `job_id`s, sets `wizard_step = Downloading`.
+6. **Step 4 view:** `For` over selected quants, each with a `<input type="number">` for context. "Start Download" → `spawn_local` that POSTs `{ repo_id, quants: [...] }` to `/koji/v1/pulls`, collects `job_id`s, sets `wizard_step = Downloading`.
 7. **Step 5 view:** `For` over `download_jobs`. Each row: filename, progress bar (`<progress value=bytes max=total>`), status. In a `create_effect`, open SSE for each job and update `download_jobs` signal on each event.
 8. **Step 6 view:** "All downloads complete!" with link to `/models`.
 
-For the POST to `/kronk/v1/pulls` returning multiple jobs (one per quant), the handler (from Task 2) returns a JSON array. The wizard POST body:
+For the POST to `/koji/v1/pulls` returning multiple jobs (one per quant), the handler (from Task 2) returns a JSON array. The wizard POST body:
 ```json
 {
   "repo_id": "bartowski/Qwen3-8B-GGUF",
@@ -564,10 +564,10 @@ Response (JSON array):
 ```
 
 **Steps:**
-- [ ] Read `crates/kronk-web/src/pages/pull.rs` (current full content) and `crates/kronk-web/src/pages/models.rs` (for Leptos patterns used in this codebase) before writing.
-- [ ] **Required:** Add `"eventsource"` feature to `gloo-net` in the workspace root `Cargo.toml`. The current workspace declaration is `gloo-net = { version = "0.6", features = ["http"] }` — change it to `gloo-net = { version = "0.6", features = ["http", "eventsource"] }`. Without this, `gloo_net::eventsource` will not compile. Run `cargo build --package kronk-web` after this change to confirm it picks up the feature.
+- [ ] Read `crates/koji-web/src/pages/pull.rs` (current full content) and `crates/koji-web/src/pages/models.rs` (for Leptos patterns used in this codebase) before writing.
+- [ ] **Required:** Add `"eventsource"` feature to `gloo-net` in the workspace root `Cargo.toml`. The current workspace declaration is `gloo-net = { version = "0.6", features = ["http"] }` — change it to `gloo-net = { version = "0.6", features = ["http", "eventsource"] }`. Without this, `gloo_net::eventsource` will not compile. Run `cargo build --package koji-web` after this change to confirm it picks up the feature.
 - [ ] Rewrite `pull.rs` with the wizard component.
-- [ ] Run `cargo build --package kronk-web` — fix any type/import errors.
+- [ ] Run `cargo build --package koji-web` — fix any type/import errors.
 - [ ] Run `cargo build --workspace` — must succeed.
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`.
 - [ ] Commit: `"feat: replace pull page with interactive multi-step download wizard"`

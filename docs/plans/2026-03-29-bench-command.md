@@ -1,9 +1,9 @@
-# `kronk bench` — HTTP API Benchmark Command
+# `koji bench` — HTTP API Benchmark Command
 
-**Goal:** Add a `kronk bench <name>` CLI command that spins up a llama-server backend, sends OpenAI-compatible streaming chat requests, measures inference timing from the SSE stream, and prints results as a formatted terminal table.
+**Goal:** Add a `koji bench <name>` CLI command that spins up a llama-server backend, sends OpenAI-compatible streaming chat requests, measures inference timing from the SSE stream, and prints results as a formatted terminal table.
 **Status:** DONE
 
-**Architecture:** The feature adds a `bench` module to `kronk-core` containing pure-logic types/statistics, an HTTP streaming measurement client, and a backend process runner/orchestrator. The CLI gets a new `Bench` command variant that wires to a handler calling the core module. The bench runner reuses existing infrastructure: `Config::resolve_server()` and `Config::build_full_args()` for argument resolution, `check_health()` for readiness polling, and `kill_process()` / `force_kill_process()` for teardown.
+**Architecture:** The feature adds a `bench` module to `koji-core` containing pure-logic types/statistics, an HTTP streaming measurement client, and a backend process runner/orchestrator. The CLI gets a new `Bench` command variant that wires to a handler calling the core module. The bench runner reuses existing infrastructure: `Config::resolve_server()` and `Config::build_full_args()` for argument resolution, `check_health()` for readiness polling, and `kill_process()` / `force_kill_process()` for teardown.
 
 **Tech Stack:** Rust, tokio (async runtime + process), reqwest (HTTP + SSE streaming), serde_json (SSE chunk parsing), clap (CLI args). All dependencies already exist in the workspace — zero new crates needed.
 
@@ -12,16 +12,16 @@
 ### Task 1: Core bench types, statistics, prompt builder, and display formatting
 
 **Context:**
-This task creates the `bench` module in `kronk-core` with all the pure-logic building blocks: data types for configuration and results, statistical aggregation (mean/stddev), a deterministic prompt builder that produces prompts of approximate token counts, and a terminal table formatter. All of this is pure logic with no IO, making it heavily unit-testable. This task establishes the data model that all subsequent tasks build on. The bench feature measures 4 metrics: prompt processing speed (PP t/s), token generation speed (TG t/s), time to first token (TTFT), and total request latency. PP speed is derived as `prompt_tokens / ttft_seconds`, TG speed as `(generated_tokens - 1) / (total_seconds - ttft_seconds)`.
+This task creates the `bench` module in `koji-core` with all the pure-logic building blocks: data types for configuration and results, statistical aggregation (mean/stddev), a deterministic prompt builder that produces prompts of approximate token counts, and a terminal table formatter. All of this is pure logic with no IO, making it heavily unit-testable. This task establishes the data model that all subsequent tasks build on. The bench feature measures 4 metrics: prompt processing speed (PP t/s), token generation speed (TG t/s), time to first token (TTFT), and total request latency. PP speed is derived as `prompt_tokens / ttft_seconds`, TG speed as `(generated_tokens - 1) / (total_seconds - ttft_seconds)`.
 
 **Files:**
-- Create: `crates/kronk-core/src/bench/mod.rs`
-- Create: `crates/kronk-core/src/bench/display.rs`
-- Modify: `crates/kronk-core/src/lib.rs`
+- Create: `crates/koji-core/src/bench/mod.rs`
+- Create: `crates/koji-core/src/bench/display.rs`
+- Modify: `crates/koji-core/src/lib.rs`
 
 **What to implement:**
 
-**In `crates/kronk-core/src/bench/mod.rs`:**
+**In `crates/koji-core/src/bench/mod.rs`:**
 
 1. Add module declarations at the top:
    ```rust
@@ -29,7 +29,7 @@ This task creates the `bench` module in `kronk-core` with all the pure-logic bui
    pub mod measure;   // created in Task 2
    pub mod runner;    // created in Task 3
    ```
-   For now, create empty placeholder files `crates/kronk-core/src/bench/measure.rs` and `crates/kronk-core/src/bench/runner.rs` containing only `//! Placeholder — implemented in a later task.` so the module compiles.
+   For now, create empty placeholder files `crates/koji-core/src/bench/measure.rs` and `crates/koji-core/src/bench/runner.rs` containing only `//! Placeholder — implemented in a later task.` so the module compiles.
 
 2. Define `BenchConfig` struct:
    ```rust
@@ -116,12 +116,12 @@ This task creates the `bench` module in `kronk-core` with all the pure-logic bui
    - The function should return just the user content string (not the full messages array — the caller builds that).
    - This is approximate and that's fine — we use it for consistent, reproducible prompts. The actual token count doesn't need to be exact since we're comparing relative performance.
 
-**In `crates/kronk-core/src/bench/display.rs`:**
+**In `crates/koji-core/src/bench/display.rs`:**
 
 9. Implement `print_bench_report(report: &BenchReport)`:
    - Print a header block:
      ```
-     kronk bench — <name> (<quant>) via <backend>
+     koji bench — <name> (<quant>) via <backend>
      GPU: <gpu_type> | Context: <context_length> | Runs: <runs> | Warmup: <warmup>
      ────────────────────────────────────────────────────────────────────
      ```
@@ -148,11 +148,11 @@ This task creates the `bench` module in `kronk-core` with all the pure-logic bui
     - Otherwise return `"4821.3 ± 42.1"`.
     - Use 1 decimal place for all values.
 
-**In `crates/kronk-core/src/lib.rs`:**
+**In `crates/koji-core/src/lib.rs`:**
 
 11. Add `pub mod bench;` after the existing `pub mod backends;` line (keep alphabetical order).
 
-**Unit tests — all in `crates/kronk-core/src/bench/mod.rs` in a `#[cfg(test)] mod tests` block:**
+**Unit tests — all in `crates/koji-core/src/bench/mod.rs` in a `#[cfg(test)] mod tests` block:**
 
 - `test_bench_config_default`: Assert `BenchConfig::default()` has pp_sizes=[512], tg_sizes=[128], runs=3, warmup=1, ctx_override=None.
 - `test_compute_summary_basic`: Create 3 `RequestMeasurement` values with known numbers, call `compute_summary`, assert mean and stddev are mathematically correct (within f64 epsilon).
@@ -164,20 +164,20 @@ This task creates the `bench` module in `kronk-core` with all the pure-logic bui
 - `test_format_stat_zero_stddev`: Assert `format_stat(4821.3, 0.0)` returns `"4821.3"`.
 
 **Steps:**
-- [ ] Write all 8 unit tests in `crates/kronk-core/src/bench/mod.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::tests`, confirm they all fail (module doesn't exist yet)
-- [ ] Create `crates/kronk-core/src/bench/mod.rs` with all types, `compute_summary`, `build_prompt`, and the test module
-- [ ] Create `crates/kronk-core/src/bench/display.rs` with `print_bench_report` and `format_stat`
-- [ ] Create placeholder files `crates/kronk-core/src/bench/measure.rs` and `crates/kronk-core/src/bench/runner.rs` with just `//! Placeholder — implemented in a later task.`
-- [ ] Add `pub mod bench;` to `crates/kronk-core/src/lib.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::tests`, confirm all 8 tests pass
+- [ ] Write all 8 unit tests in `crates/koji-core/src/bench/mod.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::tests`, confirm they all fail (module doesn't exist yet)
+- [ ] Create `crates/koji-core/src/bench/mod.rs` with all types, `compute_summary`, `build_prompt`, and the test module
+- [ ] Create `crates/koji-core/src/bench/display.rs` with `print_bench_report` and `format_stat`
+- [ ] Create placeholder files `crates/koji-core/src/bench/measure.rs` and `crates/koji-core/src/bench/runner.rs` with just `//! Placeholder — implemented in a later task.`
+- [ ] Add `pub mod bench;` to `crates/koji-core/src/lib.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::tests`, confirm all 8 tests pass
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`, fix any warnings
 - [ ] Run `cargo build --workspace`, confirm it succeeds
 - [ ] Commit with message: `feat: add bench module with types, statistics, prompt builder, and display`
 
 **Acceptance criteria:**
-- [ ] `crates/kronk-core/src/bench/mod.rs` exists with `BenchConfig`, `RequestMeasurement`, `BenchSummary`, `ModelInfo`, `BenchReport` structs
+- [ ] `crates/koji-core/src/bench/mod.rs` exists with `BenchConfig`, `RequestMeasurement`, `BenchSummary`, `ModelInfo`, `BenchReport` structs
 - [ ] `compute_summary` correctly computes mean and stddev from measurements
 - [ ] `build_prompt` returns a string that scales proportionally to the requested token count
 - [ ] `print_bench_report` outputs a formatted table with Unicode box-drawing characters
@@ -192,11 +192,11 @@ This task creates the `bench` module in `kronk-core` with all the pure-logic bui
 This task implements the HTTP client that sends a single OpenAI-compatible chat completion request to a running llama-server and measures timing from the SSE (Server-Sent Events) stream. This is the core measurement primitive — the orchestrator (Task 3) calls this repeatedly. The function sends a POST to `/v1/chat/completions` with `stream: true`, `temperature: 0`, `max_tokens: <tg_size>`, and a prompt built from `build_prompt()` (from Task 1). It then reads the SSE stream, recording: (a) the time the first `data:` chunk with `delta.content` arrives (TTFT), (b) the total number of content chunks (generated tokens), and (c) the time the stream completes (`data: [DONE]`). It returns a `RequestMeasurement`. The llama-server SSE format is: each line is `data: <json>` where the JSON has `choices[0].delta.content` for token content. The first chunk typically has `delta.role` only (no content) — skip it for TTFT. The stream ends with `data: [DONE]`.
 
 **Files:**
-- Modify: `crates/kronk-core/src/bench/measure.rs` (replace placeholder)
+- Modify: `crates/koji-core/src/bench/measure.rs` (replace placeholder)
 
 **What to implement:**
 
-1. Replace the placeholder content in `crates/kronk-core/src/bench/measure.rs` with the actual implementation.
+1. Replace the placeholder content in `crates/koji-core/src/bench/measure.rs` with the actual implementation.
 
 2. Implement `pub async fn send_bench_request(base_url: &str, prompt_tokens: u32, max_tokens: u32) -> Result<RequestMeasurement>`:
    - Build the request body as `serde_json::Value`:
@@ -246,10 +246,10 @@ This task implements the HTTP client that sends a single OpenAI-compatible chat 
 - `test_parse_sse_content_empty_content`: Input `r#"data: {"choices":[{"delta":{"content":""}}]}"#` → returns `None`.
 
 **Steps:**
-- [ ] Write the 5 unit tests for `parse_sse_content` in `crates/kronk-core/src/bench/measure.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::measure::tests`, confirm they fail
-- [ ] Implement `parse_sse_content` and `send_bench_request` in `crates/kronk-core/src/bench/measure.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::measure::tests`, confirm all 5 tests pass
+- [ ] Write the 5 unit tests for `parse_sse_content` in `crates/koji-core/src/bench/measure.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::measure::tests`, confirm they fail
+- [ ] Implement `parse_sse_content` and `send_bench_request` in `crates/koji-core/src/bench/measure.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::measure::tests`, confirm all 5 tests pass
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`, fix any warnings
 - [ ] Run `cargo build --workspace`, confirm it succeeds
@@ -266,14 +266,14 @@ This task implements the HTTP client that sends a single OpenAI-compatible chat 
 ### Task 3: Backend runner and benchmark orchestrator
 
 **Context:**
-This task implements the process lifecycle (start a llama-server, wait for health, run benchmarks, stop the server) and the orchestration logic that ties the types (Task 1) and measurement client (Task 2) together. The runner reuses existing infrastructure from kronk-core: `Config::resolve_server()` to look up the server/backend config pair, `Config::build_full_args()` to build the CLI arguments (including model path, context size, GPU layers from model cards), `override_arg()` to set host/port, `check_health()` to poll readiness, and `kill_process()` / `force_kill_process()` for shutdown. The orchestrator starts the backend, runs warmup iterations (results discarded), then runs measured iterations for each (pp_size, tg_size) combination, computes summaries, queries VRAM, stops the backend, and returns a complete `BenchReport`.
+This task implements the process lifecycle (start a llama-server, wait for health, run benchmarks, stop the server) and the orchestration logic that ties the types (Task 1) and measurement client (Task 2) together. The runner reuses existing infrastructure from koji-core: `Config::resolve_server()` to look up the server/backend config pair, `Config::build_full_args()` to build the CLI arguments (including model path, context size, GPU layers from model cards), `override_arg()` to set host/port, `check_health()` to poll readiness, and `kill_process()` / `force_kill_process()` for shutdown. The orchestrator starts the backend, runs warmup iterations (results discarded), then runs measured iterations for each (pp_size, tg_size) combination, computes summaries, queries VRAM, stops the backend, and returns a complete `BenchReport`.
 
 **Files:**
-- Modify: `crates/kronk-core/src/bench/runner.rs` (replace placeholder)
+- Modify: `crates/koji-core/src/bench/runner.rs` (replace placeholder)
 
 **What to implement:**
 
-1. Replace the placeholder content in `crates/kronk-core/src/bench/runner.rs`.
+1. Replace the placeholder content in `crates/koji-core/src/bench/runner.rs`.
 
 2. Define `BenchBackend` struct (private to this module, not `pub` — it's an internal handle):
    ```rust
@@ -292,7 +292,7 @@ This task implements the process lifecycle (start a llama-server, wait for healt
    - Override host/port: `override_arg(&mut args, "--host", "127.0.0.1"); override_arg(&mut args, "--port", &port.to_string());`
    - Spawn the process: `tokio::process::Command::new(&backend_config.path).args(&args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?`. Redirect stdout/stderr to null because we don't need backend logs during benchmarking.
    - Get PID: `child.id().ok_or_else(|| anyhow!("Failed to get backend PID"))?`
-   - Spawn a reaper task for the child (same pattern as `crates/kronk-core/src/proxy/lifecycle.rs` lines 100-106): `tokio::spawn(async move { let _ = child.wait().await; });`
+   - Spawn a reaper task for the child (same pattern as `crates/koji-core/src/proxy/lifecycle.rs` lines 100-106): `tokio::spawn(async move { let _ = child.wait().await; });`
    - Poll health: loop every 500ms calling `check_health(&format!("http://127.0.0.1:{}/health", port), Some(30)).await`. Timeout after 120 seconds (benchmarking may load large models). If timeout, kill the process and return error.
    - Record `load_time_ms = spawn_start.elapsed().as_secs_f64() * 1000.0`.
    - Return `BenchBackend { pid, url: format!("http://127.0.0.1:{}", port), load_time_ms }`.
@@ -350,10 +350,10 @@ Extract these as small pure helper functions:
 - `fn extract_gpu_layers(args: &[String]) -> Option<String>`
 
 **Steps:**
-- [ ] Write the 5 unit tests for the helper functions in `crates/kronk-core/src/bench/runner.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::runner::tests`, confirm they fail
-- [ ] Implement `detect_gpu_type`, `extract_gpu_layers`, `start_backend`, `stop_backend`, `run_benchmark` in `crates/kronk-core/src/bench/runner.rs`
-- [ ] Run `cargo test --package kronk-core --lib bench::runner::tests`, confirm all 5 tests pass
+- [ ] Write the 5 unit tests for the helper functions in `crates/koji-core/src/bench/runner.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::runner::tests`, confirm they fail
+- [ ] Implement `detect_gpu_type`, `extract_gpu_layers`, `start_backend`, `stop_backend`, `run_benchmark` in `crates/koji-core/src/bench/runner.rs`
+- [ ] Run `cargo test --package koji-core --lib bench::runner::tests`, confirm all 5 tests pass
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`, fix any warnings
 - [ ] Run `cargo build --workspace`, confirm it succeeds
@@ -372,17 +372,17 @@ Extract these as small pure helper functions:
 ### Task 4: CLI command, handler, and dispatch
 
 **Context:**
-This task wires the benchmarking feature into the kronk CLI. It adds a `Bench` variant to the `Commands` enum in `crates/kronk-cli/src/cli.rs`, creates a handler function in a new `crates/kronk-cli/src/handlers/bench.rs`, registers the handler module, and adds the dispatch arm in `crates/kronk-cli/src/lib.rs`. The handler parses comma-separated `--pp` and `--tg` strings into `Vec<u32>`, builds a `BenchConfig`, resolves which model configs to benchmark (single name or `--all` for every enabled config), calls `kronk_core::bench::runner::run_benchmark()` for each, and calls `kronk_core::bench::display::print_bench_report()` to show results. When `--all` is used, it iterates over all entries in `config.models` where `enabled == true`, running benchmarks sequentially and printing each report.
+This task wires the benchmarking feature into the koji CLI. It adds a `Bench` variant to the `Commands` enum in `crates/koji-cli/src/cli.rs`, creates a handler function in a new `crates/koji-cli/src/handlers/bench.rs`, registers the handler module, and adds the dispatch arm in `crates/koji-cli/src/lib.rs`. The handler parses comma-separated `--pp` and `--tg` strings into `Vec<u32>`, builds a `BenchConfig`, resolves which model configs to benchmark (single name or `--all` for every enabled config), calls `koji_core::bench::runner::run_benchmark()` for each, and calls `koji_core::bench::display::print_bench_report()` to show results. When `--all` is used, it iterates over all entries in `config.models` where `enabled == true`, running benchmarks sequentially and printing each report.
 
 **Files:**
-- Modify: `crates/kronk-cli/src/cli.rs`
-- Create: `crates/kronk-cli/src/handlers/bench.rs`
-- Modify: `crates/kronk-cli/src/handlers/mod.rs`
-- Modify: `crates/kronk-cli/src/lib.rs`
+- Modify: `crates/koji-cli/src/cli.rs`
+- Create: `crates/koji-cli/src/handlers/bench.rs`
+- Modify: `crates/koji-cli/src/handlers/mod.rs`
+- Modify: `crates/koji-cli/src/lib.rs`
 
 **What to implement:**
 
-**In `crates/kronk-cli/src/cli.rs`:**
+**In `crates/koji-cli/src/cli.rs`:**
 
 1. Add a new variant to the `Commands` enum. The existing enum is NOT alphabetically ordered (order is: Run, Service, ServiceRun, Add, Update, Server, Status, Profile, Config, Model, Backend, Serve, Proxy, Logs). Add the `Bench` variant **after `Backend`** and **before `Serve`** to keep it grouped with the other user-facing commands:
    ```rust
@@ -411,7 +411,7 @@ This task wires the benchmarking feature into the kronk CLI. It adds a `Bench` v
    }
    ```
 
-**In `crates/kronk-cli/src/handlers/bench.rs`:**
+**In `crates/koji-cli/src/handlers/bench.rs`:**
 
 2. Implement a helper `fn parse_comma_sizes(s: &str) -> Result<Vec<u32>>`:
    - Split `s` by `,`, trim each part, parse as `u32`.
@@ -422,20 +422,20 @@ This task wires the benchmarking feature into the kronk CLI. It adds a `Bench` v
    - Parse pp/tg: `let pp_sizes = parse_comma_sizes(&pp)?; let tg_sizes = parse_comma_sizes(&tg)?;`
    - Build `BenchConfig { pp_sizes, tg_sizes, runs, warmup, ctx_override: ctx }`.
    - Determine which servers to benchmark:
-     - If `all` is true: collect all server names from `config.models` where `enabled == true`. Sort alphabetically for deterministic order. If none found, `anyhow::bail!("No enabled model configs found. Create one with `kronk model create`.")`.
+     - If `all` is true: collect all server names from `config.models` where `enabled == true`. Sort alphabetically for deterministic order. If none found, `anyhow::bail!("No enabled model configs found. Create one with `koji model create`.")`.
      - If `name` is `Some(n)`: use `vec![n]`. Validate it exists: `config.resolve_server(&n)?;`
      - If `name` is `None` and `all` is `false`: `anyhow::bail!("Specify a model config name or use --all to benchmark all enabled configs")`.
    - For each server name in the list:
-     - Call `kronk_core::bench::runner::run_benchmark(config, &server_name, &bench_config).await?`.
-     - Call `kronk_core::bench::display::print_bench_report(&report)`.
+     - Call `koji_core::bench::runner::run_benchmark(config, &server_name, &bench_config).await?`.
+     - Call `koji_core::bench::display::print_bench_report(&report)`.
      - If there are more servers to benchmark, print a blank line separator.
    - Return `Ok(())`.
 
-**In `crates/kronk-cli/src/handlers/mod.rs`:**
+**In `crates/koji-cli/src/handlers/mod.rs`:**
 
 4. Add `pub mod bench;` — insert it alphabetically (before `config`).
 
-**In `crates/kronk-cli/src/lib.rs`:**
+**In `crates/koji-cli/src/lib.rs`:**
 
 5. Add the dispatch arm in the `match args.command` block. The match arms follow the same order as the enum declaration. Add it **after the `Backend` arm** and **before the `Serve` arm** (look for `Commands::Backend { command } => { ... }` and insert the new arm immediately after it):
    ```rust
@@ -454,22 +454,22 @@ This task wires the benchmarking feature into the kronk CLI. It adds a `Bench` v
 - `test_parse_comma_sizes_empty`: `parse_comma_sizes("")` → `Err(...)`.
 
 **Steps:**
-- [ ] Write the 5 unit tests for `parse_comma_sizes` in `crates/kronk-cli/src/handlers/bench.rs`
-- [ ] Run `cargo test --package kronk-cli --lib handlers::bench::tests`, confirm they fail (file doesn't exist yet)
-- [ ] Create `crates/kronk-cli/src/handlers/bench.rs` with `parse_comma_sizes`, `cmd_bench`, and the test module
-- [ ] Add `pub mod bench;` to `crates/kronk-cli/src/handlers/mod.rs`
-- [ ] Add `Bench` variant to `Commands` enum in `crates/kronk-cli/src/cli.rs`
-- [ ] Add dispatch arm in `crates/kronk-cli/src/lib.rs`
-- [ ] Run `cargo test --package kronk-cli --lib handlers::bench::tests`, confirm all 5 tests pass
+- [ ] Write the 5 unit tests for `parse_comma_sizes` in `crates/koji-cli/src/handlers/bench.rs`
+- [ ] Run `cargo test --package koji-cli --lib handlers::bench::tests`, confirm they fail (file doesn't exist yet)
+- [ ] Create `crates/koji-cli/src/handlers/bench.rs` with `parse_comma_sizes`, `cmd_bench`, and the test module
+- [ ] Add `pub mod bench;` to `crates/koji-cli/src/handlers/mod.rs`
+- [ ] Add `Bench` variant to `Commands` enum in `crates/koji-cli/src/cli.rs`
+- [ ] Add dispatch arm in `crates/koji-cli/src/lib.rs`
+- [ ] Run `cargo test --package koji-cli --lib handlers::bench::tests`, confirm all 5 tests pass
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`, fix any warnings
 - [ ] Run `cargo build --workspace`, confirm it succeeds
-- [ ] Run `cargo build --release -p kronk-cli` and verify `kronk bench --help` shows the correct usage
-- [ ] Commit with message: `feat: add kronk bench CLI command`
+- [ ] Run `cargo build --release -p koji-cli` and verify `koji bench --help` shows the correct usage
+- [ ] Commit with message: `feat: add koji bench CLI command`
 
 **Acceptance criteria:**
-- [ ] `kronk bench --help` shows: name arg, --all, --pp, --tg, --runs, --warmup, --ctx flags
-- [ ] `kronk bench` with no args shows the error about specifying a name or --all
+- [ ] `koji bench --help` shows: name arg, --all, --pp, --tg, --runs, --warmup, --ctx flags
+- [ ] `koji bench` with no args shows the error about specifying a name or --all
 - [ ] `parse_comma_sizes` correctly handles valid input, spaces, and invalid input
 - [ ] All 5 unit tests pass
 - [ ] `cargo build --workspace` succeeds with no warnings
@@ -480,16 +480,16 @@ This task wires the benchmarking feature into the kronk CLI. It adds a `Bench` v
 ### Task 5: Manual end-to-end verification and polish
 
 **Context:**
-This is a verification task. The feature is now fully wired up. This task runs `kronk bench` against a real model to verify the full pipeline works end-to-end, fixes any issues found, and polishes the output. This task requires at least one model config to be set up in kronk (the tester should use `kronk model ls` to find one, or create a test config if none exist). This task also verifies error handling for common failure modes.
+This is a verification task. The feature is now fully wired up. This task runs `koji bench` against a real model to verify the full pipeline works end-to-end, fixes any issues found, and polishes the output. This task requires at least one model config to be set up in koji (the tester should use `koji model ls` to find one, or create a test config if none exist). This task also verifies error handling for common failure modes.
 
 **Files:**
 - Potentially modify: any file from Tasks 1-4 based on issues found
 
 **What to verify:**
 
-1. Run `kronk model ls` to find an available model config name. If none, the tester should note this and skip to step 3.
+1. Run `koji model ls` to find an available model config name. If none, the tester should note this and skip to step 3.
 
-2. Run `kronk bench <model-config-name> --pp 128 --tg 32 --runs 1 --warmup 0` (small sizes for quick test). Verify:
+2. Run `koji bench <model-config-name> --pp 128 --tg 32 --runs 1 --warmup 0` (small sizes for quick test). Verify:
    - Backend starts and health check passes (printed message)
    - Benchmark runs and produces a `RequestMeasurement` with non-zero values
    - Table output is formatted correctly with aligned columns
@@ -498,10 +498,10 @@ This is a verification task. The feature is now fully wired up. This task runs `
    - Backend is stopped cleanly (process is killed)
 
 3. Verify error cases:
-   - `kronk bench nonexistent-model` → clear error message about model not found
-   - `kronk bench` (no args) → clear error about specifying name or --all
-   - `kronk bench --all` with no enabled models → clear error message
-   - `kronk bench <name> --pp abc` → clear error about invalid size
+   - `koji bench nonexistent-model` → clear error message about model not found
+   - `koji bench` (no args) → clear error about specifying name or --all
+   - `koji bench --all` with no enabled models → clear error message
+   - `koji bench <name> --pp abc` → clear error about invalid size
 
 4. Run the full test suite: `cargo test --workspace` — all tests (existing + new) must pass.
 
@@ -512,10 +512,10 @@ This is a verification task. The feature is now fully wired up. This task runs `
 **Steps:**
 - [ ] Run `cargo test --workspace`, confirm all tests pass
 - [ ] Run `cargo clippy --workspace -- -D warnings`, confirm no warnings
-- [ ] Run `kronk bench --help`, verify help text is correct
-- [ ] Run `kronk bench` with no args, verify error message
-- [ ] Run `kronk bench nonexistent-model`, verify error message
-- [ ] If a model config exists: run `kronk bench <name> --pp 128 --tg 32 --runs 1 --warmup 0`, verify output
+- [ ] Run `koji bench --help`, verify help text is correct
+- [ ] Run `koji bench` with no args, verify error message
+- [ ] Run `koji bench nonexistent-model`, verify error message
+- [ ] If a model config exists: run `koji bench <name> --pp 128 --tg 32 --runs 1 --warmup 0`, verify output
 - [ ] Fix any issues found
 - [ ] Run `cargo test --workspace` again to confirm no regressions
 - [ ] Commit with message: `fix: polish bench command output and error handling`

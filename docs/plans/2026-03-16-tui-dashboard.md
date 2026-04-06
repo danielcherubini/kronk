@@ -5,7 +5,7 @@
 
 **Goal:** Build a War Room dashboard showing live VRAM, tokens/sec, temperature, and logs using ratatui.
 
-**Architecture:** New `kronk-tui` crate that connects to `kronk-core` config and process supervisor. Uses ratatui for rendering, tokio for async event loop.
+**Architecture:** New `koji-tui` crate that connects to `koji-core` config and process supervisor. Uses ratatui for rendering, tokio for async event loop.
 
 **Tech Stack:** Rust, tokio, ratatui, crossterm, anyhow
 
@@ -14,9 +14,9 @@
 ## File Structure
 
 ```text
-kronk/
+koji/
 ├── crates/
-│   └── kronk-tui/              # NEW: TUI dashboard crate
+│   └── koji-tui/              # NEW: TUI dashboard crate
 │       ├── Cargo.toml
 │       └── src/
 │           ├── main.rs
@@ -35,18 +35,18 @@ kronk/
 ## Task 1: Create TUI Crate Skeleton
 
 **Files:**
-- Create: `crates/kronk-tui/Cargo.toml`
+- Create: `crates/koji-tui/Cargo.toml`
 
 - [ ] **Step 1: Write Cargo.toml**
 
 ```toml
 [package]
-name = "kronk-tui"
+name = "koji-tui"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-kronk-core = { path = "../kronk-core" }
+koji-core = { path = "../koji-core" }
 ratatui = "0.29"
 crossterm = "0.28"
 tokio = { version = "1", features = ["full"] }
@@ -56,7 +56,7 @@ anyhow = "1.0"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add crates/kronk-tui/Cargo.toml
+git add crates/koji-tui/Cargo.toml
 git commit -m "feat: add TUI dashboard crate skeleton"
 ```
 
@@ -65,13 +65,13 @@ git commit -m "feat: add TUI dashboard crate skeleton"
 ## Task 2: Write Failing Test
 
 **Files:**
-- Create: `crates/kronk-tui/tests/integration.rs`
+- Create: `crates/koji-tui/tests/integration.rs`
 
 - [ ] **Step 3: Write failing test**
 
 ```rust
-// crates/kronk-tui/tests/integration.rs
-use kronk_tui::run;
+// crates/koji-tui/tests/integration.rs
+use koji_tui::run;
 
 #[tokio::test]
 async fn test_tui_starts() {
@@ -82,13 +82,13 @@ async fn test_tui_starts() {
 
 - [ ] **Step 4: Run test to verify it fails**
 
-Run: `cd crates/kronk-tui && cargo test`
+Run: `cd crates/koji-tui && cargo test`
 Expected: FAIL with compilation error
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/kronk-tui/tests/integration.rs
+git add crates/koji-tui/tests/integration.rs
 git commit -m "test: add TUI integration test"
 ```
 
@@ -97,15 +97,15 @@ git commit -m "test: add TUI integration test"
 ## Task 3: Write Minimal Implementation
 
 **Files:**
-- Create: `crates/kronk-tui/src/lib.rs`
-- Create: `crates/kronk-tui/src/main.rs`
-- Create: `crates/kronk-tui/src/components/mod.rs`
-- Create: `crates/kronk-tui/src/components/dashboard.rs`
+- Create: `crates/koji-tui/src/lib.rs`
+- Create: `crates/koji-tui/src/main.rs`
+- Create: `crates/koji-tui/src/components/mod.rs`
+- Create: `crates/koji-tui/src/components/dashboard.rs`
 
 - [ ] **Step 6: Write minimal implementation**
 
 ```rust
-// crates/kronk-tui/src/lib.rs
+// crates/koji-tui/src/lib.rs
 use anyhow::Result;
 
 pub async fn run() -> Result<()> {
@@ -115,8 +115,8 @@ pub async fn run() -> Result<()> {
 ```
 
 ```rust
-// crates/kronk-tui/src/main.rs
-use kronk_tui::run;
+// crates/koji-tui/src/main.rs
+use koji_tui::run;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -125,14 +125,14 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 ```rust
-// crates/kronk-tui/src/components/mod.rs
+// crates/koji-tui/src/components/mod.rs
 pub mod dashboard;
 pub mod stats;
 pub mod logs;
 ```
 
 ```rust
-// crates/kronk-tui/src/components/dashboard.rs
+// crates/koji-tui/src/components/dashboard.rs
 use ratatui::prelude::*;
 
 pub struct DashboardWidget;
@@ -146,13 +146,13 @@ impl DashboardWidget {
 
 - [ ] **Step 7: Run test to verify it passes**
 
-Run: `cd crates/kronk-tui && cargo test`
+Run: `cd crates/koji-tui && cargo test`
 Expected: PASS
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/kronk-tui/src/
+git add crates/koji-tui/src/
 git commit -m "feat: add TUI components skeleton"
 ```
 
@@ -161,16 +161,16 @@ git commit -m "feat: add TUI components skeleton"
 ## Task 4: Implement Full TUI
 
 **Files:**
-- Modify: `crates/kronk-tui/src/lib.rs`
-- Modify: `crates/kronk-tui/src/main.rs`
-- Modify: `crates/kronk-tui/src/components/dashboard.rs`
-- Create: `crates/kronk-tui/src/components/stats.rs`
-- Create: `crates/kronk-tui/src/components/logs.rs`
+- Modify: `crates/koji-tui/src/lib.rs`
+- Modify: `crates/koji-tui/src/main.rs`
+- Modify: `crates/koji-tui/src/components/dashboard.rs`
+- Create: `crates/koji-tui/src/components/stats.rs`
+- Create: `crates/koji-tui/src/components/logs.rs`
 
 - [ ] **Step 9: Write full implementation**
 
 ```rust
-// crates/kronk-tui/src/lib.rs
+// crates/koji-tui/src/lib.rs
 use anyhow::Result;
 use ratatui::prelude::*;
 use tokio::time::{sleep, Duration};
@@ -204,7 +204,7 @@ fn ui(f: &mut Frame, backend: &Backend) {
 ```
 
 ```rust
-// crates/kronk-tui/src/components/stats.rs
+// crates/koji-tui/src/components/stats.rs
 use ratatui::prelude::*;
 
 pub struct StatsWidget;
@@ -218,7 +218,7 @@ impl StatsWidget {
 ```
 
 ```rust
-// crates/kronk-tui/src/components/logs.rs
+// crates/koji-tui/src/components/logs.rs
 use ratatui::prelude::*;
 
 pub struct LogsWidget;
@@ -233,30 +233,30 @@ impl LogsWidget {
 
 - [ ] **Step 10: Run test to verify it passes**
 
-Run: `cd crates/kronk-tui && cargo run`
+Run: `cd crates/koji-tui && cargo run`
 Expected: TUI window opens
 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add crates/kronk-tui/src/
+git add crates/koji-tui/src/
 git commit -m "feat: implement full TUI dashboard with stats and logs"
 ```
 
 ---
 
-## Task 5: Connect to Kronk Core
+## Task 5: Connect to Koji Core
 
 **Files:**
-- Modify: `crates/kronk-tui/src/lib.rs`
-- Create: `crates/kronk-tui/src/backend.rs`
+- Modify: `crates/koji-tui/src/lib.rs`
+- Create: `crates/koji-tui/src/backend.rs`
 
 - [ ] **Step 12: Write backend connection**
 
 ```rust
-// crates/kronk-tui/src/backend.rs
+// crates/koji-tui/src/backend.rs
 use anyhow::Result;
-use kronk_core::config::Config;
+use koji_core::config::Config;
 
 pub struct Backend {
     config: Config,
@@ -293,7 +293,7 @@ pub struct Stats {
 - [ ] **Step 13: Update lib.rs to use backend**
 
 ```rust
-// crates/kronk-tui/src/lib.rs
+// crates/koji-tui/src/lib.rs
 use anyhow::Result;
 use ratatui::prelude::*;
 use tokio::time::{sleep, Duration};
@@ -318,8 +318,8 @@ fn ui(f: &mut Frame, backend: &Backend) {
 - [ ] **Step 14: Commit**
 
 ```bash
-git add crates/kronk-tui/src/
-git commit -m "feat: connect TUI to kronk-core config"
+git add crates/koji-tui/src/
+git commit -m "feat: connect TUI to koji-core config"
 ```
 
 ---
@@ -330,6 +330,6 @@ git commit -m "feat: connect TUI to kronk-core config"
 2. Task 2: Write Failing Test
 3. Task 3: Write Minimal Implementation
 4. Task 4: Implement Full TUI
-5. Task 5: Connect to Kronk Core
+5. Task 5: Connect to Koji Core
 
 **Plan complete and saved to `docs/superpowers/plans/2026-03-16-tui-dashboard.md`. Ready to execute?**

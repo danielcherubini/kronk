@@ -2,7 +2,7 @@
 
 **Goal:** When config or models are saved via the web UI, the in-memory config used by the proxy should be updated immediately — no restart required.
 
-**Architecture:** The web UI server (`kronk-web`) has its own `AppState` that is completely disconnected from the proxy's `ProxyState`. When saving, it reads config from disk, modifies it, and writes back to disk — but never updates the `ProxyState.config` `Arc<RwLock<Config>>` that the proxy actually uses for routing, model loading, and backend resolution. The fix is to share the `ProxyState.config` Arc with `AppState` so that writes through the web API also update the live in-memory config.
+**Architecture:** The web UI server (`koji-web`) has its own `AppState` that is completely disconnected from the proxy's `ProxyState`. When saving, it reads config from disk, modifies it, and writes back to disk — but never updates the `ProxyState.config` `Arc<RwLock<Config>>` that the proxy actually uses for routing, model loading, and backend resolution. The fix is to share the `ProxyState.config` Arc with `AppState` so that writes through the web API also update the live in-memory config.
 
 **Tech Stack:** Rust, Axum, Tokio, TOML, `Arc<RwLock<Config>>`
 
@@ -12,9 +12,9 @@
 
 There are two independent state holders:
 
-1. **`ProxyState.config`** (`Arc<tokio::sync::RwLock<Config>>`) — the live config in `kronk-core`. Created once at startup in `serve.rs` and used by all proxy handlers. Only mutated by `setup_model_after_pull()` after a model download.
+1. **`ProxyState.config`** (`Arc<tokio::sync::RwLock<Config>>`) — the live config in `koji-core`. Created once at startup in `serve.rs` and used by all proxy handlers. Only mutated by `setup_model_after_pull()` after a model download.
 
-2. **`AppState`** (`kronk-web`) — holds only a `config_path: Option<PathBuf>`. Every web API endpoint (`save_config`, `update_model`, `create_model`, `rename_model`, `delete_model`) calls `load_config_from_state()` which reads config fresh from **disk**, mutates the in-memory copy, writes back to **disk**, and returns. The proxy's `Arc<RwLock<Config>>` is never touched.
+2. **`AppState`** (`koji-web`) — holds only a `config_path: Option<PathBuf>`. Every web API endpoint (`save_config`, `update_model`, `create_model`, `rename_model`, `delete_model`) calls `load_config_from_state()` which reads config fresh from **disk**, mutates the in-memory copy, writes back to **disk**, and returns. The proxy's `Arc<RwLock<Config>>` is never touched.
 
 Result: config changes are persisted to disk but the running proxy keeps using the stale config from startup.
 
@@ -23,27 +23,27 @@ Result: config changes are persisted to disk but the running proxy keeps using t
 ### Task 1: Add proxy config handle to AppState
 
 **Context:**
-The `AppState` struct in `kronk-web/src/server.rs` currently has no connection to `ProxyState`. We need to add an optional `Arc<RwLock<Config>>` field so web API handlers can update the live config after saving to disk. It's `Option` because the web server can run standalone (without a proxy).
+The `AppState` struct in `koji-web/src/server.rs` currently has no connection to `ProxyState`. We need to add an optional `Arc<RwLock<Config>>` field so web API handlers can update the live config after saving to disk. It's `Option` because the web server can run standalone (without a proxy).
 
 **Files:**
-- Modify: `crates/kronk-web/src/server.rs`
-- Test: `crates/kronk-web/tests/server_test.rs`
+- Modify: `crates/koji-web/src/server.rs`
+- Test: `crates/koji-web/tests/server_test.rs`
 
 **What to implement:**
 - Add a new field to `AppState`:
   ```rust
-  pub proxy_config: Option<Arc<tokio::sync::RwLock<kronk_core::config::Config>>>,
+  pub proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
   ```
-- Update `run_with_opts()` to accept an additional `proxy_config: Option<Arc<tokio::sync::RwLock<kronk_core::config::Config>>>` parameter and pass it into the `AppState` constructor.
+- Update `run_with_opts()` to accept an additional `proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>` parameter and pass it into the `AppState` constructor.
 - Update `run()` (convenience wrapper) to pass `None` for the new parameter.
-- Update the web UI spawn site in `crates/kronk-cli/src/handlers/serve.rs` to pass `Some(Arc::clone(&state.config))` so the web server shares the proxy's config Arc.
+- Update the web UI spawn site in `crates/koji-cli/src/handlers/serve.rs` to pass `Some(Arc::clone(&state.config))` so the web server shares the proxy's config Arc.
 - Do NOT change any API handler logic yet — that's Task 2.
 
 **Steps:**
-- [ ] Add the `proxy_config` field to `AppState` in `crates/kronk-web/src/server.rs`
+- [ ] Add the `proxy_config` field to `AppState` in `crates/koji-web/src/server.rs`
 - [ ] Update `run_with_opts()` signature and body to accept and pass through `proxy_config`
 - [ ] Update `run()` to pass `None`
-- [ ] Update `crates/kronk-cli/src/handlers/serve.rs` to pass `Some(Arc::clone(&state.config))` when spawning the web UI
+- [ ] Update `crates/koji-cli/src/handlers/serve.rs` to pass `Some(Arc::clone(&state.config))` when spawning the web UI
 - [ ] Run `cargo build --workspace`
   - Did it succeed? If not, fix and re-run.
 - [ ] Run `cargo fmt --all`
@@ -54,8 +54,8 @@ The `AppState` struct in `kronk-web/src/server.rs` currently has no connection t
 - [ ] Commit with message: "feat: plumb proxy config Arc into web AppState"
 
 **Acceptance criteria:**
-- [ ] `AppState` has a `proxy_config` field of type `Option<Arc<tokio::sync::RwLock<kronk_core::config::Config>>>`
-- [ ] When the web UI is spawned from `kronk serve`, it receives the proxy's config Arc
+- [ ] `AppState` has a `proxy_config` field of type `Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>`
+- [ ] When the web UI is spawned from `koji serve`, it receives the proxy's config Arc
 - [ ] All existing tests pass
 - [ ] No API behavior change yet
 
@@ -71,8 +71,8 @@ With the proxy config Arc now available in `AppState`, we need to update each we
 2. **Model CRUD** (`create_model`, `update_model`, `delete_model`, `rename_model` in `api.rs`): these load config from disk, modify it, save it back to disk. After saving, they should also write the updated config into the proxy's Arc.
 
 **Files:**
-- Modify: `crates/kronk-web/src/api.rs`
-- Test: `crates/kronk-web/tests/server_test.rs`
+- Modify: `crates/koji-web/src/api.rs`
+- Test: `crates/koji-web/tests/server_test.rs`
 
 **What to implement:**
 
@@ -82,7 +82,7 @@ Add a helper function in `api.rs`:
 /// No-op if proxy_config is None (standalone web server without proxy).
 async fn sync_proxy_config(
     state: &AppState,
-    new_config: kronk_core::config::Config,
+    new_config: koji_core::config::Config,
 ) {
     if let Some(ref proxy_config) = state.proxy_config {
         let mut config = proxy_config.write().await;
@@ -116,21 +116,21 @@ sync_proxy_config(&state, new_config).await;
 Important: `sync_proxy_config` calls `.write().await` on the tokio `RwLock`, which must NOT be called inside `spawn_blocking` (it requires an async context). Structure the code so the blocking file I/O happens in `spawn_blocking`, and the async config sync happens after the join.
 
 **Steps:**
-- [ ] Write a test in `crates/kronk-web/tests/server_test.rs` that:
+- [ ] Write a test in `crates/koji-web/tests/server_test.rs` that:
   1. Creates a temp config directory with a valid config
   2. Creates an `AppState` with `proxy_config = Some(Arc::new(RwLock::new(config)))`
   3. Calls the model create or update endpoint
   4. Asserts that the `proxy_config` Arc now contains the updated model
   - This test should fail initially because the sync logic doesn't exist yet.
-- [ ] Run `cargo test --package kronk-web`
+- [ ] Run `cargo test --package koji-web`
   - Did it fail with the expected assertion error? If it passed, stop and investigate.
-- [ ] Add the `sync_proxy_config` helper to `crates/kronk-web/src/api.rs`
+- [ ] Add the `sync_proxy_config` helper to `crates/koji-web/src/api.rs`
 - [ ] Update `save_config` to call `sync_proxy_config` after successful file write
 - [ ] Update `update_model` to return the updated `Config` from `spawn_blocking` and call `sync_proxy_config`
 - [ ] Update `create_model` to return the updated `Config` from `spawn_blocking` and call `sync_proxy_config`
 - [ ] Update `delete_model` to return the updated `Config` from `spawn_blocking` and call `sync_proxy_config`
 - [ ] Update `rename_model` to return the updated `Config` from `spawn_blocking` and call `sync_proxy_config`
-- [ ] Run `cargo test --package kronk-web`
+- [ ] Run `cargo test --package koji-web`
   - Did all tests pass? If not, fix and re-run.
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`
@@ -160,7 +160,7 @@ Important: `sync_proxy_config` calls `.write().await` on the tokio `RwLock`, whi
 We need to verify end-to-end that saving a model through the web API makes it visible through the proxy's model listing, without restarting. This test should simulate the full flow using the actual router.
 
 **Files:**
-- Modify: `crates/kronk-web/tests/server_test.rs`
+- Modify: `crates/koji-web/tests/server_test.rs`
 
 **What to implement:**
 Write an integration test that:
@@ -176,8 +176,8 @@ Write an integration test that:
 10. Sends a `POST /api/config` with modified TOML and asserts the proxy config is updated
 
 **Steps:**
-- [ ] Write the integration test in `crates/kronk-web/tests/server_test.rs`
-- [ ] Run `cargo test --package kronk-web`
+- [ ] Write the integration test in `crates/koji-web/tests/server_test.rs`
+- [ ] Run `cargo test --package koji-web`
   - Did all tests pass? If not, fix and re-run.
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`

@@ -19,7 +19,7 @@
 ### Task 1: Test (profiles, modified): given `profiles/coding.toml` with modified values and a model card in `configs/` with no `[sampling.coding]`, migration inserts the profile into the card
 
 **Files:**
-- Create: `crates/kronk-core/src/config/migrate.rs` (test code)
+- Create: `crates/koji-core/src/config/migrate.rs` (test code)
 
 **Steps:**
 - [ ] Create test helper function to setup test environment
@@ -34,7 +34,7 @@
 ### Task 2: Test (profiles, card has it): same scenario but model card already has `[sampling.coding]` — migration skips (card wins)
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
 - [ ] Write test that creates `profiles/coding.toml` with modified values
@@ -48,7 +48,7 @@
 ### Task 3: Test (profiles, already present): `coding.toml` exists but card already has `[sampling.coding]` — migration skips entirely
 
 **Files**:
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps**:
 - [ ] Write test that creates `profiles/coding.toml` with explicit content
@@ -62,7 +62,7 @@
 ### Task 4: Test (profiles, non-built-in): `mypreset.toml` gets inserted into each card under `"mypreset"` unless already present
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
 - [ ] Write test that creates `profiles/mypreset.toml` with custom values
@@ -76,7 +76,7 @@
 ### Task 5: Test (profiles cleanup): after migration, `profiles/` directory is deleted
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
 - [ ] Write test that creates `profiles/coding.toml` with modified values
@@ -90,7 +90,7 @@
 ### Task 6: Test (custom_profiles): given `config.custom_profiles` with `"fast"` entry, migration inserts it into each card's sampling under `"fast"` (unless already present), then sets `custom_profiles` to None
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
 - [ ] Write test that creates `config.custom_profiles` with `"fast"` entry
@@ -105,7 +105,7 @@
 ### Task 7: Test (custom_profiles, card has it): card already has `[sampling.fast]` — migration skips
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
 - [ ] Write test that creates `config.custom_profiles` with `"fast"` entry
@@ -119,9 +119,9 @@
 ### Task 8: Run tests and verify they fail
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/migrate.rs`
 
 **Steps:**
-- [ ] Run `cargo test --package kronk-core migrate_profiles_to_model_cards`
+- [ ] Run `cargo test --package koji-core migrate_profiles_to_model_cards`
 - [ ] Verify all 8 tests fail as expected
 - [ ] Commit work with descriptive message

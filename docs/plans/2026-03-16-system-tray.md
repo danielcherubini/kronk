@@ -3,11 +3,11 @@
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Status:** TODO - GUI feature, not yet implemented
 
-**Goal:** Add a Windows system tray icon that shows kronk status and lets users start/stop services without opening a terminal.
+**Goal:** Add a Windows system tray icon that shows koji status and lets users start/stop services without opening a terminal.
 
-**Architecture:** New `kronk-tray` crate using the `tray-icon` and `muda` crates for cross-platform tray functionality (Windows primary, Linux optional). The tray runs a background event loop, polls service status periodically, and calls the existing `kronk-core::platform` functions for start/stop. Menu items are dynamically built from `Config::profiles`.
+**Architecture:** New `koji-tray` crate using the `tray-icon` and `muda` crates for cross-platform tray functionality (Windows primary, Linux optional). The tray runs a background event loop, polls service status periodically, and calls the existing `koji-core::platform` functions for start/stop. Menu items are dynamically built from `Config::profiles`.
 
-**Tech Stack:** Rust, `tray-icon` (tray icon + tooltip), `muda` (context menu), `winit` or manual event loop, `kronk-core` for config and platform ops, `tokio` for async health checks
+**Tech Stack:** Rust, `tray-icon` (tray icon + tooltip), `muda` (context menu), `winit` or manual event loop, `koji-core` for config and platform ops, `tokio` for async health checks
 
 ---
 
@@ -17,18 +17,18 @@
 
 | File | Responsibility |
 |------|---------------|
-| `crates/kronk-tray/Cargo.toml` | Crate manifest |
-| `crates/kronk-tray/src/main.rs` | Entry point, event loop |
-| `crates/kronk-tray/src/menu.rs` | Build context menu from profiles |
-| `crates/kronk-tray/src/status.rs` | Poll service status, update menu/tooltip |
-| `crates/kronk-tray/build.rs` | Embed icon resource (Windows) |
-| `crates/kronk-tray/assets/kronk.ico` | Tray icon |
+| `crates/koji-tray/Cargo.toml` | Crate manifest |
+| `crates/koji-tray/src/main.rs` | Entry point, event loop |
+| `crates/koji-tray/src/menu.rs` | Build context menu from profiles |
+| `crates/koji-tray/src/status.rs` | Poll service status, update menu/tooltip |
+| `crates/koji-tray/build.rs` | Embed icon resource (Windows) |
+| `crates/koji-tray/assets/koji.ico` | Tray icon |
 
 ### Files to modify
 
 | File | Changes |
 |------|---------|
-| `Cargo.toml` (workspace) | Add `kronk-tray` to workspace members, add `tray-icon` and `muda` deps |
+| `Cargo.toml` (workspace) | Add `koji-tray` to workspace members, add `tray-icon` and `muda` deps |
 
 ---
 
@@ -38,7 +38,7 @@
 
 **Files:**
 - Modify: `Cargo.toml` (workspace root)
-- Create: `crates/kronk-tray/Cargo.toml`
+- Create: `crates/koji-tray/Cargo.toml`
 
 - [ ] **Step 1: Add workspace member and dependencies**
 
@@ -46,7 +46,7 @@ In root `Cargo.toml`:
 
 ```toml
 # Add to [workspace] members
-"crates/kronk-tray",
+"crates/koji-tray",
 
 # Add to [workspace.dependencies]
 tray-icon = "0.19"
@@ -54,16 +54,16 @@ muda = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
 ```
 
-- [ ] **Step 2: Create `crates/kronk-tray/Cargo.toml`**
+- [ ] **Step 2: Create `crates/koji-tray/Cargo.toml`**
 
 ```toml
 [package]
-name = "kronk-tray"
+name = "koji-tray"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-kronk-core = { path = "../kronk-core" }
+koji-core = { path = "../koji-core" }
 tray-icon.workspace = true
 muda.workspace = true
 image.workspace = true
@@ -78,32 +78,32 @@ windows-service = "0.7"
 
 - [ ] **Step 3: Verify it compiles**
 
-Run: `cargo check -p kronk-tray`
+Run: `cargo check -p koji-tray`
 Expected: Error — no src/main.rs yet
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Cargo.toml crates/kronk-tray/Cargo.toml
-git commit -m "feat: add kronk-tray crate skeleton"
+git add Cargo.toml crates/koji-tray/Cargo.toml
+git commit -m "feat: add koji-tray crate skeleton"
 ```
 
 ### Task 2: Create minimal tray application
 
 **Files:**
-- Create: `crates/kronk-tray/src/main.rs`
-- Create: `crates/kronk-tray/src/menu.rs`
-- Create: `crates/kronk-tray/src/status.rs`
+- Create: `crates/koji-tray/src/main.rs`
+- Create: `crates/koji-tray/src/menu.rs`
+- Create: `crates/koji-tray/src/status.rs`
 
 - [ ] **Step 1: Write main.rs with event loop**
 
 ```rust
-// crates/kronk-tray/src/main.rs
+// crates/koji-tray/src/main.rs
 mod menu;
 mod status;
 
 use anyhow::Result;
-use kronk_core::config::Config;
+use koji_core::config::Config;
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
 fn main() -> Result<()> {
@@ -115,7 +115,7 @@ fn main() -> Result<()> {
 
     let _tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Kronk - LLM Service Manager")
+        .with_tooltip("Koji - LLM Service Manager")
         .with_icon(icon)
         .build()?;
 
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
 
 fn load_icon() -> Result<tray_icon::Icon> {
     // Load embedded PNG icon
-    let icon_bytes = include_bytes!("../assets/kronk.png");
+    let icon_bytes = include_bytes!("../assets/koji.png");
     let img = image::load_from_memory(icon_bytes)?;
     let rgba = img.into_rgba8();
     let (width, height) = rgba.dimensions();
@@ -155,9 +155,9 @@ fn load_icon() -> Result<tray_icon::Icon> {
 - [ ] **Step 2: Write menu.rs**
 
 ```rust
-// crates/kronk-tray/src/menu.rs
+// crates/koji-tray/src/menu.rs
 use anyhow::Result;
-use kronk_core::config::Config;
+use koji_core::config::Config;
 use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::menu::MenuEvent;
 
@@ -193,8 +193,8 @@ pub fn handle_event(config: &Config, event: &MenuEvent) -> Result<()> {
 - [ ] **Step 3: Write status.rs**
 
 ```rust
-// crates/kronk-tray/src/status.rs
-use kronk_core::config::Config;
+// crates/koji-tray/src/status.rs
+use koji_core::config::Config;
 
 pub struct ProfileStatus {
     pub name: String,
@@ -208,10 +208,10 @@ pub fn poll_all(config: &Config) -> Vec<ProfileStatus> {
         let service_name = Config::service_name(name);
         let state = {
             #[cfg(target_os = "windows")]
-            { kronk_core::platform::windows::query_service(&service_name)
+            { koji_core::platform::windows::query_service(&service_name)
                 .unwrap_or_else(|_| "UNKNOWN".to_string()) }
             #[cfg(target_os = "linux")]
-            { kronk_core::platform::linux::query_service(&service_name)
+            { koji_core::platform::linux::query_service(&service_name)
                 .unwrap_or_else(|_| "UNKNOWN".to_string()) }
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             { let _ = &service_name; "N/A".to_string() }
@@ -228,16 +228,16 @@ pub fn poll_all(config: &Config) -> Vec<ProfileStatus> {
 
 - [ ] **Step 4: Create a placeholder icon**
 
-Create `crates/kronk-tray/assets/kronk.png` — a simple 32x32 PNG icon. Can be generated or use a placeholder.
+Create `crates/koji-tray/assets/koji.png` — a simple 32x32 PNG icon. Can be generated or use a placeholder.
 
 - [ ] **Step 5: Verify it compiles**
 
-Run: `cargo check -p kronk-tray`
+Run: `cargo check -p koji-tray`
 Expected: Compiles
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/kronk-tray/
+git add crates/koji-tray/
 git commit -m "feat: add system tray with profile menus and status polling"
 ```

@@ -1,6 +1,6 @@
 # Fix Download Progress Bar Plan
 
-**Goal:** Fix the download progress bar showing "0 B/0 B" and the completion message appearing broken during `kronk model pull`.
+**Goal:** Fix the download progress bar showing "0 B/0 B" and the completion message appearing broken during `koji model pull`.
 **Status:** DONE
 
 **Architecture:** The root cause is a known reqwest bug (#843, open since 2020) where `Response::content_length()` returns `Some(0)` for HEAD requests despite the raw `Content-Length` header being correct. The fix parses the header manually, adds a testable helper, cleans up progress bar completion in both download paths, and simplifies the control flow.
@@ -12,7 +12,7 @@
 ### Task 1: Extract and fix Content-Length parsing for HEAD requests
 
 **Files:**
-- Modify: `crates/kronk-core/src/models/download/mod.rs`
+- Modify: `crates/koji-core/src/models/download/mod.rs`
 
 **Steps:**
 - [ ] Extract a helper function `parse_content_length(headers: &reqwest::header::HeaderMap) -> Option<u64>` that manually parses the `Content-Length` header from raw headers, bypassing `reqwest::Response::content_length()` which returns `Some(0)` or `None` for HEAD responses (known bug: https://github.com/seanmonstar/reqwest/issues/843)
@@ -42,7 +42,7 @@
 ### Task 2: Fix progress bar completion in model download
 
 **Files:**
-- Modify: `crates/kronk-core/src/models/download/mod.rs`
+- Modify: `crates/koji-core/src/models/download/mod.rs`
 
 **Steps:**
 - [ ] Observe that `pb.finish_with_message("done")` (line 112) sets a `{msg}` value that isn't rendered because the progress bar template has no `{msg}` placeholder — the bar just freezes showing the last state
@@ -62,7 +62,7 @@
 ### Task 3: Fix progress bar completion in backend installer download
 
 **Files:**
-- Modify: `crates/kronk-core/src/backends/installer/download.rs`
+- Modify: `crates/koji-core/src/backends/installer/download.rs`
 
 **Steps:**
 - [ ] Observe that `pb.finish_with_message("Download complete")` (line 54) has the same `{msg}` template mismatch — the template on line 35 has no `{msg}` placeholder

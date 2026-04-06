@@ -1,6 +1,6 @@
 # Split `handlers/server.rs` into Focused Submodules
 
-**Goal:** Convert the 499-line `crates/kronk-cli/src/handlers/server.rs` into a `server/` directory with one file per command, without changing any behavior or public API.
+**Goal:** Convert the 499-line `crates/koji-cli/src/handlers/server.rs` into a `server/` directory with one file per command, without changing any behavior or public API.
 **Status:** DONE
 
 **Architecture:** The file has 6 functions: a dispatcher, 4 public command handlers (ls/add/edit/rm), and 1 private helper (`resolve_backend`). We split into 5 files + a `mod.rs`. The dispatcher and shared helper live in `mod.rs`, each command gets its own file.
@@ -23,7 +23,7 @@ Here's every function in `server.rs` and which file it goes to:
 ### New file structure:
 
 ```
-crates/kronk-cli/src/handlers/
+crates/koji-cli/src/handlers/
 ├── mod.rs              ← EXISTING (tiny edit: `pub mod server` stays as-is)
 ├── server/             ← NEW DIRECTORY (replaces server.rs)
 │   ├── mod.rs          ← Dispatcher + resolve_backend + re-exports
@@ -43,12 +43,12 @@ crates/kronk-cli/src/handlers/
 ### Who references these functions (DO NOT change these files):
 
 ```
-crates/kronk-cli/src/lib.rs:19   → pub use handlers::server::{cmd_server_add, cmd_server_edit};
-crates/kronk-cli/src/lib.rs:24   → use handlers::...server...
-crates/kronk-cli/src/lib.rs:64   → server::cmd_server_add(&config, &name, command, false).await
-crates/kronk-cli/src/lib.rs:67   → server::cmd_server_edit(&mut config.clone(), &name, command).await
-crates/kronk-cli/src/lib.rs:69   → server::cmd_server(&config, command).await
-crates/kronk-cli/tests/tests.rs:178 → use kronk::{cmd_server_add, cmd_server_edit};
+crates/koji-cli/src/lib.rs:19   → pub use handlers::server::{cmd_server_add, cmd_server_edit};
+crates/koji-cli/src/lib.rs:24   → use handlers::...server...
+crates/koji-cli/src/lib.rs:64   → server::cmd_server_add(&config, &name, command, false).await
+crates/koji-cli/src/lib.rs:67   → server::cmd_server_edit(&mut config.clone(), &name, command).await
+crates/koji-cli/src/lib.rs:69   → server::cmd_server(&config, command).await
+crates/koji-cli/tests/tests.rs:178 → use koji::{cmd_server_add, cmd_server_edit};
 ```
 
 **CRITICAL:** All callers use the path `handlers::server::function_name` or the re-export from `lib.rs`. Because `mod.rs` re-exports everything with `pub use`, callers **do not need to change**. If any caller breaks, the `mod.rs` re-exports are wrong — fix them, don't touch the callers.
@@ -65,17 +65,17 @@ Converting `server.rs` (single file) → `server/mod.rs` (directory module). You
 **Step 1.1: Create the directory**
 
 ```bash
-mkdir crates/kronk-cli/src/handlers/server
+mkdir crates/koji-cli/src/handlers/server
 ```
 
 **Step 1.2: Create `server/mod.rs`**
 
-Create the file `crates/kronk-cli/src/handlers/server/mod.rs` with this content:
+Create the file `crates/koji-cli/src/handlers/server/mod.rs` with this content:
 
 ```rust
 //! Server command handler
 //!
-//! Handles `kronk server ls/add/edit/rm` commands.
+//! Handles `koji server ls/add/edit/rm` commands.
 
 mod add;
 mod edit;
@@ -90,7 +90,7 @@ pub use ls::cmd_server_ls;
 pub use rm::cmd_server_rm;
 
 use anyhow::{Context, Result};
-use kronk_core::config::Config;
+use koji_core::config::Config;
 
 /// Manage servers — list, add, edit, remove
 pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) -> Result<()> {
@@ -102,7 +102,7 @@ pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) ->
         crate::cli::ServerCommands::Edit { name, command } => {
             if !config.models.contains_key(&name) {
                 anyhow::bail!(
-                    "Server '{}' not found. Use `kronk server add` to create it.",
+                    "Server '{}' not found. Use `koji server add` to create it.",
                     name
                 );
             }
@@ -143,18 +143,18 @@ Moving the `cmd_server_ls` function (lines 28–108, 80 lines) into its own file
 
 **Step 2.1: Create `server/ls.rs`**
 
-Create the file `crates/kronk-cli/src/handlers/server/ls.rs`.
+Create the file `crates/koji-cli/src/handlers/server/ls.rs`.
 
 1. **Imports:** Look at what `cmd_server_ls` actually uses:
    - `anyhow::Result` — for the return type
-   - `kronk_core::config::Config` — for the function parameter
+   - `koji_core::config::Config` — for the function parameter
 
 ```rust
 use anyhow::Result;
-use kronk_core::config::Config;
+use koji_core::config::Config;
 ```
 
-That's it. The function uses `reqwest::Client`, `kronk_core::platform::windows::query_service`, `kronk_core::platform::linux::query_service`, and `Config::service_name` — but all via fully-qualified paths already in the source code, so they don't need `use` imports.
+That's it. The function uses `reqwest::Client`, `koji_core::platform::windows::query_service`, `koji_core::platform::linux::query_service`, and `Config::service_name` — but all via fully-qualified paths already in the source code, so they don't need `use` imports.
 
 2. **`cmd_server_ls`** — copy lines 28–108 from `server.rs` VERBATIM. Keep as `pub async fn`. No changes needed — this function doesn't call `resolve_backend` or any other function in `server.rs`.
 
@@ -173,13 +173,13 @@ Moving the `cmd_server_rm` function (lines 110–162, 52 lines) into its own fil
 
 **Step 3.1: Create `server/rm.rs`**
 
-Create the file `crates/kronk-cli/src/handlers/server/rm.rs`.
+Create the file `crates/koji-cli/src/handlers/server/rm.rs`.
 
 1. **Imports:**
 
 ```rust
 use anyhow::{Context, Result};
-use kronk_core::config::Config;
+use koji_core::config::Config;
 ```
 
 `Context` is needed because line 149 uses `.context("Confirmation cancelled")`.
@@ -201,16 +201,16 @@ Moving the `cmd_server_add` function (lines 242–427, 185 lines) into its own f
 
 **Step 4.1: Create `server/add.rs`**
 
-Create the file `crates/kronk-cli/src/handlers/server/add.rs`.
+Create the file `crates/koji-cli/src/handlers/server/add.rs`.
 
 1. **Imports:**
 
 ```rust
 use anyhow::{Context, Result};
-use kronk_core::config::Config;
+use koji_core::config::Config;
 ```
 
-That's it. The function uses `kronk_core::models::ModelRegistry`, `kronk_core::profiles::Profile`, `kronk_core::config::ModelConfig`, and `inquire::Select` — but all via fully-qualified paths in the source. The `use anyhow::Context;` on line 249 of the original is a local import inside the function body — we move it to the file-level import instead, so **delete the `use anyhow::Context;` line from inside the function body** (line 249 in the original).
+That's it. The function uses `koji_core::models::ModelRegistry`, `koji_core::profiles::Profile`, `koji_core::config::ModelConfig`, and `inquire::Select` — but all via fully-qualified paths in the source. The `use anyhow::Context;` on line 249 of the original is a local import inside the function body — we move it to the file-level import instead, so **delete the `use anyhow::Context;` line from inside the function body** (line 249 in the original).
 
 2. **`cmd_server_add`** — copy lines 242–427 from `server.rs`. Keep as `pub async fn`. Make these changes:
 
@@ -249,7 +249,7 @@ to:
     let (backend_key, exe_str) = super::resolve_backend(&mut config, exe_path)?;
 ```
 
-**Change 3:** Line 264 calls `crate::flags::extract_kronk_flags`. This does NOT need to change — it's already a fully-qualified path from the crate root.
+**Change 3:** Line 264 calls `crate::flags::extract_koji_flags`. This does NOT need to change — it's already a fully-qualified path from the crate root.
 
 **That's it.** Only 2 changes: remove inner `use` statement, add `super::` to `resolve_backend`.
 
@@ -268,13 +268,13 @@ Moving the `cmd_server_edit` function (lines 429–499, 70 lines) into its own f
 
 **Step 5.1: Create `server/edit.rs`**
 
-Create the file `crates/kronk-cli/src/handlers/server/edit.rs`.
+Create the file `crates/koji-cli/src/handlers/server/edit.rs`.
 
 1. **Imports:**
 
 ```rust
 use anyhow::Result;
-use kronk_core::config::Config;
+use koji_core::config::Config;
 ```
 
 No `Context` needed — `cmd_server_edit` doesn't use `.context()` or `.with_context()`.
@@ -308,14 +308,14 @@ Now that all the code lives in `server/mod.rs` + submodules, the old single file
 **Step 6.1: Delete the old file**
 
 ```bash
-rm crates/kronk-cli/src/handlers/server.rs
+rm crates/koji-cli/src/handlers/server.rs
 ```
 
 ### Verification
 
 At this point you should have:
 ```
-crates/kronk-cli/src/handlers/
+crates/koji-cli/src/handlers/
 ├── mod.rs              ← UNCHANGED
 ├── server/             ← NEW DIRECTORY
 │   ├── mod.rs          ← Dispatcher + resolve_backend + re-exports
@@ -332,7 +332,7 @@ crates/kronk-cli/src/handlers/
 └── status.rs           ← UNCHANGED
 ```
 
-The OLD file `crates/kronk-cli/src/handlers/server.rs` should NOT exist.
+The OLD file `crates/koji-cli/src/handlers/server.rs` should NOT exist.
 
 ---
 
@@ -359,7 +359,7 @@ cargo build --workspace
 - `"cannot find function resolve_backend"` in `add.rs` or `edit.rs` → You forgot the `super::` prefix. Change `resolve_backend(...)` to `super::resolve_backend(...)`.
 - `"cannot find function cmd_server_ls"` (or add/edit/rm) in `mod.rs` → The `pub use` re-export is wrong. Check spelling: `pub use ls::cmd_server_ls;` etc.
 - `"unused import"` for `Context` → A file imports `Context` but doesn't use it. Remove it from that file's imports.
-- `"module server not found"` → The directory name is wrong or `mod.rs` is missing. Check that `crates/kronk-cli/src/handlers/server/mod.rs` exists (not `crates/kronk-cli/src/handlers/server.rs`).
+- `"module server not found"` → The directory name is wrong or `mod.rs` is missing. Check that `crates/koji-cli/src/handlers/server/mod.rs` exists (not `crates/koji-cli/src/handlers/server.rs`).
 - `"duplicate module"` → You have BOTH `server.rs` and `server/mod.rs`. Delete `server.rs`.
 
 **Step 7.3: Run clippy**
@@ -396,12 +396,12 @@ git diff --stat
 
 You should see ONLY these changes:
 ```
- deleted:    crates/kronk-cli/src/handlers/server.rs
- new file:   crates/kronk-cli/src/handlers/server/mod.rs
- new file:   crates/kronk-cli/src/handlers/server/ls.rs
- new file:   crates/kronk-cli/src/handlers/server/add.rs
- new file:   crates/kronk-cli/src/handlers/server/edit.rs
- new file:   crates/kronk-cli/src/handlers/server/rm.rs
+ deleted:    crates/koji-cli/src/handlers/server.rs
+ new file:   crates/koji-cli/src/handlers/server/mod.rs
+ new file:   crates/koji-cli/src/handlers/server/ls.rs
+ new file:   crates/koji-cli/src/handlers/server/add.rs
+ new file:   crates/koji-cli/src/handlers/server/edit.rs
+ new file:   crates/koji-cli/src/handlers/server/rm.rs
 ```
 
 **If you see any other files modified** (like `lib.rs`, `handlers/mod.rs`, `tests.rs`), something went wrong. The whole point is that `mod.rs` re-exports make this transparent to callers.
@@ -412,12 +412,12 @@ You should see ONLY these changes:
 
 ## Checklist Before Committing
 
-- [ ] `crates/kronk-cli/src/handlers/server.rs` is DELETED (does not exist)
-- [ ] `crates/kronk-cli/src/handlers/server/mod.rs` exists with dispatcher + resolve_backend + re-exports
-- [ ] `crates/kronk-cli/src/handlers/server/ls.rs` exists with `cmd_server_ls`
-- [ ] `crates/kronk-cli/src/handlers/server/add.rs` exists with `cmd_server_add`
-- [ ] `crates/kronk-cli/src/handlers/server/edit.rs` exists with `cmd_server_edit`
-- [ ] `crates/kronk-cli/src/handlers/server/rm.rs` exists with `cmd_server_rm`
+- [ ] `crates/koji-cli/src/handlers/server.rs` is DELETED (does not exist)
+- [ ] `crates/koji-cli/src/handlers/server/mod.rs` exists with dispatcher + resolve_backend + re-exports
+- [ ] `crates/koji-cli/src/handlers/server/ls.rs` exists with `cmd_server_ls`
+- [ ] `crates/koji-cli/src/handlers/server/add.rs` exists with `cmd_server_add`
+- [ ] `crates/koji-cli/src/handlers/server/edit.rs` exists with `cmd_server_edit`
+- [ ] `crates/koji-cli/src/handlers/server/rm.rs` exists with `cmd_server_rm`
 - [ ] `add.rs` does NOT have `use anyhow::Context;` inside the function body (moved to file-level)
 - [ ] `add.rs` calls `super::resolve_backend(...)`, NOT `resolve_backend(...)`
 - [ ] `edit.rs` calls `super::resolve_backend(...)`, NOT `resolve_backend(...)`
