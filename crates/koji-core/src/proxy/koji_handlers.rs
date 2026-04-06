@@ -971,6 +971,41 @@ pub async fn handle_koji_system_restart(_state: State<Arc<ProxyState>>) -> Respo
     .into_response()
 }
 
+/// Stream live system metrics samples as SSE events.
+///
+/// Subscribes to the `metrics_tx` broadcast channel in `ProxyState`. Each
+/// sample emitted by the metrics task (every 2s) is forwarded as an
+/// `event: "sample"` SSE event with a JSON-serialized `MetricSample` body.
+/// On subscriber lag, emits an `event: "lagged"` event with `{"missed": N}`
+/// and continues. On channel close, the stream ends.
+///
+/// No historical backfill — the stream begins from the next live sample.
+///
+/// Registered as `GET /koji/v1/system/metrics/stream`.
+pub async fn handle_system_metrics_stream(
+    State(state): State<Arc<ProxyState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.metrics_tx.subscribe();
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(sample) => {
+                    let data = serde_json::to_string(&sample).unwrap_or_default();
+                    yield Ok(Event::default().event("sample").data(data));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    let data = format!("{{\"missed\":{}}}", n);
+                    yield Ok(Event::default().event("lagged").data(data));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

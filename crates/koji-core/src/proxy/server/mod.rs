@@ -171,6 +171,7 @@ impl ProxyServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -266,5 +267,80 @@ mod tests {
             "cpu_usage_pct should be non-negative"
         );
         assert!(sample.ram_total_mib > 0, "ram_total_mib should be positive");
+    }
+
+    #[tokio::test]
+    async fn test_system_metrics_stream_emits_samples() {
+        use bytes::Bytes;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(
+            config,
+            Some(tmp.path().to_path_buf()),
+        ));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+
+        let server = ProxyServer::new(state.clone());
+        let app = server.into_router();
+        let _handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!(
+                "http://{}/koji/v1/system/metrics/stream",
+                bound_addr
+            ))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(content_type.contains("text/event-stream"));
+
+        let mut stream = response.bytes_stream();
+        let mut found_sample = false;
+        while let Some(chunk) =
+            tokio::time::timeout(std::time::Duration::from_secs(4), stream.next())
+                .await
+                .unwrap()
+        {
+            let chunk: Bytes = chunk.unwrap();
+            let data = String::from_utf8_lossy(&chunk);
+            if data.contains("event: sample") {
+                // Parse the data: line to extract data: line
+                for line in data.lines() {
+                    if let Some(data_line) = line.strip_prefix("data: ") {
+                        let sample: crate::gpu::MetricSample =
+                            serde_json::from_str(data_line).unwrap();
+                        assert!(sample.ts_unix_ms > 0);
+                        assert!(sample.ram_total_mib > 0);
+                        found_sample = true;
+                        break;
+                    }
+                }
+                if found_sample {
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            found_sample,
+            "Expected to receive a sample event within 4s, but none was found"
+        );
     }
 }
