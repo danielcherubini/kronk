@@ -73,6 +73,15 @@ pub struct ConfigBody {
     pub content: String,
 }
 
+/// Update the proxy's live in-memory config after a successful disk save.
+/// No-op if proxy_config is None (standalone web server without proxy).
+async fn sync_proxy_config(state: &AppState, new_config: kronk_core::config::Config) {
+    if let Some(ref proxy_config) = state.proxy_config {
+        let mut config = proxy_config.write().await;
+        *config = new_config;
+    }
+}
+
 pub async fn save_config(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ConfigBody>,
@@ -97,9 +106,23 @@ pub async fn save_config(
         )
             .into_response();
     }
+    // Keep a copy of the validated content for syncing after the write.
+    let content_for_sync = body.content.clone();
     // Use spawn_blocking for synchronous file I/O.
     match tokio::task::spawn_blocking(move || std::fs::write(&path, &body.content)).await {
-        Ok(Ok(_)) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(Ok(_)) => {
+            // Parse the validated TOML into a Config and sync the proxy's live config.
+            if let Ok(mut new_config) =
+                toml::from_str::<kronk_core::config::Config>(&content_for_sync)
+            {
+                // Restore loaded_from from the existing proxy config (it is skipped by serde).
+                if let Some(ref proxy_config) = state.proxy_config {
+                    new_config.loaded_from = proxy_config.read().await.loaded_from.clone();
+                }
+                sync_proxy_config(&state, new_config).await;
+            }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
@@ -321,6 +344,7 @@ pub async fn update_model(
     Path(id): Path<String>,
     Json(body): Json<ModelBody>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
         if !cfg.models.contains_key(&id) {
@@ -338,11 +362,14 @@ pub async fn update_model(
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        Ok(serde_json::json!({ "ok": true, "id": id }))
+        Ok((cfg, serde_json::json!({ "ok": true, "id": id })))
     })
     .await
     {
-        Ok(Ok(val)) => Json(val).into_response(),
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            Json(val).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -364,6 +391,7 @@ pub async fn create_model(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateModelBody>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
         let id = body.id.trim().to_string();
@@ -387,11 +415,14 @@ pub async fn create_model(
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        Ok(serde_json::json!({ "ok": true, "id": id }))
+        Ok((cfg, serde_json::json!({ "ok": true, "id": id })))
     })
     .await
     {
-        Ok(Ok(val)) => (StatusCode::CREATED, Json(val)).into_response(),
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            (StatusCode::CREATED, Json(val)).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -413,6 +444,7 @@ pub async fn rename_model(
     Path(id): Path<String>,
     Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
 
@@ -450,11 +482,14 @@ pub async fn rename_model(
             )
         })?;
 
-        Ok(serde_json::json!({ "ok": true, "id": new_id }))
+        Ok((cfg, serde_json::json!({ "ok": true, "id": new_id })))
     })
     .await
     {
-        Ok(Ok(val)) => Json(val).into_response(),
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            Json(val).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -469,6 +504,7 @@ pub async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
         if cfg.models.remove(&id).is_none() {
@@ -483,11 +519,14 @@ pub async fn delete_model(
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        Ok(serde_json::json!({ "ok": true }))
+        Ok((cfg, serde_json::json!({ "ok": true })))
     })
     .await
     {
-        Ok(Ok(val)) => Json(val).into_response(),
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            Json(val).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
