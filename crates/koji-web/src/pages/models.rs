@@ -150,3 +150,149 @@ pub fn Models() -> impl IntoView {
         </Suspense>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Stub for TDD - returns empty partitions (will fail tests)
+    fn partition_models_by_loaded(models: Vec<ModelEntry>) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
+        (vec![], vec![])
+    }
+
+    #[test]
+    fn test_all_loaded_returns_n_zero() {
+        let models = vec![
+            ModelEntry {
+                id: "model-1".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama2".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+            ModelEntry {
+                id: "model-2".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama3".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+        ];
+        let (loaded, unloaded) = partition_models_by_loaded(models);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(unloaded.len(), 0);
+    }
+
+    #[test]
+    fn test_all_unloaded_returns_zero_n() {
+        let models = vec![
+            ModelEntry {
+                id: "model-1".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama2".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: false,
+            },
+            ModelEntry {
+                id: "model-2".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama3".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: false,
+            },
+        ];
+        let (loaded, unloaded) = partition_models_by_loaded(models);
+        assert_eq!(loaded.len(), 0);
+        assert_eq!(unloaded.len(), 2);
+    }
+
+    #[test]
+    fn test_mixed_returns_correct_split() {
+        let models = vec![
+            ModelEntry {
+                id: "model-1".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama2".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+            ModelEntry {
+                id: "model-2".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama3".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: false,
+            },
+            ModelEntry {
+                id: "model-3".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama4".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+        ];
+        let (loaded, unloaded) = partition_models_by_loaded(models);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(unloaded.len(), 1);
+    }
+
+    #[test]
+    fn test_empty_returns_zero_zero() {
+        let models: Vec<ModelEntry> = vec![];
+        let (loaded, unloaded) = partition_models_by_loaded(models);
+        assert_eq!(loaded.len(), 0);
+        assert_eq!(unloaded.len(), 0);
+    }
+
+    #[test]
+    fn test_sorts_both_partitions_by_id() {
+        let models = vec![
+            ModelEntry {
+                id: "model-2".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama3".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+            ModelEntry {
+                id: "model-1".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama2".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: true,
+            },
+            ModelEntry {
+                id: "model-4".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama5".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: false,
+            },
+            ModelEntry {
+                id: "model-3".to_string(),
+                backend: "llama.cpp".to_string(),
+                model: "llama4".to_string(),
+                quant: None,
+                enabled: true,
+                loaded: false,
+            },
+        ];
+        let (loaded, unloaded) = partition_models_by_loaded(models);
+        // Check loaded partition is sorted by id
+        assert_eq!(loaded[0].id, "model-1");
+        assert_eq!(loaded[1].id, "model-2");
+        // Check unloaded partition is sorted by id
+        assert_eq!(unloaded[0].id, "model-3");
+        assert_eq!(unloaded[1].id, "model-4");
+    }
+}
