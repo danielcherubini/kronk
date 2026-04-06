@@ -322,12 +322,14 @@ mod tests {
         assert_eq!(loaded_custom.top_k, Some(100));
     }
 
+    /// Test that the default `metrics_retention_secs` equals 86_400 (24 hours).
     #[test]
     fn test_proxy_config_default_metrics_retention() {
         let config = ProxyConfig::default();
         assert_eq!(config.metrics_retention_secs, 86_400);
     }
 
+    /// Test that deserializing `metrics_retention_secs = 3600` sets the field correctly.
     #[test]
     fn test_proxy_config_deserializes_metrics_retention() {
         let toml_str = r#"

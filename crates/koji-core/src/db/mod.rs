@@ -161,6 +161,7 @@ mod tests {
         );
     }
 
+    /// Test that migration v4 creates the `system_metrics_history` table and its index.
     #[test]
     fn test_migration_v4_creates_system_metrics_history() {
         let OpenResult { conn, .. } = open_in_memory().unwrap();

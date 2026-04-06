@@ -165,6 +165,7 @@ impl ProxyState {
 mod tests {
     use super::*;
 
+    /// Test that `ProxyState::new` creates a metrics channel and that subscribing adds a receiver.
     #[test]
     fn test_proxy_state_new_creates_metrics_channel() {
         let config = crate::config::Config::default();

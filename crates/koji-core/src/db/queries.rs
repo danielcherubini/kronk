@@ -3,7 +3,7 @@
 //! All functions take a `&Connection` — the caller owns the connection.
 //! All functions are synchronous (no async).
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::Connection;
 
 // ---------------------------------------------------------------------------
@@ -506,6 +506,9 @@ pub fn get_system_metrics_since(conn: &Connection, since_ms: i64) -> Result<Vec<
 
 /// Fetch the most recent `limit` samples, oldest-first.
 pub fn get_recent_system_metrics(conn: &Connection, limit: i64) -> Result<Vec<SystemMetricsRow>> {
+    if limit < 0 {
+        bail!("limit must be >= 0");
+    }
     let mut stmt = conn.prepare(
         "SELECT ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
                  gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded

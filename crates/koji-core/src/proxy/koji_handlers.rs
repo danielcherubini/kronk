@@ -990,8 +990,10 @@ pub async fn handle_system_metrics_stream(
         loop {
             match rx.recv().await {
                 Ok(sample) => {
-                    let data = serde_json::to_string(&sample).unwrap_or_default();
-                    yield Ok(Event::default().event("sample").data(data));
+                    match serde_json::to_string(&sample) {
+                        Ok(data) => yield Ok(Event::default().event("sample").data(data)),
+                        Err(e) => tracing::warn!("failed to serialize MetricSample: {}", e),
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     let data = format!("{{\"missed\":{}}}", n);

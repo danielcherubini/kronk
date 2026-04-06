@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Add `metrics_retention_secs` to `ProxyConfig`
+## Task 1: Add `metrics_retention_secs` to `ProxyConfig`
 
 **Context:**
 The plan requires a user-tunable retention window for stored metric samples. The proxy already has a `ProxyConfig` struct in `crates/koji-core/src/config/types.rs` that uses `serde` with `#[serde(default = "...")]` helpers (e.g. `idle_timeout_secs`, `circuit_breaker_threshold`). We mirror that pattern. Default is 86400 seconds (24 hours). This is the *only* config change needed for the entire feature; it must be in place before Task 4 (the metrics task) reads it.
@@ -66,7 +66,7 @@ The plan requires a user-tunable retention window for stored metric samples. The
 
 ---
 
-### Task 2: DB migration v4 — `system_metrics_history` table and queries
+## Task DB migration v4 — `system_metrics_history` table and queries
 
 **Context:**
 Koji already uses a SQLite database at `<config_dir>/koji.db` with a `PRAGMA user_version`-driven migration system in `crates/koji-core/src/db/migrations.rs` (currently at `LATEST_VERSION = 3`). All write/read helpers live in `crates/koji-core/src/db/queries.rs` and take a plain `&Connection`. We add a new migration (v4) that creates `system_metrics_history`, plus typed helpers to insert (with inline pruning) and read recent rows. This task is independently committable: nothing else in the codebase references the new table or helpers yet. Time is stored as `INTEGER` unix milliseconds for sortability and simple range queries.
@@ -226,7 +226,7 @@ Koji already uses a SQLite database at `<config_dir>/koji.db` with a `PRAGMA use
 
 ---
 
-### Task 3: Add `MetricSample` type and broadcast channel to `ProxyState`
+## Task Add `MetricSample` type and broadcast channel to `ProxyState`
 
 **Context:**
 We need a single in-process pub/sub channel so the metrics task (one producer) can fan out samples to N concurrent SSE subscribers (zero or more consumers). `tokio::sync::broadcast` is the right primitive: it handles slow consumers via `RecvError::Lagged` and tolerates zero subscribers (the producer's `send` just returns `Err(SendError)` which we ignore). We also introduce a new `MetricSample` struct that bundles everything the dashboard needs into a single serializable record. This struct is the wire format for the SSE stream and the in-memory broadcast payload.
@@ -295,7 +295,7 @@ We need a single in-process pub/sub channel so the metrics task (one producer) c
 
 ---
 
-### Task 4: Drop metrics interval to 2s and persist + broadcast each sample
+## Task Drop metrics interval to 2s and persist + broadcast each sample
 
 **Context:**
 `ProxyServer::new` in `crates/koji-core/src/proxy/server/mod.rs` currently spawns a Tokio task that calls `crate::gpu::collect_system_metrics_with` every 5 seconds and writes the result to `state.system_metrics`. We extend this task to:
@@ -425,7 +425,7 @@ let metrics_handle = tokio::spawn(async move {
 
 ---
 
-### Task 5: New SSE endpoint `GET /koji/v1/system/metrics/stream`
+## Task New SSE endpoint `GET /koji/v1/system/metrics/stream`
 
 **Context:**
 We expose the broadcast channel to web clients via Server-Sent Events. The dashboard will connect once on mount and consume samples for as long as the page is open. Per user decision in the planning conversation: **no historical backfill** — the stream emits only live samples from the moment the client subscribes. The handler subscribes to `state.metrics_tx`, then uses `async_stream::stream!` to forward each received `MetricSample` as an SSE `event: "sample"` with the JSON-serialized payload as `data`. On `RecvError::Lagged(n)` we emit a `event: "lagged"` data event with the count and continue. On `RecvError::Closed` we end the stream cleanly.
@@ -519,7 +519,7 @@ This mirrors the existing `handle_pull_job_stream` in `crates/koji-core/src/prox
 
 ---
 
-### Task 6: Document the new endpoint in OpenAPI
+## Task Document the new endpoint in OpenAPI
 
 **Context:**
 The Koji management API is documented in `docs/openapi/koji-api.yaml`. The existing `/koji/v1/system/health` entry lives around line 301. We add a peer entry for `/koji/v1/system/metrics/stream` and a `MetricSample` schema. This task is independently committable: it touches only docs and has no Rust code dependencies (the schema is hand-written to match Task 3's struct).
@@ -610,7 +610,7 @@ The Koji management API is documented in `docs/openapi/koji-api.yaml`. The exist
 - [ ] Add the new path entry after `/koji/v1/system/health`.
 - [ ] Add the `MetricSample` schema (and `VramInfo` if missing) under `components.schemas`.
 - [ ] If a workspace has an OpenAPI linter (search for `redocly`, `spectral`, or `openapi` in `Makefile` and root config files), run it. Otherwise, validate manually with a YAML parser:
-  ```
+  ```bash
   python3 -c "import yaml; yaml.safe_load(open('docs/openapi/koji-api.yaml'))"
   ```
   - Did it parse without error? If not, fix YAML syntax and re-run.
@@ -624,7 +624,7 @@ The Koji management API is documented in `docs/openapi/koji-api.yaml`. The exist
 
 ---
 
-### Task 7: Frontend — replace polling with `EventSource`
+## Task Frontend — replace polling with `EventSource`
 
 **Context:**
 Today, `crates/koji-web/src/pages/dashboard.rs` polls `/koji/v1/system/health` every 3 seconds via `web_sys::set_interval` and accumulates a 100-entry in-memory ring buffer. We replace this with a `web_sys::EventSource` connection to `/koji/v1/system/metrics/stream`. Each `sample` event is parsed into a new local `MetricSample` struct (mirror of the backend struct from Task 3) and pushed into the existing `history` `RwSignal`. The 100-entry cap stays — at 2s cadence that's ~3.3 minutes of live data. The status badge in the page header continues to derive from the most recent sample (per user decision, we hard-code `"ok"` as the status string since the existence of recent samples implies health). The "Restart" button is unchanged. The error/retry UX is preserved: if `EventSource.onerror` fires AND the history buffer is empty, we show the existing failure card with a Retry button that re-creates the EventSource.
@@ -789,7 +789,7 @@ Today, `crates/koji-web/src/pages/dashboard.rs` polls `/koji/v1/system/health` e
 
 ---
 
-### Task 8: Mark the prior in-memory plan as superseded
+## Task Mark the prior in-memory plan as superseded
 
 **Context:**
 `docs/plans/2026-04-06-dashboard-time-series-graphs.md` describes the in-memory ring buffer approach that this plan supersedes. Adding a one-line note prevents future readers from mistaking it for current architecture.
