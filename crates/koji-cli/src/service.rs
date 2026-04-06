@@ -308,9 +308,10 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                 .build_full_args(srv, backend, ctx)
                 .unwrap_or_else(|e| {
                     tracing::warn!("Failed to build model args: {}", e);
-                    let mut args = backend.default_args.clone();
-                    args.extend(srv.args.clone());
-                    args
+                    koji_core::config::flatten_args(&koji_core::config::merge_args(
+                        &backend.default_args,
+                        &srv.args,
+                    ))
                 });
             let log_dir = config.logs_dir().unwrap_or_else(|e| {
                 tracing::warn!("Failed to get logs directory: {}, using current dir", e);
