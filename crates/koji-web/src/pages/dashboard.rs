@@ -89,7 +89,7 @@ pub fn Dashboard() -> impl IntoView {
             {move || {
                 history.get().last().cloned().map(|_h| view! {
                     <div class="flex-between gap-1">
-                        <span class="badge-success">"ok"</span>
+                        <span class="badge badge-success">"ok"</span>
                         <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
                     </div>
                 })
