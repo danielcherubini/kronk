@@ -102,6 +102,10 @@ pub fn flag_name(token: &str) -> Result<String> {
 /// This function processes a list of argument strings, splitting any compound
 /// arguments and returning a flat list of individual argument tokens.
 ///
+/// Grouped entries like "-b 4096" are split into separate tokens.
+/// Entries with equals signs like "--model=/path" are kept as-is.
+/// Quoted values are preserved.
+///
 /// # Examples
 ///
 /// ```
@@ -114,13 +118,36 @@ pub fn flag_name(token: &str) -> Result<String> {
 /// let args = vec!["--verbose".to_string(), "--help".to_string()];
 /// let flattened = flatten_args(&args).unwrap();
 /// assert_eq!(flattened, vec!["--verbose".to_string(), "--help".to_string()]);
+///
+/// let args = vec!["-b 4096".to_string(), "-t 14".to_string()];
+/// let flattened = flatten_args(&args).unwrap();
+/// assert_eq!(flattened, vec!["-b".to_string(), "4096".to_string(), "-t".to_string(), "14".to_string()]);
 /// ```
 pub fn flatten_args(args: &[String]) -> Result<Vec<String>> {
     let mut result = Vec::new();
 
     for arg in args {
         let trimmed = arg.trim();
-        if !trimmed.is_empty() {
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Check if this is a grouped entry (flag + space + value)
+        // Flag entries start with '-' but are not quoted
+        if trimmed.starts_with('-') && !trimmed.starts_with('"') && !trimmed.starts_with('\'') {
+            // Check if there's a space separating flag from value
+            if let Some(space_pos) = trimmed.find(' ') {
+                // Split into flag and value
+                let flag = trimmed[..space_pos].to_string();
+                let value = trimmed[space_pos + 1..].to_string();
+                result.push(flag);
+                result.push(value);
+            } else {
+                // No space, keep as single token
+                result.push(trimmed.to_string());
+            }
+        } else {
+            // Not a flag entry, keep as single token
             result.push(trimmed.to_string());
         }
     }
