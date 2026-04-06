@@ -481,6 +481,23 @@ label {
 /* Specific styles for progress bar indeterminate animation are defined in section 9 */
 
 /* 17. Models grid & cards */
+.model-section {
+    margin-bottom: 2rem;
+}
+
+.model-section:last-child {
+    margin-bottom: 0;
+}
+
+.model-section__title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
 .models-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
