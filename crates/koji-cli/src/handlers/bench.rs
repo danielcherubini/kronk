@@ -1,6 +1,6 @@
 //! Bench command handler
 //!
-//! Handles `kronk bench` for benchmarking model inference performance.
+//! Handles `koji bench` for benchmarking model inference performance.
 
 use anyhow::{bail, Context, Result};
 use koji_core::bench::{self, BenchConfig};
@@ -63,7 +63,7 @@ pub async fn cmd_bench(
         servers.sort();
 
         if servers.is_empty() {
-            bail!("No enabled model configs found. Create one with `kronk model create`.");
+            bail!("No enabled model configs found. Create one with `koji model create`.");
         }
 
         servers

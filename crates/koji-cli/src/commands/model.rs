@@ -269,8 +269,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     let vram = koji_core::gpu::query_vram();
 
     let selected_ctx = if largest_model_bytes > 0 {
-        let suggestions =
-            koji_core::gpu::suggest_context_sizes(largest_model_bytes, vram.as_ref());
+        let suggestions = koji_core::gpu::suggest_context_sizes(largest_model_bytes, vram.as_ref());
 
         if let Some(ref v) = vram {
             println!();
@@ -408,7 +407,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("  Create a model config:");
     for quant_key in card.quants.keys() {
         println!(
-            "    kronk model create --model {} --quant {} --profile coding --name my-server",
+            "    koji model create --model {} --quant {} --profile coding --name my-server",
             model_id, quant_key
         );
     }
@@ -429,7 +428,7 @@ fn cmd_ls(
 
     let installed = registry.find(&model_id)?.with_context(|| {
         format!(
-            "Model '{}' not found. Run `kronk model ls` to see installed models.",
+            "Model '{}' not found. Run `koji model ls` to see installed models.",
             model_id
         )
     })?;
@@ -509,7 +508,7 @@ async fn cmd_create(
     // Check if server name already exists
     if config.models.contains_key(&server_name) {
         anyhow::bail!(
-            "Server '{}' already exists. Use `kronk server edit` or choose a different name.",
+            "Server '{}' already exists. Use `koji server edit` or choose a different name.",
             server_name
         );
     }
@@ -531,7 +530,7 @@ async fn cmd_create(
         None => {
             let keys: Vec<String> = config.backends.keys().cloned().collect();
             match keys.len() {
-                0 => anyhow::bail!("No backends configured. Add one first with `kronk add`."),
+                0 => anyhow::bail!("No backends configured. Add one first with `koji add`."),
                 1 => keys.into_iter().next().unwrap(),
                 _ => inquire::Select::new("Select a backend:", keys)
                     .prompt()
@@ -579,17 +578,14 @@ async fn cmd_create(
     }
     if let Some(mc) = config.models.get(&server_name) {
         if let Some(sampling) = &mc.sampling {
-            println!(
-                "  Profile:   {}",
-                sampling.preset_label()
-            );
+            println!("  Profile:   {}", sampling.preset_label());
         } else if let Some(p) = &mc.profile {
             println!("  Profile:   {}", p);
         }
     }
     println!();
-    println!("Enable it:   kronk model enable {}", server_name);
-    println!("Start:       kronk serve");
+    println!("Enable it:   koji model enable {}", server_name);
+    println!("Start:       koji serve");
 
     Ok(())
 }
@@ -1105,7 +1101,7 @@ async fn cmd_search(
         // Delegate to cmd_pull
         cmd_pull(config, &selected).await?;
     } else {
-        println!("  Pull one:  kronk model pull <model-id>");
+        println!("  Pull one:  koji model pull <model-id>");
     }
 
     Ok(())

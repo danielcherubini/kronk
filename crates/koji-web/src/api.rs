@@ -29,7 +29,7 @@ pub async fn get_logs(
                 .into_response()
         }
     };
-    let log_path = dir.join("kronk.log");
+    let log_path = dir.join("koji.log");
     // Use spawn_blocking for synchronous file I/O to avoid blocking the Tokio runtime.
     let log_path_clone = log_path.clone();
     let n = query.lines;

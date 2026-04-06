@@ -30,7 +30,7 @@ pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
 
     if service_installed {
         anyhow::bail!(
-            "Server '{}' has an installed service '{}'. Remove it first with: kronk service remove {}",
+            "Server '{}' has an installed service '{}'. Remove it first with: koji service remove {}",
             name, service_name, name
         );
     }

@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(urlencoding("中文"), "%E4%B8%AD%E6%96%87");
     }
 
-    // Network test — run with: cargo test -p kronk-core -- search --ignored
+    // Network test — run with: cargo test -p koji-core -- search --ignored
     #[tokio::test]
     #[ignore]
     async fn test_search_gguf_models() {

@@ -1,4 +1,4 @@
-//! Typed query functions for the kronk SQLite database.
+//! Typed query functions for the koji SQLite database.
 //!
 //! All functions take a `&Connection` — the caller owns the connection.
 //! All functions are synchronous (no async).

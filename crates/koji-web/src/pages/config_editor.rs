@@ -92,7 +92,7 @@ pub fn ConfigEditor() -> impl IntoView {
                 view! {
                     <div class="form-card card">
                         <div class="form-card__header">
-                            <h2 class="form-card__title">"kronk.toml"</h2>
+                            <h2 class="form-card__title">"koji.toml"</h2>
                             <p class="form-card__desc text-muted">
                                 "Edit the raw TOML configuration. Changes take effect after saving and reloading the service."
                             </p>

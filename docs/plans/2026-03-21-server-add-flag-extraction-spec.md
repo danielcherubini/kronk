@@ -114,7 +114,7 @@ When `--model` is extracted as a model card reference, `ModelConfig.source` is a
 
 Both commands will print detailed output matching `model create`:
 ```text
-Oh yeah, it's all coming together.
+Done.
 
   Name:      qwen35
   Model:     unsloth/Qwen3.5-0.8B

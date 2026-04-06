@@ -1,6 +1,6 @@
 //! Logs command handler
 //!
-//! Handles `kronk logs <server>` for viewing server logs.
+//! Handles `koji logs <server>` for viewing server logs.
 
 use anyhow::Result;
 use koji_core::config::Config;
@@ -16,7 +16,7 @@ pub async fn cmd_logs(config: &Config, name: &str, follow: bool, lines: usize) -
         println!("No logs found for '{}'.", name);
         println!();
         println!("Logs are created when running as a service.");
-        println!("Install the service: kronk service install");
+        println!("Install the service: koji service install");
         return Ok(());
     }
 

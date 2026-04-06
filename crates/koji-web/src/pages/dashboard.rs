@@ -110,7 +110,7 @@ pub fn Dashboard() -> impl IntoView {
                 // Network error, no data yet — show error with retry button
                 return view! {
                     <div class="card">
-                        <p class="text-error">"Failed to load health data. Is Kronk running?"</p>
+                        <p class="text-error">"Failed to load health data. Is Koji running?"</p>
                         <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
                     </div>
                 }.into_any();

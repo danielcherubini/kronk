@@ -16,7 +16,7 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
 
     let (backend_key, exe_str) = super::resolve_backend(config, exe_path)?;
 
-    // Extract kronk flags from args
+    // Extract koji flags from args
     let extracted = crate::flags::extract_koji_flags(args)?;
 
     // Mutate via get_mut in a block so the borrow is dropped before save()
@@ -65,21 +65,13 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     }
     if let Some(sampling) = &srv.sampling {
         // Show which profile was used based on sampling values
-        if sampling.temperature == Some(0.3)
-            && sampling.top_p == Some(0.9)
-        {
+        if sampling.temperature == Some(0.3) && sampling.top_p == Some(0.9) {
             println!("  Profile:  coding");
-        } else if sampling.temperature == Some(0.7)
-            && sampling.top_p == Some(0.95)
-        {
+        } else if sampling.temperature == Some(0.7) && sampling.top_p == Some(0.95) {
             println!("  Profile:  chat");
-        } else if sampling.temperature == Some(0.2)
-            && sampling.top_p == Some(0.5)
-        {
+        } else if sampling.temperature == Some(0.2) && sampling.top_p == Some(0.5) {
             println!("  Profile:  analysis");
-        } else if sampling.temperature == Some(0.9)
-            && sampling.top_p == Some(0.95)
-        {
+        } else if sampling.temperature == Some(0.9) && sampling.top_p == Some(0.95) {
             println!("  Profile:  creative");
         } else {
             println!("  Profile:  custom");

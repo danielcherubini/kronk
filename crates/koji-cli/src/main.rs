@@ -1,6 +1,6 @@
-//! Kronk CLI
+//! Koji CLI
 //!
-//! This is the entry point for the kronk CLI application.
+//! This is the entry point for the koji CLI application.
 //! It delegates to the library crate for all functionality.
 
 fn main() {

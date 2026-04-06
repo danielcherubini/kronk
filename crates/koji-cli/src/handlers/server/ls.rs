@@ -5,7 +5,7 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
     if config.models.is_empty() {
         println!("No models configured.");
         println!();
-        println!("Pull one: kronk model pull <repo>");
+        println!("Pull one: koji model pull <repo>");
         return Ok(());
     }
 

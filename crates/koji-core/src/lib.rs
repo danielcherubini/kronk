@@ -1,12 +1,12 @@
-//! Kronk Core Library
+//! Koji Core Library
 //!
-//! Core functionality for Kronk including model card management, process supervision,
+//! Core functionality for Koji including model card management, process supervision,
 //! and platform abstractions.
 //!
 //! ## Model Card Configuration
 //!
-//! Kronk uses model cards to store quantization info, context settings, and sampling presets
-//! for each model. Model cards are stored in `~/.config/kronk/configs/<company>--<model>.toml`
+//! Koji uses model cards to store quantization info, context settings, and sampling presets
+//! for each model. Model cards are stored in `~/.config/koji/configs/<company>--<model>.toml`
 //! and are automatically discovered when models are installed.
 
 pub mod backends;

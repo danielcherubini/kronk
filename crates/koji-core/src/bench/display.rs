@@ -17,7 +17,7 @@ pub fn print_bench_report(report: &BenchReport) {
     let name = &report.model_info.name;
 
     println!(
-        "kronk bench — {}{}{} via {}",
+        "koji bench — {}{}{} via {}",
         name,
         if !model_id_str.is_empty() {
             format!(" ({})", model_id_str)

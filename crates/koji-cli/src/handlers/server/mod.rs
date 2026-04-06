@@ -1,6 +1,6 @@
 //! Server command handler
 //!
-//! Handles `kronk server ls/add/edit/rm` commands.
+//! Handles `koji server ls/add/edit/rm` commands.
 mod add;
 mod edit;
 mod ls;
@@ -23,7 +23,7 @@ pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) ->
         crate::cli::ServerCommands::Edit { name, command } => {
             if !config.models.contains_key(&name) {
                 anyhow::bail!(
-                    "Server '{}' not found. Use `kronk server add` to create it.",
+                    "Server '{}' not found. Use `koji server add` to create it.",
                     name
                 );
             }

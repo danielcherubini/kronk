@@ -44,11 +44,11 @@ maintainer = "Daniel Cherubini <daniel@cherubini.casa>"
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/release/kronk", "usr/bin/", "755"],
+    ["target/release/koji", "usr/bin/", "755"],
 ]
-extended-description = "Kronk is a local AI service manager that wraps llama.cpp and similar backends into supervised system services with health checks, auto-restart, and easy configuration."
+extended-description = "Koji is a local AI service manager that wraps llama.cpp and similar backends into supervised system services with health checks, auto-restart, and easy configuration."
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/release/kronk", dest = "/usr/bin/kronk", mode = "755" },
+    { source = "target/release/koji", dest = "/usr/bin/koji", mode = "755" },
 ]

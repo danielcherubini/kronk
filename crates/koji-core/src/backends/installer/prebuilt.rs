@@ -16,7 +16,7 @@ pub fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()
         if !allow_overwrite {
             return Err(anyhow!(
                 "Backend directory already exists at: {}\n\
-                 Use `kronk backend remove <name>` to uninstall first, or specify a different name.",
+                 Use `koji backend remove <name>` to uninstall first, or specify a different name.",
                 target_dir.display()
             ));
         }

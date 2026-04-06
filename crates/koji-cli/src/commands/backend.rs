@@ -391,7 +391,7 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
 
     let backend_info = registry.get(name)?.ok_or_else(|| {
         anyhow!(
-            "Backend '{}' not found. Run `kronk backend list` to see installed backends.",
+            "Backend '{}' not found. Run `koji backend list` to see installed backends.",
             name
         )
     })?;
@@ -488,8 +488,8 @@ async fn cmd_list(_config: &Config) -> Result<()> {
     if backends.is_empty() {
         println!("No backends installed.");
         println!("\nTo install one:");
-        println!("  kronk backend install llama_cpp");
-        println!("  kronk backend install ik_llama");
+        println!("  koji backend install llama_cpp");
+        println!("  koji backend install ik_llama");
         return Ok(());
     }
 
@@ -568,7 +568,7 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
                                     println!(
                                         "Skipping file removal: backend may still be running."
                                     );
-                                    println!("Run 'kronk service stop' first, then try again.");
+                                    println!("Run 'koji service stop' first, then try again.");
                                     return Err(anyhow!(
                                         "Failed to remove backend directory: {}",
                                         e

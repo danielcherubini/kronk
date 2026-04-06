@@ -66,7 +66,7 @@ pub fn service_dispatch() -> Result<()> {
         .and_then(|s| s.parse().ok());
 
     let service_name = if is_proxy {
-        "kronk".to_string()
+        "koji".to_string()
     } else {
         Config::service_name(server.as_deref().unwrap())
     };
@@ -113,15 +113,15 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     let log_dir = config_dir
         .clone()
         .unwrap_or_else(|| {
-            directories::ProjectDirs::from("", "", "kronk")
+            directories::ProjectDirs::from("", "", "koji")
                 .map(|p: directories::ProjectDirs| p.data_dir().to_path_buf())
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
         })
         .join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let log_file = std::fs::File::create(log_dir.join(format!("{}.log", service_name)))
-        .or_else(|_| std::fs::File::create("kronk-service.log"))
-        .or_else(|_| std::fs::File::create(std::env::temp_dir().join("kronk-service.log")))
+        .or_else(|_| std::fs::File::create("koji-service.log"))
+        .or_else(|_| std::fs::File::create(std::env::temp_dir().join("koji-service.log")))
         .or_else(|_| {
             // Last resort: write to /dev/null (Unix) or NUL (Windows)
             #[cfg(unix)]
@@ -236,7 +236,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             };
             let addr = SocketAddr::new(host_addr, port);
 
-            tracing::info!("Starting Kronk proxy service on {}", addr);
+            tracing::info!("Starting Koji proxy service on {}", addr);
 
             // Use the explicit config_dir from the service install, falling back to default.
             // This ensures the DB path matches what the CLI expects.
@@ -261,7 +261,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                     .map(|d| d.join("config.toml"))
                     .or_else(|| koji_core::config::Config::config_path().ok());
                 let web_addr: std::net::SocketAddr = "0.0.0.0:11435".parse().unwrap();
-                tracing::info!("Starting Kronk web UI on http://{}", web_addr);
+                tracing::info!("Starting Koji web UI on http://{}", web_addr);
                 tokio::spawn(async move {
                     if let Err(e) = koji_web::server::run_with_opts(
                         web_addr,
@@ -395,7 +395,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
     tracing::info!("Service stopped");
 }
 
-// On Windows, use the real ProcessSupervisor from kronk_core
+// On Windows, use the real ProcessSupervisor from koji_core
 #[cfg(target_os = "windows")]
 use koji_core::process::{ProcessEvent, ProcessSupervisor};
 

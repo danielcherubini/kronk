@@ -232,9 +232,9 @@ pub async fn download_gguf(
 }
 
 const MODELCARDS_BASE_URL: &str =
-    "https://raw.githubusercontent.com/danielcherubini/kronk/main/modelcards";
+    "https://raw.githubusercontent.com/danielcherubini/koji/main/modelcards";
 
-/// Try to fetch a community model card from the kronk repository.
+/// Try to fetch a community model card from the koji repository.
 ///
 /// Attempts several name variants derived from the repo_id:
 /// 1. Exact: `{company}/{model}.toml` (e.g. `Tesslate/OmniCoder-9B-GGUF.toml`)

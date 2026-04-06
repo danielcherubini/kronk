@@ -32,7 +32,7 @@ async fn main() {
         .unwrap_or(8080);
 
     tracing::info!(
-        "kronk-mock starting (port={port}, crash_after={:?}, hang={})",
+        "koji-mock starting (port={port}, crash_after={:?}, hang={})",
         crash_after,
         hang
     );

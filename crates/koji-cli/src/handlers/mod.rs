@@ -1,4 +1,4 @@
-//! Command handlers for the kronk CLI
+//! Command handlers for the koji CLI
 //!
 //! Each submodule handles a specific command group.
 

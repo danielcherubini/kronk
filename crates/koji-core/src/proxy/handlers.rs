@@ -237,7 +237,7 @@ pub async fn handle_status(state: State<Arc<ProxyState>>) -> Json<serde_json::Va
 pub async fn handle_health() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
-        "service": "kronk-proxy"
+        "service": "koji-proxy"
     }))
 }
 

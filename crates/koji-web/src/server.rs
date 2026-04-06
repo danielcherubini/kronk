@@ -59,7 +59,7 @@ async fn proxy_koji(
     body: Body,
 ) -> Response {
     let url = format!("{}/koji/v1/{}", state.proxy_base_url, path.0);
-    // Cap at 16 MiB — same as MAX_REQUEST_BODY_SIZE in kronk-core — to prevent memory exhaustion.
+    // Cap at 16 MiB — same as MAX_REQUEST_BODY_SIZE in koji-core — to prevent memory exhaustion.
     let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
         .await
         .unwrap_or_default();
@@ -152,7 +152,7 @@ pub async fn run_with_opts(
         proxy_config,
     });
     let app = build_router(state);
-    tracing::info!("Kronk web UI listening on http://{}", addr);
+    tracing::info!("Koji web UI listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())

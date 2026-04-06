@@ -11,7 +11,7 @@ use crate::models::download::parse_content_length;
 /// Download a file from a URL to a destination path with progress bar.
 pub async fn download_file(url: &str, dest: &Path) -> Result<()> {
     let client = Client::builder()
-        .user_agent("kronk-backend-manager")
+        .user_agent("koji-backend-manager")
         .timeout(Duration::from_secs(300))
         .connect_timeout(Duration::from_secs(30))
         .build()?;

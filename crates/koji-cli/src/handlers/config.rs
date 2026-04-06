@@ -1,6 +1,6 @@
 //! Config command handler
 //!
-//! Handles `kronk config show/edit/path` commands.
+//! Handles `koji config show/edit/path` commands.
 
 use anyhow::Result;
 use koji_core::config::Config;

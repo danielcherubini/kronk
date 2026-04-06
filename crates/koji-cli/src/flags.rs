@@ -1,6 +1,6 @@
 //! CLI flag extraction utilities
 //!
-//! This module provides helper functions for extracting kronk-specific flags
+//! This module provides helper functions for extracting koji-specific flags
 //! from command line arguments.
 
 use anyhow::{Context, Result};
@@ -18,11 +18,11 @@ pub struct ExtractedFlags {
     pub port: Option<u16>,
     /// Context length override
     pub context_length: Option<u32>,
-    /// Arguments not recognized as kronk flags (passed to backend)
+    /// Arguments not recognized as koji flags (passed to backend)
     pub remaining_args: Vec<String>,
 }
 
-/// Extract kronk-specific flags from command line arguments.
+/// Extract koji-specific flags from command line arguments.
 ///
 /// Parses arguments looking for: `--model`, `--profile`, `--quant`, `--port`, `--ctx`
 /// Supports both `--flag value` and `--flag=value` syntaxes.

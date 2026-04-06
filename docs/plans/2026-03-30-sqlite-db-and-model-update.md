@@ -575,7 +575,7 @@ This is the user-facing command that ties everything together. It supports three
    3. If `refresh` flag:
       - For each model, call `update::refresh_metadata(&conn, &model.card.model.source).await?`
       - Print "  Metadata refreshed for {model_id}"
-      - At end print "Oh yeah, it's all coming together. Metadata refreshed."
+      - At end print "Metadata refreshed."
       - Return
    4. For each model, call `update::check_for_updates(&conn, &model.card.model.source).await?`
    5. Display results:
@@ -603,7 +603,7 @@ This is the user-facing command that ties everything together. It supports three
         - Update DB: `upsert_model_file()` and `log_download()`
       - After all downloads: `upsert_model_pull()` with new commit SHA
       - Update TOML card's `size_bytes` if file size changed, save card
-   8. Print "Oh yeah, it's all coming together. Models updated."
+   8. Print "Models updated."
 
    Also add `koji_core::db` to the `use` imports at the top of the file. Add `use koji_core::models::update;` for the update module.
 

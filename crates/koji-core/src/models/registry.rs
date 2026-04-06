@@ -183,8 +183,8 @@ mod tests {
     #[test]
     fn test_scan_nonexistent_dir() {
         let registry = ModelRegistry::new(
-            PathBuf::from("/tmp/kronk_nonexistent_test_dir/models"),
-            PathBuf::from("/tmp/kronk_nonexistent_test_dir/configs"),
+            PathBuf::from("/tmp/koji_nonexistent_test_dir/models"),
+            PathBuf::from("/tmp/koji_nonexistent_test_dir/configs"),
         );
         let models = registry.scan().unwrap();
         assert!(models.is_empty());

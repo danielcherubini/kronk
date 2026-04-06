@@ -29,7 +29,7 @@ struct GithubCommit {
 /// publish proper releases (only a single stale pre-release tag).
 pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
     let client = Client::builder()
-        .user_agent("kronk-backend-manager")
+        .user_agent("koji-backend-manager")
         .build()?;
 
     let token = github_token();

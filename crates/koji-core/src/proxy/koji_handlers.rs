@@ -796,7 +796,7 @@ pub async fn handle_koji_system_health(
 
     Json(SystemHealthResponse {
         status: "ok",
-        service: "kronk",
+        service: "koji",
         models_loaded,
         cpu_usage_pct: metrics.cpu_usage_pct,
         ram_used_mib: metrics.ram_used_mib,
@@ -966,7 +966,7 @@ async fn setup_model_after_pull(
 /// TODO: Implement actual restart logic using ProxyState methods
 pub async fn handle_koji_system_restart(_state: State<Arc<ProxyState>>) -> Response {
     Json(serde_json::json!({
-        "message": "Restarting kronk..."
+        "message": "Restarting koji..."
     }))
     .into_response()
 }
@@ -1091,7 +1091,7 @@ mod tests {
     fn test_system_health_response_serializes() {
         let response = SystemHealthResponse {
             status: "ok",
-            service: "kronk",
+            service: "koji",
             models_loaded: 2,
             cpu_usage_pct: 42.5,
             ram_used_mib: 1024,

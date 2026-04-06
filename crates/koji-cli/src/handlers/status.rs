@@ -1,6 +1,6 @@
 //! Status command handler
 //!
-//! Handles `kronk status` for showing status of all servers.
+//! Handles `koji status` for showing status of all servers.
 //! Queries the proxy API when available for rich runtime info,
 //! falls back to DB-based status when the proxy is unreachable.
 
@@ -9,7 +9,7 @@ use koji_core::config::Config;
 
 /// Show status of all servers
 pub async fn cmd_status(config: &Config) -> Result<()> {
-    println!("KRONK Status");
+    println!("KOJI Status");
     println!("{}", "-".repeat(60));
 
     // Try the proxy API first — it has the richest info

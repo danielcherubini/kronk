@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use koji_core::config::Config;
-/// Add a new server from a command line, extracting kronk flags.
+/// Add a new server from a command line, extracting koji flags.
 pub async fn cmd_server_add(
     config: &Config,
     name: &str,
@@ -19,13 +19,13 @@ pub async fn cmd_server_add(
     let mut config = config.clone();
     let (backend_key, exe_str) = super::resolve_backend(&mut config, exe_path)?;
 
-    // Extract kronk flags from args
+    // Extract koji flags from args
     let extracted = crate::flags::extract_koji_flags(args)?;
 
     // Check for duplicate server
     if config.models.contains_key(name) && !overwrite {
         anyhow::bail!(
-            "Server '{}' already exists. Use `kronk server edit` to modify it.",
+            "Server '{}' already exists. Use `koji server edit` to modify it.",
             name
         );
     }
@@ -41,7 +41,7 @@ pub async fn cmd_server_add(
             Ok(Some(installed)) => Some(installed),
             Ok(None) => {
                 anyhow::bail!(
-                    "Model '{}' not found. Use `kronk model pull <repo>` to install it first.",
+                    "Model '{}' not found. Use `koji model pull <repo>` to install it first.",
                     model_ref
                 );
             }
@@ -80,7 +80,7 @@ pub async fn cmd_server_add(
         let quant_names: Vec<String> = installed.card.quants.keys().cloned().collect();
         if quant_names.is_empty() {
             anyhow::bail!(
-                "No quants available for '{}'. Run `kronk model pull {}` first.",
+                "No quants available for '{}'. Run `koji model pull {}` first.",
                 installed.card.model.source,
                 installed.card.model.source
             );
@@ -165,10 +165,7 @@ pub async fn cmd_server_add(
     }
 
     if let Some(sampling) = &model_config.sampling {
-        println!(
-            "  Profile:  {}",
-            sampling.preset_label()
-        );
+        println!("  Profile:  {}", sampling.preset_label());
     }
 
     // Use single registry for both lookups
@@ -183,8 +180,8 @@ pub async fn cmd_server_add(
     }
 
     println!();
-    println!("Enable it:  kronk model enable {}", name);
-    println!("Start:      kronk serve");
+    println!("Enable it:  koji model enable {}", name);
+    println!("Start:      koji serve");
 
     Ok(())
 }

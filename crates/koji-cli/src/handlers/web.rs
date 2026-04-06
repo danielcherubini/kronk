@@ -1,4 +1,4 @@
-/// Start the Kronk web control plane UI server.
+/// Start the Koji web control plane UI server.
 #[cfg(feature = "web-ui")]
 pub async fn cmd_web(
     port: u16,

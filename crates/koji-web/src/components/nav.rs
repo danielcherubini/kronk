@@ -5,7 +5,7 @@ use leptos_router::components::A;
 pub fn Nav() -> impl IntoView {
     view! {
         <nav class="topbar">
-            <span class="logo">"⚡ Kronk"</span>
+            <span class="logo">"⚡ Koji"</span>
             <A href="/" attr:class="nav-link">"Dashboard"</A>
             <A href="/models" attr:class="nav-link">"Models"</A>
             <A href="/pull" attr:class="nav-link">"Pull Model"</A>

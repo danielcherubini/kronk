@@ -432,7 +432,7 @@ async fn configure_cmake_windows(cmake_args: &[String], build_output: &Path) -> 
         }
     };
 
-    let bat_path = build_output.join("kronk_cmake_configure.bat");
+    let bat_path = build_output.join("koji_cmake_configure.bat");
     std::fs::write(&bat_path, &bat_contents)
         .with_context(|| format!("Failed to write cmake bat file: {:?}", bat_path))?;
 
@@ -616,7 +616,7 @@ async fn build_cmake(build_output: &Path) -> Result<()> {
             ),
             None => format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_build_cmd),
         };
-        let bat_path = build_output.join("kronk_cmake_build.bat");
+        let bat_path = build_output.join("koji_cmake_build.bat");
         std::fs::write(&bat_path, &bat_contents)
             .with_context(|| format!("Failed to write build bat file: {:?}", bat_path))?;
         let status = tokio::process::Command::new("cmd")
