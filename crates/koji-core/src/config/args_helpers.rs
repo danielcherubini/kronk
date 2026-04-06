@@ -225,7 +225,9 @@ pub fn group_legacy_flat_args(flat: &[String]) -> (Vec<String>, bool) {
         // It's a flag. Look at next token: if it's a value (not a flag,
         // or is a negative number), join the two.
         let next = flat.get(i + 1);
+        // Skip joining if current token already has inline =value form.
         let next_is_value = match next {
+            Some(_n) if cur.contains('=') => false,
             Some(n) => !is_flag_token(n),
             None => false,
         };
@@ -692,6 +694,20 @@ mod tests {
             out,
             vec!["--ctx-checkpoints 0".to_string(), "--no-mmap".to_string()]
         );
+        assert!(changed);
+    }
+
+    #[test]
+    fn group_inline_equals_flag_not_joined() {
+        // Regression: `--port=8080` should be left alone, not joined with
+        // the next token.
+        let flat = vec![
+            "--port=8080".to_string(),
+            "-fa".to_string(),
+            "1".to_string(),
+        ];
+        let (out, changed) = group_legacy_flat_args(&flat);
+        assert_eq!(out, vec!["--port=8080".to_string(), "-fa 1".to_string()]);
         assert!(changed);
     }
 }

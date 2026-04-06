@@ -244,12 +244,18 @@ impl Config {
         // proxy/lifecycle.rs::override_arg depend on this. The check
         // catches the failure mode where a *grouped* entry (e.g.
         // "-b 4096") leaks through unflattened: such an element starts
-        // with '-' AND contains whitespace. Legitimate value-side tokens
-        // like "system: hi" or "/path with space/m.gguf" contain
-        // whitespace but do NOT start with '-', so they pass.
+        // with '-' AND contains whitespace AND is not quoted.
+        // Legitimate value-side tokens like "system: hi" or
+        // "/path with space/m.gguf" contain whitespace but do NOT start
+        // with '-', so they pass. We also allow tokens that start with a
+        // quote character (escaped quotes from shlex unquoting edge cases).
         debug_assert!(
-            flat.iter()
-                .all(|t| !(t.starts_with('-') && t.contains(char::is_whitespace))),
+            flat.iter().all(|t| {
+                !t.starts_with('-')
+                    || !t.contains(char::is_whitespace)
+                    || t.starts_with('"')
+                    || t.starts_with('\'')
+            }),
             "build_full_args invariant violated: element looks like a grouped entry (flag + space + value): {:?}",
             flat
         );
