@@ -164,10 +164,10 @@ pub async fn cmd_server_add(
         println!("  Model:    {} ({})", model, quant);
     }
 
-    if model_config.sampling.is_some() {
+    if let Some(sampling) = &model_config.sampling {
         println!(
             "  Profile:  {}",
-            model_config.sampling.as_ref().unwrap().preset_label()
+            sampling.preset_label()
         );
     }
 

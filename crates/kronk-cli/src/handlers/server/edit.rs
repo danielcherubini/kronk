@@ -63,22 +63,22 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
         let quant = srv.quant.as_deref().unwrap_or("?");
         println!("  Model:    {} ({})", model, quant);
     }
-    if srv.sampling.is_some() {
+    if let Some(sampling) = &srv.sampling {
         // Show which profile was used based on sampling values
-        if srv.sampling.as_ref().unwrap().temperature == Some(0.3)
-            && srv.sampling.as_ref().unwrap().top_p == Some(0.9)
+        if sampling.temperature == Some(0.3)
+            && sampling.top_p == Some(0.9)
         {
             println!("  Profile:  coding");
-        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.7)
-            && srv.sampling.as_ref().unwrap().top_p == Some(0.95)
+        } else if sampling.temperature == Some(0.7)
+            && sampling.top_p == Some(0.95)
         {
             println!("  Profile:  chat");
-        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.2)
-            && srv.sampling.as_ref().unwrap().top_p == Some(0.5)
+        } else if sampling.temperature == Some(0.2)
+            && sampling.top_p == Some(0.5)
         {
             println!("  Profile:  analysis");
-        } else if srv.sampling.as_ref().unwrap().temperature == Some(0.9)
-            && srv.sampling.as_ref().unwrap().top_p == Some(0.95)
+        } else if sampling.temperature == Some(0.9)
+            && sampling.top_p == Some(0.95)
         {
             println!("  Profile:  creative");
         } else {
