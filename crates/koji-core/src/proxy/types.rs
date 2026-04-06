@@ -172,6 +172,7 @@ impl ProxyState {
             gpu_utilization_pct: None,
             vram: None,
             models_loaded: 0,
+            models: vec![],
         });
 
         // Clear all loaded models

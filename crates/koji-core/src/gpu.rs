@@ -72,6 +72,17 @@ pub struct MetricSample {
     pub gpu_utilization_pct: Option<u8>,
     pub vram: Option<VramInfo>,
     pub models_loaded: u64,
+    /// Per-model loaded/idle status, embedded in `MetricSample.models`.
+    #[serde(default)]
+    pub models: Vec<ModelStatus>,
+}
+
+/// Per-model loaded/idle status, embedded in `MetricSample.models`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelStatus {
+    pub id: String,
+    pub backend: String,
+    pub loaded: bool,
 }
 
 /// Collect a snapshot of system metrics using a caller-owned `System`.
