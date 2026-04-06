@@ -3,12 +3,14 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use super::types::{ModelState, ProxyState};
 
 impl ProxyState {
-    /// Build a comprehensive status response for the proxy.
-    ///
-    /// Returns JSON matching the spec: models as an object keyed by name,
-    /// fields flat per model (not nested in a `runtime` sub-object),
-    /// `idle_timeout_secs` at top level.
-    pub async fn collect_model_statuses(&self) -> Vec<crate::gpu::ModelStatus> {
+/// Build the per-model status snapshot embedded in `MetricSample.models`.
+///
+/// Iterates over every configured model, resolves its servers, and reports
+/// `loaded: true` iff at least one of the server entries returned by
+/// `Config::resolve_servers_for_model` is in `ModelState::Ready`. The
+/// returned vector is sorted by `id` so dashboard rows do not shuffle
+/// between SSE samples.
+pub async fn collect_model_statuses(&self) -> Vec<crate::gpu::ModelStatus> {
         let config = self.config.read().await;
         let runtime = self.models.read().await;
         let mut out: Vec<crate::gpu::ModelStatus> = Vec::with_capacity(config.models.len());
