@@ -2,16 +2,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-// Helper function to determine the color class based on percentage
-fn color_for_pct(pct: f32) -> &'static str {
-    if pct < 60.0 {
-        "var(--accent-green)"
-    } else if pct < 85.0 {
-        "var(--accent-yellow)"
-    } else {
-        "var(--accent-red)"
-    }
-}
+use crate::components::sparkline::SparklineChart;
 
 // Helper function to determine the status badge class
 fn status_badge_class(status: &str) -> &'static str {
@@ -43,6 +34,8 @@ struct VramInfo {
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let refresh = RwSignal::new(0u32);
+    let history = RwSignal::new(Vec::<SystemHealth>::new());
+    let fetch_failed = RwSignal::new(false);
 
     // Auto-refresh every 3 seconds using web_sys interval; clear on cleanup to prevent leaks.
     let cb = Closure::<dyn Fn()>::new(move || {
@@ -81,89 +74,120 @@ pub fn Dashboard() -> impl IntoView {
             .await;
     });
 
+    // Effect to accumulate health snapshots into history ring buffer
+    Effect::new(move |_| {
+        if let Some(guard) = health.get() {
+            if let Some(h) = (*guard).clone() {
+                fetch_failed.set(false);
+                history.update(|buf| {
+                    buf.push(h);
+                    if buf.len() > 100 {
+                        buf.drain(..buf.len() - 100);
+                    }
+                });
+            } else {
+                fetch_failed.set(true);
+            }
+        }
+    });
+
     view! {
         <div class="page-header">
             <h1>"Dashboard"</h1>
-            <Suspense>
-                {move || {
-                    health.get().map(|guard| {
-                        let h = guard.take();
-                        h.map(|h| view! {
-                            <div class="flex-between gap-1">
-                                <span class={format!("badge {}", status_badge_class(&h.status))}>{h.status.clone()}</span>
-                                <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
-                            </div>
-                        })
-                    })
-                }}
-            </Suspense>
-        </div>
-
-        <Suspense fallback=|| view! {
-            <div class="card card--centered">
-                <span class="spinner">"Loading dashboard..."</span>
-            </div>
-        }>
             {move || {
-                health.get().map(|guard| {
-                    let h = guard.take();
-                    match h {
-                        Some(h) => view! {
-                            <div class="grid-stats">
-                                <div class="card">
-                                    <div class="card-header">"CPU Usage"</div>
-                                    <div class="card-value">{format!("{:.1}%", h.cpu_usage_pct)}</div>
-                                    <div class="gauge">
-                                        <div class="gauge-fill" style={format!("width:{}%; background:{}", h.cpu_usage_pct, color_for_pct(h.cpu_usage_pct))} />
-                                    </div>
-                                </div>
-
-                                <div class="card">
-                                    <div class="card-header">"Memory"</div>
-                                    <div class="card-value">{format!("{} / {} MiB", h.ram_used_mib, h.ram_total_mib)}</div>
-                                    <div class="gauge">
-                                        <div class="gauge-fill" style={format!("width:{}%; background:var(--accent-blue)", if h.ram_total_mib > 0 { (h.ram_used_mib as f32 / h.ram_total_mib as f32) * 100.0 } else { 0.0 })} />
-                                    </div>
-                                </div>
-
-                                {h.gpu_utilization_pct.map(|pct| view! {
-                                    <div class="card">
-                                        <div class="card-header">"GPU"</div>
-                                        <div class="card-value">{format!("{}%", pct)}</div>
-                                        <div class="gauge">
-                                            <div class="gauge-fill" style={format!("width:{}%; background:{}", pct, color_for_pct(pct as f32))} />
-                                        </div>
-                                    </div>
-                                })}
-
-                                {h.vram.map(|v| {
-                                    let usage_pct = if v.total_mib > 0 { (v.used_mib as f32 / v.total_mib as f32) * 100.0 } else { 0.0 };
-                                    view! {
-                                        <div class="card">
-                                            <div class="card-header">"VRAM"</div>
-                                            <div class="card-value">{format!("{} / {} MiB", v.used_mib, v.total_mib)}</div>
-                                            <div class="gauge">
-                                                <div class="gauge-fill" style={format!("width:{}%; background:{}", usage_pct, color_for_pct(usage_pct))} />
-                                            </div>
-                                        </div>
-                                    }
-                                })}
-
-                                <div class="card">
-                                    <div class="card-header">"Models Loaded"</div>
-                                    <div class="card-value">{h.models_loaded}</div>
-                                </div>
-                            </div>
-                        }.into_any(),
-                        None => view! {
-                            <div class="card">
-                                <p class="text-error">"Failed to load health data. Is Kronk running?"</p>
-                                <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
-                            </div>
-                        }.into_any(),
-                    }
+                history.get().last().cloned().map(|h| view! {
+                    <div class="flex-between gap-1">
+                        <span class={format!("badge {}", status_badge_class(&h.status))}>{h.status.clone()}</span>
+                        <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
+                    </div>
                 })
             }}
-        </Suspense>
+        </div>
+
+        {move || {
+            let buf = history.get();
+            if fetch_failed.get() && buf.is_empty() {
+                // Network error, no data yet — show error with retry button
+                return view! {
+                    <div class="card">
+                        <p class="text-error">"Failed to load health data. Is Kronk running?"</p>
+                        <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
+                    </div>
+                }.into_any();
+            }
+            match buf.last().cloned() {
+                Some(h) => view! {
+                    <div class="grid-stats">
+                        // CPU card
+                        <div class="card">
+                            <div class="card-header">"CPU Usage"</div>
+                            <div class="card-value">{format!("{:.1}%", h.cpu_usage_pct)}</div>
+                            <SparklineChart
+                                data={buf.iter().map(|s| s.cpu_usage_pct).collect::<Vec<f32>>()}
+                                max_value=100.0
+                                color="var(--accent-green)".to_string()
+                                height=60.0
+                            />
+                        </div>
+
+                        // Memory card
+                        <div class="card">
+                            <div class="card-header">"Memory"</div>
+                            <div class="card-value">{format!("{} / {} MiB", h.ram_used_mib, h.ram_total_mib)}</div>
+                            <SparklineChart
+                                data={buf.iter().map(|s| s.ram_used_mib as f32).collect::<Vec<f32>>()}
+                                max_value={h.ram_total_mib as f32}
+                                color="var(--accent-blue)".to_string()
+                                height=60.0
+                            />
+                        </div>
+
+                        // GPU card — only rendered if GPU data is present in the latest snapshot.
+                        // For the data Vec, use .map() with unwrap_or(0) instead of .filter_map()
+                        // to keep time-axis aligned with other charts.
+                        {h.gpu_utilization_pct.map(|pct| view! {
+                            <div class="card">
+                                <div class="card-header">"GPU"</div>
+                                <div class="card-value">{format!("{}%", pct)}</div>
+                                <SparklineChart
+                                    data={buf.iter().map(|s| s.gpu_utilization_pct.unwrap_or(0) as f32).collect::<Vec<f32>>()}
+                                    max_value=100.0
+                                    color="var(--accent-yellow)".to_string()
+                                    height=60.0
+                                />
+                            </div>
+                        })}
+
+                        // VRAM card — only rendered if VRAM data is present in the latest snapshot.
+                        {h.vram.as_ref().map(|v| {
+                            let total = v.total_mib as f32;
+                            view! {
+                                <div class="card">
+                                    <div class="card-header">"VRAM"</div>
+                                    <div class="card-value">{format!("{} / {} MiB", v.used_mib, v.total_mib)}</div>
+                                    <SparklineChart
+                                        data={buf.iter().map(|s| s.vram.as_ref().map(|v| v.used_mib as f32).unwrap_or(0.0)).collect::<Vec<f32>>()}
+                                        max_value=total
+                                        color="var(--accent-purple)".to_string()
+                                        height=60.0
+                                    />
+                                </div>
+                            }
+                        })}
+
+                        // Models Loaded — keep as simple number, no chart
+                        <div class="card">
+                            <div class="card-header">"Models Loaded"</div>
+                            <div class="card-value">{h.models_loaded}</div>
+                        </div>
+                    </div>
+                }.into_any(),
+                None => view! {
+                    <div class="card card--centered">
+                        <span class="spinner">"Loading dashboard..."</span>
+                    </div>
+                }.into_any(),
+            }
+        }}
     }
 }
