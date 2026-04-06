@@ -212,6 +212,7 @@ pub fn quote_value(value: &str) -> String {
 ///
 /// Combines all provided argument vectors into one, maintaining order and
 /// removing duplicates while preserving the first occurrence of each argument.
+/// Note: This performs exact string matching, not flag-name-based matching.
 ///
 /// # Examples
 ///
@@ -221,10 +222,11 @@ pub fn quote_value(value: &str) -> String {
 /// let args1 = vec!["--verbose".to_string(), "--model=/path".to_string()];
 /// let args2 = vec!["--quiet".to_string(), "--model=/other".to_string()];
 /// let merged = merge_args(&[args1, args2]).unwrap();
-/// assert_eq!(merged.len(), 3); // verbose, model=/path, quiet
+/// assert_eq!(merged.len(), 4); // verbose, model=/path, quiet, model=/other
 /// assert!(merged.contains(&"--verbose".to_string()));
 /// assert!(merged.contains(&"--model=/path".to_string()));
 /// assert!(merged.contains(&"--quiet".to_string()));
+/// assert!(merged.contains(&"--model=/other".to_string()));
 /// ```
 pub fn merge_args(args_list: &[Vec<String>]) -> Result<Vec<String>> {
     let mut seen = std::collections::HashSet::new();
