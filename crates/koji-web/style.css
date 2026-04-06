@@ -808,3 +808,30 @@ label {
     font-weight: 400;
     margin-left: 0.5rem;
 }
+
+/* 24. Dashboard "Active Models" section
+ *
+ * The dashboard renders this section directly below the system metrics
+ * `.grid-stats` block. We need:
+ *   - vertical breathing room above the section so it doesn't collide with
+ *     the cards above (`margin-top`),
+ *   - a tighter bottom margin on the inner `.page-header` than the global
+ *     default (`1.5rem`) so the title row hugs its grid more closely,
+ *   - a slightly smaller heading size than the page-level `<h1>` so the
+ *     section feels subordinate to the page title.
+ *
+ * The grid items themselves reuse `.models-grid` and `.model-card` from
+ * section 17 — no new selectors are needed for the cards.
+ */
+.dashboard-models {
+    margin-top: 2rem;
+}
+
+.dashboard-models .page-header {
+    margin-bottom: 1rem;
+}
+
+.dashboard-models .page-header h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
