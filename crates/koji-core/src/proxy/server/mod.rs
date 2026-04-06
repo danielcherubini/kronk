@@ -50,7 +50,8 @@ impl ProxyServer {
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
-                let models_loaded = metrics_state.models.read().await.len() as u64;
+                let model_statuses = metrics_state.collect_model_statuses().await;
+                let models_loaded = model_statuses.iter().filter(|m| m.loaded).count() as u64;
                 let sample = crate::gpu::MetricSample {
                     ts_unix_ms,
                     cpu_usage_pct: snapshot.cpu_usage_pct,
@@ -59,6 +60,7 @@ impl ProxyServer {
                     gpu_utilization_pct: snapshot.gpu_utilization_pct,
                     vram: snapshot.vram.clone(),
                     models_loaded,
+                    models: model_statuses,
                 };
 
                 // Persist to SQLite (best-effort). Read retention from config.
@@ -267,6 +269,74 @@ mod tests {
             "cpu_usage_pct should be non-negative"
         );
         assert!(sample.ram_total_mib > 0, "ram_total_mib should be positive");
+    }
+
+    #[tokio::test]
+    async fn test_metric_sample_broadcast_populates_models_field() {
+        use crate::config::ModelConfig;
+        use std::collections::BTreeMap;
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Build a Config with exactly one known model so the assertions are
+        // deterministic. We clear the default fixtures shipped by
+        // `Config::default()` first.
+        let mut config = crate::config::Config::default();
+        config.models.clear();
+        config.models.insert(
+            "alpha".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: None,
+                quant: None,
+                port: None,
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: BTreeMap::new(),
+            },
+        );
+
+        let state = Arc::new(crate::proxy::ProxyState::new(
+            config,
+            Some(tmp.path().to_path_buf()),
+        ));
+
+        // Subscribe BEFORE starting the server so we don't miss the first tick.
+        let mut rx = state.metrics_tx.subscribe();
+
+        let _server = ProxyServer::new(state.clone());
+
+        let sample = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv())
+            .await
+            .expect("Expected to receive a MetricSample within 4s, but timeout occurred")
+            .expect("metrics_tx channel closed before any sample was broadcast");
+
+        // The metrics loop must populate `MetricSample.models` from
+        // `ProxyState::collect_model_statuses`, which reflects the current
+        // configuration.
+        assert_eq!(
+            sample.models.len(),
+            1,
+            "Expected exactly one model in sample.models, got: {:?}",
+            sample.models
+        );
+        assert_eq!(sample.models[0].id, "alpha");
+        assert_eq!(sample.models[0].backend, "llama_cpp");
+        assert!(
+            !sample.models[0].loaded,
+            "Expected the configured model to be reported as loaded == false since no backend was started, got: {:?}",
+            sample.models[0]
+        );
+        assert_eq!(
+            sample.models_loaded, 0,
+            "Expected models_loaded counter to be 0 when no model is loaded"
+        );
     }
 
     #[tokio::test]
