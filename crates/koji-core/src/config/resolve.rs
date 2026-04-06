@@ -157,27 +157,44 @@ impl Config {
         crate::config::flatten_args(&args).expect("flatten_args failed")
     }
 
-    /// Build the full argument list for a model, including model config args (-m, -c, -ngl).
-    /// This is the complete arg set needed to start a backend for a given model config.
-    /// Reads from unified ModelConfig fields instead of ModelRegistry/ModelCard.
+    /// Build the full argument list for a model, including model config args
+    /// (`-m`, `-c`, `-ngl`) and sampling. Returns **flat tokens** suitable for
+    /// `Command::args`.
+    ///
+    /// Merging order:
+    /// 1. `backend.default_args`
+    /// 2. `server.args`     (replaces same-flag entries from #1)
+    /// 3. Injected `-m`/`-c`/`-ngl` (only if not already present after #1+#2)
+    /// 4. `server.sampling.to_args()` (replaces same-flag entries from #1+#2+#3)
+    ///
+    /// **Invariant:** the returned `Vec<String>` is always flat (one token
+    /// per element). Callers like `proxy/lifecycle.rs::override_arg` and
+    /// `bench/runner.rs::_override_arg` depend on this. The final
+    /// `flatten_args` call enforces it; the `debug_assert!` makes accidental
+    /// regressions visible in test/debug builds.
     pub fn build_full_args(
         &self,
         server: &ModelConfig,
         backend: &BackendConfig,
         ctx_override: Option<u32>,
     ) -> Result<Vec<String>> {
-        let mut args = backend.default_args.clone();
-        args.extend(server.args.clone());
+        let mut grouped = crate::config::merge_args_override(&backend.default_args, &server.args);
 
-        // Inject model path from ModelConfig
+        // Inject -m from model card, only if not already present.
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
             if let Some(quant_entry) = server.quants.get(quant_name.as_str()) {
                 let models_dir = self.models_dir()?;
                 let model_path = models_dir.join(model_id).join(&quant_entry.file);
-
-                if !args.iter().any(|a| a == "-m" || a == "--model") {
-                    args.push("-m".to_string());
-                    args.push(model_path.to_string_lossy().to_string());
+                let already_has_m = grouped.iter().any(|e| {
+                    crate::config::flag_name(e)
+                        .ok()
+                        .map(|s| s == "m" || s == "model")
+                        .unwrap_or(false)
+                });
+                if !already_has_m {
+                    let path_str = model_path.to_string_lossy();
+                    let quoted = crate::config::quote_value(&path_str);
+                    grouped.push(format!("-m {}", quoted));
                 }
             } else {
                 tracing::warn!(
@@ -188,62 +205,60 @@ impl Config {
             }
         }
 
-        // Context length: ctx_override > server.context_length > quant.context_length
+        // Inject -c (context length) only if not already present.
         let ctx = ctx_override.or(server.context_length).or_else(|| {
             server
                 .quant
                 .as_ref()
                 .and_then(|q| server.quants.get(q).and_then(|qe| qe.context_length))
         });
-
         if let Some(ctx) = ctx {
-            if !args.iter().any(|a| a == "-c" || a == "--ctx-size") {
-                args.push("-c".to_string());
-                args.push(ctx.to_string());
+            let already_has_c = grouped.iter().any(|e| {
+                crate::config::flag_name(e)
+                    .ok()
+                    .map(|s| s == "c" || s == "ctx-size")
+                    .unwrap_or(false)
+            });
+            if !already_has_c {
+                grouped.push(format!("-c {}", ctx));
             }
         }
 
-        // GPU layers from ModelConfig
+        // Inject -ngl only if not already present.
         if let Some(ngl) = server.gpu_layers {
-            if !args.iter().any(|a| a == "-ngl" || a == "--n-gpu-layers") {
-                args.push("-ngl".to_string());
-                args.push(ngl.to_string());
+            let already_has_ngl = grouped.iter().any(|e| {
+                crate::config::flag_name(e)
+                    .ok()
+                    .map(|s| s == "ngl" || s == "n-gpu-layers")
+                    .unwrap_or(false)
+            });
+            if !already_has_ngl {
+                grouped.push(format!("-ngl {}", ngl));
             }
         }
 
-        // Sampling args from ModelConfig (no profile/template merge)
+        // Sampling: each sampling flag fully replaces the same flag in
+        // anything injected so far.
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
-                let sampling_args = sampling.to_args();
-                let sampling_flags: std::collections::HashSet<&str> = sampling_args
-                    .iter()
-                    .filter(|a| a.starts_with("--"))
-                    .map(|a| a.as_str())
-                    .collect();
-
-                // Remove existing sampling flags to avoid duplicates
-                if !sampling_flags.is_empty() {
-                    let mut filtered = Vec::with_capacity(args.len());
-                    let mut skip_next = false;
-                    for arg in &args {
-                        if skip_next {
-                            skip_next = false;
-                            continue;
-                        }
-                        if sampling_flags.contains(arg.as_str()) {
-                            skip_next = true;
-                            continue;
-                        }
-                        filtered.push(arg.clone());
-                    }
-                    args = filtered;
-                }
-
-                args.extend(sampling_args);
+                grouped = crate::config::merge_args_override(&grouped, &sampling.to_args());
             }
         }
 
-        Ok(args)
+        let flat = crate::config::flatten_args(&grouped)?;
+        // INVARIANT: build_full_args returns flat tokens. Callers like
+        // proxy/lifecycle.rs::override_arg depend on this. The check
+        // catches the failure mode where a *grouped* entry (e.g.
+        // "-b 4096") leaks through unflattened: such an element starts
+        // with '-' AND contains whitespace. Legitimate value-side tokens
+        // like "system: hi" or "/path with space/m.gguf" contain
+        // whitespace but do NOT start with '-', so they pass.
+        debug_assert!(
+            flat.iter().all(|t| !(t.starts_with('-') && t.contains(' '))),
+            "build_full_args invariant violated: element looks like a grouped entry (flag + space + value): {:?}",
+            flat
+        );
+        Ok(flat)
     }
 
     pub fn service_name(server_name: &str) -> String {
@@ -587,9 +602,9 @@ mod tests {
         assert!(args.contains(&"-ngl".to_string()));
         assert!(args.contains(&"99".to_string()));
 
-        // Verify sampling args (grouped form now)
-        assert!(args.iter().any(|a| a.starts_with("--temp")));
-        assert!(args.iter().any(|a| a == "--temp 0.30"));
+        // Verify sampling args (flattened)
+        assert!(args.iter().any(|a| a == "--temp"));
+        assert!(args.iter().any(|a| a == "0.30"));
     }
 
     #[test]
@@ -786,16 +801,17 @@ mod tests {
         let backend = config.backends.get("test_backend").unwrap().clone();
         let flat = config.build_args(&server, &backend);
 
-        // -t 14 from base must survive (grouped form)
-        assert!(flat.iter().any(|t| *t == "-t 14"));
+        // -t 14 from base must survive (flattened to separate tokens)
+        assert!(flat.iter().any(|t| *t == "-t"));
+        assert!(flat.iter().any(|t| *t == "14"));
         // -b appears exactly once with value 4096
-        let b_count = flat.iter().filter(|t| t.starts_with("-b")).count();
+        let b_count = flat.iter().filter(|t| *t == "-b").count();
         assert_eq!(b_count, 1, "expected exactly one -b flag, got {:?}", flat);
-        assert!(flat.iter().any(|t| t.starts_with("-b 4096")));
+        assert!(flat.iter().any(|t| *t == "-b"));
         // -ub appears exactly once with value 4096
-        let ub_count = flat.iter().filter(|t| t.starts_with("-ub")).count();
+        let ub_count = flat.iter().filter(|t| *t == "-ub").count();
         assert_eq!(ub_count, 1, "expected exactly one -ub flag, got {:?}", flat);
-        assert!(flat.iter().any(|t| t.starts_with("-ub 4096")));
+        assert!(flat.iter().any(|t| *t == "-ub"));
         // 2048 and 512 must NOT appear
         assert!(!flat.iter().any(|t| t.contains("2048")));
         assert!(!flat.iter().any(|t| t.contains("512")));
@@ -841,14 +857,157 @@ mod tests {
         let backend = config.backends.get("test_backend").unwrap().clone();
         let flat = config.build_args(&server, &backend);
 
-        // --temp appears exactly once with value 0.50 (grouped form)
-        let temp_count = flat.iter().filter(|t| t.starts_with("--temp")).count();
+        // --temp appears exactly once with value 0.50 (flattened)
+        let temp_count = flat.iter().filter(|t| *t == "--temp").count();
         assert_eq!(
             temp_count, 1,
             "expected exactly one --temp flag, got {:?}",
             flat
         );
-        assert!(flat.iter().any(|t| t.starts_with("--temp 0.50")));
+        assert!(flat.iter().any(|t| *t == "--temp"));
+        assert!(flat.iter().any(|t| *t == "0.50"));
         assert!(!flat.iter().any(|t| t.contains("0.10")));
+    }
+
+    #[test]
+    fn build_full_args_dedupes_backend_vs_model_flags() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models");
+        let org_dir = models_dir.join("org").join("repo");
+        let quant_file = org_dir.join("model-Q4_K_M.gguf");
+        std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+        std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model-Q4_K_M.gguf".to_string(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec!["-b 4096".to_string(), "-ub 4096".to_string()],
+            sampling: None,
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: Some(4096),
+            profile: None,
+            display_name: None,
+            gpu_layers: Some(99),
+            quants,
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![
+                "-b 2048".to_string(),
+                "-ub 512".to_string(),
+                "-t 14".to_string(),
+            ],
+            health_check_url: None,
+            version: None,
+        };
+
+        let args = config
+            .build_full_args(&server, &backend, None)
+            .expect("build_full_args failed");
+
+        // -t 14 must survive from backend defaults
+        assert!(
+            args.windows(2).any(|w| w == ["-t", "14"]),
+            "expected -t 14 in args, got {:?}",
+            args
+        );
+        // -b appears exactly once with value 4096
+        let b_count = args.iter().filter(|t| *t == "-b").count();
+        assert_eq!(b_count, 1, "expected exactly one -b token, got {:?}", args);
+        assert!(args.windows(2).any(|w| w == ["-b", "4096"]));
+        // -ub appears exactly once with value 4096
+        let ub_count = args.iter().filter(|t| *t == "-ub").count();
+        assert_eq!(
+            ub_count, 1,
+            "expected exactly one -ub token, got {:?}",
+            args
+        );
+        assert!(args.windows(2).any(|w| w == ["-ub", "4096"]));
+        // No 2048 or 512 anywhere
+        assert!(!args.iter().any(|t| t == "2048"));
+        assert!(!args.iter().any(|t| t == "512"));
+    }
+
+    #[test]
+    fn build_full_args_returns_flat_tokens_with_quoted_path() {
+        // Path with spaces must round-trip through grouped → flat correctly.
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let models_dir = temp_dir.path().join("models with space");
+        let org_dir = models_dir.join("org").join("repo");
+        let quant_file = org_dir.join("model.gguf");
+        std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+        std::fs::write(&quant_file, b"dummy").expect("Failed to write model file");
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model.gguf".to_string(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        let mut config = Config::default();
+        config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+        config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+        let server = ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: vec![],
+            sampling: None,
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4".to_string()),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants,
+        };
+
+        let backend = BackendConfig {
+            path: None,
+            default_args: vec![],
+            health_check_url: None,
+            version: None,
+        };
+
+        let args = config
+            .build_full_args(&server, &backend, None)
+            .expect("build_full_args failed");
+
+        // -m and the path must appear as adjacent flat tokens, with the
+        // space-containing path preserved as a single token.
+        let m_pos = args.iter().position(|t| t == "-m").expect("-m not found");
+        let path_token = &args[m_pos + 1];
+        assert!(
+            path_token.contains("models with space"),
+            "expected path with spaces preserved as a single token, got {:?}",
+            path_token
+        );
+        // Strip quotes if present and check the actual filename
+        let path_stripped = path_token.trim_matches('"').trim_matches('\'');
+        assert!(path_stripped.ends_with("model.gguf"));
     }
 }
