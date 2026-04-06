@@ -1,3 +1,4 @@
+mod args_helpers;
 mod defaults;
 mod loader;
 mod migrate;
@@ -5,6 +6,9 @@ mod rename_legacy;
 mod resolve;
 mod types;
 
+pub use args_helpers::{
+    flag_name, flatten_args, group_legacy_flat_args, merge_args, quote_value, split_arg_entry,
+};
 pub use migrate::migrate_cards_to_unified_config;
 pub use rename_legacy::{migrate_legacy_data_dir, Migration};
 pub use types::{
