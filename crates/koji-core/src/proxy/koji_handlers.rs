@@ -963,12 +963,13 @@ async fn setup_model_after_pull(
 }
 
 /// Handle system restart (Koji management API).
-/// TODO: Implement actual restart logic using ProxyState methods
-pub async fn handle_koji_system_restart(_state: State<Arc<ProxyState>>) -> Response {
-    Json(serde_json::json!({
-        "message": "Restarting koji..."
-    }))
-    .into_response()
+/// Triggers a graceful shutdown and then exits the process.
+pub async fn handle_koji_system_restart(state: State<Arc<ProxyState>>) -> Response {
+    // Trigger graceful shutdown first
+    state.0.shutdown().await;
+
+    // Exit the process
+    std::process::exit(0);
 }
 
 /// Stream live system metrics samples as SSE events.
