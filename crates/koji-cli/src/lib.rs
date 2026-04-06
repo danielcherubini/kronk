@@ -1,11 +1,11 @@
-//! Kronk CLI library
+//! Koji CLI library
 //!
-//! This library provides the core functionality for the kronk CLI application.
+//! This library provides the core functionality for the koji CLI application.
 //!
 //! ## Model Card-Based Configuration
 //!
-//! Kronk uses model cards to store quantization info, context settings, and sampling presets
-//! for each model. Model cards are stored in `~/.config/kronk/configs/<company>--<model>.toml`
+//! Koji uses model cards to store quantization info, context settings, and sampling presets
+//! for each model. Model cards are stored in `~/.config/koji/configs/<company>--<model>.toml`
 //! and are automatically discovered when models are installed.
 
 pub mod cli;
@@ -88,13 +88,12 @@ pub async fn main() -> Result<()> {
             port,
             idle_timeout,
         } => serve::cmd_serve(&config, host, port, idle_timeout).await,
-        Commands::Proxy { command } => serve::cmd_proxy(&config, command).await,
         Commands::Logs {
             name,
             follow,
             lines,
         } => {
-            let name = name.unwrap_or_else(|| "kronk".to_string());
+            let name = name.unwrap_or_else(|| "koji".to_string());
             crate::handlers::logs::cmd_logs(&config, &name, follow, lines).await
         }
         #[cfg(feature = "web-ui")]

@@ -1,14 +1,14 @@
 //! CLI argument parsing and command types
 //!
-//! This module contains all clap-derived types for the kronk CLI.
+//! This module contains all clap-derived types for the koji CLI.
 
 use crate::commands::backend::BackendSubcommand;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "kronk")]
+#[command(name = "koji")]
 #[command(version)]
-#[command(about = "Oh yeah, it's all coming together. -- Local AI Server")]
+#[command(about = "A local AI server with automatic backend management.")]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
@@ -111,7 +111,7 @@ pub enum Commands {
         #[arg(long)]
         ctx: Option<u32>,
     },
-    /// Start kronk server (OpenAI-compatible API on a single port)
+    /// Start the koji server (OpenAI-compatible API on a single port)
     Serve {
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
@@ -123,16 +123,9 @@ pub enum Commands {
         #[arg(long, default_value = "300")]
         idle_timeout: u64,
     },
-    /// OpenAI-compliant proxy for local AI models (deprecated: use `kronk serve`)
-    #[command(hide = true)]
-    Proxy {
-        /// Proxy settings
-        #[command(subcommand)]
-        command: ProxyCommands,
-    },
     /// View server logs
     Logs {
-        /// Server name (defaults to "kronk" proxy logs)
+        /// Server name (defaults to "koji" proxy logs)
         name: Option<String>,
         /// Follow log output (like tail -f)
         #[arg(short, long)]
@@ -141,37 +134,21 @@ pub enum Commands {
         #[arg(short = 'n', long, default_value = "50")]
         lines: usize,
     },
-    /// Start the Kronk web control plane UI
+    /// Start the koji web control plane UI
     #[cfg(feature = "web-ui")]
     Web {
         /// Port to listen on (default: 11435)
         #[arg(long, default_value = "11435")]
         port: u16,
-        /// Kronk proxy base URL (default: http://127.0.0.1:11434)
+        /// Koji proxy base URL (default: http://127.0.0.1:11434)
         #[arg(long, default_value = "http://127.0.0.1:11434")]
         proxy_url: String,
-        /// Directory containing Kronk log files
+        /// Directory containing koji log files
         #[arg(long)]
         logs_dir: Option<std::path::PathBuf>,
-        /// Path to Kronk config file
+        /// Path to koji config file
         #[arg(long)]
         config_path: Option<std::path::PathBuf>,
-    },
-}
-
-#[derive(Parser, Debug)]
-pub enum ProxyCommands {
-    /// Start the proxy server
-    Start {
-        /// Host to bind to
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        /// Port to bind to
-        #[arg(long, default_value = "11434")]
-        port: u16,
-        /// Idle timeout in seconds (models unload after this many seconds of inactivity)
-        #[arg(long, default_value = "300")]
-        idle_timeout: u64,
     },
 }
 
@@ -309,27 +286,27 @@ pub enum ProfileCommands {
 
 #[derive(Parser, Debug)]
 pub enum ServiceCommands {
-    /// Install kronk as a system service (proxy mode)
+    /// Install koji as a system service (proxy mode)
     Install {
         /// Server name (omit to install the proxy; provide a name for legacy single-backend mode)
         name: Option<String>,
     },
-    /// Start the kronk service
+    /// Start the koji service
     Start {
         /// Server name (omit to start the proxy service)
         name: Option<String>,
     },
-    /// Stop the kronk service
+    /// Stop the koji service
     Stop {
         /// Server name (omit to stop the proxy service)
         name: Option<String>,
     },
-    /// Restart the kronk service (stop then start)
+    /// Restart the koji service (stop then start)
     Restart {
         /// Server name (omit to restart the proxy service)
         name: Option<String>,
     },
-    /// Remove the kronk service
+    /// Remove the koji service
     Remove {
         /// Server name (omit to remove the proxy service)
         name: Option<String>,

@@ -1,6 +1,6 @@
 //! Service command handler
 //!
-//! Handles `kronk service install/start/stop/remove` commands.
+//! Handles `koji service install/start/stop/remove` commands.
 
 use anyhow::Result;
 use koji_core::config::Config;
@@ -18,7 +18,7 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
 
                 #[cfg(target_os = "windows")]
                 {
-                    let display_name = format!("Kronk: {}", server_name);
+                    let display_name = format!("Koji: {}", server_name);
                     let config_dir = Config::base_dir()?;
                     let port = srv.port.unwrap_or(8080);
                     koji_core::platform::windows::install_service(
@@ -70,35 +70,35 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
                 anyhow::bail!("Service management not supported on this platform");
 
-                println!("Installed kronk service.");
-                println!("Start it: kronk service start");
+                println!("Installed koji service.");
+                println!("Start it: koji service start");
             }
         }
         crate::cli::ServiceCommands::Start { name } => {
             let service_name = name
                 .map(|n| Config::service_name(&n))
-                .unwrap_or_else(|| "kronk".to_string());
+                .unwrap_or_else(|| "koji".to_string());
             service_start_inner(&service_name)?;
-            println!("Pull the lever! '{}' started.", service_name);
+            println!("Started '{}'.", service_name);
         }
         crate::cli::ServiceCommands::Stop { name } => {
             let service_name = name
                 .map(|n| Config::service_name(&n))
-                .unwrap_or_else(|| "kronk".to_string());
+                .unwrap_or_else(|| "koji".to_string());
             service_stop_inner(&service_name)?;
-            println!("Wrong lever! '{}' stopped.", service_name);
+            println!("Stopped '{}'.", service_name);
         }
         crate::cli::ServiceCommands::Restart { name } => {
             let service_name = name
                 .map(|n| Config::service_name(&n))
-                .unwrap_or_else(|| "kronk".to_string());
+                .unwrap_or_else(|| "koji".to_string());
             service_restart_inner(&service_name)?;
-            println!("Right lever! '{}' restarted.", service_name);
+            println!("Restarted '{}'.", service_name);
         }
         crate::cli::ServiceCommands::Remove { name } => {
             let service_name = name
                 .map(|n| Config::service_name(&n))
-                .unwrap_or_else(|| "kronk".to_string());
+                .unwrap_or_else(|| "koji".to_string());
 
             #[cfg(target_os = "windows")]
             koji_core::platform::windows::remove_service(&service_name)?;
@@ -112,7 +112,7 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                 anyhow::bail!("Not supported on this platform");
             }
 
-            println!("No touchy! '{}' removed.", service_name);
+            println!("Removed '{}'.", service_name);
         }
     }
     Ok(())

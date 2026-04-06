@@ -1,6 +1,6 @@
 //! Profile command handler
 //!
-//! Handles `kronk profile list/set/clear` commands.
+//! Handles `koji profile list/set/clear` commands.
 //! Profiles are now pure labels into model card `[sampling.<profile>]` sections.
 
 use anyhow::{Context, Result};
@@ -84,7 +84,7 @@ pub fn cmd_profile(config: &Config, command: crate::cli::ProfileCommands) -> Res
 
             config.save()?;
 
-            println!("Oh yeah, it's all coming together.");
+            println!("Updated.");
             println!("  Model '{}' now uses '{}' preset.", server, profile);
 
             Ok(())

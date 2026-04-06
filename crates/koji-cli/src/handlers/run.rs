@@ -1,6 +1,6 @@
 //! Run command handler
 //!
-//! Handles `kronk run <server>` for debugging/foreground running.
+//! Handles `koji run <server>` for debugging/foreground running.
 
 use anyhow::Result;
 use koji_core::config::Config;
@@ -19,7 +19,7 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     };
     let backend_path_str = backend_path.to_string_lossy().to_string();
 
-    println!("Oh yeah, it's all coming together.");
+    println!("Starting server...");
     println!();
     println!("  Model:    {}", server_name);
     println!("  Backend:  {}", backend_path.display());
@@ -45,18 +45,15 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     let printer = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
-                ProcessEvent::Started => println!("[kronk] Pull the lever!"),
-                ProcessEvent::Ready => println!("[kronk] Oh yeah, it's all coming together."),
+                ProcessEvent::Started => println!("[koji] Started."),
+                ProcessEvent::Ready => println!("[koji] Ready."),
                 ProcessEvent::Output(line) => println!("[backend] {}", line),
-                ProcessEvent::Crashed(msg) => eprintln!("[kronk] WRONG LEVER! {}", msg),
+                ProcessEvent::Crashed(msg) => eprintln!("[koji] Crashed: {}", msg),
                 ProcessEvent::Restarting { attempt, max } => {
-                    println!(
-                        "[kronk] Why do we even have that lever? Restarting ({}/{})",
-                        attempt, max
-                    )
+                    println!("[koji] Restarting ({}/{})", attempt, max)
                 }
                 ProcessEvent::Stopped => {
-                    println!("[kronk] By all accounts, it doesn't make sense.")
+                    println!("[koji] Stopped.")
                 }
                 ProcessEvent::HealthCheck {
                     alive,

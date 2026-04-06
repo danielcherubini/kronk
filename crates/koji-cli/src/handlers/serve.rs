@@ -1,29 +1,16 @@
 //! Serve command handler
 //!
-//! Handles `kronk serve` for starting the proxy server.
+//! Handles `koji serve` for starting the proxy server.
 
 use anyhow::Result;
 use koji_core::config::Config;
 
-/// Start the kronk server (proxy) with the given host, port, and idle timeout.
+/// Start the koji server (proxy) with the given host, port, and idle timeout.
 pub async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u64) -> Result<()> {
     start_proxy_server(config, host, port, idle_timeout).await
 }
 
-/// Start the OpenAI-compliant proxy server (deprecated: use `kronk serve`).
-pub async fn cmd_proxy(config: &Config, command: crate::cli::ProxyCommands) -> Result<()> {
-    eprintln!("Warning: `kronk proxy start` is deprecated. Use `kronk serve` instead.");
-
-    match command {
-        crate::cli::ProxyCommands::Start {
-            host,
-            port,
-            idle_timeout,
-        } => start_proxy_server(config, host, port, idle_timeout).await,
-    }
-}
-
-/// Start the kronk server (proxy) with the given host, port, and idle timeout.
+/// Start the koji server (proxy) with the given host, port, and idle timeout.
 async fn start_proxy_server(
     config: &Config,
     host: String,
@@ -55,7 +42,7 @@ async fn start_proxy_server(
         tracing::warn!("Invalid host '{}' - using 127.0.0.1", host);
     }
 
-    tracing::info!("Starting Kronk on {}", addr);
+    tracing::info!("Starting koji on {}", addr);
     tracing::info!("Idle timeout: {}s", idle_timeout);
 
     let db_dir = koji_core::config::Config::config_dir().ok();
@@ -95,7 +82,7 @@ async fn start_proxy_server(
         let logs_dir = updated_config.logs_dir().ok();
         let config_path = koji_core::config::Config::config_path().ok();
         let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
-        tracing::info!("Starting Kronk web UI on http://{}", web_addr);
+        tracing::info!("Starting koji web UI on http://{}", web_addr);
         let proxy_config = Some(Arc::clone(&state.config));
         tokio::spawn(async move {
             if let Err(e) = koji_web::server::run_with_opts(

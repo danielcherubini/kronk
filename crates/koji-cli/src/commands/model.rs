@@ -126,7 +126,7 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
 }
 
 async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
-    println!("Pull the lever!");
+    println!("Pulling model...");
     println!();
     println!("  Fetching file list from {}...", repo_id);
 
@@ -402,7 +402,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     card.save(&card_path)?;
 
     println!();
-    println!("Oh yeah, it's all coming together.");
+    println!("Done.");
     println!("  Model card saved: {}", card_path.display());
     println!();
     println!("  Create a model config:");
@@ -570,7 +570,7 @@ async fn cmd_create(
 
     config.save()?;
 
-    println!("Oh yeah, it's all coming together.");
+    println!("Created.");
     println!();
     println!("  Name:      {}", server_name);
     println!("  Model:     {}", model_id_arg);
@@ -665,7 +665,7 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         }
     }
 
-    println!("No touchy! Model '{}' removed.", model_id);
+    println!("Removed model '{}'.", model_id);
     Ok(())
 }
 
@@ -712,7 +712,7 @@ async fn cmd_update(
             println!(" done.");
         }
         println!();
-        println!("Oh yeah, it's all coming together. Metadata refreshed.");
+        println!("Metadata refreshed.");
         return Ok(());
     }
 
@@ -899,7 +899,7 @@ async fn cmd_update(
     }
 
     println!();
-    println!("Oh yeah, it's all coming together. Models updated.");
+    println!("Models updated.");
     Ok(())
 }
 
@@ -1021,7 +1021,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
         println!("No untracked models or GGUF files found.");
     } else {
         println!();
-        println!("Oh yeah, it's all coming together. Model cards updated.");
+        println!("Model cards updated.");
     }
 
     Ok(())

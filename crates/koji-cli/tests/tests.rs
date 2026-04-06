@@ -64,7 +64,7 @@ fn test_extract_context_length() {
 }
 
 #[test]
-fn test_mixed_kronk_and_backend_flags() {
+fn test_mixed_koji_and_backend_flags() {
     let args = vec![
         "--model".to_string(),
         "unsloth/Qwen3.5-0.8B".to_string(),
@@ -92,7 +92,7 @@ fn test_mixed_kronk_and_backend_flags() {
 }
 
 #[test]
-fn test_no_kronk_flags_all_remain() {
+fn test_no_koji_flags_all_remain() {
     let args = vec![
         "--host".to_string(),
         "0.0.0.0".to_string(),
