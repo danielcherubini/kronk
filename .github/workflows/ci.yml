@@ -40,20 +40,20 @@ jobs:
           version: latest
 
       - name: Build Leptos WASM frontend
-        working-directory: crates/kronk-web
+        working-directory: crates/koji-web
         run: trunk build
 
       - name: Run tests (workspace)
         run: cargo test --workspace -- --nocapture
 
-      - name: Run kronk-web SSR integration tests
-        run: cargo test --package kronk-web --features ssr -- --nocapture
+      - name: Run koji-web SSR integration tests
+        run: cargo test --package koji-web --features ssr -- --nocapture
 
       - name: Clippy (workspace)
         run: cargo clippy --workspace -- -D warnings
 
-      - name: Clippy (kronk-web SSR)
-        run: cargo clippy --package kronk-web --features ssr -- -D warnings
+      - name: Clippy (koji-web SSR)
+        run: cargo clippy --package koji-web --features ssr -- -D warnings
 
       - name: Format check
         run: cargo fmt --all --check

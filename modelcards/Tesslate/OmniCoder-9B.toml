@@ -2,7 +2,7 @@
 name = "OmniCoder-9B"
 source = "Tesslate/OmniCoder-9B-GGUF"
 # max supported context is 128K, but actual usable context depends on VRAM
-# context length is selected during 'kronk model pull' based on available GPU memory
+# context length is selected during 'koji model pull' based on available GPU memory
 default_gpu_layers = 999 # sentinel: offload all layers to GPU
 
 # Recommended sampling from HuggingFace model card.
