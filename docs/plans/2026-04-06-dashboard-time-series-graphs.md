@@ -2,7 +2,7 @@
 
 **Goal:** Replace the current static gauge/number cards on the Dashboard with live SVG sparkline/area charts that show system metrics (CPU, RAM, GPU, VRAM) over the last 5 minutes.
 
-**Architecture:** The existing 3-second polling loop on the dashboard already fetches `SystemHealth` from `/kronk/v1/system/health`. We will accumulate these snapshots into a client-side ring buffer (max 100 entries ≈ 5 minutes at 3s intervals). A new reusable `<SparklineChart>` Leptos component will render the buffered data as responsive SVG area charts. No backend changes required — all history is kept in browser memory.
+**Architecture:** The existing 3-second polling loop on the dashboard already fetches `SystemHealth` from `/koji/v1/system/health`. We will accumulate these snapshots into a client-side ring buffer (max 100 entries ≈ 5 minutes at 3s intervals). A new reusable `<SparklineChart>` Leptos component will render the buffered data as responsive SVG area charts. No backend changes required — all history is kept in browser memory.
 
 **Tech Stack:** Leptos 0.7 (CSR), SVG rendering in Leptos `view!` macros, `RwSignal<Vec<SystemHealth>>` as the ring buffer.
 
@@ -14,8 +14,8 @@
 The dashboard needs a reusable charting component to render time-series data as SVG area charts. This component will be used for CPU%, RAM usage, GPU%, and VRAM usage. It takes a slice of `f32` values (normalized 0–100 or raw values) and renders an SVG with a filled area and a line stroke, colored according to the dashboard's existing dark theme CSS variables. The component should be self-contained, responsive (fills its container width), and have no external dependencies.
 
 **Files:**
-- Create: `crates/kronk-web/src/components/sparkline.rs`
-- Modify: `crates/kronk-web/src/components/mod.rs` — add `pub mod sparkline;`
+- Create: `crates/koji-web/src/components/sparkline.rs`
+- Modify: `crates/koji-web/src/components/mod.rs` — add `pub mod sparkline;`
 
 **What to implement:**
 
@@ -51,11 +51,11 @@ M 0,{y0} L {x1},{y1} L {x2},{y2} ... L {xN},{yN}
 Also in `components/mod.rs`, add `pub mod sparkline;` alongside the existing `pub mod nav;`.
 
 **Steps:**
-- [ ] Create `crates/kronk-web/src/components/sparkline.rs` with the `SparklineChart` component as described above
-- [ ] Add `pub mod sparkline;` to `crates/kronk-web/src/components/mod.rs`
+- [ ] Create `crates/koji-web/src/components/sparkline.rs` with the `SparklineChart` component as described above
+- [ ] Add `pub mod sparkline;` to `crates/koji-web/src/components/mod.rs`
 - [ ] Run `cargo fmt --all`
 - [ ] Run `cargo clippy --workspace -- -D warnings`
-  - Did it succeed? The WASM target may require `--target wasm32-unknown-unknown` for the kronk-web crate. If clippy fails on kronk-web specifically, try `cargo clippy --package kronk-core --package kronk-cli --package kronk-mock -- -D warnings` to at least validate the non-WASM crates, and visually verify the kronk-web code compiles with `cargo build --package kronk-web --target wasm32-unknown-unknown` (if the target is installed) or just `cargo check --package kronk-web`.
+  - Did it succeed? The WASM target may require `--target wasm32-unknown-unknown` for the koji-web crate. If clippy fails on koji-web specifically, try `cargo clippy --package koji-core --package koji-cli --package koji-mock -- -D warnings` to at least validate the non-WASM crates, and visually verify the koji-web code compiles with `cargo build --package koji-web --target wasm32-unknown-unknown` (if the target is installed) or just `cargo check --package koji-web`.
 - [ ] Commit with message: `feat: add SparklineChart SVG component for dashboard graphs`
 
 **Acceptance criteria:**
@@ -75,7 +75,7 @@ Also in `components/mod.rs`, add `pub mod sparkline;` alongside the existing `pu
 The existing dashboard cards use `.grid-stats` with `.card`, `.card-header`, `.card-value`, and `.gauge` / `.gauge-fill` classes. We need to update the layout so each card can show both the current value AND a sparkline chart below it. The existing gauge bars will be replaced by the sparkline charts. We also need CSS for the new `.sparkline` SVG element.
 
 **Files:**
-- Modify: `crates/kronk-web/style.css`
+- Modify: `crates/koji-web/style.css`
 
 **What to implement:**
 
@@ -101,7 +101,7 @@ Also modify the `.grid-stats` rule to use a slightly wider minimum column width 
 Do NOT remove or modify the existing `.gauge` / `.gauge-fill` CSS rules — they may be used elsewhere or in the future. Just add the new sparkline rules.
 
 **Steps:**
-- [ ] Add the sparkline CSS rules to `crates/kronk-web/style.css` after the gauge section (after line ~313)
+- [ ] Add the sparkline CSS rules to `crates/koji-web/style.css` after the gauge section (after line ~313)
 - [ ] Update `.grid-stats` `grid-template-columns` from `minmax(200px, 1fr)` to `minmax(240px, 1fr)`
 - [ ] Run `cargo fmt --all` (CSS won't be affected but good practice)
 - [ ] Commit with message: `feat: add sparkline chart CSS styles for dashboard`
@@ -116,7 +116,7 @@ Do NOT remove or modify the existing `.gauge` / `.gauge-fill` CSS rules — they
 ### Task 3: Refactor the Dashboard to use a metrics history ring buffer and render sparkline charts
 
 **Context:**
-This is the main task. The current `Dashboard` component polls `/kronk/v1/system/health` every 3 seconds and displays the latest snapshot as gauge bars and numbers. We need to:
+This is the main task. The current `Dashboard` component polls `/koji/v1/system/health` every 3 seconds and displays the latest snapshot as gauge bars and numbers. We need to:
 1. Accumulate each health snapshot into a `Vec<SystemHealth>` ring buffer (max 100 entries, ~5 minutes)
 2. Replace the gauge bars with `SparklineChart` components showing the time-series for each metric
 3. Keep the current value display (the big number) above each chart
@@ -125,7 +125,7 @@ This is the main task. The current `Dashboard` component polls `/kronk/v1/system
 The existing `SystemHealth` struct is defined locally in `dashboard.rs`. It already has all the fields we need: `cpu_usage_pct`, `ram_used_mib`, `ram_total_mib`, `gpu_utilization_pct`, and `vram` (with `used_mib`/`total_mib`).
 
 **Files:**
-- Modify: `crates/kronk-web/src/pages/dashboard.rs`
+- Modify: `crates/koji-web/src/pages/dashboard.rs`
 
 **What to implement:**
 
@@ -203,7 +203,7 @@ The existing `SystemHealth` struct is defined locally in `dashboard.rs`. It alre
            // Network error, no data yet — show error with retry button
            return view! {
                <div class="card">
-                   <p class="text-error">"Failed to load health data. Is Kronk running?"</p>
+                   <p class="text-error">"Failed to load health data. Is Koji running?"</p>
                    <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
                </div>
            }.into_any();
@@ -303,8 +303,8 @@ The existing `SystemHealth` struct is defined locally in `dashboard.rs`. It alre
 - [ ] Keep the "Models Loaded" card as a simple number (no chart)
 - [ ] Preserve the error/retry state — if fetch fails and history is empty, show the error message with retry button
 - [ ] Run `cargo fmt --all`
-- [ ] Run `cargo clippy --workspace -- -D warnings` (or check kronk-web specifically)
-- [ ] Visually verify by building with Trunk if possible: `trunk serve` in `crates/kronk-web/`
+- [ ] Run `cargo clippy --workspace -- -D warnings` (or check koji-web specifically)
+- [ ] Visually verify by building with Trunk if possible: `trunk serve` in `crates/koji-web/`
 - [ ] Commit with message: `feat: replace dashboard gauges with time-series sparkline charts`
 
 **Acceptance criteria:**

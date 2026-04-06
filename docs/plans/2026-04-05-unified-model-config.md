@@ -4,7 +4,7 @@
 
 **Architecture:** The separate model card TOML files (`configs/<org>--<model>.toml`) are eliminated. All model metadata — quants table, GPU layers, context length defaults, display name, and sampling parameters — moves directly into `[models.<id>]` entries in `config.toml`. The `Profile` enum is kept only for preset lookup (quick-fill in the UI); it is no longer stored on `ModelConfig`. Model IDs (config keys) become editable with full rename support, updating config, DB, and running model state. Community card fetching is removed entirely. Auto-migration runs on config load (backs up `config.toml` first).
 
-**Tech Stack:** Rust (kronk-core, kronk-cli, kronk-web/Leptos), SQLite (rusqlite), TOML (serde)
+**Tech Stack:** Rust (koji-core, koji-cli, koji-web/Leptos), SQLite (rusqlite), TOML (serde)
 
 **Key decisions:**
 - `source` field dropped — `model` remains the canonical HF repo ID field
@@ -23,9 +23,9 @@ Currently, model metadata is split between `ModelConfig` (in `config.toml`) and 
 This task must also update `Config::default()` in `loader.rs` because it currently constructs `ModelConfig` with `profile: Some(Profile::Coding)` — which would fail to compile after the type change from `Option<Profile>` to `Option<String>`.
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/types.rs`
-- Modify: `crates/kronk-core/src/config/loader.rs`
-- Test: `crates/kronk-core/src/config/types.rs` (inline `#[cfg(test)]` module)
+- Modify: `crates/koji-core/src/config/types.rs`
+- Modify: `crates/koji-core/src/config/loader.rs`
+- Test: `crates/koji-core/src/config/types.rs` (inline `#[cfg(test)]` module)
 
 **What to implement:**
 
@@ -97,14 +97,14 @@ In `loader.rs`, update `Config::default()`:
 
 **Steps:**
 - [ ] Write test `test_model_config_with_unified_fields` in `types.rs`: constructs a `ModelConfig` with `display_name: Some("My Model")`, `gpu_layers: Some(99)`, a `quants` BTreeMap with one entry, and `sampling: Some(SamplingParams { temperature: Some(0.3), ..Default::default() })`. No `profile` field set. Serialize to TOML and deserialize back, assert all fields round-trip correctly.
-- [ ] Run `cargo test --package kronk-core test_model_config_with_unified_fields`
+- [ ] Run `cargo test --package koji-core test_model_config_with_unified_fields`
   - Should fail because the new fields don't exist yet.
 - [ ] Add `QuantEntry` struct, `is_btreemap_empty` helper, `BTreeMap` import, and new fields to `ModelConfig` in `types.rs`. Change `profile` from `Option<Profile>` to `Option<String>` with `#[serde(default, skip_serializing)]`.
 - [ ] Update `Config::default()` in `loader.rs`: change the default model entry to use `profile: None`, `sampling: Some(...)` with coding preset values, `display_name: None`, `gpu_layers: None`, `quants: BTreeMap::new()`. Remove the `Profile` import if unused.
-- [ ] Run `cargo test --package kronk-core test_model_config_with_unified_fields` — should pass.
+- [ ] Run `cargo test --package koji-core test_model_config_with_unified_fields` — should pass.
 - [ ] Write test `test_model_config_reads_legacy_profile` that deserializes TOML containing `profile = "coding"` and verifies `config.profile == Some("coding".to_string())`. Then serialize back and verify `profile` is NOT in the output (because `skip_serializing`).
 - [ ] Run `cargo fmt --all`
-- [ ] Run `cargo check --package kronk-core` — expect compile errors in other files that reference `profile` as `Option<Profile>`. That's expected and will be fixed in later tasks. Verify `types.rs` and `loader.rs` themselves compile.
+- [ ] Run `cargo check --package koji-core` — expect compile errors in other files that reference `profile` as `Option<Profile>`. That's expected and will be fixed in later tasks. Verify `types.rs` and `loader.rs` themselves compile.
 - [ ] Commit with message: "feat: expand ModelConfig with unified fields (display_name, gpu_layers, quants, sampling)"
 
 **Acceptance criteria:**
@@ -133,10 +133,10 @@ Existing users have model card TOML files in `configs/` and `ModelConfig` entrie
 The migration runs automatically in `Config::load_from()` (same pattern as existing migrations) and is idempotent — if a model already has quants populated and no card file exists, it's a no-op.
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
-- Modify: `crates/kronk-core/src/config/loader.rs` (wire in the new migration call)
-- Modify: `crates/kronk-core/src/models/pull.rs` (remove `fetch_community_card`, `MODELCARDS_BASE_URL`)
-- Test: `crates/kronk-core/src/config/migrate.rs` (inline `#[cfg(test)]` module)
+- Modify: `crates/koji-core/src/config/migrate.rs`
+- Modify: `crates/koji-core/src/config/loader.rs` (wire in the new migration call)
+- Modify: `crates/koji-core/src/models/pull.rs` (remove `fetch_community_card`, `MODELCARDS_BASE_URL`)
+- Test: `crates/koji-core/src/config/migrate.rs` (inline `#[cfg(test)]` module)
 
 **What to implement:**
 
@@ -164,7 +164,7 @@ Add `pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Resu
 
 Wire into `Config::load_from()` in `loader.rs`: call `migrate_cards_to_unified_config(&mut config)?` after the existing `migrate_profiles_to_model_cards` call (or replace it). The new migration supersedes both `migrate_model_cards_to_configs` and `migrate_profiles_to_model_cards`.
 
-Do NOT remove `fetch_community_card` or `MODELCARDS_BASE_URL` from `pull.rs` in this task — their callers in `kronk-cli` and `kronk_handlers` would break workspace compilation. They will be removed in Task 6b along with their callers. This task only adds the new migration function and wires it into `Config::load_from()`.
+Do NOT remove `fetch_community_card` or `MODELCARDS_BASE_URL` from `pull.rs` in this task — their callers in `koji-cli` and `koji_handlers` would break workspace compilation. They will be removed in Task 6b along with their callers. This task only adds the new migration function and wires it into `Config::load_from()`.
 
 **Migration edge cases to handle:**
 - Model with card but no profile → quants/gpu_layers/display_name migrated, sampling stays None
@@ -189,15 +189,15 @@ Do NOT remove `fetch_community_card` or `MODELCARDS_BASE_URL` from `pull.rs` in 
     - `config.models["test-model"].profile == None`
     - Card file `configs/org--repo.toml` no longer exists
     - Backup file `config.toml.pre-unified-migration` exists
-- [ ] Run `cargo test --package kronk-core test_migrate_cards_to_unified` — should fail.
+- [ ] Run `cargo test --package koji-core test_migrate_cards_to_unified` — should fail.
 - [ ] Implement `migrate_cards_to_unified_config`.
 - [ ] Run the test — should pass.
 - [ ] Write test `test_migrate_idempotent` — run migration twice, verify second run is no-op.
 - [ ] Write test `test_migrate_no_card_with_profile` — model has `profile = "coding"`, no card file. Verify sampling is populated from `sampling_templates["coding"]`.
 - [ ] Write test `test_migrate_preserves_existing_quants` — model already has quants populated. Verify card data doesn't overwrite them.
 - [ ] Wire `migrate_cards_to_unified_config` into `Config::load_from()`.
-- [ ] Run `cargo test --package kronk-core` to verify existing tests still pass.
-- [ ] Run `cargo fmt --all && cargo clippy --package kronk-core -- -D warnings`
+- [ ] Run `cargo test --package koji-core` to verify existing tests still pass.
+- [ ] Run `cargo fmt --all && cargo clippy --package koji-core -- -D warnings`
 - [ ] Commit with message: "feat: auto-migrate model cards into unified ModelConfig on config load"
 
 **Acceptance criteria:**
@@ -219,8 +219,8 @@ The `build_full_args` method in `resolve.rs` currently constructs a `ModelRegist
 The `ctx_override: Option<u32>` parameter is preserved on `build_full_args` for callers that need runtime context-length overrides.
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/resolve.rs`
-- Test: `crates/kronk-core/src/config/resolve.rs` (inline `#[cfg(test)]` module)
+- Modify: `crates/koji-core/src/config/resolve.rs`
+- Test: `crates/koji-core/src/config/resolve.rs` (inline `#[cfg(test)]` module)
 
 **What to implement:**
 
@@ -258,8 +258,8 @@ The `ctx_override: Option<u32>` parameter is preserved on `build_full_args` for 
 - [ ] Implement the new `build_full_args` logic. Remove `effective_sampling` and `effective_sampling_with_card`.
 - [ ] Run tests — should pass.
 - [ ] Update/fix any existing tests in `resolve.rs` that constructed `ModelConfig` with `profile: Some(Profile::Coding)` — change to `profile: None` or remove.
-- [ ] Run `cargo test --package kronk-core -- config::resolve::tests`
-- [ ] Run `cargo fmt --all && cargo clippy --package kronk-core -- -D warnings`
+- [ ] Run `cargo test --package koji-core -- config::resolve::tests`
+- [ ] Run `cargo fmt --all && cargo clippy --package koji-core -- -D warnings`
 - [ ] Commit with message: "refactor: build_full_args reads from unified ModelConfig instead of ModelCard"
 
 **Acceptance criteria:**
@@ -279,10 +279,10 @@ The `ctx_override: Option<u32>` parameter is preserved on `build_full_args` for 
 Model IDs (config keys like "my-coding-model") are used as the primary key `server_name` in the `active_models` DB table, and as keys in both `Config.models` HashMap and the in-memory `ProxyState.models` map. To support renaming, we need: (1) a DB function that updates the PK, (2) logic to rename the key in config and in-memory state. The rename must be atomic with rollback if config save fails. The API/UI endpoints for triggering rename come in Task 5.
 
 **Files:**
-- Modify: `crates/kronk-core/src/db/queries.rs`
-- Create: `crates/kronk-core/src/proxy/rename.rs`
-- Modify: `crates/kronk-core/src/proxy/mod.rs` (add `mod rename;`)
-- Test: `crates/kronk-core/src/db/queries.rs` (inline tests)
+- Modify: `crates/koji-core/src/db/queries.rs`
+- Create: `crates/koji-core/src/proxy/rename.rs`
+- Modify: `crates/koji-core/src/proxy/mod.rs` (add `mod rename;`)
+- Test: `crates/koji-core/src/db/queries.rs` (inline tests)
 
 **What to implement:**
 
@@ -315,16 +315,16 @@ Model IDs (config keys like "my-coding-model") are used as the primary key `serv
      - If `old_name` exists in the map, remove and re-insert at `new_name`
    - DB update (best-effort): call `rename_active_model(conn, old_name, new_name)` if db is available
 
-3. Add `mod rename;` to `crates/kronk-core/src/proxy/mod.rs`.
+3. Add `mod rename;` to `crates/koji-core/src/proxy/mod.rs`.
 
 **Steps:**
 - [ ] Write test `test_rename_active_model` in `queries.rs`: insert an active model with name "old-name", call `rename_active_model("old-name", "new-name")`, verify `get_active_models` returns `server_name == "new-name"` and "old-name" is gone.
 - [ ] Write test `test_rename_active_model_not_found` — rename a name that doesn't exist, verify no error (0 rows affected is OK).
-- [ ] Run `cargo test --package kronk-core test_rename_active_model` — should fail.
+- [ ] Run `cargo test --package koji-core test_rename_active_model` — should fail.
 - [ ] Implement `rename_active_model` in `queries.rs`.
 - [ ] Run tests — should pass.
 - [ ] Create `proxy/rename.rs` with `ProxyState::rename_model`. Add `mod rename;` to `proxy/mod.rs`.
-- [ ] Run `cargo fmt --all && cargo clippy --package kronk-core -- -D warnings`
+- [ ] Run `cargo fmt --all && cargo clippy --package koji-core -- -D warnings`
 - [ ] Commit with message: "feat: add rename_active_model DB function and ProxyState::rename_model"
 
 **Acceptance criteria:**
@@ -340,14 +340,14 @@ Model IDs (config keys like "my-coding-model") are used as the primary key `serv
 ### Task 5: Update Web API and model editor UI
 
 **Context:**
-The web API (`kronk-web/src/api.rs`) currently has separate endpoints for model config CRUD (`/api/models/:id`) and model card CRUD (`/api/models/:id/card`). After consolidation, the card endpoints are removed. The model config endpoints are updated to include the new unified fields. A new `POST /api/models/:id/rename` endpoint is added. The model editor UI (`model_editor.rs`) is redesigned from a two-panel layout (Model Config + Model Card) into a single unified form with sections. Sampling params get per-field enable/disable checkboxes.
+The web API (`koji-web/src/api.rs`) currently has separate endpoints for model config CRUD (`/api/models/:id`) and model card CRUD (`/api/models/:id/card`). After consolidation, the card endpoints are removed. The model config endpoints are updated to include the new unified fields. A new `POST /api/models/:id/rename` endpoint is added. The model editor UI (`model_editor.rs`) is redesigned from a two-panel layout (Model Config + Model Card) into a single unified form with sections. Sampling params get per-field enable/disable checkboxes.
 
-The web crate (`kronk-web`) is a separate process from the proxy. It has no direct access to `ProxyState` or the DB. The rename handler only updates `config.toml` — the DB is updated when the proxy next loads the model. This matches the existing architecture where the web crate only reads/writes config files.
+The web crate (`koji-web`) is a separate process from the proxy. It has no direct access to `ProxyState` or the DB. The rename handler only updates `config.toml` — the DB is updated when the proxy next loads the model. This matches the existing architecture where the web crate only reads/writes config files.
 
 **Files:**
-- Modify: `crates/kronk-web/src/api.rs`
-- Modify: `crates/kronk-web/src/server.rs` (router)
-- Modify: `crates/kronk-web/src/pages/model_editor.rs`
+- Modify: `crates/koji-web/src/api.rs`
+- Modify: `crates/koji-web/src/server.rs` (router)
+- Modify: `crates/koji-web/src/pages/model_editor.rs`
 - Test: Manual testing via browser (Leptos WASM apps don't support unit tests)
 
 **What to implement:**
@@ -370,7 +370,7 @@ The web crate (`kronk-web`) is a separate process from the proxy. It has no dire
        pub args: Vec<String>,
        // REMOVED: pub profile: Option<String>,
        #[serde(default)]
-       pub sampling: Option<kronk_core::profiles::SamplingParams>,
+       pub sampling: Option<koji_core::profiles::SamplingParams>,
        #[serde(default)]
        pub enabled: Option<bool>,
        #[serde(default)]
@@ -383,7 +383,7 @@ The web crate (`kronk-web`) is a separate process from the proxy. It has no dire
        #[serde(default)]
        pub gpu_layers: Option<u32>,
        #[serde(default)]
-       pub quants: Option<BTreeMap<String, kronk_core::config::QuantEntry>>,
+       pub quants: Option<BTreeMap<String, koji_core::config::QuantEntry>>,
    }
    ```
 5. Update `apply_model_body`: remove `Profile` parsing/import. Map all body fields to `ModelConfig`:
@@ -488,8 +488,8 @@ The web crate (`kronk-web`) is a separate process from the proxy. It has no dire
   - Add "Load Preset" dropdown
   - Update `ModelDetail`, `ModelForm` types
   - Single save button
-- [ ] Run `cargo build --package kronk-web` to verify compilation.
-- [ ] Run `cargo fmt --all && cargo clippy --package kronk-web -- -D warnings`
+- [ ] Run `cargo build --package koji-web` to verify compilation.
+- [ ] Run `cargo fmt --all && cargo clippy --package koji-web -- -D warnings`
 - [ ] Commit with message: "feat: unified model editor UI with sampling checkboxes and rename support"
 
 **Acceptance criteria:**
@@ -500,7 +500,7 @@ The web crate (`kronk-web`) is a separate process from the proxy. It has no dire
 - [ ] Model ID is editable; renaming calls the rename endpoint before saving
 - [ ] Quants table is in the main form
 - [ ] Single save button saves everything
-- [ ] Compilation succeeds for `kronk-web`
+- [ ] Compilation succeeds for `koji-web`
 
 ---
 
@@ -510,31 +510,31 @@ The web crate (`kronk-web`) is a separate process from the proxy. It has no dire
 After Tasks 1-5, many files across all 3 crates still reference `ModelCard`, `Profile` (as an enum on `ModelConfig`), `ModelRegistry` (for card lookups), and community card fetching. This task updates all remaining consumers. It's broken into sub-steps by area to keep changes manageable.
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/kronk_handlers.rs`
-- Modify: `crates/kronk-core/src/proxy/state.rs`
-- Modify: `crates/kronk-core/src/proxy/lifecycle.rs`
-- Modify: `crates/kronk-core/src/proxy/status.rs`
-- Modify: `crates/kronk-core/src/models/registry.rs`
-- Modify: `crates/kronk-core/src/models/mod.rs`
-- Delete: `crates/kronk-core/src/models/card.rs`
-- Modify: `crates/kronk-core/src/db/backfill.rs`
-- Modify: `crates/kronk-cli/src/commands/model.rs`
-- Modify: `crates/kronk-cli/src/handlers/profile.rs`
-- Modify: `crates/kronk-cli/src/handlers/status.rs`
-- Modify: `crates/kronk-cli/src/handlers/server/add.rs`
-- Modify: `crates/kronk-cli/src/handlers/server/edit.rs`
-- Modify: `crates/kronk-cli/src/handlers/server/ls.rs`
-- Modify: `crates/kronk-cli/src/cli.rs`
-- Modify: `crates/kronk-cli/src/lib.rs`
-- Modify: `crates/kronk-cli/tests/tests.rs`
+- Modify: `crates/koji-core/src/proxy/koji_handlers.rs`
+- Modify: `crates/koji-core/src/proxy/state.rs`
+- Modify: `crates/koji-core/src/proxy/lifecycle.rs`
+- Modify: `crates/koji-core/src/proxy/status.rs`
+- Modify: `crates/koji-core/src/models/registry.rs`
+- Modify: `crates/koji-core/src/models/mod.rs`
+- Delete: `crates/koji-core/src/models/card.rs`
+- Modify: `crates/koji-core/src/db/backfill.rs`
+- Modify: `crates/koji-cli/src/commands/model.rs`
+- Modify: `crates/koji-cli/src/handlers/profile.rs`
+- Modify: `crates/koji-cli/src/handlers/status.rs`
+- Modify: `crates/koji-cli/src/handlers/server/add.rs`
+- Modify: `crates/koji-cli/src/handlers/server/edit.rs`
+- Modify: `crates/koji-cli/src/handlers/server/ls.rs`
+- Modify: `crates/koji-cli/src/cli.rs`
+- Modify: `crates/koji-cli/src/lib.rs`
+- Modify: `crates/koji-cli/tests/tests.rs`
 
 **What to implement:**
 
 **Step 6a: Core library — models module and DB backfill**
 
-1. Delete `crates/kronk-core/src/models/card.rs`.
-2. Update `crates/kronk-core/src/models/mod.rs`: remove `pub mod card;` and re-exports of `ModelCard`, `ModelMeta`, `QuantInfo`. Keep `pub mod registry;` and `pub mod pull;`.
-3. Simplify `crates/kronk-core/src/models/registry.rs`:
+1. Delete `crates/koji-core/src/models/card.rs`.
+2. Update `crates/koji-core/src/models/mod.rs`: remove `pub mod card;` and re-exports of `ModelCard`, `ModelMeta`, `QuantInfo`. Keep `pub mod registry;` and `pub mod pull;`.
+3. Simplify `crates/koji-core/src/models/registry.rs`:
    - Remove `configs_dir` field (no more card scanning).
    - `ModelRegistry::new` takes only `models_dir: PathBuf`.
    - Remove `InstalledModel.card` and `InstalledModel.card_path` fields. The struct only needs `dir: PathBuf` and `id: String`.
@@ -543,21 +543,21 @@ After Tasks 1-5, many files across all 3 crates still reference `ModelCard`, `Pr
    - `gguf_path()` — takes `id`, `quant_filename` (not quant name). Returns `models_dir/id/filename`.
    - `untracked_ggufs()` — takes `model_dir: &Path` and `tracked_files: &HashSet<&str>` (instead of `&ModelCard`).
    - Update all tests in `registry.rs` to not create card files.
-4. Update `crates/kronk-core/src/db/backfill.rs`: change `ModelRegistry::new` call to single arg. Don't load cards. Backfill by scanning `models/` for GGUF files and matching against `config.models` entries.
+4. Update `crates/koji-core/src/db/backfill.rs`: change `ModelRegistry::new` call to single arg. Don't load cards. Backfill by scanning `models/` for GGUF files and matching against `config.models` entries.
 
-After this step: `cargo build --package kronk-core` should compile (though `kronk-cli` and `kronk-web` may still have errors).
+After this step: `cargo build --package koji-core` should compile (though `koji-cli` and `koji-web` may still have errors).
 
 **Step 6b: Core library — proxy handlers**
 
-1. `proxy/kronk_handlers.rs`:
+1. `proxy/koji_handlers.rs`:
    - In `_setup_model_after_pull_with_config` (and its callers): remove all card file creation. Instead, create/update the `ModelConfig` entry directly in `config.models` with `display_name`, `quants`, `gpu_layers`, etc. Remove `ModelCard`/`ModelMeta`/`QuantInfo` imports. Rename the `QuantEntry` struct in this file (used for HF API response parsing) to `HfQuantEntry` to avoid collision with `config::QuantEntry`.
    - Remove community card merging logic — remove the caller of `fetch_community_card`.
-   - Also in this step: remove `fetch_community_card()` function and `MODELCARDS_BASE_URL` constant from `crates/kronk-core/src/models/pull.rs` (deferred from Task 2 to keep workspace compilable). Remove the `use crate::models::card::ModelCard` import from `pull.rs`.
+   - Also in this step: remove `fetch_community_card()` function and `MODELCARDS_BASE_URL` constant from `crates/koji-core/src/models/pull.rs` (deferred from Task 2 to keep workspace compilable). Remove the `use crate::models::card::ModelCard` import from `pull.rs`.
 2. `proxy/state.rs`: Remove `get_model_card` method (it loaded card TOML files). If anything calls it, replace with reading from `config.models[key]` directly.
 3. `proxy/lifecycle.rs`: Remove `_model_card: Option<&crate::models::card::ModelCard>` parameter from `load_model`. Update the signature to just `pub async fn load_model(&self, model_name: &str) -> Result<String>`. Update all callers (search for `load_model(` across the codebase).
 4. `proxy/status.rs`: Replace `m.profile` serialization with `m.sampling` serialization. Where it currently outputs `"profile": model_config.profile.as_ref().map(|p| p.to_string())`, change to `"sampling": model_config.sampling`.
 
-After this step: `cargo build --package kronk-core` should compile cleanly.
+After this step: `cargo build --package koji-core` should compile cleanly.
 
 **Step 6c: CLI commands and handlers**
 
@@ -571,21 +571,21 @@ After this step: `cargo build --package kronk-core` should compile cleanly.
    - `profile list`: Keep as-is — shows available presets from `sampling_templates`.
    - `profile set <model> <preset>`: Instead of setting `model_config.profile = Some(Profile::...)`, look up `config.sampling_templates[preset]`, set `model_config.sampling = Some(template_params)`, set `model_config.profile = None`, save config.
    - `profile clear <model>`: Set `model_config.sampling = None`, save config.
-   - Remove `use kronk_core::profiles::Profile;` import if only used for matching.
+   - Remove `use koji_core::profiles::Profile;` import if only used for matching.
 3. `handlers/server/add.rs`: Remove `Profile` parsing. When constructing a new `ModelConfig`, set `profile: None`. Update `ModelRegistry::new` call to single arg. Quant validation now checks against the `ModelConfig.quants` map (loaded from config) instead of scanning card files.
 4. `handlers/server/edit.rs`: Remove `Profile` parsing. If the user is editing sampling, update `model_config.sampling` directly.
 5. `handlers/server/ls.rs`: Display `sampling` summary (e.g. "temp=0.3 top_k=50") instead of profile name.
 6. `handlers/status.rs`: Display `sampling` params instead of `profile` name.
-7. `cli.rs`: The `kronk profile` subcommand stays (it's reused as "kronk sampling preset" essentially). No structural changes needed.
+7. `cli.rs`: The `koji profile` subcommand stays (it's reused as "koji sampling preset" essentially). No structural changes needed.
 8. `lib.rs`: Update doc comments about model cards.
 9. `tests/tests.rs`: Update any test that constructs `ModelConfig` with `profile: Some("chat")` or references `Profile` enum.
 
 After this step: `cargo build --workspace` should compile cleanly.
 
 **Steps:**
-- [ ] **6a**: Delete `card.rs`, update `mod.rs`, simplify `registry.rs`, update `backfill.rs`. Run `cargo build --package kronk-core`.
-- [ ] **6b**: Update `kronk_handlers.rs` (rename `QuantEntry` → `HfQuantEntry`, remove card creation), `state.rs` (remove `get_model_card`), `lifecycle.rs` (remove card parameter from `load_model`), `status.rs` (sampling instead of profile). Run `cargo build --package kronk-core`.
-- [ ] **6c**: Update all CLI files. Run `cargo build --package kronk-cli`.
+- [ ] **6a**: Delete `card.rs`, update `mod.rs`, simplify `registry.rs`, update `backfill.rs`. Run `cargo build --package koji-core`.
+- [ ] **6b**: Update `koji_handlers.rs` (rename `QuantEntry` → `HfQuantEntry`, remove card creation), `state.rs` (remove `get_model_card`), `lifecycle.rs` (remove card parameter from `load_model`), `status.rs` (sampling instead of profile). Run `cargo build --package koji-core`.
+- [ ] **6c**: Update all CLI files. Run `cargo build --package koji-cli`.
 - [ ] Run `cargo build --workspace` — should compile.
 - [ ] Run `cargo test --workspace` — fix any broken tests.
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`
@@ -600,7 +600,7 @@ After this step: `cargo build --workspace` should compile cleanly.
 - [ ] `load_model` no longer takes a model card parameter
 - [ ] `ModelRegistry` no longer has `configs_dir` or card-loading logic
 - [ ] All profile references in CLI handlers replaced with sampling
-- [ ] `HfQuantEntry` used in `kronk_handlers.rs` (no naming collision)
+- [ ] `HfQuantEntry` used in `koji_handlers.rs` (no naming collision)
 
 ---
 
@@ -610,13 +610,13 @@ After this step: `cargo build --workspace` should compile cleanly.
 After all changes, clean up dead code, remove the deprecated `profile` string field from `ModelConfig` (it was `skip_serializing` but still deserializable), remove the `modelcards/` directory from the repo, remove now-unnecessary migration functions, update doc comments, and verify the full workflow.
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/types.rs` (remove `profile` field)
-- Modify: `crates/kronk-core/src/config/loader.rs` (clean up default config)
-- Modify: `crates/kronk-core/src/config/migrate.rs` (remove legacy migration functions)
+- Modify: `crates/koji-core/src/config/types.rs` (remove `profile` field)
+- Modify: `crates/koji-core/src/config/loader.rs` (clean up default config)
+- Modify: `crates/koji-core/src/config/migrate.rs` (remove legacy migration functions)
 - Delete: `modelcards/` directory (community card templates in the repo)
-- Modify: `crates/kronk-core/src/lib.rs` (update doc comments)
-- Modify: `crates/kronk-cli/src/lib.rs` (update doc comments)
-- Modify: `crates/kronk-core/src/config/defaults.rs` (update/remove comments about profiles)
+- Modify: `crates/koji-core/src/lib.rs` (update doc comments)
+- Modify: `crates/koji-cli/src/lib.rs` (update doc comments)
+- Modify: `crates/koji-core/src/config/defaults.rs` (update/remove comments about profiles)
 
 **What to implement:**
 
@@ -635,8 +635,8 @@ After all changes, clean up dead code, remove the deprecated `profile` string fi
 5. Delete the `modelcards/` directory from the repo root.
 
 6. Update doc comments:
-   - `kronk-core/src/lib.rs`: remove references to "model cards in configs/" and "profile-based sampling"
-   - `kronk-cli/src/lib.rs`: same
+   - `koji-core/src/lib.rs`: remove references to "model cards in configs/" and "profile-based sampling"
+   - `koji-cli/src/lib.rs`: same
    - `config/defaults.rs`: remove comment about "Profile resolution is now handled via Config.sampling_templates" (outdated)
 
 7. Run `make check` (fmt + clippy + test).

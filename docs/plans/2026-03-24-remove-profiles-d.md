@@ -3,27 +3,27 @@
 **Goal:** Eliminate `profiles/`, `custom_profiles`, `Profile::Custom`, and
 hardcoded built-in profile defaults. Model cards become the sole source of
 sampling parameters. A new `[sampling_templates]` section in `config.toml`
-provides seed values for new model cards created during `kronk model pull`.
+provides seed values for new model cards created during `koji model pull`.
 **Status:** DONE - Part of model card migration
 
 **Architecture:** The `Profile` enum (coding, chat, analysis, creative)
 becomes a pure label — a key into the model card's `[sampling.<profile>]`
 section. It no longer carries hardcoded default params. The resolution
 chain simplifies to: `modelcard [sampling.<profile>] -> server-level overrides`.
-When `kronk model pull` creates a new card without a community card, it
+When `koji model pull` creates a new card without a community card, it
 copies the `[sampling_templates.*]` from config.toml into the card. A
 one-time migration moves any user-customised profiles and custom_profiles
 entries into existing model cards before cleaning up.
 
-**Tech Stack:** Rust, TOML (serde), existing `kronk-core` / `kronk-cli` crates
+**Tech Stack:** Rust, TOML (serde), existing `koji-core` / `koji-cli` crates
 
 ---
 
 ## Task 1: Add `[sampling_templates]` to Config
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/types.rs`
-- Modify: `crates/kronk-core/src/config/loader.rs` (Default impl)
+- Modify: `crates/koji-core/src/config/types.rs`
+- Modify: `crates/koji-core/src/config/loader.rs` (Default impl)
 - Test: inline tests
 
 **Steps:**
@@ -44,8 +44,8 @@ entries into existing model cards before cleaning up.
 ## Task 2: Auto-migrate profiles and custom_profiles into model cards
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/migrate.rs`
-- Test: `crates/kronk-core/src/config/migrate.rs` (inline tests)
+- Modify: `crates/koji-core/src/config/migrate.rs`
+- Test: `crates/koji-core/src/config/migrate.rs` (inline tests)
 
 **Steps:**
 - [ ] Write test (profiles, modified): given `profiles/coding.toml` with
@@ -83,7 +83,7 @@ entries into existing model cards before cleaning up.
 ## Task 3: Wire migration into Config::load_from, remove profiles generation
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/loader.rs`
+- Modify: `crates/koji-core/src/config/loader.rs`
 - Test: inline tests
 
 **Steps:**
@@ -103,9 +103,9 @@ entries into existing model cards before cleaning up.
 ## Task 4: Remove `Profile::params()` — profile becomes a pure label
 
 **Files:**
-- Modify: `crates/kronk-core/src/profiles.rs`
-- Modify: `crates/kronk-core/src/config/defaults.rs`
-- Modify: `crates/kronk-core/src/config/resolve.rs`
+- Modify: `crates/koji-core/src/profiles.rs`
+- Modify: `crates/koji-core/src/config/defaults.rs`
+- Modify: `crates/koji-core/src/config/resolve.rs`
 - Test: inline tests
 
 **Steps:**
@@ -130,10 +130,10 @@ entries into existing model cards before cleaning up.
 ## Task 5: Remove `Profile::Custom` and `custom_profiles` from Config
 
 **Files:**
-- Modify: `crates/kronk-core/src/profiles.rs`
-- Modify: `crates/kronk-core/src/config/types.rs`
-- Modify: `crates/kronk-core/src/config/loader.rs`
-- Modify: `crates/kronk-core/src/config/defaults.rs`
+- Modify: `crates/koji-core/src/profiles.rs`
+- Modify: `crates/koji-core/src/config/types.rs`
+- Modify: `crates/koji-core/src/config/loader.rs`
+- Modify: `crates/koji-core/src/config/defaults.rs`
 - Test: inline tests
 
 **Steps:**
@@ -154,7 +154,7 @@ entries into existing model cards before cleaning up.
 ## Task 6: Remove `ProfileDef`, `load_profiles_d`, `generate_default_profiles`
 
 **Files:**
-- Modify: `crates/kronk-core/src/profiles.rs`
+- Modify: `crates/koji-core/src/profiles.rs`
 - Test: inline tests
 
 **Steps:**
@@ -168,7 +168,7 @@ entries into existing model cards before cleaning up.
   `test_load_profiles_d_nonexistent`,
   `test_generate_and_load_default_profiles`,
   `test_generate_does_not_overwrite_existing`
-- [ ] Run `cargo test --package kronk-core`, verify all pass
+- [ ] Run `cargo test --package koji-core`, verify all pass
 - [ ] Run `cargo clippy --workspace -- -D warnings`, fix warnings
 - [ ] Commit
 
@@ -177,8 +177,8 @@ entries into existing model cards before cleaning up.
 ## Task 7: Populate modelcard sampling on pull from `sampling_templates`
 
 **Files:**
-- Modify: `crates/kronk-cli/src/commands/model.rs` (in `cmd_pull`)
-- Modify: `crates/kronk-core/src/models/card.rs` (add helper)
+- Modify: `crates/koji-cli/src/commands/model.rs` (in `cmd_pull`)
+- Modify: `crates/koji-core/src/models/card.rs` (add helper)
 - Test: inline tests in `card.rs`
 
 **Steps:**
@@ -199,8 +199,8 @@ entries into existing model cards before cleaning up.
 ## Task 8: Update profile CLI handler and CLI definition
 
 **Files:**
-- Modify: `crates/kronk-cli/src/handlers/profile.rs`
-- Modify: `crates/kronk-cli/src/cli.rs`
+- Modify: `crates/koji-cli/src/handlers/profile.rs`
+- Modify: `crates/koji-cli/src/cli.rs`
 - Test: `cargo clippy` + `cargo test`
 
 **Steps:**
@@ -222,7 +222,7 @@ entries into existing model cards before cleaning up.
 ## Task 9: Clean up re-exports, unused imports, and docs
 
 **Files:**
-- Modify: `crates/kronk-core/src/config/mod.rs`
+- Modify: `crates/koji-core/src/config/mod.rs`
 - Modify: `README.md`
 
 **Steps:**

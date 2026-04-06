@@ -1,16 +1,16 @@
-# Kronk Management API — Spec
+# Koji Management API — Spec
 
 **Date:** 2026-04-03  
 **Status:** Draft  
-**Prefix:** `/kronk/v1/`
+**Prefix:** `/koji/v1/`
 
 ## OpenAPI Specs
 
-The machine-readable OpenAPI 3.1.0 specs for all Kronk endpoints live in [`docs/openapi/`](../openapi/):
+The machine-readable OpenAPI 3.1.0 specs for all Koji endpoints live in [`docs/openapi/`](../openapi/):
 
 | File | Covers |
 |---|---|
-| [`docs/openapi/kronk-api.yaml`](../openapi/kronk-api.yaml) | All `/kronk/v1/` management endpoints defined in this spec |
+| [`docs/openapi/koji-api.yaml`](../openapi/koji-api.yaml) | All `/koji/v1/` management endpoints defined in this spec |
 | [`docs/openapi/openai-compat.yaml`](../openapi/openai-compat.yaml) | `/v1/` chat & model routes + `/health`, `/status`, `/metrics` |
 
 > **The OpenAPI specs are the authoritative request/response contract.** The endpoint descriptions
@@ -20,12 +20,12 @@ The machine-readable OpenAPI 3.1.0 specs for all Kronk endpoints live in [`docs/
 
 ## Background
 
-Kronk exposes an OpenAI-compatible API under `/v1/` (chat completions, model listing). It also has
+Koji exposes an OpenAI-compatible API under `/v1/` (chat completions, model listing). It also has
 `/health`, `/status`, and `/metrics` at the root. What it lacks is an explicit **management plane**
 for operations like loading/unloading model backends, pulling models from HuggingFace, and
 restarting the proxy.
 
-This spec defines a new `GET`/`POST` surface under `/kronk/v1/` that is clearly Kronk-native and
+This spec defines a new `GET`/`POST` surface under `/koji/v1/` that is clearly Koji-native and
 not part of the OpenAI spec.
 
 ---
@@ -33,7 +33,7 @@ not part of the OpenAI spec.
 ## Guiding Principles
 
 1. **No breakage.** Existing `/health`, `/status`, `/metrics`, and `/v1/...` routes are untouched.
-2. **Explicit versioning.** `/kronk/v1/` allows a future `/kronk/v2/` without path conflict.
+2. **Explicit versioning.** `/koji/v1/` allows a future `/koji/v2/` without path conflict.
 3. **Long ops are async.** Pull/download is async: POST returns a `job_id`, poll for progress.
 4. **Consistent error shape.** All errors return `{ "error": { "message": "...", "type": "..." } }`.
 5. **Thin handlers.** Handlers call existing `ProxyState` methods. No business logic in HTTP layer.
@@ -44,7 +44,7 @@ not part of the OpenAI spec.
 
 ### 1. Model Management
 
-#### `GET /kronk/v1/models`
+#### `GET /koji/v1/models`
 
 List all configured models with their runtime state.
 
@@ -89,7 +89,7 @@ that clients already understand.
 
 ---
 
-#### `GET /kronk/v1/models/:id`
+#### `GET /koji/v1/models/:id`
 
 Get runtime state for a single configured model.
 
@@ -98,7 +98,7 @@ Get runtime state for a single configured model.
 
 ---
 
-#### `POST /kronk/v1/models/:id/load`
+#### `POST /koji/v1/models/:id/load`
 
 Start the backend process for a configured model.
 
@@ -127,7 +127,7 @@ state.load_model(&id, model_card.as_ref()).await
 
 ---
 
-#### `POST /kronk/v1/models/:id/unload`
+#### `POST /koji/v1/models/:id/unload`
 
 Gracefully stop the backend for a loaded model.
 
@@ -157,11 +157,11 @@ state.unload_model(&server_name).await
 
 ### 2. Pull / Download
 
-> **Route note:** Pull jobs live under `/kronk/v1/pulls/` (not `/kronk/v1/models/pull/`) to avoid
+> **Route note:** Pull jobs live under `/koji/v1/pulls/` (not `/koji/v1/models/pull/`) to avoid
 > an axum path conflict between the literal segment `pull` and the `:id` capture in
-> `/kronk/v1/models/:id`.
+> `/koji/v1/models/:id`.
 
-#### `POST /kronk/v1/pulls`
+#### `POST /koji/v1/pulls`
 
 Start an async download of a GGUF model from HuggingFace.
 
@@ -205,7 +205,7 @@ pick a sensible default (e.g. Q4_K_M if available, otherwise first file alphabet
 
 ---
 
-#### `GET /kronk/v1/pulls/:job_id`
+#### `GET /koji/v1/pulls/:job_id`
 
 Poll the status of an in-progress or completed pull job.
 
@@ -233,7 +233,7 @@ caveat above). Pollers should track status transitions, not byte counts.
 
 ### 3. System
 
-#### `GET /kronk/v1/system/health`
+#### `GET /koji/v1/system/health`
 
 Richer health check than the root `/health` liveness probe. Returns overall system health
 including VRAM and currently loaded model count.
@@ -242,7 +242,7 @@ including VRAM and currently loaded model count.
 ```json
 {
   "status": "ok",
-  "service": "kronk",
+  "service": "koji",
   "models_loaded": 2,
   "vram": {
     "used_mib": 8192,
@@ -251,20 +251,20 @@ including VRAM and currently loaded model count.
 }
 ```
 
-**Notes:** Root `/health` is unchanged (returns `{ "status": "ok", "service": "kronk-proxy" }`)
+**Notes:** Root `/health` is unchanged (returns `{ "status": "ok", "service": "koji-proxy" }`)
 and continues to serve as a lightweight liveness probe.
 
 ---
 
-#### `POST /kronk/v1/system/restart`
+#### `POST /koji/v1/system/restart`
 
-Trigger a graceful restart of the kronk proxy process.
+Trigger a graceful restart of the koji proxy process.
 
 **Request body:** empty
 
 **Response 200:**
 ```json
-{ "message": "Restarting kronk..." }
+{ "message": "Restarting koji..." }
 ```
 
 **Implementation notes:**
@@ -273,7 +273,7 @@ Trigger a graceful restart of the kronk proxy process.
 - Shutdown is triggered by sending `SIGTERM` to self (`libc::kill(libc::getpid(), libc::SIGTERM)`)
   so the normal signal handler (if registered) runs destructors and flushes I/O. Avoids
   `std::process::exit(0)` which skips destructors.
-- Assumes kronk is managed by a process supervisor (systemd, launchd, etc.) that will restart it.
+- Assumes koji is managed by a process supervisor (systemd, launchd, etc.) that will restart it.
 - A `force` query param (`?force=true`) skips graceful model unloading; default is graceful (allow
   in-flight requests to drain and unload all models before exiting).
 
@@ -281,35 +281,35 @@ Trigger a graceful restart of the kronk proxy process.
 
 ## Router Changes
 
-The new routes are added to `build_router` in `crates/kronk-core/src/proxy/server/router.rs`:
+The new routes are added to `build_router` in `crates/koji-core/src/proxy/server/router.rs`:
 
 ```rust
-// Kronk management API — model lifecycle
-.route("/kronk/v1/models",                    get(handle_kronk_list_models))
-.route("/kronk/v1/models/:id",                get(handle_kronk_get_model))
-.route("/kronk/v1/models/:id/load",           post(handle_kronk_load_model))
-.route("/kronk/v1/models/:id/unload",         post(handle_kronk_unload_model))
-// Pull jobs live under /kronk/v1/pulls/ to avoid path conflict with /models/:id
-.route("/kronk/v1/pulls",                     post(handle_kronk_pull_model))
-.route("/kronk/v1/pulls/:job_id",             get(handle_kronk_get_pull_job))
+// Koji management API — model lifecycle
+.route("/koji/v1/models",                    get(handle_koji_list_models))
+.route("/koji/v1/models/:id",                get(handle_koji_get_model))
+.route("/koji/v1/models/:id/load",           post(handle_koji_load_model))
+.route("/koji/v1/models/:id/unload",         post(handle_koji_unload_model))
+// Pull jobs live under /koji/v1/pulls/ to avoid path conflict with /models/:id
+.route("/koji/v1/pulls",                     post(handle_koji_pull_model))
+.route("/koji/v1/pulls/:job_id",             get(handle_koji_get_pull_job))
 // System
-.route("/kronk/v1/system/health",             get(handle_kronk_system_health))
-.route("/kronk/v1/system/restart",            post(handle_kronk_system_restart))
+.route("/koji/v1/system/health",             get(handle_koji_system_health))
+.route("/koji/v1/system/restart",            post(handle_koji_system_restart))
 ```
 
-Handlers live in a new file: `crates/kronk-core/src/proxy/kronk_handlers.rs`.
+Handlers live in a new file: `crates/koji-core/src/proxy/koji_handlers.rs`.
 
 ---
 
 ## State Changes
 
-`ProxyState` in `crates/kronk-core/src/proxy/types.rs` gains one new field:
+`ProxyState` in `crates/koji-core/src/proxy/types.rs` gains one new field:
 
 ```rust
 pub pull_jobs: Arc<RwLock<HashMap<String, PullJob>>>,
 ```
 
-A new file `crates/kronk-core/src/proxy/pull_jobs.rs` defines:
+A new file `crates/koji-core/src/proxy/pull_jobs.rs` defines:
 
 ```rust
 #[derive(Debug, Clone, Serialize)]
@@ -344,12 +344,12 @@ where `completed_at` is older than 1 hour.
 
 | File | Change |
 |---|---|
-| `crates/kronk-core/src/proxy/server/router.rs` | Add 8 new routes |
-| `crates/kronk-core/src/proxy/kronk_handlers.rs` | New file: all 8 handler functions |
-| `crates/kronk-core/src/proxy/pull_jobs.rs` | New file: `PullJob` + `PullJobStatus` types |
-| `crates/kronk-core/src/proxy/types.rs` | Add `pull_jobs` field to `ProxyState` |
-| `crates/kronk-core/src/proxy/state.rs` | Init `pull_jobs` in `ProxyState::new` |
-| `crates/kronk-core/src/proxy/mod.rs` | `pub mod` for new files |
+| `crates/koji-core/src/proxy/server/router.rs` | Add 8 new routes |
+| `crates/koji-core/src/proxy/koji_handlers.rs` | New file: all 8 handler functions |
+| `crates/koji-core/src/proxy/pull_jobs.rs` | New file: `PullJob` + `PullJobStatus` types |
+| `crates/koji-core/src/proxy/types.rs` | Add `pull_jobs` field to `ProxyState` |
+| `crates/koji-core/src/proxy/state.rs` | Init `pull_jobs` in `ProxyState::new` |
+| `crates/koji-core/src/proxy/mod.rs` | `pub mod` for new files |
 
 ---
 

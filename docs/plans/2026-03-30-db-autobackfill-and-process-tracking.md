@@ -1,14 +1,14 @@
 # DB Auto-Backfill on First Open + Process Tracking Plan
 
-**Goal:** (1) Automatically backfill the SQLite database with metadata from all installed models when the DB is first created, and (2) persist running model PIDs/ports in the DB so `kronk status` can report live state and `kronk serve` can clean up orphaned processes on startup.
+**Goal:** (1) Automatically backfill the SQLite database with metadata from all installed models when the DB is first created, and (2) persist running model PIDs/ports in the DB so `koji status` can report live state and `koji serve` can clean up orphaned processes on startup.
 **Status:** DONE
 
-**Architecture:** The `db::open()` function detects a freshly created DB (migration v1 just ran on an empty DB) and triggers a one-time backfill that scans installed model cards and fetches commit SHAs + LFS hashes from HuggingFace. A new `active_models` table tracks which backend processes are currently running, written by the proxy's `load_model()`/`unload_model()` lifecycle. On `kronk serve` startup, stale entries are detected (PID no longer alive) and cleaned up.
+**Architecture:** The `db::open()` function detects a freshly created DB (migration v1 just ran on an empty DB) and triggers a one-time backfill that scans installed model cards and fetches commit SHAs + LFS hashes from HuggingFace. A new `active_models` table tracks which backend processes are currently running, written by the proxy's `load_model()`/`unload_model()` lifecycle. On `koji serve` startup, stale entries are detected (PID no longer alive) and cleaned up.
 
 **Key design decisions:**
 - Backfill happens inside a new `db::backfill` module called from `db::open()`. Since `db::open()` is sync but backfill needs async network calls, the backfill is a separate async function called from the CLI layer (not from `db::open()` itself). `db::open()` returns a flag indicating whether backfill is needed.
 - `active_models` table uses a simple insert-on-load / delete-on-unload pattern. The proxy holds a `Connection` (opened once at startup), passed into `ProxyState`. All DB writes happen synchronously outside `.await` points.
-- `kronk status` still queries the `/status` HTTP endpoint when the proxy is running (most accurate), but the DB `active_models` table serves as a fallback and is used for orphan cleanup on startup.
+- `koji status` still queries the `/status` HTTP endpoint when the proxy is running (most accurate), but the DB `active_models` table serves as a fallback and is used for orphan cleanup on startup.
 
 ---
 
@@ -18,9 +18,9 @@
 The DB currently has three tables (`model_pulls`, `model_files`, `download_log`) from migration v1. We need a fourth table `active_models` to track running backend processes, and a mechanism to detect when the DB was just freshly created so the CLI can trigger a one-time backfill. This task adds migration v2 with the new table, and changes `db::open()` to return whether backfill is needed.
 
 **Files:**
-- Modify: `crates/kronk-core/src/db/mod.rs` (change `open()` return type, add `needs_backfill` check)
-- Modify: `crates/kronk-core/src/db/migrations.rs` (add v2 migration, update LATEST_VERSION)
-- Modify: `crates/kronk-core/src/db/queries.rs` (add active_models query functions)
+- Modify: `crates/koji-core/src/db/mod.rs` (change `open()` return type, add `needs_backfill` check)
+- Modify: `crates/koji-core/src/db/migrations.rs` (add v2 migration, update LATEST_VERSION)
+- Modify: `crates/koji-core/src/db/queries.rs` (add active_models query functions)
 
 **What to implement:**
 
@@ -50,7 +50,7 @@ The DB currently has three tables (`model_pulls`, `model_files`, `download_log`)
    `needs_backfill` is `true` when the DB was at version 0 before migrations ran (i.e., it was just freshly created). Check `user_version` before running migrations — if it's 0, set a flag, run migrations, then return with `needs_backfill: true`.
 
    **Update all call sites** that use `db::open()`:
-   - `crates/kronk-cli/src/commands/model.rs` — `cmd_pull()`, `cmd_rm()`, `cmd_update()` — these all just need `result.conn`, can ignore `needs_backfill`
+   - `crates/koji-cli/src/commands/model.rs` — `cmd_pull()`, `cmd_rm()`, `cmd_update()` — these all just need `result.conn`, can ignore `needs_backfill`
    - The backfill itself will be wired in Task 2
 
 3. **Active models query functions** in `queries.rs`:
@@ -108,7 +108,7 @@ The DB currently has three tables (`model_pulls`, `model_files`, `download_log`)
   - `test_remove_active_model` — insert, remove, verify gone
   - `test_clear_active_models` — insert several, clear, verify empty
   - `test_touch_active_model` — insert, touch, verify last_accessed changed
-- [ ] Run `cargo test --package kronk-core -- db`
+- [ ] Run `cargo test --package koji-core -- db`
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`
 - [ ] Run `cargo build --workspace`
 - [ ] Commit with message: "feat: add active_models table and backfill detection to DB"
@@ -134,10 +134,10 @@ Since `db::open()` is synchronous but backfill needs async network calls, the ap
 - After backfill completes, a marker is set in the DB so it never runs again (we use the presence of any row in `model_pulls` as a signal, but also set a custom pragma or metadata row)
 
 **Files:**
-- Create: `crates/kronk-core/src/db/backfill.rs`
-- Modify: `crates/kronk-core/src/db/mod.rs` (add `pub mod backfill;`)
-- Modify: `crates/kronk-cli/src/commands/model.rs` (trigger backfill when `needs_backfill` is true in `cmd_pull`, `cmd_update`)
-- Modify: `crates/kronk-cli/src/handlers/serve.rs` (trigger backfill on `kronk serve` startup)
+- Create: `crates/koji-core/src/db/backfill.rs`
+- Modify: `crates/koji-core/src/db/mod.rs` (add `pub mod backfill;`)
+- Modify: `crates/koji-cli/src/commands/model.rs` (trigger backfill when `needs_backfill` is true in `cmd_pull`, `cmd_update`)
+- Modify: `crates/koji-cli/src/handlers/serve.rs` (trigger backfill on `koji serve` startup)
 
 **What to implement:**
 
@@ -178,9 +178,9 @@ Since `db::open()` is synchronous but backfill needs async network calls, the ap
 
    In `cmd_pull()` (model.rs), after opening the DB:
    ```rust
-   let db_result = kronk_core::db::open(&db_dir)?;
+   let db_result = koji_core::db::open(&db_dir)?;
    if db_result.needs_backfill {
-       kronk_core::db::backfill::run_initial_backfill(&db_result.conn, config).await?;
+       koji_core::db::backfill::run_initial_backfill(&db_result.conn, config).await?;
    }
    let conn = db_result.conn;
    ```
@@ -189,18 +189,18 @@ Since `db::open()` is synchronous but backfill needs async network calls, the ap
 
    In `start_proxy_server()` (serve.rs):
    ```rust
-   let db_dir = kronk_core::config::Config::config_dir()?;
-   let db_result = kronk_core::db::open(&db_dir)?;
+   let db_dir = koji_core::config::Config::config_dir()?;
+   let db_result = koji_core::db::open(&db_dir)?;
    if db_result.needs_backfill {
-       kronk_core::db::backfill::run_initial_backfill(&db_result.conn, &updated_config).await?;
+       koji_core::db::backfill::run_initial_backfill(&db_result.conn, &updated_config).await?;
    }
    ```
 
    In `cmd_rm()` — this is sync, can't call async backfill. Since `cmd_rm` doesn't need backfill data (it only deletes), just ignore the flag.
 
 **Steps:**
-- [ ] Create `crates/kronk-core/src/db/backfill.rs` with `run_initial_backfill()`
-- [ ] Add `pub mod backfill;` to `crates/kronk-core/src/db/mod.rs`
+- [ ] Create `crates/koji-core/src/db/backfill.rs` with `run_initial_backfill()`
+- [ ] Add `pub mod backfill;` to `crates/koji-core/src/db/mod.rs`
 - [ ] Wire backfill into `cmd_pull()`, `cmd_update()`, and `start_proxy_server()`
 - [ ] Write a unit test `test_backfill_with_no_models` — calls backfill on empty registry, verifies it succeeds without error
 - [ ] Run `cargo test --workspace`
@@ -219,15 +219,15 @@ Since `db::open()` is synchronous but backfill needs async network calls, the ap
 ## Task 3: Wire DB into proxy for process tracking
 
 **Context:**
-The proxy currently tracks running models in an in-memory `HashMap<String, ModelState>` inside `ProxyState`. When the proxy exits (gracefully or crashes), that state is lost. We want to persist model load/unload events to the `active_models` table so that: (1) `kronk status` can show richer data, (2) on startup, orphaned processes from a previous crash can be detected and killed.
+The proxy currently tracks running models in an in-memory `HashMap<String, ModelState>` inside `ProxyState`. When the proxy exits (gracefully or crashes), that state is lost. We want to persist model load/unload events to the `active_models` table so that: (1) `koji status` can show richer data, (2) on startup, orphaned processes from a previous crash can be detected and killed.
 
 The `ProxyState` needs access to a `Connection`. Since `Connection` is `!Send`, it can't be stored in `ProxyState` (which is `Arc`'d and shared across tokio tasks). Instead, we'll open a fresh connection for each sync DB operation, or store the `db_dir` path in `ProxyState` and open/close on demand. Opening a WAL-mode SQLite DB is very fast (~0.1ms), so this is fine for the load/unload frequency.
 
 **Files:**
-- Modify: `crates/kronk-core/src/proxy/types.rs` (add `db_dir: Option<PathBuf>` to `ProxyState`)
-- Modify: `crates/kronk-core/src/proxy/lifecycle.rs` (write to DB on `load_model` and `unload_model`)
-- Modify: `crates/kronk-core/src/proxy/server/mod.rs` (clean up stale entries on `ProxyServer::new()`)
-- Modify: `crates/kronk-cli/src/handlers/serve.rs` (pass `db_dir` when creating `ProxyState`)
+- Modify: `crates/koji-core/src/proxy/types.rs` (add `db_dir: Option<PathBuf>` to `ProxyState`)
+- Modify: `crates/koji-core/src/proxy/lifecycle.rs` (write to DB on `load_model` and `unload_model`)
+- Modify: `crates/koji-core/src/proxy/server/mod.rs` (clean up stale entries on `ProxyServer::new()`)
+- Modify: `crates/koji-cli/src/handlers/serve.rs` (pass `db_dir` when creating `ProxyState`)
 
 **What to implement:**
 
@@ -321,7 +321,7 @@ The `ProxyState` needs access to a `Connection`. Since `Connection` is `!Send`, 
 
 5. **`serve.rs` changes** — pass `db_dir` to `ProxyState::new()`:
    ```rust
-   let db_dir = kronk_core::config::Config::config_dir().ok();
+   let db_dir = koji_core::config::Config::config_dir().ok();
    let state = Arc::new(ProxyState::new(updated_config, db_dir));
    ```
 
@@ -342,20 +342,20 @@ The `ProxyState` needs access to a `Connection`. Since `Connection` is `!Send`, 
 **Acceptance criteria:**
 - [ ] When a model is loaded, a row appears in `active_models` with PID, port, URL
 - [ ] When a model is unloaded, the row is removed
-- [ ] On `kronk serve` startup, stale entries from a crashed previous session are detected and cleaned up
+- [ ] On `koji serve` startup, stale entries from a crashed previous session are detected and cleaned up
 - [ ] Orphaned processes are killed on startup
 - [ ] Tests still pass (they use `db_dir: None` so no DB writes)
 - [ ] All tests pass, clippy clean
 
 ---
 
-## Task 4: Enhance `kronk status` to show PID and loaded state from DB
+## Task 4: Enhance `koji status` to show PID and loaded state from DB
 
 **Context:**
-Currently `kronk status` shows "proxy not running" when the proxy `/status` endpoint is unreachable. With the `active_models` table, we can show richer information even in the fallback path: which models were last loaded, their PIDs, and whether those PIDs are still alive. When the proxy IS running, we can also include PID info from the `/status` endpoint (it already returns `backend_pid`).
+Currently `koji status` shows "proxy not running" when the proxy `/status` endpoint is unreachable. With the `active_models` table, we can show richer information even in the fallback path: which models were last loaded, their PIDs, and whether those PIDs are still alive. When the proxy IS running, we can also include PID info from the `/status` endpoint (it already returns `backend_pid`).
 
 **Files:**
-- Modify: `crates/kronk-cli/src/handlers/status.rs` (enhance fallback to query DB)
+- Modify: `crates/koji-cli/src/handlers/status.rs` (enhance fallback to query DB)
 
 **What to implement:**
 
@@ -363,10 +363,10 @@ Update the fallback path in `cmd_status()` (the `else` branch when proxy is not 
 
 1. Open the DB (best-effort):
    ```rust
-   let db_active = kronk_core::config::Config::config_dir()
+   let db_active = koji_core::config::Config::config_dir()
        .ok()
-       .and_then(|dir| kronk_core::db::open(&dir).ok())
-       .and_then(|r| kronk_core::db::queries::get_active_models(&r.conn).ok())
+       .and_then(|dir| koji_core::db::open(&dir).ok())
+       .and_then(|r| koji_core::db::queries::get_active_models(&r.conn).ok())
        .unwrap_or_default();
    ```
 
@@ -392,11 +392,11 @@ Update the fallback path in `cmd_status()` (the `else` branch when proxy is not 
 - [ ] Run `cargo build --workspace`
 - [ ] Run `cargo test --workspace`
 - [ ] Run `cargo fmt --all && cargo clippy --workspace -- -D warnings`
-- [ ] Commit with message: "feat: enhance kronk status with PID and DB-backed loaded state"
+- [ ] Commit with message: "feat: enhance koji status with PID and DB-backed loaded state"
 
 **Acceptance criteria:**
-- [ ] `kronk status` shows PID when the proxy is running and a model is loaded
-- [ ] `kronk status` shows last-known state from DB when the proxy is not responding
+- [ ] `koji status` shows PID when the proxy is running and a model is loaded
+- [ ] `koji status` shows last-known state from DB when the proxy is not responding
 - [ ] Stale PIDs (process dead) are correctly identified and shown as stale
 - [ ] When no DB or no active entries exist, shows `"false"` (clean fallback)
 - [ ] All tests pass, clippy clean
