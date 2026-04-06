@@ -1,5 +1,15 @@
+# Build artifacts
 /target
 /dist
+
+# Crate-specific dist
+
 crates/kronk-web/dist/
+
+# Log files
 *.log
 VP_VULKANINFO_*.json
+
+# Cache directories
+.ruff_cache/
+worktree/
