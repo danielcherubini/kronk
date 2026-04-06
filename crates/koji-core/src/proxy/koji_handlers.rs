@@ -968,8 +968,17 @@ pub async fn handle_koji_system_restart(state: State<Arc<ProxyState>>) -> Respon
     // Trigger graceful shutdown first
     state.0.shutdown().await;
 
-    // Exit the process
-    std::process::exit(0);
+    // Schedule process exit on a short delay so the HTTP response can be delivered
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        std::process::exit(0);
+    });
+
+    // Return a response to the client
+    Response::builder()
+        .status(200)
+        .body(axum::body::Body::from("Koji is shutting down"))
+        .unwrap()
 }
 
 /// Stream live system metrics samples as SSE events.

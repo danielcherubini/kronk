@@ -43,9 +43,10 @@ enabled = true
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Check if the process is still alive
+    // try_wait().is_none() means the process is still running
     let is_alive = child.try_wait()
         .expect("Failed to check process status")
-        .is_some();
+        .is_none();
 
     // The process should be alive at this point
     assert!(is_alive, "Koji process should be running after spawn");

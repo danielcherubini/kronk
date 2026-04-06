@@ -176,6 +176,12 @@ impl ProxyState {
 
         // Clear all loaded models
         let mut models = self.models.write().await;
+        // Kill backend processes before clearing
+        for entry in models.iter() {
+            if let ModelState::Ready { backend_pid, .. } = entry.1 {
+                let _ = crate::proxy::process::kill_process(*backend_pid).await;
+            }
+        }
         models.clear();
 
         // Clear active pull jobs
