@@ -8,6 +8,38 @@ impl ProxyState {
     /// Returns JSON matching the spec: models as an object keyed by name,
     /// fields flat per model (not nested in a `runtime` sub-object),
     /// `idle_timeout_secs` at top level.
+    pub async fn collect_model_statuses(&self) -> Vec<crate::gpu::ModelStatus> {
+        let config = self.config.read().await;
+        let runtime = self.models.read().await;
+        let mut out: Vec<crate::gpu::ModelStatus> = Vec::with_capacity(config.models.len());
+        for (model_id, model_cfg) in &config.models {
+            // A model is "loaded" iff at least one of its server entries
+            // in `state.models` is in the Ready state. Mirrors the logic
+            // used by build_status_response().
+            let loaded = config.resolve_servers_for_model(model_id).into_iter().any(
+                |(server_name, _, _)| {
+                    runtime
+                        .get(&server_name)
+                        .map(|s| s.is_ready())
+                        .unwrap_or(false)
+                },
+            );
+            out.push(crate::gpu::ModelStatus {
+                id: model_id.clone(),
+                backend: model_cfg.backend.clone(),
+                loaded,
+            });
+        }
+        // Stable order so dashboard rows don't shuffle between samples.
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
+    }
+
+    /// Build a comprehensive status response for the proxy.
+    ///
+    /// Returns JSON matching the spec: models as an object keyed by name,
+    /// fields flat per model (not nested in a `runtime` sub-object),
+    /// `idle_timeout_secs` at top level.
     pub async fn build_status_response(&self) -> serde_json::Value {
         use std::sync::atomic::Ordering::Relaxed;
 
@@ -127,5 +159,83 @@ impl ProxyState {
             },
             "models": models_obj,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{BackendConfig, Config, ModelConfig};
+    use std::collections::BTreeMap;
+
+    fn make_model_config(backend: &str) -> ModelConfig {
+        ModelConfig {
+            backend: backend.to_string(),
+            args: vec![],
+            sampling: None,
+            model: None,
+            quant: None,
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: BTreeMap::new(),
+        }
+    }
+
+    /// When `state.models` has no runtime entries, every configured model
+    /// should be reported as `loaded == false`, with the returned vector
+    /// sorted by id ascending and the `backend` field matching the
+    /// corresponding `ModelConfig.backend` value.
+    #[tokio::test]
+    async fn test_collect_model_statuses_reports_idle_when_no_runtime_entry() {
+        let mut config = Config::default();
+        // Clear default fixtures so the test only sees the models we add.
+        config.models.clear();
+        config.backends.insert(
+            "vllm".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+        config
+            .models
+            .insert("zephyr".to_string(), make_model_config("llama_cpp"));
+        config
+            .models
+            .insert("alpha".to_string(), make_model_config("vllm"));
+
+        let state = ProxyState::new(config, None);
+
+        // Sanity check: no runtime entries.
+        assert!(state.models.read().await.is_empty());
+
+        let statuses = state.collect_model_statuses().await;
+
+        // Length matches the number of configured models.
+        assert_eq!(statuses.len(), 2);
+
+        // Every entry is reported as not loaded.
+        assert!(
+            statuses.iter().all(|s| !s.loaded),
+            "expected every status to have loaded == false, got: {:?}",
+            statuses
+        );
+
+        // Entries are sorted by id ascending.
+        let ids: Vec<&str> = statuses.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "zephyr"]);
+
+        // Backend field matches the configured backend name for each model.
+        assert_eq!(statuses[0].id, "alpha");
+        assert_eq!(statuses[0].backend, "vllm");
+        assert_eq!(statuses[1].id, "zephyr");
+        assert_eq!(statuses[1].backend, "llama_cpp");
     }
 }
