@@ -160,4 +160,18 @@ mod tests {
             "idx_backend_installations_name index should exist after migration v3"
         );
     }
+
+    /// Test that migration v4 creates the `system_metrics_history` table and its index.
+    #[test]
+    fn test_migration_v4_creates_system_metrics_history() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_metrics_history'",
+            [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let idx_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_system_metrics_ts'",
+            [], |row| row.get(0)).unwrap();
+        assert_eq!(idx_count, 1);
+    }
 }

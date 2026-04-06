@@ -50,6 +50,8 @@ pub struct ProxyConfig {
     pub circuit_breaker_threshold: u32,
     #[serde(default = "default_circuit_breaker_cooldown")]
     pub circuit_breaker_cooldown_seconds: u64,
+    #[serde(default = "default_metrics_retention")]
+    pub metrics_retention_secs: u64,
 }
 
 impl Default for ProxyConfig {
@@ -62,6 +64,7 @@ impl Default for ProxyConfig {
             startup_timeout_secs: default_startup_timeout(),
             circuit_breaker_threshold: default_circuit_breaker_threshold(),
             circuit_breaker_cooldown_seconds: default_circuit_breaker_cooldown(),
+            metrics_retention_secs: default_metrics_retention(),
         }
     }
 }
@@ -220,6 +223,10 @@ fn default_circuit_breaker_cooldown() -> u64 {
     60
 }
 
+fn default_metrics_retention() -> u64 {
+    86_400
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -313,5 +320,22 @@ mod tests {
         let loaded_custom = loaded.sampling_templates.get("custom").unwrap();
         assert_eq!(loaded_custom.temperature, Some(0.5));
         assert_eq!(loaded_custom.top_k, Some(100));
+    }
+
+    /// Test that the default `metrics_retention_secs` equals 86_400 (24 hours).
+    #[test]
+    fn test_proxy_config_default_metrics_retention() {
+        let config = ProxyConfig::default();
+        assert_eq!(config.metrics_retention_secs, 86_400);
+    }
+
+    /// Test that deserializing `metrics_retention_secs = 3600` sets the field correctly.
+    #[test]
+    fn test_proxy_config_deserializes_metrics_retention() {
+        let toml_str = r#"
+metrics_retention_secs = 3600
+"#;
+        let config: ProxyConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.metrics_retention_secs, 3600);
     }
 }

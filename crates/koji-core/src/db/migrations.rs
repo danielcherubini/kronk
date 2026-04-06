@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 3;
+pub const LATEST_VERSION: i32 = 4;
 
 /// Run all applicable migrations on the database
 ///
@@ -94,6 +94,24 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
                     UNIQUE(name, version)
                 );
                 CREATE INDEX IF NOT EXISTS idx_backend_installations_name ON backend_installations(name);
+                "#,
+        ),
+        (
+            4,
+            r#"
+                CREATE TABLE IF NOT EXISTS system_metrics_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts_unix_ms          INTEGER NOT NULL,
+                    cpu_usage_pct       REAL    NOT NULL,
+                    ram_used_mib        INTEGER NOT NULL,
+                    ram_total_mib       INTEGER NOT NULL,
+                    gpu_utilization_pct INTEGER,
+                    vram_used_mib       INTEGER,
+                    vram_total_mib      INTEGER,
+                    models_loaded       INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_system_metrics_ts
+                    ON system_metrics_history(ts_unix_ms);
                 "#,
         ),
     ];

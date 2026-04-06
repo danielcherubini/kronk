@@ -4,25 +4,15 @@ use wasm_bindgen::prelude::*;
 
 use crate::components::sparkline::SparklineChart;
 
-// Helper function to determine the status badge class
-fn status_badge_class(status: &str) -> &'static str {
-    match status {
-        "ok" => "badge-success",
-        "degraded" => "badge-warning",
-        _ => "badge-error",
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SystemHealth {
-    status: String,
-    service: String,
-    models_loaded: usize,
+struct MetricSample {
+    ts_unix_ms: i64,
     cpu_usage_pct: f32,
     ram_used_mib: u64,
     ram_total_mib: u64,
     gpu_utilization_pct: Option<u8>,
     vram: Option<VramInfo>,
+    models_loaded: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,39 +23,58 @@ struct VramInfo {
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
-    let refresh = RwSignal::new(0u32);
-    let history = RwSignal::new(Vec::<SystemHealth>::new());
+    let history = RwSignal::new(Vec::<MetricSample>::new());
     let fetch_failed = RwSignal::new(false);
+    // Incrementing this signal re-runs the Effect that opens the EventSource.
+    let connect_trigger = RwSignal::new(0u32);
 
-    // Auto-refresh every 3 seconds using web_sys interval; clear on cleanup to prevent leaks.
-    let cb = Closure::<dyn Fn()>::new(move || {
-        refresh.update(|n| *n += 1);
+    // Open (or re-open) an EventSource each time connect_trigger changes.
+    Effect::new(move |_| {
+        let _ = connect_trigger.get(); // track signal
+
+        let es = match web_sys::EventSource::new("/koji/v1/system/metrics/stream") {
+            Ok(es) => es,
+            Err(_) => {
+                fetch_failed.set(true);
+                return;
+            }
+        };
+
+        // Handler for "sample" events.
+        let on_sample =
+            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if let Some(data_str) = evt.data().as_string() {
+                    if let Ok(sample) = serde_json::from_str::<MetricSample>(&data_str) {
+                        fetch_failed.set(false);
+                        history.update(|buf| {
+                            buf.push(sample);
+                            if buf.len() > 100 {
+                                buf.drain(..buf.len() - 100);
+                            }
+                        });
+                    }
+                }
+            });
+        let _ = es.add_event_listener_with_callback("sample", on_sample.as_ref().unchecked_ref());
+        on_sample.forget();
+
+        // Error handler — flag for the empty-history retry UI.
+        let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            fetch_failed.set(true);
+        });
+        es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        on_error.forget();
+
+        // Close the EventSource when the effect re-runs or the component unmounts.
+        on_cleanup(move || {
+            es.close();
+        });
     });
-    let interval_id = web_sys::window()
-        .unwrap()
-        .set_interval_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 3_000)
-        .unwrap();
-    cb.forget(); // keep closure alive
 
-    on_cleanup(move || {
-        web_sys::window()
-            .unwrap()
-            .clear_interval_with_handle(interval_id);
-    });
-
-    // Re-fetch when refresh signal changes.
-    let health = LocalResource::new(move || async move {
-        let _ = refresh.get(); // track the signal
-        let resp = gloo_net::http::Request::get("/koji/v1/system/health")
-            .send()
-            .await
-            .ok()?;
-        resp.json::<SystemHealth>().await.ok()
-    });
-
-    // Action for manual refresh/retry
+    // Manual retry: close and re-open the EventSource.
     let manual_refresh = move |_| {
-        refresh.update(|n| *n += 1);
+        fetch_failed.set(false);
+        connect_trigger.update(|n| *n += 1);
     };
 
     let restart: Action<(), (), LocalStorage> = Action::new_unsync(|_: &()| async move {
@@ -74,32 +83,21 @@ pub fn Dashboard() -> impl IntoView {
             .await;
     });
 
-    // Effect to accumulate health snapshots into history ring buffer
-    Effect::new(move |_| {
-        if let Some(guard) = health.get() {
-            if let Some(h) = (*guard).clone() {
-                fetch_failed.set(false);
-                history.update(|buf| {
-                    buf.push(h);
-                    if buf.len() > 100 {
-                        buf.drain(..buf.len() - 100);
-                    }
-                });
-            } else {
-                fetch_failed.set(true);
-            }
-        }
-    });
-
     view! {
         <div class="page-header">
             <h1>"Dashboard"</h1>
             {move || {
-                history.get().last().cloned().map(|h| view! {
-                    <div class="flex-between gap-1">
-                        <span class={format!("badge {}", status_badge_class(&h.status))}>{h.status.clone()}</span>
-                        <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>"Restart"</button>
-                    </div>
+                history.get().last().cloned().map(|_h| {
+                    let badge_class = if fetch_failed.get() { "badge badge-danger" } else { "badge badge-success" };
+                    let badge_text = if fetch_failed.get() { "error" } else { "ok" };
+                    view! {
+                        <div class="flex-between gap-1">
+                            <span class={badge_class}>{badge_text}</span>
+                            <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>
+                                "Restart"
+                            </button>
+                        </div>
+                    }
                 })
             }}
         </div>
@@ -110,7 +108,7 @@ pub fn Dashboard() -> impl IntoView {
                 // Network error, no data yet — show error with retry button
                 return view! {
                     <div class="card">
-                        <p class="text-error">"Failed to load health data. Is Koji running?"</p>
+                        <p class="text-error">"Failed to load metrics stream. Is Koji running?"</p>
                         <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
                     </div>
                 }.into_any();

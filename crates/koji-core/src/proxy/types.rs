@@ -143,6 +143,7 @@ pub struct ProxyState {
     /// concurrent downloads writing to the same temp files, which would silently
     /// corrupt the assembled output.
     pub in_flight_downloads: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
+    pub metrics_tx: tokio::sync::broadcast::Sender<crate::gpu::MetricSample>,
 }
 
 impl ProxyState {

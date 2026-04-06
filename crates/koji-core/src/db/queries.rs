@@ -3,7 +3,7 @@
 //! All functions take a `&Connection` — the caller owns the connection.
 //! All functions are synchronous (no async).
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::Connection;
 
 // ---------------------------------------------------------------------------
@@ -427,6 +427,110 @@ pub fn delete_backend_installation(conn: &Connection, name: &str, version: &str)
 pub fn delete_all_backend_versions(conn: &Connection, name: &str) -> Result<()> {
     conn.execute("DELETE FROM backend_installations WHERE name = ?1", [name])?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// System metrics history record type and query functions
+// ---------------------------------------------------------------------------
+
+/// One sample of system-level metrics, persisted in `system_metrics_history`.
+#[derive(Debug, Clone)]
+pub struct SystemMetricsRow {
+    pub ts_unix_ms: i64,
+    pub cpu_usage_pct: f32,
+    pub ram_used_mib: i64,
+    pub ram_total_mib: i64,
+    pub gpu_utilization_pct: Option<i64>,
+    pub vram_used_mib: Option<i64>,
+    pub vram_total_mib: Option<i64>,
+    pub models_loaded: i64,
+}
+
+/// Insert one sample and prune anything older than `cutoff_ms` in a single
+/// transaction. Both operations succeed or fail together so a crash never
+/// leaves the table half-pruned.
+pub fn insert_system_metric(
+    conn: &Connection,
+    row: &SystemMetricsRow,
+    cutoff_ms: i64,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO system_metrics_history
+             (ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
+              gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        (
+            row.ts_unix_ms,
+            row.cpu_usage_pct as f64,
+            row.ram_used_mib,
+            row.ram_total_mib,
+            row.gpu_utilization_pct,
+            row.vram_used_mib,
+            row.vram_total_mib,
+            row.models_loaded,
+        ),
+    )?;
+    tx.execute(
+        "DELETE FROM system_metrics_history WHERE ts_unix_ms < ?1",
+        [cutoff_ms],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Fetch all samples newer than `since_ms` (exclusive), oldest-first.
+pub fn get_system_metrics_since(conn: &Connection, since_ms: i64) -> Result<Vec<SystemMetricsRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
+                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded
+          FROM system_metrics_history
+          WHERE ts_unix_ms > ?1
+          ORDER BY ts_unix_ms ASC",
+    )?;
+    let rows = stmt.query_map([since_ms], |row| {
+        Ok(SystemMetricsRow {
+            ts_unix_ms: row.get(0)?,
+            cpu_usage_pct: row.get(1)?,
+            ram_used_mib: row.get(2)?,
+            ram_total_mib: row.get(3)?,
+            gpu_utilization_pct: row.get(4)?,
+            vram_used_mib: row.get(5)?,
+            vram_total_mib: row.get(6)?,
+            models_loaded: row.get(7)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Fetch the most recent `limit` samples, oldest-first.
+pub fn get_recent_system_metrics(conn: &Connection, limit: i64) -> Result<Vec<SystemMetricsRow>> {
+    if limit < 0 {
+        bail!("limit must be >= 0");
+    }
+    let mut stmt = conn.prepare(
+        "SELECT ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
+                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded
+          FROM system_metrics_history
+          ORDER BY ts_unix_ms DESC
+          LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit], |row| {
+        Ok(SystemMetricsRow {
+            ts_unix_ms: row.get(0)?,
+            cpu_usage_pct: row.get(1)?,
+            ram_used_mib: row.get(2)?,
+            ram_total_mib: row.get(3)?,
+            gpu_utilization_pct: row.get(4)?,
+            vram_used_mib: row.get(5)?,
+            vram_total_mib: row.get(6)?,
+            models_loaded: row.get(7)?,
+        })
+    })?;
+    let mut rows: Vec<SystemMetricsRow> = rows.collect::<rusqlite::Result<_>>()?;
+    rows.reverse(); // reverse to return oldest-first
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -954,5 +1058,112 @@ mod tests {
             count, 1,
             "only one row should exist after idempotent insert"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // system_metrics_history tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_insert_and_get_recent_system_metrics() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let row1 = SystemMetricsRow {
+            ts_unix_ms: 1_000_000_000_000,
+            cpu_usage_pct: 25.5,
+            ram_used_mib: 2048,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: Some(45),
+            vram_used_mib: Some(1024),
+            vram_total_mib: Some(8192),
+            models_loaded: 3,
+        };
+        insert_system_metric(&conn, &row1, 0).unwrap();
+
+        let row2 = SystemMetricsRow {
+            ts_unix_ms: 2_000_000_000_000,
+            cpu_usage_pct: 50.0,
+            ram_used_mib: 4096,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: Some(70),
+            vram_used_mib: Some(4096),
+            vram_total_mib: Some(8192),
+            models_loaded: 5,
+        };
+        insert_system_metric(&conn, &row2, 0).unwrap();
+
+        let recent = get_recent_system_metrics(&conn, 10).unwrap();
+        assert_eq!(recent.len(), 2);
+        // Should return oldest-first
+        assert_eq!(recent[0].ts_unix_ms, 1_000_000_000_000);
+        assert_eq!(recent[1].ts_unix_ms, 2_000_000_000_000);
+    }
+
+    #[test]
+    fn test_insert_system_metric_prunes_old_rows() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let old_row = SystemMetricsRow {
+            ts_unix_ms: 1_000_000_000_000,
+            cpu_usage_pct: 10.0,
+            ram_used_mib: 1024,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+            models_loaded: 0,
+        };
+        insert_system_metric(&conn, &old_row, 5_000_000_000_000).unwrap();
+
+        let new_row = SystemMetricsRow {
+            ts_unix_ms: 6_000_000_000_000,
+            cpu_usage_pct: 30.0,
+            ram_used_mib: 3072,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: Some(25),
+            vram_used_mib: Some(512),
+            vram_total_mib: Some(8192),
+            models_loaded: 1,
+        };
+        insert_system_metric(&conn, &new_row, 5_000_000_000_000).unwrap();
+
+        // old_row should have been pruned (ts_unix_ms < cutoff_ms)
+        let recent = get_recent_system_metrics(&conn, 10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].ts_unix_ms, 6_000_000_000_000);
+    }
+
+    #[test]
+    fn test_get_system_metrics_since() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let row1 = SystemMetricsRow {
+            ts_unix_ms: 1_000_000_000_000,
+            cpu_usage_pct: 20.0,
+            ram_used_mib: 2048,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+            models_loaded: 1,
+        };
+        insert_system_metric(&conn, &row1, 0).unwrap();
+
+        let row2 = SystemMetricsRow {
+            ts_unix_ms: 3_000_000_000_000,
+            cpu_usage_pct: 40.0,
+            ram_used_mib: 4096,
+            ram_total_mib: 8192,
+            gpu_utilization_pct: Some(60),
+            vram_used_mib: Some(2048),
+            vram_total_mib: Some(8192),
+            models_loaded: 2,
+        };
+        insert_system_metric(&conn, &row2, 0).unwrap();
+
+        // Get metrics since 2_000_000_000_000 (exclusive)
+        let since = get_system_metrics_since(&conn, 2_000_000_000_000).unwrap();
+        assert_eq!(since.len(), 1);
+        assert_eq!(since[0].ts_unix_ms, 3_000_000_000_000);
     }
 }

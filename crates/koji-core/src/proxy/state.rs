@@ -7,6 +7,7 @@ use super::types::{ModelState, ProxyMetrics, ProxyState};
 impl ProxyState {
     pub fn new(config: crate::config::Config, db_dir: Option<std::path::PathBuf>) -> Self {
         let config_clone = config.clone();
+        let (metrics_tx, _) = tokio::sync::broadcast::channel(64);
         Self {
             config: Arc::new(tokio::sync::RwLock::new(config)),
             models: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -27,6 +28,7 @@ impl ProxyState {
             in_flight_downloads: Arc::new(
                 tokio::sync::Mutex::new(std::collections::HashSet::new()),
             ),
+            metrics_tx,
         }
     }
 
@@ -156,5 +158,19 @@ impl ProxyState {
         let content = tokio::fs::read_to_string(&card_path).await.ok()?;
         let card: crate::models::card::ModelCard = toml::from_str(&content).ok()?;
         Some(card)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that `ProxyState::new` creates a metrics channel and that subscribing adds a receiver.
+    #[test]
+    fn test_proxy_state_new_creates_metrics_channel() {
+        let config = crate::config::Config::default();
+        let state = ProxyState::new(config, None);
+        let _subscriber = state.metrics_tx.subscribe();
+        assert_eq!(state.metrics_tx.receiver_count(), 1);
     }
 }

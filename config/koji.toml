@@ -18,3 +18,8 @@ health_check_url = "http://localhost:8080/health"
 health_check_interval_ms = 10000
 health_check_timeout_ms = 30000
 health_check_retries = 3
+
+[proxy]
+# How long to keep system-metric samples in the SQLite history table.
+# Older rows are pruned on every metrics tick. Default: 86400 (24 hours).
+metrics_retention_secs = 86400

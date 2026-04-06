@@ -1,5 +1,7 @@
 # Dashboard Time-Series Graphs Plan
 
+> **Status:** Superseded by `docs/plans/2026-04-06-persist-dashboard-metrics.md`. The in-memory ring buffer described below has been replaced by SQLite persistence + an SSE stream.
+
 **Goal:** Replace the current static gauge/number cards on the Dashboard with live SVG sparkline/area charts that show system metrics (CPU, RAM, GPU, VRAM) over the last 5 minutes.
 
 **Architecture:** The existing 3-second polling loop on the dashboard already fetches `SystemHealth` from `/koji/v1/system/health`. We will accumulate these snapshots into a client-side ring buffer (max 100 entries ≈ 5 minutes at 3s intervals). A new reusable `<SparklineChart>` Leptos component will render the buffered data as responsive SVG area charts. No backend changes required — all history is kept in browser memory.

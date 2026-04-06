@@ -335,6 +335,35 @@ paths:
                     models_loaded: 1
                     vram: null
 
+  /koji/v1/system/metrics/stream:
+    get:
+      operationId: streamSystemMetrics
+      summary: Live system metrics stream (SSE)
+      description: |
+        Streams live `MetricSample` events as Server-Sent Events. A new sample
+        is emitted every ~2 seconds by the proxy's background metrics task.
+
+        Samples are persisted to a SQLite history table (pruned to the
+        configured retention window via `proxy.metrics_retention_secs`), but
+        this endpoint only emits live samples — there is no historical
+        backfill on connect.
+
+        Event types:
+          - `sample` — JSON-serialized `MetricSample`.
+          - `lagged` — emitted when the subscriber falls behind; payload
+            `{"missed": N}`. The stream continues after this event.
+      tags: [system]
+      responses:
+        "200":
+          description: SSE stream of metric samples
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE-framed stream. Each `sample` event's `data` field is a
+                  JSON object matching the `MetricSample` schema.
+
   /koji/v1/system/restart:
     post:
       operationId: restartKoji
@@ -711,6 +740,40 @@ components:
           $ref: "#/components/schemas/VramInfo"
           nullable: true
           description: GPU VRAM usage. `null` on CPU-only systems or when GPU info is unavailable.
+
+    MetricSample:
+      type: object
+      required:
+        - ts_unix_ms
+        - cpu_usage_pct
+        - ram_used_mib
+        - ram_total_mib
+        - models_loaded
+      properties:
+        ts_unix_ms:
+          type: integer
+          format: int64
+          description: Sample timestamp (unix milliseconds).
+        cpu_usage_pct:
+          type: number
+          format: float
+        ram_used_mib:
+          type: integer
+          format: int64
+        ram_total_mib:
+          type: integer
+          format: int64
+        gpu_utilization_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        vram:
+          $ref: "#/components/schemas/VramInfo"
+          nullable: true
+        models_loaded:
+          type: integer
+          format: int64
 
     # -------------------------------------------------------------------------
     # Shared error schemas

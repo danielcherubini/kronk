@@ -61,6 +61,19 @@ pub struct SystemMetrics {
     pub vram: Option<VramInfo>,
 }
 
+/// A timestamped snapshot of system + proxy metrics, suitable for persistence
+/// in `system_metrics_history` and broadcast over the SSE stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricSample {
+    pub ts_unix_ms: i64,
+    pub cpu_usage_pct: f32,
+    pub ram_used_mib: u64,
+    pub ram_total_mib: u64,
+    pub gpu_utilization_pct: Option<u8>,
+    pub vram: Option<VramInfo>,
+    pub models_loaded: u64,
+}
+
 /// Collect a snapshot of system metrics using a caller-owned `System`.
 ///
 /// The caller is responsible for passing a `System` that persists across
