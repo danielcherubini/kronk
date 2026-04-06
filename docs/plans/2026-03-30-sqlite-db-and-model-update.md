@@ -1,7 +1,7 @@
 # SQLite Database + `koji model update` Plan
 
 **Goal:** Introduce a SQLite database (`koji.db`) in the config directory to store internal metadata, and use it to power a new `koji model update` command that detects and downloads updated GGUF files from HuggingFace.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `e7e73e0` ("feat: SQLite database + kronk model update command (#23)"), `8d01ccb` ("feat: add SQLite database foundation with migration system")
 
 **Architecture:** A new `db` module in `koji-core` owns the database connection, schema migrations, and typed query functions. The DB stores internal metadata (pull timestamps, commit SHAs, file hashes, download logs) while TOML model cards remain the user-facing config for sampling presets, context lengths, and GPU layers. The `koji model update` command compares stored commit SHAs and per-file LFS OIDs against HuggingFace to detect changes.
 

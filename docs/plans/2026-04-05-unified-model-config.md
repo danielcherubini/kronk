@@ -1,5 +1,7 @@
 # Unified Model Config Plan
 
+**Status:** ✅ COMPLETED - See git commits `95c8e01` ("feat: Unified Model Config - merge model cards into ModelConfig with rename support (#31)"), `13bc2d3` ("feat: expand ModelConfig with unified fields (display_name, gpu_layers, quants, sampling)"), `0be825a` ("feat: auto-migrate model cards into unified ModelConfig on config load")
+
 **Goal:** Consolidate model cards and model configs into a single unified `ModelConfig` in `config.toml`, add editable model IDs (rename), inline sampling params (removing profile-based indirection), and add per-param enable/disable UI checkboxes.
 
 **Architecture:** The separate model card TOML files (`configs/<org>--<model>.toml`) are eliminated. All model metadata — quants table, GPU layers, context length defaults, display name, and sampling parameters — moves directly into `[models.<id>]` entries in `config.toml`. The `Profile` enum is kept only for preset lookup (quick-fill in the UI); it is no longer stored on `ModelConfig`. Model IDs (config keys) become editable with full rename support, updating config, DB, and running model state. Community card fetching is removed entirely. Auto-migration runs on config load (backs up `config.toml` first).

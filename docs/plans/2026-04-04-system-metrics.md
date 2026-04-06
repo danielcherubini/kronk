@@ -2,6 +2,8 @@
 
 **Goal:** Expose CPU usage %, RAM used/total, and GPU utilization % from the proxy health endpoint and display them in the web dashboard.
 
+**Status:** ✅ COMPLETED - See git commits `67029b2` ("Merge pull request #28 from danielcherubini/feature/system-metrics"), `2465a4d` ("feat: add SystemMetrics struct and collect_system_metrics() to gpu.rs"), `11d9287` ("feat: add cached system metrics background task to ProxyState")
+
 **Architecture:**
 A new `SystemMetrics` struct is collected every 5 seconds by a background Tokio task and stored as `Arc<RwLock<SystemMetrics>>` inside `ProxyState`. The `sysinfo` crate (already a workspace dependency, pinned to `"0.30"`) provides CPU and RAM. GPU utilization % comes from `nvidia-smi` for NVIDIA (consistent with the existing `query_vram` pattern). The `/koji/v1/system/health` endpoint reads the cached struct. The web dashboard is updated to display all three new metrics.
 

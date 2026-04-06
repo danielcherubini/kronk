@@ -1,7 +1,7 @@
 # koji-cli Code Quality Improvements Plan
 
 **Goal:** Improve code quality, consistency, and maintainability of the koji-cli crate through targeted refactoring, dead code removal, and documentation.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `a93e639` ("Feature/code quality improvements (#16)"), `423ec0b` ("kronk-cli code quality improvements (#15)")
 
 **Architecture:** Five focused tasks addressing real issues found via code review. Each task is independently committable and ordered by impact.
 

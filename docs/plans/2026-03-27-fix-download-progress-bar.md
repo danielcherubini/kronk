@@ -1,7 +1,7 @@
 # Fix Download Progress Bar Plan
 
 **Goal:** Fix the download progress bar showing "0 B/0 B" and the completion message appearing broken during `koji model pull`.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `bc35068` ("fix: download progress bar showing 0 B/0 B (#18)"), `bd9ea75` ("feat: fix download progress bar"), `f052bba` ("fix: get Content-Length from GET response for progress bar, not HEAD")
 
 **Architecture:** The root cause is a known reqwest bug (#843, open since 2020) where `Response::content_length()` returns `Some(0)` for HEAD requests despite the raw `Content-Length` header being correct. The fix parses the header manually, adds a testable helper, cleans up progress bar completion in both download paths, and simplifies the control flow.
 

@@ -4,6 +4,8 @@
 **Architecture:** Add an `extract_koji_flags()` helper that parses the raw arg vec, separating koji flags from backend passthrough args. Refactor `cmd_server_add` and `cmd_server_edit` to use it. Extract shared backend resolution logic into `resolve_backend()`.
 **Tech Stack:** Rust, clap (existing), inquire (existing), koji-core ModelRegistry
 
+**Status:** ✅ COMPLETED - See git commit `c8327c8` ("Feature/server flag extraction (#12)") and `4de3b5a` ("feat: unified status command, remove model ps, fix logs_dir path mismatch")
+
 ---
 
 ### Task 1: Add `extract_koji_flags()` helper with tests

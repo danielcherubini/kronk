@@ -4,6 +4,8 @@
 **Architecture:** Add `GET /status` to the proxy server that returns all model state, config, VRAM, and metrics in one JSON call. Rewrite `cmd_status` to consume this endpoint with a 500ms timeout, falling back to config-only display. Remove `model ps` entirely.
 **Tech Stack:** Rust, axum, reqwest, serde_json, tokio (spawn_blocking for VRAM)
 
+**Status:** ✅ COMPLETED - See git commits `4de3b5a` ("feat: unified status command, remove model ps"), `b077271` ("feat: add /status endpoint to proxy server"), `7a49b44` ("fix: move DB query outside loop in status.rs")
+
 ---
 
 ### Task 1: Add `GET /status` endpoint to proxy server

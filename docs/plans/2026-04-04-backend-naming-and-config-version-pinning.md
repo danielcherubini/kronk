@@ -2,6 +2,8 @@
 
 **Goal:** Backends install with simple names (`llama_cpp`, `ik_llama`); the DB stores all version history; `config.toml` optionally pins a specific version hash — the DB is the store, config.toml is the master.
 
+**Status:** ✅ COMPLETED - See git commits `bce6928` ("Merge pull request #30 from danielcherubini/feature/backend-naming-and-version-pinning"), `90898b4` ("feat: add version pin to BackendConfig and resolve_backend_path"), `211546d` ("fix: default backend install name to canonical type; make same-version reinstall idempotent")
+
 **Architecture:**
 - `koji backend install llama_cpp` always installs under the canonical name `llama_cpp` (not `llama_cpp_b8407`). The DB tracks the version hash internally.
 - `config.toml [backends.llama_cpp]` gains an optional `version` field. When set, `resolve_backend_path` looks up the DB for that specific version of that backend. When absent, the active (latest) version is used.

@@ -1,5 +1,7 @@
 # Koji Web Control Plane Plan
 
+**Status:** ✅ PARTIALLY COMPLETED - Core UI implemented, but some features may still be pending. See git commits for web UI work.
+
 **Goal:** Add a `koji-web` crate that serves a Leptos WASM single-page app as a control plane UI for the Koji proxy, running on a separate port (default 11435).
 
 **Architecture:** A new `crates/koji-web` Rust crate hosts a Leptos frontend (compiled to WASM via `trunk`) and an Axum backend that proxies the `/koji/v1/` management API to the running Koji proxy on port 11434. The compiled WASM+HTML assets are embedded into the Rust binary at compile time using `include_dir!`. A new `koji web` CLI sub-command (in `koji-cli`) starts the web server, pointing at the configured proxy base URL.

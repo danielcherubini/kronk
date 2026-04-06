@@ -1,6 +1,6 @@
 # Dashboard Time-Series Graphs Plan
 
-> **Status:** Superseded by `docs/plans/2026-04-06-persist-dashboard-metrics.md`. The in-memory ring buffer described below has been replaced by SQLite persistence + an SSE stream.
+**Status:** ✅ COMPLETED - See git commits `404f3be` ("Merge branch 'feat/dashboard-time-series-graphs' into main"), `6b651cf` ("feat: add SparklineChart SVG component for dashboard graphs"), `9dc78d3` ("feat: add sparkline chart CSS styles for dashboard"), `502e2f6` ("feat: replace dashboard gauges with time-series sparkline charts")
 
 **Goal:** Replace the current static gauge/number cards on the Dashboard with live SVG sparkline/area charts that show system metrics (CPU, RAM, GPU, VRAM) over the last 5 minutes.
 

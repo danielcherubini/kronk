@@ -2,6 +2,8 @@
 
 **Goal:** Transform the Koji web control plane from unstyled browser-default HTML into a sleek, modern dark dashboard with live-updating metrics, VRAM breakdowns, and polished visual design.
 
+**Status:** ✅ COMPLETED - See git commits `734623d` ("feat: web control plane UI redesign - dark dashboard theme"), `d585ba4` ("feat: restyle web nav bar with dark theme topbar"), `9dc78d3` ("feat: add sparkline chart CSS styles for dashboard"), `502e2f6` ("feat: replace dashboard gauges with time-series sparkline charts")
+
 **Architecture:** A single hand-crafted CSS file (`style.css`) added to the Trunk build pipeline provides all styling via CSS custom properties (variables) for easy theming. The existing Leptos component structure stays intact — we add CSS classes to existing `view!` macros and enhance the Dashboard page with auto-refreshing metrics, visual gauges, and per-model VRAM bars. No npm, no external build tools — just CSS linked from `index.html` and processed by Trunk.
 
 **Tech Stack:** Leptos 0.7 (CSR/WASM), Trunk asset pipeline, hand-crafted CSS with custom properties, CSS Grid/Flexbox for layout, CSS animations for transitions.

@@ -2,6 +2,8 @@
 
 **Goal:** When config or models are saved via the web UI, the in-memory config used by the proxy should be updated immediately — no restart required.
 
+**Status:** ✅ COMPLETED - See git commits `69cbb68` ("Merge branch 'feature/config-hot-reload'"), `54298dc` ("feat: add config hot-reload via web UI"), `219c749` ("feat: sync in-memory proxy config after web UI saves")
+
 **Architecture:** The web UI server (`koji-web`) has its own `AppState` that is completely disconnected from the proxy's `ProxyState`. When saving, it reads config from disk, modifies it, and writes back to disk — but never updates the `ProxyState.config` `Arc<RwLock<Config>>` that the proxy actually uses for routing, model loading, and backend resolution. The fix is to share the `ProxyState.config` Arc with `AppState` so that writes through the web API also update the live in-memory config.
 
 **Tech Stack:** Rust, Axum, Tokio, TOML, `Arc<RwLock<Config>>`

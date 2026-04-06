@@ -2,6 +2,8 @@
 
 **Goal:** Migrate the backend registry from a `backend_registry.toml` file on disk to the SQLite database (`koji.db`), while keeping `config.toml` as the sole place where named backends are declared (with exactly `llama_cpp` and `ik_llama` as the two well-known names).
 
+**Status:** ✅ COMPLETED - See git commits `998256c` ("Merge pull request #27 from danielcherubini/feature/backend-registry-to-db"), `d9aa88f` ("refactor: replace file-based BackendRegistry with SQLite-backed implementation"), `e3565e9` ("feat: add db query functions for backend_installations"), `e954552` ("feat: add db migration v3 for backend_installations table")
+
 **Architecture:**
 The current system has two parallel backend representations: `[backends]` in `config.toml` (path + default_args, used at runtime) and `backend_registry.toml` (install metadata like version, gpu_type, source). We will eliminate `backend_registry.toml` entirely. A new `backend_installations` table in SQLite will store all install metadata including version history and an `is_active` flag to mark the "current active version" for each named backend. The `BackendRegistry` struct will be rewritten to use a `rusqlite::Connection` instead of reading/writing a TOML file.
 

@@ -1,6 +1,8 @@
 # Implement System Restart Logic (Process-Level Exit)
 
 **Goal:** Implement a functional system restart by triggering a graceful shutdown and process exit.
+
+**Status:** ✅ COMPLETED - See git commits `3a1b7a0` ("Merge branch 'feat/system-restart'"), `eea20ef` ("fix(proxy): complete system restart implementation per plan"), `ec0fc08` ("feat: implement system restart with process exit"), `0fe3ab5` ("feat: implement system restart handler with process exit")
 **Architecture:** The restart handler will trigger a shutdown sequence in the `ProxyState` to clean up resources (models, jobs) and then terminate the process. The host environment (systemd, Docker, etc.) is expected to handle the process recreation.
 **Tech Stack:** Rust, Axum, Tokio, Koji Core.
 

@@ -4,7 +4,7 @@
 hardcoded built-in profile defaults. Model cards become the sole source of
 sampling parameters. A new `[sampling_templates]` section in `config.toml`
 provides seed values for new model cards created during `koji model pull`.
-**Status:** DONE - Part of model card migration
+**Status:** ✅ COMPLETED - Part of unified model config (commit `95c8e01`)
 
 **Architecture:** The `Profile` enum (coding, chat, analysis, creative)
 becomes a pure label — a key into the model card's `[sampling.<profile>]`

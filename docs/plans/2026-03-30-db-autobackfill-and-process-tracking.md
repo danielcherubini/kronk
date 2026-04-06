@@ -1,7 +1,7 @@
 # DB Auto-Backfill on First Open + Process Tracking Plan
 
 **Goal:** (1) Automatically backfill the SQLite database with metadata from all installed models when the DB is first created, and (2) persist running model PIDs/ports in the DB so `koji status` can report live state and `koji serve` can clean up orphaned processes on startup.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `fe9efcb` ("feat: DB auto-backfill on first open + process tracking (#24)"), `1fa1f9d` ("feat: add active_models table and backfill detection to DB")
 
 **Architecture:** The `db::open()` function detects a freshly created DB (migration v1 just ran on an empty DB) and triggers a one-time backfill that scans installed model cards and fetches commit SHAs + LFS hashes from HuggingFace. A new `active_models` table tracks which backend processes are currently running, written by the proxy's `load_model()`/`unload_model()` lifecycle. On `koji serve` startup, stale entries are detected (PID no longer alive) and cleaned up.
 

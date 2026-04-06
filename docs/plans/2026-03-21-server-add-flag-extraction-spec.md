@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-21
 **Reviewed:** 2026-03-21
-**Status:** DONE
+**Status:** ✅ COMPLETED - Integrated into server add/edit flag extraction plan (commit `c8327c8`)
 
 ## Problem
 

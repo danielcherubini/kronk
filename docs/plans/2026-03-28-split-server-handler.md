@@ -1,7 +1,7 @@
 # Split `handlers/server.rs` into Focused Submodules
 
 **Goal:** Convert the 499-line `crates/koji-cli/src/handlers/server.rs` into a `server/` directory with one file per command, without changing any behavior or public API.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `a9b3a84` ("refactor: split handlers/server.rs into focused submodules"), `92c110f` ("feat: Split proxy/server.rs into focused submodules")
 
 **Architecture:** The file has 6 functions: a dispatcher, 4 public command handlers (ls/add/edit/rm), and 1 private helper (`resolve_backend`). We split into 5 files + a `mod.rs`. The dispatcher and shared helper live in `mod.rs`, each command gets its own file.
 

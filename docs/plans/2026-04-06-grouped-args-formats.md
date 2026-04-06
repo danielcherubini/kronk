@@ -2,6 +2,8 @@
 
 **Goal:** Store args as one logical flag per array entry (e.g. `"-fa 1"`, `"--mlock"`) for readable `config.toml`, and ensure any flag in `model.args` completely replaces the same flag in `backend.default_args`.
 
+**Status:** ✅ COMPLETED - See git commits `5c8fac1` ("feat(config): add shlex and grouped-args helper functions with tests"), `3fbf27b` ("feat(config): wire merge_args into build_args and grouped SamplingParams::to_args"), `ae67a0b` ("refactor(config): rework args_helpers to use shlex and align with grouped-args plan")
+
 **Architecture:** Add the `shlex` crate for quote-aware splitting. Introduce a `merge_args` helper that operates on grouped form and de-duplicates by flag name. Flatten back to tokens at the `Command::args` boundary. Auto-migrate legacy flat configs on load and write the migrated form back to disk.
 
 **Tech Stack:** Rust, `toml` crate, `shlex` crate (zero deps), Leptos (web frontend, built via `trunk`).

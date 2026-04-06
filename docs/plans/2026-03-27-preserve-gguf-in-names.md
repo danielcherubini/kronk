@@ -1,7 +1,7 @@
 # Stop Stripping -GGUF from Model Names
 
 **Goal:** Preserve `-GGUF` / `-gguf` in model IDs and directory paths instead of stripping it during `koji model pull`.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commits `c102bd0` ("fix: preserve -GGUF in model IDs and directory paths (#17)"), `58ad0b4` ("fix: preserve -GGUF in model IDs and directory paths")
 
 **Architecture:** Remove the `clean_parts` stripping logic in the pull command so that `repo_id` is used directly for directory creation, `model_id`, and config filenames. The community card lookup fallback (which tries stripped names as URL candidates) is kept as-is since it's a read-only lookup, not a name mutation.
 

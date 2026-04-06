@@ -3,6 +3,8 @@
 ## Goal
 
 Rename the project from `kronk` to `koji` because the name `kronk` is already
+
+**Status:** ✅ COMPLETED - See git commits `6d3a220` ("docs: rename kronk -> koji across README, AGENTS, TODO, MIGRATION, plans"), `8281739` ("chore: rename workspace crates from kronk-* to koji-*"), `ab25016` ("refactor: rename HTTP API routes /kronk/v1 -> /koji/v1 and OpenAPI specs"), `bb8b734` ("refactor: rename Rust identifiers and imports kronk -> koji"), `d731eab` ("refactor(platform): rename service names kronk -> koji")
 taken by another similar project. This is a hard rename with no backward
 compatibility: all crates, binary names, HTTP API routes, environment
 variables, data directories, service names, installer, CI workflows, and

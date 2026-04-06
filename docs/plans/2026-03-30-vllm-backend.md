@@ -2,6 +2,8 @@
 
 **Goal:** Add vLLM as a first-class backend type in koji with full lifecycle management (start, stop, health check, auto-unload), matching the existing llama.cpp/ik_llama experience.
 
+**Status:** 🚧 NOT STARTED - Only remaining major feature plan. Need to add `Vllm` variant to `BackendType` enum with PyPI version checking.
+
 **Architecture:** vLLM is a Python-based inference server (installed via pip) that serves an OpenAI-compatible API on `/v1/chat/completions` with health checks on `/health`. Unlike llama.cpp, it uses HuggingFace safetensors models (not GGUF), takes different CLI flags (`vllm serve <model> --port N`), handles sampling parameters per-request (not as CLI flags), and primarily runs on Linux. The proxy layer requires no changes since it just forwards HTTP. The key work is in the backend type enum, arg builder, installer, and updater.
 
 **Tech Stack:** Rust (koji-core, koji-cli), Python (vLLM external dependency), PyPI API for version checks

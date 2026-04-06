@@ -1,7 +1,7 @@
 # [Cleanup] Re-exports and Model Card Documentation
 
 **Goal:** Clean up unnecessary re-exports in CLI lib.rs and update documentation to reflect the new model card-based approach.
-**Status:** DONE - Part of model card migration
+**Status:** ✅ COMPLETED - Part of unified model config (commit `95c8e01`)
 
 **Architecture:** 
 - Remove redundant public exports that expose internal implementation details

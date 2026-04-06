@@ -1,6 +1,8 @@
 # Implement ProxyState::shutdown Plan
 
 **Goal:** Implement a graceful shutdown method for `ProxyState` to allow clean process exit.
+
+**Status:** ✅ COMPLETED - See git commits `6c83743` ("feat: add shutdown method to ProxyState for graceful exit"), `82ec8ab` ("fix(proxy): fix system restart handler and shutdown")
 **Architecture:** Add an `async fn shutdown(&self)` method to `ProxyState`. The method will unload all models, close the metrics broadcast channel, and attempt to cancel active pull jobs.
 **Tech Stack:** Rust, Tokio, Koji Core.
 

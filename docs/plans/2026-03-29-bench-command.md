@@ -1,7 +1,7 @@
 # `koji bench` — HTTP API Benchmark Command
 
 **Goal:** Add a `koji bench <name>` CLI command that spins up a llama-server backend, sends OpenAI-compatible streaming chat requests, measures inference timing from the SSE stream, and prints results as a formatted terminal table.
-**Status:** DONE
+**Status:** ✅ COMPLETED - See git commit `4bf65f7` ("feat: add kronk bench command for LLM inference benchmarking (#22)")
 
 **Architecture:** The feature adds a `bench` module to `koji-core` containing pure-logic types/statistics, an HTTP streaming measurement client, and a backend process runner/orchestrator. The CLI gets a new `Bench` command variant that wires to a handler calling the core module. The bench runner reuses existing infrastructure: `Config::resolve_server()` and `Config::build_full_args()` for argument resolution, `check_health()` for readiness polling, and `kill_process()` / `force_kill_process()` for teardown.
 

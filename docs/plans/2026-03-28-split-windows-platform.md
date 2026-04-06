@@ -1,5 +1,7 @@
 # Split `platform/windows.rs` into Focused Submodules
 
+**Status:** ✅ COMPLETED - See git commit `5d20835` ("refactor: split platform/windows.rs into focused submodules")
+
 **Goal:** Convert the monolithic 458-line `crates/koji-core/src/platform/windows.rs` into a `windows/` directory with focused submodules, without changing any behavior or public API.
 
 **Architecture:** The file contains 11 functions in 4 logical groups: service installation, service lifecycle (start/stop/query/remove), firewall rules, and user permissions. We split into 4 files plus a `mod.rs` that re-exports everything so callers don't change.

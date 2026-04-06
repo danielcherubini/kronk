@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-21
 **Reviewed:** 2026-03-21
-**Status:** DONE
+**Status:** ✅ COMPLETED - Integrated into status command redesign (commit `4de3b5a`)
 
 ## Problem
 
