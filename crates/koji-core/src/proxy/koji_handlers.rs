@@ -31,6 +31,7 @@ pub struct QuantEntry {
     pub filename: String,
     pub quant: Option<String>,
     pub size_bytes: Option<i64>,
+    pub is_mmproj: bool, // true if filename matches mmproj*.gguf pattern
 }
 
 /// A single quantisation variant to download (used in multi-quant wizard format).
@@ -824,10 +825,14 @@ pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
         Ok(blobs) => {
             let mut quants: Vec<QuantEntry> = blobs
                 .into_values()
-                .map(|b| QuantEntry {
-                    quant: crate::models::pull::infer_quant_from_filename(&b.filename),
-                    filename: b.filename,
-                    size_bytes: b.size,
+                .map(|b| {
+                    let is_mmproj = crate::models::pull::is_mmproj_filename(&b.filename);
+                    QuantEntry {
+                        quant: crate::models::pull::infer_quant_from_filename(&b.filename),
+                        filename: b.filename,
+                        size_bytes: b.size,
+                        is_mmproj,
+                    }
                 })
                 .collect();
             quants.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -868,6 +873,7 @@ async fn _setup_model_after_pull_with_config(
                 source: repo_id.to_string(),
                 default_context_length: None,
                 default_gpu_layers: None,
+                mmproj: None,
             },
             sampling: std::collections::HashMap::new(),
             quants: std::collections::HashMap::new(),
@@ -1122,15 +1128,18 @@ mod tests {
             filename: "Model-Q4_K_M.gguf".to_string(),
             quant: Some("Q4_K_M".to_string()),
             size_bytes: Some(4_200_000_000),
+            is_mmproj: false,
         };
 
         let value = serde_json::to_value(&entry).expect("serialization failed");
         assert!(value.get("filename").is_some(), "missing filename");
         assert!(value.get("quant").is_some(), "missing quant");
         assert!(value.get("size_bytes").is_some(), "missing size_bytes");
+        assert!(value.get("is_mmproj").is_some(), "missing is_mmproj");
         assert_eq!(value["filename"], "Model-Q4_K_M.gguf");
         assert_eq!(value["quant"], "Q4_K_M");
         assert_eq!(value["size_bytes"], 4_200_000_000_i64);
+        assert_eq!(value["is_mmproj"], false);
     }
 
     /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.

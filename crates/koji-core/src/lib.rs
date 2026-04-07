@@ -20,3 +20,8 @@ pub mod platform;
 pub mod process;
 pub mod profiles;
 pub mod proxy;
+
+#[cfg(test)]
+mod tests {
+    mod mmproj_detection_test;
+}

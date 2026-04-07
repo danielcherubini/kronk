@@ -210,6 +210,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                     source: repo_id.to_string(),
                     default_context_length: None, // set by interactive context prompt
                     default_gpu_layers: Some(999),
+                    mmproj: None,
                 },
                 sampling: HashMap::new(),
                 quants: HashMap::new(),
@@ -1000,6 +1001,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                             source: model_id.clone(),
                             default_context_length: Some(8192),
                             default_gpu_layers: Some(999),
+                            mmproj: None,
                         },
                         sampling: HashMap::new(),
                         quants,

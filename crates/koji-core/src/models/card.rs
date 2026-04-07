@@ -26,6 +26,9 @@ pub struct ModelMeta {
     pub default_context_length: Option<u32>,
     #[serde(default)]
     pub default_gpu_layers: Option<u32>,
+    /// Filename of the selected mmproj (vision projector) file, e.g. "mmproj-F16.gguf"
+    #[serde(default)]
+    pub mmproj: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
