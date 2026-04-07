@@ -1,6 +1,6 @@
 # Pull Quant from HuggingFace on the Model Editor — Spec
 
-**Status:** Draft (rev 2 — incorporates reviewer feedback)
+**Status:** Draft (rev 3 — incorporates two rounds of reviewer feedback)
 **Date:** 2026-04-07
 **Branch:** `feature/pull-quant-from-model-editor`
 
@@ -96,8 +96,13 @@ pub fn PullQuantWizard(
 
     /// Whether the wizard is currently visible to the user. The wizard uses this
     /// to detect (closed → open) transitions and reset itself when reopened
-    /// after a previous Done state. When the wizard is hosted directly on a page
-    /// (not in a modal), pass `Signal::derive(|| true)`.
+    /// after a previous Done state.
+    ///
+    /// **Convention:** `None` means "hosted directly on a page, always visible,
+    /// never auto-reset" — the wizard relies entirely on user interaction (e.g.
+    /// clicking Search on step 1). `Some(signal)` enables the modal lifecycle
+    /// where false→true transitions drive the reset/refetch behavior described
+    /// in 5.4 #1.
     #[prop(into, optional)] is_open: Option<Signal<bool>>,
 
     /// Called once after ALL downloads in the current session have reached a
@@ -114,6 +119,13 @@ pub fn PullQuantWizard(
     #[prop(optional)] on_close: Option<Callback<()>>,
 ) -> impl IntoView
 ```
+
+**`Send + Sync` requirement.** Leptos's `Callback<T>` requires its handler
+(and any captured environment) to be `Send + Sync + 'static`. All signal types
+we capture in §8.3 (`RwSignal<Vec<(String, QuantInfo)>>`, `RwSignal<bool>`)
+and all fields of `Vec<CompletedQuant>` (`String`, `Option<String>`,
+`Option<u64>`, `u32`) satisfy this trivially. Future maintainers must avoid
+capturing `Rc`/`RefCell` here.
 
 ### 5.2 Public type emitted on completion
 
@@ -151,20 +163,61 @@ RepoInput → LoadingQuants → SelectQuants → SetContext → Downloading → 
 
 ### 5.4 Behavioral changes vs. today's `pages/pull.rs`
 
-1. **On mount and on (closed → open) transition**, an `Effect` checks
-   `(is_open == true) && (initial_repo.get().is_some_non_empty())`. If both
-   are true *and* `wizard_step == RepoInput` *or* `wizard_step == Done`, the
-   wizard:
-   - Resets `selected_filenames`, `context_lengths`, `download_jobs`,
-     `error_msg`, and `did_complete` to fresh values.
-   - Sets `repo_id` from `initial_repo`.
-   - Transitions to `LoadingQuants`.
-   - Fires the same `GET /koji/v1/hf/*repo_id` fetch the "Search" button does today.
+1. **The reset Effect**. A dedicated `Effect` drives reset/refetch on modal
+   open. **It tracks ONLY `is_open`** — all other signals are read via
+   `get_untracked` / `with_untracked` to prevent re-runs on internal state
+   changes. This is critical: if the Effect tracked `wizard_step`, it would
+   race with the `on_complete` Effect (5.4 #5) on the `Done` transition and
+   could reset the wizard before `on_complete` reads its state, silently
+   losing the merge.
 
-   The Effect does **not** trigger when `initial_repo` changes while the modal
-   is closed (because `is_open == false`), and does **not** trigger when the
-   wizard is mid-flow (steps `LoadingQuants` through `Downloading`). This prevents
-   background refetches and protects in-progress sessions.
+   When `is_open` is `None` (hosted on a page, not in a modal): the Effect is
+   **not registered at all**. The wizard relies on user interaction.
+
+   When `is_open` is `Some(sig)`: the Effect is registered and behaves as
+   follows on each run (mount + every change to `sig`):
+
+   ```rust
+   Effect::new(move |_| {
+       let open = is_open_sig.get(); // tracked
+       if !open { return; }          // ignore close transitions and the initial false-mount
+
+       // Read everything else untracked.
+       let repo = initial_repo.get_untracked();
+       if repo.trim().is_empty() { return; }
+
+       let step = wizard_step.get_untracked();
+       // Only reset from a terminal/initial state — never interrupt mid-flow.
+       if !matches!(step, WizardStep::RepoInput | WizardStep::Done) { return; }
+
+       // Reset session state.
+       selected_filenames.set(HashSet::new());
+       context_lengths.set(HashMap::new());
+       download_jobs.set(Vec::new());
+       error_msg.set(None);
+       did_complete.set(false);
+       repo_id.set(repo);
+       wizard_step.set(WizardStep::LoadingQuants);
+
+       // Kick off the same fetch the Search button does today.
+       spawn_local(async move { /* GET /koji/v1/hf/*repo_id */ });
+   });
+   ```
+
+   **Properties this gives us**:
+   - The Effect runs on (closed → open) transitions only (because the early
+     return on `!open` swallows the false branches and the initial mount with
+     `open == false`).
+   - It **never** runs on `wizard_step` or `initial_repo` changes — those are
+     untracked reads. Background refetches when `form_model` changes while
+     the modal is closed are impossible.
+   - Mid-flow sessions (`LoadingQuants`, `SelectQuants`, `SetContext`,
+     `Downloading`) are preserved across close/reopen because the
+     step-matches gate fails and the Effect early-returns.
+   - The race with the `on_complete` Effect on the `Done` transition is
+     impossible: this Effect doesn't subscribe to `wizard_step`, so it
+     doesn't run when downloads finish. Only `on_complete` runs on that
+     transition.
 
 2. **The step indicator hides the "1. Repo" pill** when `initial_repo` is
    non-empty (renders 5 steps instead of 6).
@@ -361,6 +414,15 @@ mounted unconditionally; the `modal-backdrop--open` class controls
       drop(closure);
   });
   ```
+
+  **Cargo.toml dependency.** `KeyboardEvent` is **not** currently in
+  `crates/koji-web/Cargo.toml`'s `web-sys` feature list (which has only
+  `Window`, `Document`, `HtmlElement`, `HtmlInputElement`, `EventSource`,
+  `EventSourceInit`, `MessageEvent`, `Event`). Implementation must add
+  `KeyboardEvent` to that list, otherwise the modal won't compile. `Closure`,
+  `JsCast`, and `unchecked_ref` are already used elsewhere in the crate
+  (`dashboard.rs`, `model_editor.rs`), so no other dependency changes are
+  needed. See §10.
 
   Note `get_untracked()` — we don't want the listener to re-register every
   time `open` changes.
@@ -652,13 +714,13 @@ No new automated tests are added, because:
 **7. Model editor — mid-download close (decision #6):**
 - Open the modal, start a download of a reasonably large quant.
 - Before it finishes, close the modal via X.
-- Reopen the modal — the wizard should reset to `LoadingQuants` and refetch
-  (because it was no longer in mid-flow per the reset Effect's gating? **No**
-  — the reset only fires when previous step is `RepoInput` or `Done`.
-  Mid-flow sessions are preserved). Verify: reopening shows the still-running
-  Downloading step with progress.
-- Wait for completion. The merge fires while the modal is open or closed,
-  whichever the user happens to be in. The new row appears in the quants table.
+- Reopen the modal. The wizard remains on `Downloading` with the
+  in-progress bar — the reset Effect (5.4 #1) only fires when the prior step
+  was `RepoInput` or `Done`, so mid-flow sessions are preserved across
+  close/reopen.
+- Wait for completion. The merge fires regardless of whether the modal is
+  open or closed at the time, and the new row appears in the editor's
+  quants table.
 
 **8. Model editor — modal-closed completion:**
 - Open the modal, start a download.
@@ -678,8 +740,9 @@ No new automated tests are added, because:
 | `crates/koji-web/src/pages/pull.rs` | **Shrink to thin wrapper** | ~20 (was ~600) |
 | `crates/koji-web/src/pages/model_editor.rs` | Remove `add_quant_counter`. Add `pull_modal_open`. Replace button (with span wrapper for tooltip). Mount modal + wizard with field-by-field merge. | +60, -10 |
 | `crates/koji-web/style.css` | Add modal overlay styles using existing CSS variables | +35 |
+| `crates/koji-web/Cargo.toml` | Add `KeyboardEvent` to `web-sys` features (required by Modal's Escape handler) | +1 |
 
-**Net total:** ~+925 lines, ~-610 lines (mostly the move of the wizard).
+**Net total:** ~+926 lines, ~-610 lines (mostly the move of the wizard).
 
 ## 11. Implementation order
 
