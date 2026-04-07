@@ -180,7 +180,7 @@ pub fn PullQuantWizard(
     /// "hosted directly on a page, always visible, never auto-reset" — the
     /// reset Effect is not registered. `Some(signal)` enables the modal
     /// lifecycle where (closed → open) transitions drive reset/refetch.
-    #[prop(into, optional)]
+    #[prop(optional)]
     is_open: Option<Signal<bool>>,
 
     /// Called once after all downloads in the current session reach a terminal

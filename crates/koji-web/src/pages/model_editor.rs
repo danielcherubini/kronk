@@ -4,6 +4,16 @@ use leptos_router::hooks::use_params_map;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use web_sys;
+
+use crate::components::modal::Modal;
+use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+
+// Helper to convert RwSignal to Signal for Modal
+fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
+    let (read, _) = sig.split();
+    read.into()
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -278,7 +288,7 @@ pub fn ModelEditor() -> impl IntoView {
 
     let backends = RwSignal::new(Vec::<String>::new());
     let quants: RwSignal<Vec<(String, QuantInfo)>> = RwSignal::new(vec![]);
-    let add_quant_counter = RwSignal::new(0);
+    let pull_modal_open_signal = RwSignal::new(false);
 
     // Status
     let model_status = RwSignal::new(Option::<(bool, String)>::None);
@@ -1166,16 +1176,18 @@ pub fn ModelEditor() -> impl IntoView {
                                 </tbody>
                             </table>
                             <div class="mt-1">
-                                <button
-                                    type="button"
-                                    class="btn btn-secondary btn-sm"
-                                    on:click=move |_| {
-                                        let counter = add_quant_counter.get() + 1;
-                                        add_quant_counter.set(counter);
-                                        let unique_name = format!("quant-{}", counter);
-                                        quants.update(|rows| rows.push((unique_name, QuantInfo::default())));
-                                    }
-                                >"+ Add Quant"</button>
+                                <span title=move || if form_model.get().trim().is_empty() {
+                                    "Enter the HuggingFace repo above before pulling quants".to_string()
+                                } else {
+                                    "Pull a new quant from HuggingFace".to_string()
+                                }>
+                                    <button
+                                        type="button"
+                                        class="btn btn-primary btn-sm"
+                                        prop:disabled=move || form_model.get().trim().is_empty()
+                                        on:click=move |_| pull_modal_open_signal.set(true)
+                                    >"+ Pull Quant"</button>
+                                </span>
                             </div>
 
                             <label class="form-label" for="field-args">"Extra args"</label>
@@ -1220,6 +1232,54 @@ pub fn ModelEditor() -> impl IntoView {
                             })}
                         </form>
                     </div>
+                    <Modal
+                        open=rw_signal_to_signal(pull_modal_open_signal)
+                        on_close=Callback::new(move |_| pull_modal_open_signal.set(false))
+                        title="Pull Quant from HuggingFace".to_string()
+                    >
+                        <PullQuantWizard
+                            initial_repo=Signal::derive(move || form_model.get())
+                            on_complete=Callback::new(move |completed: Vec<CompletedQuant>| {
+                                // Visibility for the silent-failure caveat in spec §8.7: if all
+                                // quants in this session failed, log to console so the user has
+                                // *some* trace after the modal auto-closes.
+                                if completed.is_empty() {
+                                    web_sys::console::warn_1(
+                                        &"All pulled quants failed; nothing merged into the editor.".into(),
+                                    );
+                                }
+                                quants.update(|rows| {
+                                    for cq in completed {
+                                        let key = cq.quant.clone()
+                                            .unwrap_or_else(|| {
+                                                cq.filename.trim_end_matches(".gguf").to_string()
+                                            });
+                                        if let Some(pos) = rows.iter().position(|(k, _)| k == &key) {
+                                            // Re-pull: overwrite filename and context_length
+                                            // (the wizard's values reflect the user's latest intent).
+                                            // Only overwrite size_bytes when we have a value —
+                                            // never clobber a known size with None.
+                                            let row = &mut rows[pos].1;
+                                            row.file = cq.filename;
+                                            row.context_length = Some(cq.context_length);
+                                            if cq.size_bytes.is_some() {
+                                                row.size_bytes = cq.size_bytes;
+                                            }
+                                        } else {
+                                            // New row.
+                                            rows.push((key, QuantInfo {
+                                                file: cq.filename,
+                                                size_bytes: cq.size_bytes,
+                                                context_length: Some(cq.context_length),
+                                            }));
+                                        }
+                                    }
+                                });
+                                pull_modal_open_signal.set(false);
+                            })
+                            on_close=Callback::new(move |_| pull_modal_open_signal.set(false))
+                        />
+                    </Modal>
                 }.into_any()
             }}
         </Suspense>
