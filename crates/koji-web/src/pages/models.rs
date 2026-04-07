@@ -18,20 +18,9 @@ struct ModelsResponse {
 }
 
 fn partition_models_by_loaded(models: Vec<ModelEntry>) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
-    let mut loaded: Vec<ModelEntry> = vec![];
-    let mut unloaded: Vec<ModelEntry> = vec![];
-
-    for model in models {
-        if model.loaded {
-            loaded.push(model);
-        } else {
-            unloaded.push(model);
-        }
-    }
-
+    let (mut loaded, mut unloaded): (Vec<_>, Vec<_>) = models.into_iter().partition(|m| m.loaded);
     loaded.sort_by(|a, b| a.id.cmp(&b.id));
     unloaded.sort_by(|a, b| a.id.cmp(&b.id));
-
     (loaded, unloaded)
 }
 
@@ -140,7 +129,10 @@ pub fn Models() -> impl IntoView {
                                                                         view! {
                                                                             <button
                                                                                 class="btn btn-danger btn-sm"
-                                                                                on:click=move |_| { unload_action.dispatch(id_unload.clone()); }
+                                                                                on:click=move |_| {
+                                                                                    unload_action.dispatch(id_unload.clone());
+                                                                                    refresh.update(|n| *n += 1);
+                                                                                }
                                                                             >
                                                                                 "Unload"
                                                                             </button>
@@ -149,7 +141,10 @@ pub fn Models() -> impl IntoView {
                                                                         view! {
                                                                             <button
                                                                                 class="btn btn-success btn-sm"
-                                                                                on:click=move |_| { load_action.dispatch(id_load.clone()); }
+                                                                                on:click=move |_| {
+                                                                                    load_action.dispatch(id_load.clone());
+                                                                                    refresh.update(|n| *n += 1);
+                                                                                }
                                                                             >
                                                                                 "Load"
                                                                             </button>
@@ -166,7 +161,7 @@ pub fn Models() -> impl IntoView {
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! { <div></div> }.into_any()
+                                        view! { <></> }.into_any()
                                     }}
                                     {if !unloaded.is_empty() {
                                         view! {
@@ -213,7 +208,10 @@ pub fn Models() -> impl IntoView {
                                                                         view! {
                                                                             <button
                                                                                 class="btn btn-danger btn-sm"
-                                                                                on:click=move |_| { unload_action.dispatch(id_unload.clone()); }
+                                                                                on:click=move |_| {
+                                                                                    unload_action.dispatch(id_unload.clone());
+                                                                                    refresh.update(|n| *n += 1);
+                                                                                }
                                                                             >
                                                                                 "Unload"
                                                                             </button>
@@ -222,7 +220,10 @@ pub fn Models() -> impl IntoView {
                                                                         view! {
                                                                             <button
                                                                                 class="btn btn-success btn-sm"
-                                                                                on:click=move |_| { load_action.dispatch(id_load.clone()); }
+                                                                                on:click=move |_| {
+                                                                                    load_action.dispatch(id_load.clone());
+                                                                                    refresh.update(|n| *n += 1);
+                                                                                }
                                                                             >
                                                                                 "Load"
                                                                             </button>
@@ -239,7 +240,7 @@ pub fn Models() -> impl IntoView {
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! { <div></div> }.into_any()
+                                        view! { <></> }.into_any()
                                     }}
                                 </div>
                             }.into_any()
