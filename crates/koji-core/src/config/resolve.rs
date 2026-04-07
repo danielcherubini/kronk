@@ -189,7 +189,8 @@ impl Config {
                     .iter()
                     .any(|e| matches!(crate::config::flag_name(e), Some("-m") | Some("--model")));
                 if !already_has_m {
-                    let path_str = model_path.to_string_lossy();
+                    // Use as_os_str() for proper Windows path handling (forward slashes in model_id).
+                    let path_str = model_path.as_os_str().to_string_lossy();
                     let quoted = crate::config::quote_value(&path_str);
                     grouped.push(format!("-m {}", quoted));
                 }
@@ -213,7 +214,8 @@ impl Config {
                         .iter()
                         .any(|e| matches!(crate::config::flag_name(e), Some("--mmproj")));
                     if !already_has_mmproj {
-                        let path_str = mmproj_path.to_string_lossy();
+                        // Use as_os_str() for proper Windows path handling (forward slashes in model_id).
+                        let path_str = mmproj_path.as_os_str().to_string_lossy();
                         let quoted = crate::config::quote_value(&path_str);
                         grouped.push(format!("--mmproj {}", quoted));
                     }
