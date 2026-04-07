@@ -374,7 +374,8 @@ pub fn Dashboard() -> impl IntoView {
                                                 </div>
                                             }.into_any()
                                         } else {
-                                            view! { <></> }.into_any()
+                                            let _: () = view! { <></> };
+                                            ().into_any()
                                         }}
                                         // Idle models section
                                         {if !idle.is_empty() {
@@ -430,7 +431,8 @@ pub fn Dashboard() -> impl IntoView {
                                                 </div>
                                             }.into_any()
                                         } else {
-                                            view! { <></> }.into_any()
+                                            let _: () = view! { <></> };
+                                            ().into_any()
                                         }}
                                     </div>
                                 }.into_any()

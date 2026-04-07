@@ -1401,8 +1401,8 @@ pub fn ModelEditor() -> impl IntoView {
                                                     || stem_upper.contains(&format!("_{}", pattern))
                                             }).map(|s| s.to_string());
                                             quant.unwrap_or_else(|| {
-                                                stem.split(|c: char| c == '-' || c == '_')
-                                                    .last()
+                                                stem.split(|c: char| ['-', '_'].contains(&c))
+                                                    .next_back()
                                                     .unwrap_or("unknown")
                                                     .to_string()
                                             })
