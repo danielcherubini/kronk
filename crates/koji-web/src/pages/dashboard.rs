@@ -92,6 +92,17 @@ fn model_action_button_label(loaded: bool) -> &'static str {
     }
 }
 
+/// Partition model statuses into loaded and unloaded vectors, sorted by ID.
+///
+/// This is extracted to avoid duplicating the partition logic between the
+/// "Loaded Models" and "Idle Models" sections.
+fn partition_model_statuses(models: Vec<ModelStatus>) -> (Vec<ModelStatus>, Vec<ModelStatus>) {
+    let (mut loaded, mut unloaded): (Vec<_>, Vec<_>) = models.into_iter().partition(|m| m.loaded);
+    loaded.sort_by(|a, b| a.id.cmp(&b.id));
+    unloaded.sort_by(|a, b| a.id.cmp(&b.id));
+    (loaded, unloaded)
+}
+
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let history = RwSignal::new(Vec::<MetricSample>::new());
@@ -301,57 +312,122 @@ pub fn Dashboard() -> impl IntoView {
                                     </div>
                                 }.into_any()
                             } else {
+                                // Partition models into loaded and idle sections
+                                let (loaded, idle) = partition_model_statuses(h.models);
                                 view! {
                                     <div class="models-grid">
-                                        {h.models.into_iter().map(|m| {
-                                            // Clone the id once for the click handler. The closure
-                                            // is `Fn` (event listeners may fire repeatedly), so it
-                                            // can't move the original — the inner `.clone()` on each
-                                            // dispatch supplies a fresh owned String per click.
-                                            let id_for_action = m.id.clone();
-                                            let badge_class = model_status_badge_class(m.loaded);
-                                            let badge_label = model_status_badge_label(m.loaded);
-                                            let button_class = model_action_button_class(m.loaded);
-                                            let button_label = model_action_button_label(m.loaded);
-                                            let loaded = m.loaded;
+                                        // Loaded models section
+                                        {if !loaded.is_empty() {
                                             view! {
-                                                <div class="model-card card">
-                                                    <div class="model-card__header">
-                                                        <span class="model-card__id text-mono">{m.id.clone()}</span>
-                                                        <span class={badge_class}>{badge_label}</span>
-                                                    </div>
-                                                    <div class="model-card__body">
-                                                        <div class="model-card__field">
-                                                            <span class="model-card__label">"Backend"</span>
-                                                            <span class="model-card__value text-mono">{m.backend}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div class="model-card__actions">
-                                                        {if loaded {
+                                                <div class="model-section">
+                                                    <h2 class="model-section__title">"Loaded Models"</h2>
+                                                    <div class="models-grid">
+                                                        {loaded.into_iter().map(|m| {
+                                                            let id_for_action = m.id.clone();
+                                                            let badge_class = model_status_badge_class(m.loaded);
+                                                            let badge_label = model_status_badge_label(m.loaded);
+                                                            let button_class = model_action_button_class(m.loaded);
+                                                            let button_label = model_action_button_label(m.loaded);
                                                             view! {
-                                                                <button
-                                                                    class={button_class}
-                                                                    prop:disabled=move || unload_pending.get()
-                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
-                                                                >
-                                                                    {button_label}
-                                                                </button>
-                                                            }.into_any()
-                                                        } else {
-                                                            view! {
-                                                                <button
-                                                                    class={button_class}
-                                                                    prop:disabled=move || load_pending.get()
-                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
-                                                                >
-                                                                    {button_label}
-                                                                </button>
-                                                            }.into_any()
-                                                        }}
+                                                                <div class="model-card card">
+                                                                    <div class="model-card__header">
+                                                                        <span class="model-card__id text-mono">{m.id.clone()}</span>
+                                                                        <span class={badge_class}>{badge_label}</span>
+                                                                    </div>
+                                                                    <div class="model-card__body">
+                                                                        <div class="model-card__field">
+                                                                            <span class="model-card__label">"Backend"</span>
+                                                                            <span class="model-card__value text-mono">{m.backend}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div class="model-card__actions">
+                                                                        {if m.loaded {
+                                                                            view! {
+                                                                                <button
+                                                                                    class={button_class}
+                                                                                    prop:disabled=move || unload_pending.get()
+                                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
+                                                                                >
+                                                                                    {button_label}
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! {
+                                                                                <button
+                                                                                    class={button_class}
+                                                                                    prop:disabled=move || load_pending.get()
+                                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
+                                                                                >
+                                                                                    {button_label}
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        }}
+                                                                    </div>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
                                                     </div>
                                                 </div>
-                                            }
-                                        }).collect::<Vec<_>>()}
+                                            }.into_any()
+                                        } else {
+                                            view! { <></> }.into_any()
+                                        }}
+                                        // Idle models section
+                                        {if !idle.is_empty() {
+                                            view! {
+                                                <div class="model-section">
+                                                    <h2 class="model-section__title">"Idle Models"</h2>
+                                                    <div class="models-grid">
+                                                        {idle.into_iter().map(|m| {
+                                                            let id_for_action = m.id.clone();
+                                                            let badge_class = model_status_badge_class(m.loaded);
+                                                            let badge_label = model_status_badge_label(m.loaded);
+                                                            let button_class = model_action_button_class(m.loaded);
+                                                            let button_label = model_action_button_label(m.loaded);
+                                                            view! {
+                                                                <div class="model-card card">
+                                                                    <div class="model-card__header">
+                                                                        <span class="model-card__id text-mono">{m.id.clone()}</span>
+                                                                        <span class={badge_class}>{badge_label}</span>
+                                                                    </div>
+                                                                    <div class="model-card__body">
+                                                                        <div class="model-card__field">
+                                                                            <span class="model-card__label">"Backend"</span>
+                                                                            <span class="model-card__value text-mono">{m.backend}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div class="model-card__actions">
+                                                                        {if m.loaded {
+                                                                            view! {
+                                                                                <button
+                                                                                    class={button_class}
+                                                                                    prop:disabled=move || unload_pending.get()
+                                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
+                                                                                >
+                                                                                    {button_label}
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! {
+                                                                                <button
+                                                                                    class={button_class}
+                                                                                    prop:disabled=move || load_pending.get()
+                                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
+                                                                                >
+                                                                                    {button_label}
+                                                                                </button>
+                                                                            }.into_any()
+                                                                        }}
+                                                                    </div>
+                                                                </div>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </div>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <></> }.into_any()
+                                        }}
                                     </div>
                                 }.into_any()
                             }
