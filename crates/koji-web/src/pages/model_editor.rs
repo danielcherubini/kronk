@@ -324,6 +324,18 @@ pub fn ModelEditor() -> impl IntoView {
                     selected_mmproj_for_config.set(mmproj.clone());
                 }
 
+                // Populate available mmprojs from quants
+                let mmprojs: Vec<String> = quants
+                    .get()
+                    .iter()
+                    .filter(|(_, q)| {
+                        q.file.to_lowercase().starts_with("mmproj")
+                            && q.file.to_lowercase().ends_with(".gguf")
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                available_mmprojs_for_select.set(mmprojs);
+
                 let mut fields = std::collections::HashMap::new();
                 if let Some(sampling_json) = &d.sampling {
                     if let Some(obj) = sampling_json.as_object() {

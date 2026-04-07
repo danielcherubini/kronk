@@ -694,8 +694,8 @@ pub fn PullQuantWizard(
 
                     <div class="form-actions mt-3">
                         <button class="btn btn-secondary" on:click=move |_| {
-                            // If mmprojs exist and none selected, go to Vision step
-                            if !available_mmprojs.get().is_empty() && selected_mmproj_filenames.get().is_empty() {
+                            // If mmprojs exist, go to Vision step; otherwise go to SelectQuants
+                            if !available_mmprojs.get().is_empty() {
                                 wizard_step.set(WizardStep::Vision);
                             } else {
                                 wizard_step.set(WizardStep::SelectQuants);
