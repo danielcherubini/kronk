@@ -41,6 +41,7 @@ pub struct ModelDetail {
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
+    pub mmproj: Option<String>, // NEW: selected mmproj filename
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +96,7 @@ async fn fetch_model(id: String) -> Option<ModelDetail> {
             gpu_layers: None,
             quants: BTreeMap::new(),
             backends: list.backends,
+            mmproj: None,
         });
     }
     let resp = gloo_net::http::Request::get(&format!("/api/models/{}", id))
@@ -282,6 +284,9 @@ pub fn ModelEditor() -> impl IntoView {
     let form_port = RwSignal::new(String::new());
     let form_display_name = RwSignal::new(String::new());
     let form_gpu_layers = RwSignal::new(String::new());
+    let form_vision_enabled = RwSignal::new(false);
+    let available_mmprojs_for_select = RwSignal::new(Vec::<String>::new());
+    let selected_mmproj_for_config = RwSignal::new(String::new());
 
     let sampling_fields: RwSignal<std::collections::HashMap<String, SamplingField>> =
         RwSignal::new(std::collections::HashMap::new());
@@ -312,6 +317,12 @@ pub fn ModelEditor() -> impl IntoView {
                 form_port.set(d.port.map(|v| v.to_string()).unwrap_or_default());
                 form_display_name.set(d.display_name.unwrap_or_default());
                 form_gpu_layers.set(d.gpu_layers.map(|v| v.to_string()).unwrap_or_default());
+
+                // Load mmproj from model detail
+                if let Some(mmproj) = d.mmproj.as_ref() {
+                    form_vision_enabled.set(true);
+                    selected_mmproj_for_config.set(mmproj.clone());
+                }
 
                 let mut fields = std::collections::HashMap::new();
                 if let Some(sampling_json) = &d.sampling {
@@ -527,6 +538,20 @@ pub fn ModelEditor() -> impl IntoView {
         } else {
             form_id.get()
         };
+        // Build args with mmproj flag if enabled
+        let mut args: Vec<String> = form_args
+            .get()
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        // Add mmproj flag if enabled
+        if form_vision_enabled.get() && !selected_mmproj_for_config.get().is_empty() {
+            let mmproj_path = format!("models/{}/{}", save_id, selected_mmproj_for_config.get());
+            args.push(format!("--mmproj {}", mmproj_path));
+        }
+
         let form = ModelForm {
             id: save_id,
             backend: form_backend.get(),
@@ -540,12 +565,7 @@ pub fn ModelEditor() -> impl IntoView {
             } else {
                 Some(form_quant.get())
             },
-            args: form_args
-                .get()
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect(),
+            args,
             sampling: sampling_fields.get().clone(),
             enabled: form_enabled.get(),
             context_length: form_context_length.get().parse::<u32>().ok(),
@@ -1194,6 +1214,45 @@ pub fn ModelEditor() -> impl IntoView {
                                         on:click=move |_| pull_modal_open_signal.set(true)
                                     >"+ Pull Quant"</button>
                                 </span>
+                            </div>
+
+                            <h3 class="form-section-title">"Vision Projector"</h3>
+                            <div class="form-check">
+                                <input
+                                    id="field-vision-enabled"
+                                    type="checkbox"
+                                    prop:checked=move || form_vision_enabled.get()
+                                    on:change=move |e| {
+                                        use wasm_bindgen::JsCast;
+                                        let checked = e.target()
+                                            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                            .map(|el| el.checked())
+                                            .unwrap_or(false);
+                                        form_vision_enabled.set(checked);
+                                    }
+                                />
+                                <label class="form-check-label" for="field-vision-enabled">"Enable Vision Projector"</label>
+                            </div>
+
+                            <div class="form-group" prop:style=move || {
+                                if form_vision_enabled.get() { "display: block;" } else { "display: none;" }
+                            }>
+                                <label class="form-label" for="mmproj-select">"Select mmproj File"</label>
+                                <select
+                                    id="mmproj-select"
+                                    class="form-select"
+                                    prop:value=move || selected_mmproj_for_config.get()
+                                    on:change=move |e| {
+                                        selected_mmproj_for_config.set(event_target_value(&e));
+                                    }
+                                >
+                                    <option value="">"(none)"</option>
+                                    {move || available_mmprojs_for_select.get().into_iter().map(|m| {
+                                        let mm = m.clone();
+                                        view! { <option value=mm.clone()>{mm.clone()}</option> }
+                                    }).collect::<Vec<_>>()}
+                                </select>
+                                <span class="form-hint">"Choose the mmproj file to use for vision support"</span>
                             </div>
 
                             <label class="form-label" for="field-args">"Extra args"</label>
