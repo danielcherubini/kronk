@@ -315,7 +315,11 @@ pub fn Dashboard() -> impl IntoView {
                                 // Partition models into loaded and idle sections
                                 let (loaded, idle) = partition_model_statuses(h.models);
                                 view! {
-                                    <div class="models-grid">
+                                    // Plain wrapper div (NOT `.models-grid`) so the two
+                                    // `.model-section` children stack vertically, matching
+                                    // the Models page. The inner `.models-grid` inside each
+                                    // section is what flows the model cards horizontally.
+                                    <div>
                                         // Loaded models section
                                         {if !loaded.is_empty() {
                                             view! {
