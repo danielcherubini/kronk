@@ -49,6 +49,7 @@ enum WizardStep {
     RepoInput,
     LoadingQuants,
     SelectQuants,
+    Vision,
     SetContext,
     Downloading,
     Done,
@@ -200,7 +201,9 @@ pub fn PullQuantWizard(
     let wizard_step = RwSignal::new(WizardStep::RepoInput);
     let repo_id = RwSignal::new(String::new());
     let available_quants = RwSignal::new(Vec::<QuantEntry>::new());
+    let available_mmprojs = RwSignal::new(Vec::<QuantEntry>::new());
     let selected_filenames = RwSignal::new(HashSet::<String>::new());
+    let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
     let context_lengths = RwSignal::new(HashMap::<String, u32>::new());
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
@@ -226,6 +229,7 @@ pub fn PullQuantWizard(
             }
             // Reset session state.
             selected_filenames.set(std::collections::HashSet::new());
+            selected_mmproj_filenames.set(std::collections::HashSet::new());
             context_lengths.set(std::collections::HashMap::new());
             download_jobs.set(Vec::new());
             error_msg.set(None);
@@ -245,7 +249,18 @@ pub fn PullQuantWizard(
                                 ));
                                 wizard_step.set(WizardStep::RepoInput);
                             } else {
-                                available_quants.set(quants);
+                                // Separate quants from mmprojs
+                                let mut model_quants: Vec<QuantEntry> = Vec::new();
+                                let mut mmprojs: Vec<QuantEntry> = Vec::new();
+                                for q in quants {
+                                    if q.is_mmproj {
+                                        mmprojs.push(q);
+                                    } else {
+                                        model_quants.push(q);
+                                    }
+                                }
+                                available_quants.set(model_quants);
+                                available_mmprojs.set(mmprojs);
                                 wizard_step.set(WizardStep::SelectQuants);
                             }
                         }
@@ -325,14 +340,17 @@ pub fn PullQuantWizard(
                     <div class=step_class(&step, &WizardStep::SelectQuants, 2)>
                         "3. Select"
                     </div>
-                    <div class=step_class(&step, &WizardStep::SetContext, 3)>
-                        "4. Context"
+                    <div class=step_class(&step, &WizardStep::Vision, 3)>
+                        "4. Vision"
                     </div>
-                    <div class=step_class(&step, &WizardStep::Downloading, 4)>
-                        "5. Download"
+                    <div class=step_class(&step, &WizardStep::SetContext, 4)>
+                        "5. Context"
                     </div>
-                    <div class=step_class(&step, &WizardStep::Done, 5)>
-                        "6. Done"
+                    <div class=step_class(&step, &WizardStep::Downloading, 5)>
+                        "6. Download"
+                    </div>
+                    <div class=step_class(&step, &WizardStep::Done, 6)>
+                        "7. Done"
                     </div>
                 }
             }}
@@ -397,7 +415,18 @@ pub fn PullQuantWizard(
                                                         ));
                                                         wizard_step.set(WizardStep::RepoInput);
                                                     } else {
-                                                        available_quants.set(quants);
+                                                        // Separate quants from mmprojs
+                                                        let mut model_quants: Vec<QuantEntry> = Vec::new();
+                                                        let mut mmprojs: Vec<QuantEntry> = Vec::new();
+                                                        for q in quants {
+                                                            if q.is_mmproj {
+                                                                mmprojs.push(q);
+                                                            } else {
+                                                                model_quants.push(q);
+                                                            }
+                                                        }
+                                                        available_quants.set(model_quants);
+                                                        available_mmprojs.set(mmprojs);
                                                         wizard_step.set(WizardStep::SelectQuants);
                                                     }
                                                 }
@@ -522,13 +551,89 @@ pub fn PullQuantWizard(
                                     ctx.insert(fname.clone(), 32768u32);
                                 }
                                 context_lengths.set(ctx);
+                                // If mmprojs exist, go to Vision step first
+                                if !available_mmprojs.get().is_empty() {
+                                    wizard_step.set(WizardStep::Vision);
+                                } else {
+                                    wizard_step.set(WizardStep::SetContext);
+                                }
+                            }
+                        >"Next →"</button>
+                    </div>
+                }.into_any(),
+
+                // ── Step 4: Vision ────────────────────────────────────────────
+                WizardStep::Vision => view! {
+                    <div class="form-card__header">
+                        <h2 class="form-card__title">"Select Vision Projector"</h2>
+                        <p class="form-card__desc text-muted">
+                            "Choose a vision projector file for multimodal support."
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="mmproj-select">"Vision Projector"</label>
+                        <select
+                            id="mmproj-select"
+                            class="form-select"
+                            multiple
+                            on:change=move |e| {
+                                use wasm_bindgen::JsCast;
+                                let select = e.target().unwrap().dyn_into::<web_sys::HtmlSelectElement>().unwrap();
+                                let selected_filenames: HashSet<String> = {
+                                    let options = select.selected_options();
+                                    let len = options.length();
+                                    let mut set = HashSet::new();
+                                    for i in 0..len {
+                                        if let Some(option) = options.item(i) {
+                                            if let Some(value) = option.get_attribute("value") {
+                                                set.insert(value);
+                                            }
+                                        }
+                                    }
+                                    set
+                                };
+                                selected_mmproj_filenames.set(selected_filenames);
+                            }
+                        >
+                            {move || available_mmprojs.get().into_iter().map(|m| {
+                                let filename = m.filename.clone();
+                                view! { <option value=filename.clone()>{filename.clone()}</option> }
+                            }).collect::<Vec<_>>()}
+                        </select>
+                        <span class="form-hint">"Hold Ctrl/Cmd to select multiple"</span>
+                    </div>
+
+                    {move || {
+                        if available_mmprojs.get().is_empty() {
+                            None
+                        } else {
+                            Some(view! {
+                                <div class="alert alert--info mt-2">
+                                    <span class="alert__icon">"ℹ"</span>
+                                    <span>"Vision projector available: " {available_mmprojs.get().len()} " file(s) found"</span>
+                                </div>
+                            }.into_any())
+                        }
+                    }}
+
+                    <div class="form-actions mt-3">
+                        <button class="btn btn-secondary" on:click=move |_| {
+                            wizard_step.set(WizardStep::SelectQuants);
+                        }>
+                            "Back"
+                        </button>
+                        <button
+                            class="btn btn-primary"
+                            prop:disabled=move || selected_mmproj_filenames.get().is_empty()
+                            on:click=move |_| {
                                 wizard_step.set(WizardStep::SetContext);
                             }
                         >"Next →"</button>
                     </div>
                 }.into_any(),
 
-                // ── Step 4: Set Context ───────────────────────────────────────
+                // ── Step 5: Set Context ────────────────────────────────────────
                 WizardStep::SetContext => view! {
                     <div class="form-card__header">
                         <h2 class="form-card__title">"Set Context Length"</h2>
@@ -589,7 +694,12 @@ pub fn PullQuantWizard(
 
                     <div class="form-actions mt-3">
                         <button class="btn btn-secondary" on:click=move |_| {
-                            wizard_step.set(WizardStep::SelectQuants);
+                            // If mmprojs exist and none selected, go to Vision step
+                            if !available_mmprojs.get().is_empty() && selected_mmproj_filenames.get().is_empty() {
+                                wizard_step.set(WizardStep::Vision);
+                            } else {
+                                wizard_step.set(WizardStep::SelectQuants);
+                            }
                         }>
                             "Back"
                         </button>
@@ -600,7 +710,7 @@ pub fn PullQuantWizard(
                             let ctx_map = context_lengths.get();
 
                             // Build request payload
-                            let quants: Vec<QuantRequest> = sel.iter()
+                            let mut quants: Vec<QuantRequest> = sel.iter()
                                 .filter_map(|fname| {
                                     let entry = quants_list.iter().find(|q| &q.filename == fname)?;
                                     let ctx = ctx_map.get(fname).copied().unwrap_or(32768);
@@ -611,6 +721,23 @@ pub fn PullQuantWizard(
                                     })
                                 })
                                 .collect();
+
+                            // Add selected mmprojs (no context length needed for mmprojs)
+                            let available_mmprojs_list = available_mmprojs.get();
+                            let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
+                                .get()
+                                .iter()
+                                .filter_map(|fname| {
+                                    let entry = available_mmprojs_list.iter().find(|q| &q.filename == fname)?;
+                                    Some(QuantRequest {
+                                        filename: fname.clone(),
+                                        quant: entry.quant.clone(),
+                                        context_length: 0,  // mmprojs don't need context length
+                                    })
+                                })
+                                .collect();
+
+                            quants.extend(selected_mmprojs);
 
                             let body = PullRequest { repo_id: rid, quants };
 
