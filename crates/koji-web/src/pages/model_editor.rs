@@ -324,9 +324,9 @@ pub fn ModelEditor() -> impl IntoView {
                     selected_mmproj_for_config.set(mmproj.clone());
                 }
 
-                // Populate available mmprojs from quants
-                let mmprojs: Vec<String> = quants
-                    .get()
+                // Populate available mmprojs from d.quants (before quants is updated)
+                let mmprojs: Vec<String> = d
+                    .quants
                     .iter()
                     .filter(|(_, q)| {
                         q.file.to_lowercase().starts_with("mmproj")
@@ -560,7 +560,11 @@ pub fn ModelEditor() -> impl IntoView {
 
         // Add mmproj flag if enabled
         if form_vision_enabled.get() && !selected_mmproj_for_config.get().is_empty() {
-            let mmproj_path = format!("models/{}/{}", save_id, selected_mmproj_for_config.get());
+            let mmproj_path = format!(
+                "models/{}/{}",
+                form_model.get(),
+                selected_mmproj_for_config.get()
+            );
             args.push(format!("--mmproj {}", mmproj_path));
         }
 
