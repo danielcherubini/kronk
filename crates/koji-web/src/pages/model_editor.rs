@@ -521,8 +521,14 @@ pub fn ModelEditor() -> impl IntoView {
 
     // Actions
     let _save_action: Action<(), (), LocalStorage> = Action::new_unsync(move |_: &()| {
+        // Ensure form_id is set to original_id if empty (prevents creating new models)
+        let save_id = if form_id.get().trim().is_empty() {
+            original_id.get()
+        } else {
+            form_id.get()
+        };
         let form = ModelForm {
-            id: form_id.get(),
+            id: save_id,
             backend: form_backend.get(),
             model: if form_model.get().is_empty() {
                 None
