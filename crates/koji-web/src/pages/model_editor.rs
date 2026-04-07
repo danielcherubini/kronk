@@ -291,7 +291,7 @@ pub fn ModelEditor() -> impl IntoView {
     let form_id = RwSignal::new(String::new());
     let form_backend = RwSignal::new(String::new());
     let form_model = RwSignal::new(String::new());
-    let form_quant = RwSignal::new(String::new());
+    let form_quant = RwSignal::new(Option::<String>::None);
     let form_args = RwSignal::new(String::new());
     let form_enabled = RwSignal::new(true);
     let form_context_length = RwSignal::new(String::new());
@@ -323,7 +323,7 @@ pub fn ModelEditor() -> impl IntoView {
                 form_id.set(d.id.clone());
                 form_backend.set(d.backend.clone());
                 form_model.set(d.model.unwrap_or_default());
-                form_quant.set(d.quant.unwrap_or_default());
+                form_quant.set(d.quant);
                 form_args.set(d.args.join("\n"));
                 form_enabled.set(d.enabled);
                 form_context_length
@@ -590,11 +590,7 @@ pub fn ModelEditor() -> impl IntoView {
             } else {
                 Some(form_model.get())
             },
-            quant: if form_quant.get().is_empty() {
-                None
-            } else {
-                Some(form_quant.get())
-            },
+            quant: form_quant.get(),
             mmproj,
             args,
             sampling: sampling_fields.get().clone(),
@@ -754,14 +750,41 @@ pub fn ModelEditor() -> impl IntoView {
                                 />
 
                                 <label class="form-label" for="field-quant">"Quant"</label>
-                                <input
+                                <select
                                     id="field-quant"
-                                    class="form-input"
-                                    type="text"
-                                    placeholder="e.g. Q4_K_M"
+                                    class="form-select"
                                     prop:value=move || form_quant.get()
-                                    on:input=move |e| form_quant.set(event_target_value(&e))
-                                />
+                                    on:change=move |e| {
+                                        let value = event_target_value(&e);
+                                        if value.is_empty() {
+                                            form_quant.set(None);
+                                        } else {
+                                            form_quant.set(Some(value));
+                                        }
+                                    }
+                                >
+                                    <option value="">"No quant selected"</option>
+                                    {move || {
+                                        let quants = quants.get();
+                                        if quants.is_empty() {
+                                            view! { <option disabled>"No quants available"</option> }.into_any()
+                                        } else {
+                                            view! {
+                                                <For
+                                                    each=move || {
+                                                        let quants = quants.clone();
+                                                        quants.into_iter().map(|(k, _)| k)
+                                                    }
+                                                    key=|k| k.clone()
+                                                    children=move |quant_key| {
+                                                        view! { <option value={quant_key.clone()}> {quant_key.clone()} </option> }.into_any()
+                                                    }
+                                                />
+                                            }
+                                            .into_any()
+                                        }
+                                    }}
+                                </select>
 
                                 <label class="form-label" for="field-gpu-layers">"GPU Layers"</label>
                                 <input
@@ -1357,10 +1380,33 @@ pub fn ModelEditor() -> impl IntoView {
                                         } else {
                                             QuantKind::Model
                                         };
-                                        let key = cq.quant.clone()
-                                            .unwrap_or_else(|| {
-                                                cq.filename.trim_end_matches(".gguf").to_string()
-                                            });
+                                        let key = cq.quant.clone().unwrap_or_else(|| {
+                                            // Infer quant from filename: try standard patterns first,
+                                            // otherwise use last component after splitting by `-` or `_`
+                                            let stem = cq.filename.trim_end_matches(".gguf");
+                                            let quant_patterns = [
+                                                "IQ2_XXS", "IQ3_XXS", "IQ1_S", "IQ1_M", "IQ2_XS", "IQ2_S",
+                                                "IQ2_M", "IQ3_XS", "IQ3_S", "IQ3_M", "IQ4_XS", "IQ4_NL",
+                                                "Q2_K_S", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_K_S", "Q4_K_M",
+                                                "Q4_K_L", "Q5_K_S", "Q5_K_M", "Q5_K_L", "Q2_K_XL", "Q3_K_XL",
+                                                "Q4_K_XL", "Q5_K_XL", "Q6_K_XL", "Q8_K_XL", "Q2_K", "Q3_K",
+                                                "Q4_K", "Q5_K", "Q6_K", "Q4_0", "Q4_1", "Q5_0", "Q5_1",
+                                                "Q6_0", "Q8_0", "Q8_1", "F16", "F32", "BF16",
+                                            ];
+                                            let stem_upper = stem.to_uppercase();
+                                            let quant = quant_patterns.iter().find(|pattern| {
+                                                stem_upper.ends_with(*pattern)
+                                                    || stem_upper.contains(&format!("-{}", pattern))
+                                                    || stem_upper.contains(&format!(".{}", pattern))
+                                                    || stem_upper.contains(&format!("_{}", pattern))
+                                            }).map(|s| s.to_string());
+                                            quant.unwrap_or_else(|| {
+                                                stem.split(|c: char| c == '-' || c == '_')
+                                                    .last()
+                                                    .unwrap_or("unknown")
+                                                    .to_string()
+                                            })
+                                        });
                                         if let Some(pos) = rows.iter().position(|(k, _)| k == &key) {
                                             // Re-pull: overwrite filename and context_length
                                             // (the wizard's values reflect the user's latest intent).

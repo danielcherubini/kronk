@@ -303,7 +303,12 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
         }
     }
 
-    None
+    // No standard quant pattern found. Fall back to the last component
+    // after splitting by `-` or `_`. For "Qwen3.5-35B-A3B-APEX-I-Balanced",
+    // this returns "I-Balanced" instead of the full stem.
+    stem.split(|c| c == '-' || c == '_')
+        .last()
+        .map(|s| s.to_string())
 }
 
 #[cfg(test)]
@@ -408,6 +413,29 @@ mod tests {
     }
 
     #[test]
+    fn test_infer_quant_non_standard_name() {
+        // For non-standard quant names, return the last component after splitting by `-` or `_`
+        // "Qwen3.5-35B-A3B-APEX-I-Balanced" -> "Balanced"
+        assert_eq!(
+            infer_quant_from_filename("Qwen3.5-35B-A3B-APEX-I-Balanced.gguf"),
+            Some("Balanced".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_quant_with_underscore() {
+        assert_eq!(
+            infer_quant_from_filename("model-Q4_K_M.gguf"),
+            Some("Q4_K_M".to_string())
+        );
+        // Returns the matched pattern, not the full suffix
+        assert_eq!(
+            infer_quant_from_filename("model-Q4_K_M_v2.gguf"),
+            Some("Q4_K_M".to_string())
+        );
+    }
+
+    #[test]
     fn test_infer_quant_lowercase() {
         assert_eq!(
             infer_quant_from_filename("model-q4_k_m.gguf"),
@@ -425,7 +453,8 @@ mod tests {
 
     #[test]
     fn test_infer_quant_none() {
-        assert_eq!(infer_quant_from_filename("model.gguf"), None);
+        // Returns last component when no pattern matches
+        assert_eq!(infer_quant_from_filename("model.gguf"), Some("model".to_string()));
     }
 
     #[test]

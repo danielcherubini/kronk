@@ -900,7 +900,15 @@ async fn _setup_model_after_pull_with_config(
     // Determine the quant key
     let quant_key = spec.quant.clone().unwrap_or_else(|| {
         crate::models::pull::infer_quant_from_filename(&spec.filename)
-            .unwrap_or_else(|| spec.filename.trim_end_matches(".gguf").to_string())
+            .unwrap_or_else(|| {
+                // Fallback: use last component after splitting by `-` or `_`
+                spec.filename
+                    .trim_end_matches(".gguf")
+                    .split(|c| c == '-' || c == '_')
+                    .last()
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
     });
 
     // Get actual file size from disk
