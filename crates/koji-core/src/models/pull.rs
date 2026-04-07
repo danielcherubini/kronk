@@ -306,8 +306,8 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
     // No standard quant pattern found. Fall back to the last component
     // after splitting by `-` or `_`. For "Qwen3.5-35B-A3B-APEX-I-Balanced",
     // this returns "I-Balanced" instead of the full stem.
-    stem.split(|c| c == '-' || c == '_')
-        .last()
+    stem.split(|c| ['-', '_'].contains(&c))
+        .next_back()
         .map(|s| s.to_string())
 }
 
@@ -454,7 +454,10 @@ mod tests {
     #[test]
     fn test_infer_quant_none() {
         // Returns last component when no pattern matches
-        assert_eq!(infer_quant_from_filename("model.gguf"), Some("model".to_string()));
+        assert_eq!(
+            infer_quant_from_filename("model.gguf"),
+            Some("model".to_string())
+        );
     }
 
     #[test]

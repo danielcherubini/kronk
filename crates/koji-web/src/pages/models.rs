@@ -161,7 +161,8 @@ pub fn Models() -> impl IntoView {
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! { <></> }.into_any()
+                                        let _: () = view! { <></> };
+                                        ().into_any()
                                     }}
                                     {if !unloaded.is_empty() {
                                         view! {
@@ -240,7 +241,8 @@ pub fn Models() -> impl IntoView {
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! { <></> }.into_any()
+                                        let _: () = view! { <></> };
+                                        ().into_any()
                                     }}
                                 </div>
                             }.into_any()
