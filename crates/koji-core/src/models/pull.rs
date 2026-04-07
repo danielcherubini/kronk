@@ -278,13 +278,6 @@ pub async fn fetch_community_card(repo_id: &str) -> Option<ModelCard> {
     None
 }
 
-/// Check if a filename matches the mmproj pattern.
-/// Matches: mmproj*.gguf (case-insensitive)
-pub fn is_mmproj_filename(filename: &str) -> bool {
-    let stem = filename.to_lowercase();
-    stem.starts_with("mmproj") && stem.ends_with(".gguf")
-}
-
 /// Try to infer the quantisation type from a GGUF filename.
 /// Common patterns: "Model-Q4_K_M.gguf", "model.Q8_0.gguf", "model-q4_k_m.gguf"
 pub fn infer_quant_from_filename(filename: &str) -> Option<String> {

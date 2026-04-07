@@ -12,6 +12,6 @@ pub use args_helpers::{
 pub use migrate::migrate_cards_to_unified_config;
 pub use rename_legacy::{migrate_legacy_data_dir, Migration};
 pub use types::{
-    BackendConfig, Config, General, HealthCheck, ModelConfig, ProxyConfig, QuantEntry, Supervisor,
-    DEFAULT_PROXY_PORT, MAX_REQUEST_BODY_SIZE,
+    BackendConfig, Config, General, HealthCheck, ModelConfig, ProxyConfig, QuantEntry, QuantKind,
+    Supervisor, DEFAULT_PROXY_PORT, MAX_REQUEST_BODY_SIZE,
 };

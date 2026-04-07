@@ -6,12 +6,23 @@ use std::collections::{HashMap, HashSet};
 
 // ── Local types ──────────────────────────────────────────────────────────────
 
+/// Mirrors `koji_core::config::QuantKind`. Used to distinguish model quants
+/// from auxiliary files (mmproj) in the wizard's grouping logic.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+enum QuantKind {
+    #[default]
+    Model,
+    Mmproj,
+}
+
 #[derive(Deserialize, Clone, Debug)]
 struct QuantEntry {
     filename: String,
     quant: Option<String>,
     size_bytes: Option<i64>,
-    is_mmproj: bool, // true if filename matches mmproj*.gguf pattern
+    #[serde(default)]
+    kind: QuantKind,
 }
 
 #[derive(Clone, Debug)]
@@ -253,7 +264,7 @@ pub fn PullQuantWizard(
                                 let mut model_quants: Vec<QuantEntry> = Vec::new();
                                 let mut mmprojs: Vec<QuantEntry> = Vec::new();
                                 for q in quants {
-                                    if q.is_mmproj {
+                                    if q.kind == QuantKind::Mmproj {
                                         mmprojs.push(q);
                                     } else {
                                         model_quants.push(q);
@@ -419,7 +430,7 @@ pub fn PullQuantWizard(
                                                         let mut model_quants: Vec<QuantEntry> = Vec::new();
                                                         let mut mmprojs: Vec<QuantEntry> = Vec::new();
                                                         for q in quants {
-                                                            if q.is_mmproj {
+                                                            if q.kind == QuantKind::Mmproj {
                                                                 mmprojs.push(q);
                                                             } else {
                                                                 model_quants.push(q);

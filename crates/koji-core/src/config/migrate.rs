@@ -105,10 +105,24 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
                             quant_name.clone(),
                             crate::config::types::QuantEntry {
                                 file: quant_info.file.clone(),
+                                kind: quant_info.kind,
                                 size_bytes: quant_info.size_bytes,
                                 context_length: quant_info.context_length,
                             },
                         );
+                    }
+                }
+
+                // Backfill: any quant entry whose kind is the default `Model`
+                // but whose filename matches an mmproj pattern should be tagged
+                // as `Mmproj`. This handles configs written before the kind
+                // field existed (e.g. v1.15.0 broken mmproj support).
+                for entry in model_config.quants.values_mut() {
+                    if entry.kind == crate::config::QuantKind::Model {
+                        let detected = crate::config::QuantKind::from_filename(&entry.file);
+                        if detected != crate::config::QuantKind::Model {
+                            entry.kind = detected;
+                        }
                     }
                 }
             }
@@ -412,6 +426,7 @@ top_k = 40
                     sampling: None,
                     model: Some("org/repo".to_string()),
                     quant: Some("Q4_K_M".to_string()),
+                    mmproj: None,
                     port: None,
                     health_check: None,
                     enabled: true,
@@ -521,6 +536,7 @@ top_k = 40
                     sampling: None,
                     model: Some("org/repo".to_string()),
                     quant: Some("Q4_K_M".to_string()),
+                    mmproj: None,
                     port: None,
                     health_check: None,
                     enabled: true,
@@ -622,6 +638,7 @@ size_bytes = 8000000000
                     sampling: None,
                     model: Some("org/repo".to_string()),
                     quant: Some("Q4_K_M".to_string()),
+                    mmproj: None,
                     port: None,
                     health_check: None,
                     enabled: true,
@@ -635,6 +652,7 @@ size_bytes = 8000000000
                             "Q4_K_M".to_string(),
                             crate::config::types::QuantEntry {
                                 file: "existing-model-Q4_K_M.gguf".to_string(),
+                                kind: Default::default(),
                                 size_bytes: Some(1000000000),
                                 context_length: None,
                             },

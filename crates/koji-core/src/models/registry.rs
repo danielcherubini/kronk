@@ -151,7 +151,6 @@ mod tests {
                 source: format!("{}/{}", company, model),
                 default_context_length: Some(8192),
                 default_gpu_layers: Some(999),
-                mmproj: None,
             },
             sampling: HashMap::new(),
             quants: {
@@ -160,6 +159,7 @@ mod tests {
                     "Q4_K_M".to_string(),
                     QuantInfo {
                         file: format!("{}-Q4_K_M.gguf", model),
+                        kind: Default::default(),
                         size_bytes: Some(4_000_000_000),
                         context_length: None,
                     },

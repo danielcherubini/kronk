@@ -17,9 +17,20 @@ fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Si
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/// What kind of file a quant entry represents. Mirrors `koji_core::config::QuantKind`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum QuantKind {
+    #[default]
+    Model,
+    Mmproj,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuantInfo {
     pub file: String,
+    #[serde(default)]
+    pub kind: QuantKind,
     #[serde(default)]
     pub size_bytes: Option<u64>,
     #[serde(default)]
@@ -32,6 +43,8 @@ pub struct ModelDetail {
     pub backend: String,
     pub model: Option<String>,
     pub quant: Option<String>,
+    #[serde(default)]
+    pub mmproj: Option<String>,
     pub args: Vec<String>,
     pub sampling: Option<serde_json::Value>,
     pub enabled: bool,
@@ -41,7 +54,6 @@ pub struct ModelDetail {
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
-    pub mmproj: Option<String>, // NEW: selected mmproj filename
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +75,7 @@ pub struct ModelForm {
     pub backend: String,
     pub model: Option<String>,
     pub quant: Option<String>,
+    pub mmproj: Option<String>,
     pub args: Vec<String>,
     pub sampling: std::collections::HashMap<String, SamplingField>,
     pub enabled: bool,
@@ -179,6 +192,7 @@ async fn save_model(form: ModelForm, is_new: bool) -> Result<(), String> {
         "backend": form.backend,
         "model": form.model,
         "quant": form.quant,
+        "mmproj": form.mmproj,
         "args": form.args,
         "sampling": sampling,
         "enabled": form.enabled,
@@ -324,15 +338,14 @@ pub fn ModelEditor() -> impl IntoView {
                     selected_mmproj_for_config.set(mmproj.clone());
                 }
 
-                // Populate available mmprojs from d.quants (before quants is updated)
+                // Populate available mmprojs from d.quants by `kind`. The
+                // dropdown values are quant *keys* (the BTreeMap keys), which
+                // is what `ModelConfig.mmproj` references.
                 let mmprojs: Vec<String> = d
                     .quants
                     .iter()
-                    .filter(|(_, q)| {
-                        q.file.to_lowercase().starts_with("mmproj")
-                            && q.file.to_lowercase().ends_with(".gguf")
-                    })
-                    .map(|(_, q)| q.file.clone())
+                    .filter(|(_, q)| q.kind == QuantKind::Mmproj)
+                    .map(|(name, _)| name.clone())
                     .collect();
                 available_mmprojs_for_select.set(mmprojs);
 
@@ -550,23 +563,24 @@ pub fn ModelEditor() -> impl IntoView {
         } else {
             form_id.get()
         };
-        // Build args with mmproj flag if enabled
-        let mut args: Vec<String> = form_args
+        // Args are passed through unchanged — the backend injects --mmproj
+        // automatically when ModelConfig.mmproj is set, so the frontend must
+        // not touch the args list.
+        let args: Vec<String> = form_args
             .get()
             .lines()
             .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty())
             .collect();
 
-        // Add mmproj flag if enabled
-        if form_vision_enabled.get() && !selected_mmproj_for_config.get().is_empty() {
-            let mmproj_path = format!(
-                "models/{}/{}",
-                form_model.get(),
-                selected_mmproj_for_config.get()
-            );
-            args.push(format!("--mmproj {}", mmproj_path));
-        }
+        // Resolve the active mmproj key from the vision toggle. When the
+        // toggle is off we send `None` so the backend clears the field.
+        let mmproj =
+            if form_vision_enabled.get() && !selected_mmproj_for_config.get().trim().is_empty() {
+                Some(selected_mmproj_for_config.get())
+            } else {
+                None
+            };
 
         let form = ModelForm {
             id: save_id,
@@ -581,6 +595,7 @@ pub fn ModelEditor() -> impl IntoView {
             } else {
                 Some(form_quant.get())
             },
+            mmproj,
             args,
             sampling: sampling_fields.get().clone(),
             enabled: form_enabled.get(),
@@ -1125,7 +1140,9 @@ pub fn ModelEditor() -> impl IntoView {
                                 </thead>
                                 <tbody>
                                    <For
-                                         each=move || quants.get().into_iter().enumerate()
+                                         each=move || quants.get().into_iter()
+                                             .filter(|(_, q)| q.kind == QuantKind::Model)
+                                             .enumerate()
                                          key=|(_i, (_name, _))| _i.to_string()
                                          children=move |(_i, (name, q))| {
                                             let name_arc = Arc::new(name.clone());
@@ -1332,6 +1349,14 @@ pub fn ModelEditor() -> impl IntoView {
                                 }
                                 quants.update(|rows| {
                                     for cq in completed {
+                                        // Detect mmproj files by filename pattern (matches
+                                        // the backend's QuantKind::from_filename logic).
+                                        let lower = cq.filename.to_lowercase();
+                                        let kind = if lower.starts_with("mmproj") && lower.ends_with(".gguf") {
+                                            QuantKind::Mmproj
+                                        } else {
+                                            QuantKind::Model
+                                        };
                                         let key = cq.quant.clone()
                                             .unwrap_or_else(|| {
                                                 cq.filename.trim_end_matches(".gguf").to_string()
@@ -1343,7 +1368,12 @@ pub fn ModelEditor() -> impl IntoView {
                                             // never clobber a known size with None.
                                             let row = &mut rows[pos].1;
                                             row.file = cq.filename;
-                                            row.context_length = Some(cq.context_length);
+                                            row.kind = kind;
+                                            // Only set context_length for model quants;
+                                            // mmprojs don't use it.
+                                            if kind == QuantKind::Model {
+                                                row.context_length = Some(cq.context_length);
+                                            }
                                             if cq.size_bytes.is_some() {
                                                 row.size_bytes = cq.size_bytes;
                                             }
@@ -1351,8 +1381,13 @@ pub fn ModelEditor() -> impl IntoView {
                                             // New row.
                                             rows.push((key, QuantInfo {
                                                 file: cq.filename,
+                                                kind,
                                                 size_bytes: cq.size_bytes,
-                                                context_length: Some(cq.context_length),
+                                                context_length: if kind == QuantKind::Model {
+                                                    Some(cq.context_length)
+                                                } else {
+                                                    None
+                                                },
                                             }));
                                         }
                                     }

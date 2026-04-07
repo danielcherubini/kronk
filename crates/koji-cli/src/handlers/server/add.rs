@@ -141,6 +141,7 @@ pub async fn cmd_server_add(
         sampling,
         model: extracted.model.clone(),
         quant: quant_name,
+        mmproj: None,
         port: extracted.port,
         health_check: None,
         enabled: true,

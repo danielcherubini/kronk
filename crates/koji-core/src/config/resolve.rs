@@ -202,6 +202,38 @@ impl Config {
             }
         }
 
+        // Inject --mmproj from model card, only if not already present.
+        // The mmproj entry must exist in `server.quants` and have kind = Mmproj.
+        if let (Some(ref model_id), Some(ref mmproj_name)) = (&server.model, &server.mmproj) {
+            if let Some(mmproj_entry) = server.quants.get(mmproj_name.as_str()) {
+                if mmproj_entry.kind == crate::config::QuantKind::Mmproj {
+                    let models_dir = self.models_dir()?;
+                    let mmproj_path = models_dir.join(model_id).join(&mmproj_entry.file);
+                    let already_has_mmproj = grouped
+                        .iter()
+                        .any(|e| matches!(crate::config::flag_name(e), Some("--mmproj")));
+                    if !already_has_mmproj {
+                        let path_str = mmproj_path.to_string_lossy();
+                        let quoted = crate::config::quote_value(&path_str);
+                        grouped.push(format!("--mmproj {}", quoted));
+                    }
+                } else {
+                    tracing::warn!(
+                        "mmproj '{}' for model '{}' has kind={:?}, expected Mmproj",
+                        mmproj_name,
+                        model_id,
+                        mmproj_entry.kind
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "mmproj '{}' not found in ModelConfig for model '{}'",
+                    mmproj_name,
+                    model_id
+                );
+            }
+        }
+
         // Inject -c (context length) only if not already present.
         let ctx = ctx_override.or(server.context_length).or_else(|| {
             server
@@ -549,6 +581,7 @@ mod tests {
             "Q4_K_M".to_string(),
             QuantEntry {
                 file: "model-Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
                 size_bytes: None,
                 context_length: Some(8192),
             },
@@ -567,6 +600,7 @@ mod tests {
             }),
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -623,6 +657,7 @@ mod tests {
             "Q4_K_M".to_string(),
             QuantEntry {
                 file: "model-Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
                 size_bytes: None,
                 context_length: Some(8192),
             },
@@ -641,6 +676,7 @@ mod tests {
             }),
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -683,6 +719,7 @@ mod tests {
             "Q4_K_M".to_string(),
             QuantEntry {
                 file: "model-Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
                 size_bytes: None,
                 context_length: None,
             },
@@ -698,6 +735,7 @@ mod tests {
             sampling: None, // No sampling params
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -740,6 +778,7 @@ mod tests {
             sampling: None,
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -789,6 +828,7 @@ mod tests {
             sampling: None,
             model: None,
             quant: None,
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -845,6 +885,7 @@ mod tests {
             }),
             model: None,
             quant: None,
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -884,6 +925,7 @@ mod tests {
             "Q4_K_M".to_string(),
             crate::config::types::QuantEntry {
                 file: "model-Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
                 size_bytes: None,
                 context_length: None,
             },
@@ -899,6 +941,7 @@ mod tests {
             sampling: None,
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -962,6 +1005,7 @@ mod tests {
             "Q4".to_string(),
             crate::config::types::QuantEntry {
                 file: "model.gguf".to_string(),
+                kind: Default::default(),
                 size_bytes: None,
                 context_length: None,
             },
@@ -977,6 +1021,7 @@ mod tests {
             sampling: None,
             model: Some("org/repo".to_string()),
             quant: Some("Q4".to_string()),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,

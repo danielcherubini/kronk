@@ -222,6 +222,7 @@ impl Default for Config {
                 }),
                 model: None,
                 quant: None,
+                mmproj: None,
                 port: None,
                 health_check: None,
                 enabled: true,
@@ -347,6 +348,8 @@ mod tests {
                 sampling: None,
                 model: None,
                 quant: None,
+
+                mmproj: None,
                 port: None,
                 health_check: None,
                 enabled: true,

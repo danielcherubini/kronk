@@ -247,6 +247,8 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             sampling: None,
             model: None,
             quant: None,
+
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,

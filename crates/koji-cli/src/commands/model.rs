@@ -210,7 +210,6 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                     source: repo_id.to_string(),
                     default_context_length: None, // set by interactive context prompt
                     default_gpu_layers: Some(999),
-                    mmproj: None,
                 },
                 sampling: HashMap::new(),
                 quants: HashMap::new(),
@@ -245,6 +244,7 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
             quant_key,
             QuantInfo {
                 file: gguf.filename.clone(),
+                kind: koji_core::config::QuantKind::from_filename(&gguf.filename),
                 size_bytes: Some(result.size_bytes),
                 context_length: None,
             },
@@ -558,6 +558,7 @@ async fn cmd_create(
             sampling: None,
             model: Some(model_id_arg.to_string()),
             quant: quant_name.clone(),
+            mmproj: None,
             port: None,
             health_check: None,
             enabled: true,
@@ -928,6 +929,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                     quant_key,
                     QuantInfo {
                         file: filename.clone(),
+                        kind: koji_core::config::QuantKind::from_filename(filename),
                         size_bytes,
                         context_length: None,
                     },
@@ -989,6 +991,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                             quant_key,
                             QuantInfo {
                                 file: filename.clone(),
+                                kind: koji_core::config::QuantKind::from_filename(filename),
                                 size_bytes,
                                 context_length: None,
                             },
@@ -1001,7 +1004,6 @@ fn cmd_scan(config: &Config) -> Result<()> {
                             source: model_id.clone(),
                             default_context_length: Some(8192),
                             default_gpu_layers: Some(999),
-                            mmproj: None,
                         },
                         sampling: HashMap::new(),
                         quants,

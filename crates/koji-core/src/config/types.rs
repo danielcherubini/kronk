@@ -2,9 +2,41 @@ use crate::profiles::SamplingParams;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+/// What kind of file a quant entry represents.
+///
+/// Used to distinguish regular GGUF model quants from auxiliary files like
+/// vision projectors (mmproj). Drives both UI grouping and how the file is
+/// passed on the server command line (`-m` vs `--mmproj`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum QuantKind {
+    /// A regular GGUF model quantization (Q4_K_M, Q8_0, F16, etc.).
+    #[default]
+    Model,
+    /// A vision projector (mmproj-*.gguf). Passed via `--mmproj` to llama.cpp.
+    Mmproj,
+}
+
+impl QuantKind {
+    /// Infer the kind from a filename. Defaults to `Model` for anything that
+    /// doesn't match a known auxiliary-file pattern.
+    pub fn from_filename(filename: &str) -> Self {
+        let lower = filename.to_lowercase();
+        if lower.starts_with("mmproj") && lower.ends_with(".gguf") {
+            QuantKind::Mmproj
+        } else {
+            QuantKind::Model
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuantEntry {
     pub file: String,
+    /// What kind of file this is. Defaults to `Model` for backward compat
+    /// with config files written before this field existed.
+    #[serde(default)]
+    pub kind: QuantKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +174,11 @@ pub struct ModelConfig {
     /// Which quant to use from the model card (e.g. "Q4_K_M").
     #[serde(default)]
     pub quant: Option<String>,
+    /// Which mmproj (vision projector) to use, if any. References a key in
+    /// `quants` whose entry has `kind = Mmproj`. When set, the launch command
+    /// gets `--mmproj <path>` injected automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj: Option<String>,
     /// Custom port for this server (None = backend default)
     #[serde(default)]
     pub port: Option<u16>,

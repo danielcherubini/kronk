@@ -31,7 +31,9 @@ pub struct QuantEntry {
     pub filename: String,
     pub quant: Option<String>,
     pub size_bytes: Option<i64>,
-    pub is_mmproj: bool, // true if filename matches mmproj*.gguf pattern
+    /// What kind of file this is (model quant vs vision projector). Used by
+    /// the frontend wizard to group files into the correct step.
+    pub kind: crate::config::QuantKind,
 }
 
 /// A single quantisation variant to download (used in multi-quant wizard format).
@@ -826,12 +828,12 @@ pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
             let mut quants: Vec<QuantEntry> = blobs
                 .into_values()
                 .map(|b| {
-                    let is_mmproj = crate::models::pull::is_mmproj_filename(&b.filename);
+                    let kind = crate::config::QuantKind::from_filename(&b.filename);
                     QuantEntry {
                         quant: crate::models::pull::infer_quant_from_filename(&b.filename),
                         filename: b.filename,
                         size_bytes: b.size,
-                        is_mmproj,
+                        kind,
                     }
                 })
                 .collect();
@@ -873,7 +875,6 @@ async fn _setup_model_after_pull_with_config(
                 source: repo_id.to_string(),
                 default_context_length: None,
                 default_gpu_layers: None,
-                mmproj: None,
             },
             sampling: std::collections::HashMap::new(),
             quants: std::collections::HashMap::new(),
@@ -907,42 +908,61 @@ async fn _setup_model_after_pull_with_config(
         .ok()
         .map(|m| m.len());
 
-    // Insert/update quant entry in card
+    // Insert/update quant entry in card. Detect mmproj files by filename so
+    // they get tagged with `kind = Mmproj` and tracked separately from real
+    // model quants.
     card.quants.insert(
         quant_key.clone(),
         crate::models::card::QuantInfo {
             file: spec.filename.clone(),
+            kind: crate::config::QuantKind::from_filename(&spec.filename),
             size_bytes,
             context_length: spec.context_length,
         },
     );
 
-    // Derive model config key: e.g. "bartowski--qwen3-8b-gguf-q4-k-m"
-    let model_key = format!(
-        "{}-{}",
-        repo_slug.to_lowercase(),
-        quant_key.to_lowercase().replace('_', "-")
-    );
-
-    // Insert model config entry (only if not already present)
-    config
+    // Find an existing model entry for this repo (if any), regardless of
+    // its key format. This prevents creating duplicate model entries when
+    // pulling additional quants for a model that's already in the config.
+    // Matching is by the `model` field rather than the key, so user-renamed
+    // entries are preserved.
+    let existing_key: Option<String> = config
         .models
-        .entry(model_key)
-        .or_insert_with(|| crate::config::ModelConfig {
-            backend: "llama_cpp".to_string(),
-            model: Some(repo_id.to_string()),
-            quant: Some(quant_key),
-            context_length: spec.context_length,
-            enabled: true,
-            args: vec![],
-            sampling: None,
-            port: None,
-            health_check: None,
-            profile: None,
-            display_name: None,
-            gpu_layers: None,
-            quants: std::collections::BTreeMap::new(),
-        });
+        .iter()
+        .find(|(_, m)| m.model.as_deref() == Some(repo_id))
+        .map(|(k, _)| k.clone());
+
+    // For mmproj files: don't create or modify a model entry. The mmproj is
+    // a sibling file that gets attached to an existing model only when the
+    // user explicitly enables it via the editor's vision toggle.
+    let is_mmproj = matches!(
+        crate::config::QuantKind::from_filename(&spec.filename),
+        crate::config::QuantKind::Mmproj
+    );
+    if !is_mmproj {
+        // Reuse the existing model key if we found one, otherwise create a
+        // new entry keyed by the bare repo slug (no per-quant suffix).
+        let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
+        config
+            .models
+            .entry(model_key)
+            .or_insert_with(|| crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                model: Some(repo_id.to_string()),
+                quant: Some(quant_key),
+                mmproj: None,
+                context_length: spec.context_length,
+                enabled: true,
+                args: vec![],
+                sampling: None,
+                port: None,
+                health_check: None,
+                profile: None,
+                display_name: None,
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            });
+    }
 
     // Save card and config (best-effort — download is already marked Completed)
     let _ = std::fs::create_dir_all(&configs_dir);
@@ -1084,14 +1104,19 @@ mod tests {
         assert_eq!(card.quants["Q4_K_M"].file, filename);
         assert_eq!(card.quants["Q4_K_M"].context_length, Some(8192));
 
-        // Assert model config entry was added
-        let model_key = format!("{}-{}", repo_slug.to_lowercase(), "q4-k-m");
+        // Assert model config entry was added. Key is now derived from the
+        // bare repo slug (no per-quant suffix), so all quants of the same
+        // repo share one model entry.
+        let model_key = repo_slug.to_lowercase();
         assert!(
             config.models.contains_key(&model_key),
             "Expected model key '{}' in config, got: {:?}",
             model_key,
             config.models.keys().collect::<Vec<_>>()
         );
+        // Verify the entry's `model` field points to the original repo (this
+        // is what the dedupe-by-model logic uses).
+        assert_eq!(config.models[&model_key].model.as_deref(), Some(repo_id));
     }
 
     /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
@@ -1128,18 +1153,18 @@ mod tests {
             filename: "Model-Q4_K_M.gguf".to_string(),
             quant: Some("Q4_K_M".to_string()),
             size_bytes: Some(4_200_000_000),
-            is_mmproj: false,
+            kind: crate::config::QuantKind::Model,
         };
 
         let value = serde_json::to_value(&entry).expect("serialization failed");
         assert!(value.get("filename").is_some(), "missing filename");
         assert!(value.get("quant").is_some(), "missing quant");
         assert!(value.get("size_bytes").is_some(), "missing size_bytes");
-        assert!(value.get("is_mmproj").is_some(), "missing is_mmproj");
+        assert!(value.get("kind").is_some(), "missing kind");
         assert_eq!(value["filename"], "Model-Q4_K_M.gguf");
         assert_eq!(value["quant"], "Q4_K_M");
         assert_eq!(value["size_bytes"], 4_200_000_000_i64);
-        assert_eq!(value["is_mmproj"], false);
+        assert_eq!(value["kind"], "model");
     }
 
     /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.

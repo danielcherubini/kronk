@@ -1,3 +1,4 @@
+use crate::config::QuantKind;
 use crate::profiles::SamplingParams;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -26,15 +27,15 @@ pub struct ModelMeta {
     pub default_context_length: Option<u32>,
     #[serde(default)]
     pub default_gpu_layers: Option<u32>,
-    /// Filename of the selected mmproj (vision projector) file, e.g. "mmproj-F16.gguf"
-    #[serde(default)]
-    pub mmproj: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct QuantInfo {
     /// Filename of the GGUF file relative to the model directory.
     pub file: String,
+    /// What kind of file this is. Defaults to `Model` for backward compat.
+    #[serde(default)]
+    pub kind: QuantKind,
     /// File size in bytes (informational).
     #[serde(default)]
     pub size_bytes: Option<u64>,

@@ -179,6 +179,7 @@ fn model_entry_json(
         "backend": m.backend,
         "model": m.model,
         "quant": m.quant,
+        "mmproj": m.mmproj,
         "args": m.args,
         "sampling": m.sampling,
         "enabled": m.enabled,
@@ -266,6 +267,8 @@ pub struct ModelBody {
     #[serde(default)]
     pub quant: Option<String>,
     #[serde(default)]
+    pub mmproj: Option<String>,
+    #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub sampling: Option<koji_core::profiles::SamplingParams>,
@@ -294,6 +297,7 @@ fn apply_model_body(
         sampling: None,
         model: None,
         quant: None,
+        mmproj: None,
         port: None,
         health_check: None,
         enabled: true,
@@ -311,6 +315,7 @@ fn apply_model_body(
         backend: body.backend,
         model: body.model,
         quant: body.quant,
+        mmproj: body.mmproj,
         args: body.args,
         sampling,
         enabled: body.enabled.unwrap_or(base.enabled),
@@ -329,6 +334,7 @@ fn apply_model_body(
                     k,
                     koji_core::config::QuantEntry {
                         file: v.file,
+                        kind: v.kind,
                         size_bytes: v.size_bytes,
                         context_length: v.context_length,
                     },
