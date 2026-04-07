@@ -46,10 +46,16 @@ This task delivers a compiles-and-runs-but-unused Modal component. No other file
    ```toml
    web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "EventSource", "EventSourceInit", "MessageEvent", "Event"] }
    ```
-   Append `"KeyboardEvent"` to the features array. Final:
+   Append both `"KeyboardEvent"` (needed by Modal's Escape handler in this task) and `"Console"` (needed by Task 3's `web_sys::console::warn_1` call — colocated here so all `web-sys` feature changes happen in one commit). Final:
    ```toml
-   web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "EventSource", "EventSourceInit", "MessageEvent", "Event", "KeyboardEvent"] }
+   web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "EventSource", "EventSourceInit", "MessageEvent", "Event", "KeyboardEvent", "Console"] }
    ```
+
+   Note: `web_sys::console::warn_1` requires the `Console` feature
+   (`web-sys-0.3.x/src/features/gen_console.rs` documents this). No other file
+   in koji-web currently uses `web_sys::console::*`, so `"Console"` is genuinely
+   new. Without it, Task 3's `cargo build --workspace` will fail with `function
+   or associated item warn_1 not found in module console`.
 
 2. **`crates/koji-web/src/components/mod.rs`** — add `pub mod modal;` alongside the existing `pub mod nav;` and `pub mod sparkline;` declarations.
 
@@ -319,6 +325,13 @@ pub struct CompletedQuant {
     /// Final downloaded byte count. Sourced from the SSE done payload's
     /// `bytes_downloaded` field, which equals the actual on-disk file size
     /// because `download_chunked` writes bytes 1:1.
+    ///
+    /// Always `Some` today (`bytes_downloaded` is `u64`, never absent for a
+    /// completed job). Wrapped in `Option` for forward-compat: a future
+    /// backend revision that reports completion without a final byte count
+    /// can set this to `None` and the editor's merge logic
+    /// (`if cq.size_bytes.is_some() { ... }`) handles it correctly without
+    /// clobbering an existing value.
     pub size_bytes: Option<u64>,
     /// Context length the user picked in step 4.
     pub context_length: u32,
@@ -521,7 +534,9 @@ pub fn PullQuantWizard(
          }}
      </div>
      ```
-     (Note: the indices `0..5` for `step_class` reflect *position in the order array*, not display position. The `step_class` function uses a fixed order array so the existing arguments stay correct even when the first pill is hidden.)
+     Notes:
+     - The indices `0..5` for `step_class` reflect *position in the order array*, not display position. The `step_class` function uses a fixed order array so the existing arguments stay correct even when the first pill is hidden.
+     - In today's `pull.rs`, the indicator block already wraps the whole thing in `{move || { ... view! { ... } }}` (lines ~123-135). The 5 trailing pills use `step_class(&step, ...)` reading the local `step` variable, **not** their own per-pill `move ||` closures. So a verbatim move works without further surgery — the only change is wrapping the first pill in `show_repo_step.then(...)` and adding the `let show_repo_step = ...;` line.
    - **In the `SelectQuants` step**, gate the Back button on `initial_repo` being empty. The current code has:
      ```rust
      <button class="btn btn-secondary" on:click=move |_| {

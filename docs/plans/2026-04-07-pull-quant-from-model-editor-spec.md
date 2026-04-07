@@ -405,11 +405,14 @@ mounted unconditionally; the `modal-backdrop--open` class controls
   Effect, to avoid duplicate listeners across re-runs):
 
   ```rust
-  let closure = Closure::wrap(Box::new(move |e: KeyboardEvent| {
+  // Style mirrors `crates/koji-web/src/pages/dashboard.rs` (around line 115):
+  // use Closure::<dyn Fn(...)>::new(...) rather than
+  // Closure::wrap(Box::new(...) as Box<dyn Fn(_)>).
+  let closure = Closure::<dyn Fn(KeyboardEvent)>::new(move |e: KeyboardEvent| {
       if e.key() == "Escape" && open.get_untracked() {
           on_close.run(());
       }
-  }) as Box<dyn Fn(_)>);
+  });
   let window = web_sys::window().expect("window");
   window.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
       .expect("add keydown listener");
@@ -420,14 +423,16 @@ mounted unconditionally; the `modal-backdrop--open` class controls
   });
   ```
 
-  **Cargo.toml dependency.** `KeyboardEvent` is **not** currently in
-  `crates/koji-web/Cargo.toml`'s `web-sys` feature list (which has only
-  `Window`, `Document`, `HtmlElement`, `HtmlInputElement`, `EventSource`,
-  `EventSourceInit`, `MessageEvent`, `Event`). Implementation must add
-  `KeyboardEvent` to that list, otherwise the modal won't compile. `Closure`,
-  `JsCast`, and `unchecked_ref` are already used elsewhere in the crate
-  (`dashboard.rs`, `model_editor.rs`), so no other dependency changes are
-  needed. See §10.
+  **Cargo.toml dependencies.** Two `web-sys` features are missing from the
+  current `crates/koji-web/Cargo.toml` and must be added:
+
+  - `KeyboardEvent` — needed by the Modal's Escape handler (this section).
+  - `Console` — needed by the model editor's `on_complete` callback, which
+    uses `web_sys::console::warn_1` to log a warning when all pulled quants
+    failed (see §8.7).
+
+  Both are added in the plan's Task 1 alongside the rest of the Modal work,
+  so they ship in one commit. See plan §10 / Task 1 step 1.
 
   Note `get_untracked()` — we don't want the listener to re-register every
   time `open` changes.
