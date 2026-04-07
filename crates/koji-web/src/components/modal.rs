@@ -43,7 +43,9 @@ pub fn Modal(
         window
             .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
             .expect("add keydown listener");
-        // Don't clean up - the listener will be removed when the host unmounts.
+        // Keep the closure alive so the JS event listener remains functional.
+        // The listener will be removed when the host unmounts (page navigation).
+        closure.forget();
     }
 
     // Click handlers.

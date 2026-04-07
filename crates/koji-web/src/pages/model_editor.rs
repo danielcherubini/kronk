@@ -1239,6 +1239,7 @@ pub fn ModelEditor() -> impl IntoView {
                     >
                         <PullQuantWizard
                             initial_repo=Signal::derive(move || form_model.get())
+                            is_open=rw_signal_to_signal(pull_modal_open_signal)
                             on_complete=Callback::new(move |completed: Vec<CompletedQuant>| {
                                 // Visibility for the silent-failure caveat in spec §8.7: if all
                                 // quants in this session failed, log to console so the user has
