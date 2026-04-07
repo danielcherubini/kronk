@@ -172,6 +172,88 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
     Ok(())
 }
 
+/// Strip stale `--mmproj <path>` entries from `args` in every model config.
+///
+/// These were written by the broken v1.15.0 frontend code that munged the
+/// `args` field directly. The new path is `ModelConfig.mmproj` + automatic
+/// `--mmproj` injection in `build_full_args`.
+///
+/// As a best-effort recovery, if a stale `--mmproj` argument is found and
+/// `model_config.mmproj` is currently `None`, the function tries to find a
+/// quant entry in `model_config.quants` whose `file` matches the basename of
+/// the stripped path. If found, that entry's key is set as the active
+/// `mmproj`. This preserves the user's intent across the migration.
+///
+/// Returns `true` if any model config was modified (so the caller can persist
+/// the cleanup to disk).
+pub fn cleanup_stale_mmproj_args(config: &mut Config) -> bool {
+    let mut changed = false;
+
+    for model_config in config.models.values_mut() {
+        let mut i = 0;
+        while i < model_config.args.len() {
+            // Match three forms:
+            //   1. "--mmproj <path>"             (single grouped token)
+            //   2. "--mmproj=<path>"             (inline equals)
+            //   3. "--mmproj" then "<path>"      (two separate tokens)
+            let arg = &model_config.args[i];
+
+            let stripped_path: Option<String> = if let Some(rest) = arg.strip_prefix("--mmproj ") {
+                Some(rest.to_string())
+            } else if let Some(rest) = arg.strip_prefix("--mmproj=") {
+                Some(rest.to_string())
+            } else if arg == "--mmproj" && i + 1 < model_config.args.len() {
+                Some(model_config.args[i + 1].clone())
+            } else {
+                None
+            };
+
+            let Some(path) = stripped_path else {
+                i += 1;
+                continue;
+            };
+
+            // Best-effort: recover the user's mmproj selection.
+            if model_config.mmproj.is_none() {
+                // Strip surrounding quotes that the migration may have left in.
+                let path_clean = path.trim_matches(|c: char| c == '"' || c == '\'');
+                let filename = path_clean
+                    .replace('\\', "/")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                if !filename.is_empty() {
+                    if let Some((key, _)) =
+                        model_config.quants.iter().find(|(_, q)| q.file == filename)
+                    {
+                        model_config.mmproj = Some(key.clone());
+                        tracing::info!(
+                            "Recovered mmproj selection '{}' from stale --mmproj arg",
+                            key
+                        );
+                    }
+                }
+            }
+
+            // Remove the stale token(s). Two-token form removes both;
+            // grouped/inline-equals forms remove just the one.
+            if arg == "--mmproj" {
+                model_config.args.remove(i); // remove flag
+                if i < model_config.args.len() {
+                    model_config.args.remove(i); // remove value
+                }
+            } else {
+                model_config.args.remove(i);
+            }
+            changed = true;
+            // Don't increment i — the next entry has shifted into this slot.
+        }
+    }
+
+    changed
+}
+
 #[allow(dead_code)]
 pub fn migrate_model_cards_to_configs(config: &crate::config::Config) -> anyhow::Result<()> {
     let configs_dir = config.configs_dir()?;
@@ -687,5 +769,152 @@ size_bytes = 8000000000
 
         // display_name should be set
         assert_eq!(model_config.display_name, Some("TestModel".to_string()));
+    }
+
+    /// Helper that builds a minimal `ModelConfig` with a quants map containing
+    /// a Mmproj entry, used by the cleanup tests.
+    fn build_test_model_config_with_mmproj(
+        args: Vec<&str>,
+        mmproj: Option<&str>,
+    ) -> crate::config::types::ModelConfig {
+        let mut quants = BTreeMap::new();
+        quants.insert(
+            "mmproj-F16".to_string(),
+            crate::config::types::QuantEntry {
+                file: "mmproj-F16.gguf".to_string(),
+                kind: crate::config::QuantKind::Mmproj,
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model-Q4_K_M.gguf".to_string(),
+                kind: crate::config::QuantKind::Model,
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+        crate::config::types::ModelConfig {
+            backend: "llama_cpp".to_string(),
+            args: args.into_iter().map(String::from).collect(),
+            sampling: None,
+            model: Some("org/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            mmproj: mmproj.map(String::from),
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            profile: None,
+            display_name: None,
+            gpu_layers: None,
+            quants,
+        }
+    }
+
+    #[test]
+    fn cleanup_strips_grouped_mmproj_arg_and_recovers_selection() {
+        let mut config = Config::default();
+        config.models.insert(
+            "m".to_string(),
+            build_test_model_config_with_mmproj(
+                vec![
+                    "-fa 1",
+                    "--mmproj models/org/repo/mmproj-F16.gguf",
+                    "-c 4096",
+                ],
+                None,
+            ),
+        );
+
+        let changed = cleanup_stale_mmproj_args(&mut config);
+
+        assert!(changed);
+        let m = &config.models["m"];
+        assert_eq!(m.args, vec!["-fa 1".to_string(), "-c 4096".to_string()]);
+        // Selection recovered from filename match.
+        assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
+    }
+
+    #[test]
+    fn cleanup_strips_two_token_mmproj_arg() {
+        let mut config = Config::default();
+        config.models.insert(
+            "m".to_string(),
+            build_test_model_config_with_mmproj(
+                vec![
+                    "-fa 1",
+                    "--mmproj",
+                    "models/org/repo/mmproj-F16.gguf",
+                    "-c 4096",
+                ],
+                None,
+            ),
+        );
+
+        let changed = cleanup_stale_mmproj_args(&mut config);
+
+        assert!(changed);
+        let m = &config.models["m"];
+        assert_eq!(m.args, vec!["-fa 1".to_string(), "-c 4096".to_string()]);
+        assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
+    }
+
+    #[test]
+    fn cleanup_strips_inline_equals_mmproj_arg() {
+        let mut config = Config::default();
+        config.models.insert(
+            "m".to_string(),
+            build_test_model_config_with_mmproj(
+                vec!["-fa 1", "--mmproj=models/org/repo/mmproj-F16.gguf"],
+                None,
+            ),
+        );
+
+        let changed = cleanup_stale_mmproj_args(&mut config);
+
+        assert!(changed);
+        let m = &config.models["m"];
+        assert_eq!(m.args, vec!["-fa 1".to_string()]);
+        assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
+    }
+
+    #[test]
+    fn cleanup_preserves_existing_mmproj_field() {
+        // If the user has already set mmproj via the editor, the recovered
+        // value from a stale arg must NOT overwrite it.
+        let mut config = Config::default();
+        config.models.insert(
+            "m".to_string(),
+            build_test_model_config_with_mmproj(
+                vec!["--mmproj models/org/repo/some-other-name.gguf"],
+                Some("mmproj-F16"),
+            ),
+        );
+
+        let changed = cleanup_stale_mmproj_args(&mut config);
+
+        assert!(changed);
+        let m = &config.models["m"];
+        assert!(m.args.is_empty());
+        // Pre-existing selection preserved.
+        assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
+    }
+
+    #[test]
+    fn cleanup_returns_false_when_no_stale_args() {
+        let mut config = Config::default();
+        config.models.insert(
+            "m".to_string(),
+            build_test_model_config_with_mmproj(vec!["-fa 1", "-c 4096"], Some("mmproj-F16")),
+        );
+
+        let changed = cleanup_stale_mmproj_args(&mut config);
+
+        assert!(!changed);
+        let m = &config.models["m"];
+        assert_eq!(m.args, vec!["-fa 1".to_string(), "-c 4096".to_string()]);
     }
 }

@@ -1,4 +1,6 @@
-use super::migrate::{migrate_cards_to_unified_config, rename_legacy_directories};
+use super::migrate::{
+    cleanup_stale_mmproj_args, migrate_cards_to_unified_config, rename_legacy_directories,
+};
 use super::types::{BackendConfig, Config, General, ModelConfig, ProxyConfig, Supervisor};
 use crate::profiles::Profile;
 use anyhow::{Context, Result};
@@ -113,7 +115,17 @@ impl Config {
         config.loaded_from = Some(config_dir.to_path_buf());
         migrate_cards_to_unified_config(&mut config)?;
 
-        if args_migrated {
+        // Strip stale `--mmproj <path>` entries from args (broken v1.15.0
+        // frontend wrote these). Returns true if any model was modified.
+        let mmproj_cleaned = cleanup_stale_mmproj_args(&mut config);
+        if mmproj_cleaned {
+            tracing::info!(
+                "Cleaned stale --mmproj entries from model args in {}",
+                config_path.display()
+            );
+        }
+
+        if args_migrated || mmproj_cleaned {
             // Best-effort save; if it fails (e.g. read-only filesystem),
             // log a warning but do not fail the load.
             if let Err(e) = config.save_to(config_dir) {
