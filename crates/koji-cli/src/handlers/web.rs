@@ -7,5 +7,5 @@ pub async fn cmd_web(
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    koji_web::server::run_with_opts(addr, proxy_url, logs_dir, config_path, None).await
+    koji_web::server::run_with_opts(addr, proxy_url, logs_dir, config_path, None, None, None).await
 }

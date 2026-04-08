@@ -7,6 +7,8 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let state = Arc::new(koji_web::server::AppState {
+                jobs: None,
+                capabilities: None,
                 proxy_base_url: "http://127.0.0.1:11434".to_string(),
                 client: reqwest::Client::new(),
                 logs_dir: None,
@@ -116,6 +118,8 @@ mod tests {
             let config_path_server = config_path.clone();
             tokio::spawn(async move {
                 let state = Arc::new(koji_web::server::AppState {
+                    jobs: None,
+                    capabilities: None,
                     proxy_base_url: "http://127.0.0.1:11434".to_string(),
                     client: reqwest::Client::new(),
                     logs_dir: None,
