@@ -1,3 +1,4 @@
+pub mod backends_section;
 pub mod config_nav;
 pub mod form_validation;
 pub mod general_section;
