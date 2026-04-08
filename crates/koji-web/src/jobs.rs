@@ -81,14 +81,6 @@ impl JobManager {
         kind: JobKind,
         backend_type: koji_core::backends::BackendType,
     ) -> Result<Arc<Job>, JobError> {
-        // Check if there's already an active job
-        {
-            let active = self.active.lock().await;
-            if active.is_some() {
-                return Err(JobError::AlreadyRunning(active.as_ref().unwrap().clone()));
-            }
-        }
-
         // Generate a unique job ID
         let job_id = format!("j_{}", uuid::Uuid::new_v4().simple());
 
@@ -115,8 +107,15 @@ impl JobManager {
             child_pids: RwLock::new(Vec::new()),
         });
 
-        // Set active and insert into jobs
-        *self.active.lock().await = Some(job_id.clone());
+        // Atomic check-and-set: hold the active lock across check and set
+        let mut active = self.active.lock().await;
+        if active.is_some() {
+            return Err(JobError::AlreadyRunning(active.as_ref().unwrap().clone()));
+        }
+        *active = Some(job_id.clone());
+        drop(active);
+
+        // Insert into jobs map
         self.jobs.write().await.insert(job_id.clone(), job.clone());
 
         Ok(job)
@@ -142,10 +141,11 @@ impl JobManager {
         if line.contains("pid=") {
             if let Some(start) = line.find("pid=") {
                 let pid_str = &line[start + 4..];
-                if let Some(end) = pid_str.find(|c: char| !c.is_ascii_digit()) {
-                    if let Ok(pid) = pid_str[..end].parse::<u32>() {
-                        self.register_child(job, pid).await;
-                    }
+                let end = pid_str
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(pid_str.len());
+                if let Ok(pid) = pid_str[..end].parse::<u32>() {
+                    self.register_child(job, pid).await;
                 }
             }
         }

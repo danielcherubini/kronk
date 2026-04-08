@@ -1,4 +1,6 @@
+#[allow(unused_imports)]
 use axum::{body::Body, http::Request, Router};
+#[allow(unused_imports)]
 use tower::ServiceExt;
 
 #[cfg(test)]

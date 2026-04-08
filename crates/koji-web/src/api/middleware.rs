@@ -39,6 +39,9 @@ pub async fn enforce_same_origin(
             if origin_str != expected_origin && origin_str != expected_origin_ssl {
                 return Err((StatusCode::FORBIDDEN, "Cross-origin requests not allowed"));
             }
+        } else {
+            // Origin present but HOST missing — reject state-changing methods
+            return Err((StatusCode::FORBIDDEN, "Cross-origin requests not allowed"));
         }
     }
 

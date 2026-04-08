@@ -482,9 +482,8 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             let all_backends = registry.list().unwrap_or_default();
             for info in all_backends {
                 // Skip known backends (they're already in the backends list)
-                if info.backend_type.to_string() == "llama_cpp"
-                    && info.backend_type.to_string() != "ik_llama"
-                {
+                let bt = info.backend_type.to_string();
+                if bt != "llama_cpp" && bt != "ik_llama" {
                     custom.push(BackendCardDto {
                         r#type: format!("{}", info.backend_type),
                         display_name: format!("Custom ({})", info.name),
@@ -658,7 +657,13 @@ pub async fn install_backend(
         koji_core::backends::BackendType::IkLlama => {
             "https://github.com/ikawrakow/ik_llama.cpp.git"
         }
-        _ => unreachable!(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("Unsupported backend type: {}", backend_type)})),
+            )
+                .into_response();
+        }
     };
 
     let source = if effective_build_from_source {
@@ -677,7 +682,13 @@ pub async fn install_backend(
         Ok(d) => d.join(match backend_type {
             koji_core::backends::BackendType::LlamaCpp => "llama_cpp",
             koji_core::backends::BackendType::IkLlama => "ik_llama",
-            _ => unreachable!(),
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("Unsupported backend type: {}", backend_type)})),
+                )
+                    .into_response();
+            }
         }),
         Err(e) => {
             return (
