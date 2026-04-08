@@ -68,8 +68,6 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    #[serde(default = "default_proxy_enabled")]
-    pub enabled: bool,
     #[serde(default = "default_proxy_host")]
     pub host: String,
     #[serde(default = "default_proxy_port")]
@@ -89,7 +87,6 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            enabled: default_proxy_enabled(),
             host: default_proxy_host(),
             port: default_proxy_port(),
             idle_timeout_secs: default_proxy_timeout(),
@@ -234,10 +231,6 @@ impl Default for Supervisor {
             health_check_retries: default_health_check_retries(),
         }
     }
-}
-
-fn default_proxy_enabled() -> bool {
-    false
 }
 
 fn default_proxy_host() -> String {

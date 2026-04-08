@@ -167,8 +167,6 @@ pub struct Supervisor {
 /// Proxy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyConfig {
-    #[serde(default = "default_proxy_enabled")]
-    pub enabled: bool,
     #[serde(default = "default_proxy_host")]
     pub host: String,
     #[serde(default = "default_proxy_port")]
@@ -206,10 +204,6 @@ pub struct Config {
 }
 
 /// Default helper functions for Config fields.
-fn default_proxy_enabled() -> bool {
-    false
-}
-
 fn default_proxy_host() -> String {
     "0.0.0.0".to_string()
 }
@@ -493,7 +487,6 @@ impl From<Supervisor> for CoreSupervisor {
 impl From<CoreProxyConfig> for ProxyConfig {
     fn from(p: CoreProxyConfig) -> Self {
         Self {
-            enabled: p.enabled,
             host: p.host,
             port: p.port,
             idle_timeout_secs: p.idle_timeout_secs,
@@ -509,7 +502,6 @@ impl From<CoreProxyConfig> for ProxyConfig {
 impl From<ProxyConfig> for CoreProxyConfig {
     fn from(p: ProxyConfig) -> Self {
         Self {
-            enabled: p.enabled,
             host: p.host,
             port: p.port,
             idle_timeout_secs: p.idle_timeout_secs,
