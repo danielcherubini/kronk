@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
 use clap::{Args, Subcommand};
-use koji_core::backends::*;
+use koji_core::backends::{
+    backends_dir, check_latest_version, check_updates, install_backend, safe_remove_installation,
+    update_backend, BackendInfo, BackendRegistry, BackendSource, BackendType, InstallOptions,
+};
 use koji_core::config::Config;
 use koji_core::gpu;
 
@@ -160,11 +163,6 @@ fn parse_gpu_type(gpu_str: &str) -> Result<koji_core::gpu::GpuType> {
 
 fn registry_config_dir() -> Result<std::path::PathBuf> {
     Config::base_dir()
-}
-
-fn backends_dir() -> Result<std::path::PathBuf> {
-    let base_dir = Config::base_dir()?;
-    Ok(base_dir.join("backends"))
 }
 
 fn current_unix_timestamp() -> i64 {
@@ -539,73 +537,11 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
             .prompt()?;
 
         if remove_files {
-            if let Some(parent) = backend.path.parent() {
-                // SECURITY: Prevent directory traversal attacks during file removal
-                // - Canonicalize both paths: resolves symlinks and normalizes "."/".." sequences
-                // - This prevents attacks where a symlink or ".." traversal could escape
-                //   the intended removal directory and delete arbitrary files
-                // - The "starts_with" check ensures we only remove files within our
-                //   managed "backends/" directory, preventing accidental deletion of
-                //   system or user files outside our control
-                // - If canonicalization fails (permissions, etc.), deletion is skipped
-                //   by default — a safe conservative behavior that prevents unintended
-                //   side effects from transient file system issues
-                let canonical_parent_opt = std::fs::canonicalize(parent).ok();
-                let managed_opt = std::fs::canonicalize(backends_dir()?).ok();
-
-                if let (Some(canonical_parent), Some(managed)) = (canonical_parent_opt, managed_opt)
-                {
-                    if canonical_parent.starts_with(&managed) {
-                        // On Windows, remove_dir_all fails if a process is using the directory
-                        #[cfg(windows)]
-                        {
-                            use std::io::ErrorKind;
-                            match std::fs::remove_dir_all(parent) {
-                                Ok(_) => {
-                                    println!("Files removed.");
-                                }
-                                Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                                    println!(
-                                        "Skipping file removal: backend may still be running."
-                                    );
-                                    println!("Run 'koji service stop' first, then try again.");
-                                    return Err(anyhow!(
-                                        "Failed to remove backend directory: {}",
-                                        e
-                                    ));
-                                }
-                                Err(e) => {
-                                    eprintln!("Skipping file removal: {}", e);
-                                    return Err(anyhow!(
-                                        "Failed to remove backend directory: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        }
-                        // On Unix, remove_dir_all will fail if directory is in use
-                        #[cfg(not(windows))]
-                        {
-                            match std::fs::remove_dir_all(parent) {
-                                Ok(_) => {
-                                    println!("Files removed.");
-                                }
-                                Err(e) => {
-                                    eprintln!("Skipping file removal: {}", e);
-                                    return Err(anyhow!(
-                                        "Failed to remove backend directory: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        }
-                    } else {
-                        eprintln!("Skipping file removal: path is outside managed directory.");
-                    }
-                } else {
-                    eprintln!("Skipping file removal: directory does not exist.");
-                }
-            }
+            // Use the shared safe_remove_installation helper which handles:
+            // - Path validation (prevents directory traversal attacks)
+            // - Windows PermissionDenied retry logic
+            // - Cross-platform file removal
+            safe_remove_installation(&backend)?;
         }
     }
 
