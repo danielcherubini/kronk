@@ -17,6 +17,7 @@ wasm-bindgen-futures.workspace = true
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+url = "2.5"
 # Backend-only deps (not needed for WASM, gated behind the `ssr` feature)
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
@@ -31,6 +32,7 @@ koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
 
 [features]
+csr = []
 ssr = [
   "dep:axum", "dep:tokio", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
