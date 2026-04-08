@@ -45,16 +45,29 @@ Two existing stores are joined by the UI:
 | Store | Write path | Fields |
 |---|---|---|
 | `config.backends` (`BTreeMap<String, BackendConfig>` in `config.toml`) | Existing `POST /api/config/structured` | `path`, `default_args`, `health_check_url`, `version` (pin) |
-| `BackendRegistry` (sled DB at `<base_dir>/backends/registry`) | New backend API endpoints | `BackendInfo` (`name`, `backend_type`, `version`, `path`, `installed_at`, `gpu_type`, `source`) |
+| `BackendRegistry` — **SQLite** at `<config_dir>/koji.db`, table `backend_installations` (opened via `koji_core::db`) | New backend API endpoints | `BackendInfo` (`name`, `backend_type`, `version`, `path`, `installed_at`, `gpu_type`, `source`) |
 
 The UI displays **two cards**, keyed by the hard-coded set `{ llama_cpp, ik_llama }`:
 
 - Registry has an entry for this name → "Installed" state.
 - Registry has no entry → "Not installed" state.
 
+`BackendType::Custom` entries (possible via direct DB writes or future CLI flags) are **listed but not actionable** in the UI — no Install/Update/Uninstall buttons, just a read-only row at the bottom of the section.
+
 Config-side fields continue to live in `config.backends` and are edited via the existing structured-config save flow from within an "Advanced" disclosure on each card. **No TOML schema changes.**
 
 A new in-memory `JobManager` lives in `AppState` to track install/update jobs.
+
+### 4.1 Wire DTOs vs. core types
+
+`koji_core` types use serde defaults that are not web-friendly:
+
+- `BackendType::LlamaCpp` → `"LlamaCpp"` (externally tagged)
+- `BackendSource` → `#[serde(tag = "source", content = "content")]` → `{"source":"Prebuilt","content":{"version":"b8407"}}`
+- `GpuType::Cuda { version }` → `{"Cuda":{"version":"12.4"}}`
+- `JobStatus::Running` → `"Running"`
+
+Changing the derives in `koji-core` would require migrating the stored JSON columns in `backend_installations`. Instead, **`koji-web` defines its own DTOs** in `crates/koji-web/src/api/backends.rs` that serialize with `#[serde(rename_all = "snake_case")]` and flatten tagging, and converts via `From`/`TryFrom`. The JSON shapes in §5 are **wire DTOs, not core types**. Integration tests in §9.3 snapshot the wire shape against fixtures to catch drift.
 
 ---
 
@@ -72,13 +85,14 @@ All new routes live under `/api/backends` and `/api/system`. Errors follow the e
   "git_available": true,
   "cmake_available": true,
   "compiler_available": true,
-  "detected_cuda_version": "12.4",
-  "detected_rocm_version": null
+  "detected_cuda_version": "12.4"
 }
 ```
-Backed by `koji_core::gpu::detect_build_prerequisites()` + `detect_cuda_version()`. Cheap, no caching.
+Backed by `koji_core::gpu::detect_build_prerequisites()` + `detect_cuda_version()`. ROCm detection does not exist in `koji_core::gpu` today and is intentionally omitted from the response — the UI defaults ROCm to the hardcoded version used by `urls.rs` (`7.2`).
 
-**`GET /api/backends`** — joined view of known backends.
+Each call spawns up to ~6 subprocesses (`cmake --version`, `git --version`, compiler probe, `nvcc`, `nvidia-smi`, `vswhere` on Windows). Wrap the handler in a **5-second in-process TTL cache** (`Arc<Mutex<Option<(Instant, Capabilities)>>>`) to avoid hammering on rapid modal reopens.
+
+**`GET /api/backends`** — joined view of known backends. **All field names below are wire DTO names (snake_case); see §4.1.**
 ```json
 {
   "active_job": { "id": "j_abc123", "kind": "install", "backend_type": "llama_cpp" },
@@ -106,13 +120,15 @@ Backed by `koji_core::gpu::detect_build_prerequisites()` + `detect_cuda_version(
       "update": { "checked": false, "latest_version": null, "update_available": null },
       "release_notes_url": "https://github.com/ikawrakow/ik_llama.cpp/commits/main"
     }
-  ]
+  ],
+  "custom": []
 }
 ```
 
 Notes:
 - `update` is left unfilled here — the UI calls `/check-updates` explicitly to avoid hitting GitHub on every page load.
-- `active_job` lets the UI rehydrate a running job after a page reload without polling.
+- `active_job` is set **iff** there is currently a job with `status == Running`. Finished/failed jobs do not populate it. The UI uses this solely to reattach an SSE stream after a page reload; completed jobs surface via the card's per-state rendering based on the current registry entry.
+- `custom` lists any `BackendType::Custom` registry entries as read-only rows.
 
 **`POST /api/backends/check-updates`** (empty body) — calls `check_updates` for each installed backend. Synchronous (~1s). Returns the same shape as `GET /api/backends`, with `update` populated for installed backends.
 
@@ -133,20 +149,48 @@ Returns `202 Accepted`:
 { "job_id": "j_abc123", "kind": "install", "backend_type": "llama_cpp" }
 ```
 
-For `ik_llama`, `build_from_source` is forced to `true` server-side regardless of request.
+**Server-side source-build forcing** — the handler upgrades `build_from_source` to `true` in these cases, regardless of what the client sent:
+
+1. `backend_type == ik_llama` (no prebuilts exist at all).
+2. `backend_type == llama_cpp` **and** `os == linux` **and** `gpu == Cuda` — because `urls.rs` currently maps Linux+CUDA to the plain `llama-*-bin-ubuntu-x64.tar.gz` CPU build (see `urls.rs:33-37`). Serving a silent CPU binary to a user who asked for CUDA is a trap; building from source is the only way to honor the request today.
+
+The response payload for a forced upgrade includes a notice:
+```json
+{ "job_id": "j_abc123", "kind": "install", "backend_type": "llama_cpp", "notices": ["forced source build: no prebuilt CUDA binary for Linux"] }
+```
+
+When source build is selected (or forced) the handler must verify `git_available && cmake_available && compiler_available` from capabilities; if any are missing it returns `400 Bad Request` with a clear error instead of kicking off a doomed job.
 
 Returns `409 Conflict` if another install/update job is already running:
 ```json
 { "error": "another backend job is already running", "job_id": "j_existing" }
 ```
 
-**`POST /api/backends/:name/update`** (empty body) — reuses the existing registry's `gpu_type` and `source` (mirroring CLI `cmd_update`). Returns the same shape as install. 409 on concurrent job.
+**`POST /api/backends/:name/update`** (empty body) — reuses the existing registry's `gpu_type` and `source` (mirroring CLI `cmd_update`). The handler:
 
-**`DELETE /api/backends/:name`** — synchronous. Removes registry entry **and** binary files, reusing the CLI's canonical-path safety check (only paths under the managed `backends_dir()` are deleted). Returns:
+1. Calls `check_latest_version` **once** up front and captures the concrete tag (e.g. `b8410` or `main@abcd1234`).
+2. Passes that resolved tag as `latest_version` into `update_backend` so the post-install registry row reflects exactly what the user saw in the card's "Update available → bXXXX" line. Avoids the `updater.rs:124` re-resolve path entirely.
+
+Returns the same shape as install. 409 on concurrent job.
+
+**`DELETE /api/backends/:name`** — synchronous. Removes registry entry **and** binary files.
+
+The current CLI helpers `backends_dir()` and the `canonicalize → starts_with` safety check live privately inside `crates/koji-cli/src/commands/backend.rs`. They must be **lifted into `koji-core`** as:
+
+- `koji_core::backends::backends_dir() -> Result<PathBuf>` — returns `<config_dir>/backends`.
+- `koji_core::backends::safe_remove_installation(info: &BackendInfo) -> Result<()>` — canonicalizes `info.path.parent()`, asserts it starts with `backends_dir()`, and `remove_dir_all`s it. Preserves the existing Windows `ErrorKind::PermissionDenied` handling from `cmd_remove`.
+
+Both `koji-web::api::backends::remove_backend` and the CLI's `cmd_remove` then call the shared helper. The handler rejects (without touching the filesystem) any registry entry whose `path` does not canonicalize to a location under `backends_dir()` — for example a user-registered `/usr/local/bin/llama-server` — returning:
+```json
+{ "error": "path is outside the managed backends directory; remove manually" }
+```
+with status `409 Conflict`.
+
+Returns:
 ```json
 { "removed": true }
 ```
-or 404 on unknown name.
+or 404 on unknown name. Returns `409 Conflict` if a job for the same backend is currently `Running`.
 
 ### 5.3 Job endpoints
 
@@ -224,16 +268,19 @@ pub enum JobEvent { Log(String), Status(JobStatus) }
 
 **Policy:**
 - **Single in-flight job.** Second submission while one is running returns `JobError::AlreadyRunning(existing_id)` → 409 from the handler.
-- **Retention.** Finished jobs are kept so the UI can still fetch their final log. FIFO eviction keeps at most **8 finished jobs**.
-- **Log buffer.** Each `Job` keeps at most **500 lines** (`VecDeque::pop_front` on overflow). This is the replay buffer for late SSE subscribers.
-- **Broadcast channel.** Live tailing. Capacity ~256 events; slow subscribers receive `broadcast::error::RecvError::Lagged` and are handled gracefully (log a warning line, continue).
-- **No persistence** across process restarts.
+- **Retention.** Finished jobs are kept so the UI can still fetch their final log. FIFO eviction keeps at most **8 finished jobs**. Eviction is safe for any SSE clients still attached to an evicted job: the SSE handler holds an `Arc<Job>` taken at connect time, so evicting the map entry does not drop the `Job` out from under the stream — it only stops *new* clients from looking it up.
+- **Log buffer: head + tail.** A full source build can emit thousands of lines, and the tail-only view loses the all-important "what command was run and where did it fail" context from the start. We keep two bounded `VecDeque`s per job:
+  - `log_head`: the first **100 lines**, never evicted once filled.
+  - `log_tail`: the last **400 lines**, `pop_front` on overflow.
+  On SSE connect, the handler replays `log_head`, then a single synthesized `[... N lines skipped ...]` marker if any, then `log_tail`.
+- **Broadcast channel.** Live tailing. Capacity **1024** events (source builds can burst at hundreds of lines/sec). Slow subscribers that get `broadcast::error::RecvError::Lagged(n)` emit a synthesized `[N lines dropped]` event to the client so the gap is visible in the UI, then continue with the next live event.
+- **No persistence** across process restarts. See §6.4 for on-disk cleanup.
 
 `JobManager` is added to `AppState` as `pub jobs: Arc<JobManager>`.
 
 ### 6.2 Progress propagation from `koji-core`
 
-One minimal change to `koji-core`: a `ProgressSink` trait so the installer/updater can emit progress lines without `println!`.
+**A public field on `InstallOptions` is not viable.** `InstallOptions` derives `Debug` (`installer/mod.rs:17`), adding `Arc<dyn ProgressSink>` would break the derive; it has no `Default` impl so callers can't use `..Default::default()`; and there are three existing call sites (`backend.rs:350`, `backend.rs:471`, `source.rs:491`) that would require `progress: None` churn. Instead, we add **wrapper functions** that leave `InstallOptions` entirely untouched.
 
 ```rust
 // crates/koji-core/src/backends/mod.rs
@@ -241,34 +288,66 @@ pub trait ProgressSink: Send + Sync {
     fn log(&self, line: &str);
 }
 
-pub struct StdoutSink;
-impl ProgressSink for StdoutSink {
-    fn log(&self, line: &str) { println!("{line}"); }
-}
+// No-op sink for callers that want the no-println! behavior in tests.
+pub struct NullSink;
+impl ProgressSink for NullSink { fn log(&self, _line: &str) {} }
 ```
-
-`InstallOptions` gains an optional field (not serialized):
 
 ```rust
-pub struct InstallOptions {
-    // ... existing fields ...
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub progress: Option<Arc<dyn ProgressSink>>,
+// crates/koji-core/src/backends/installer/mod.rs
+
+// Existing API — unchanged, zero call-site churn.
+pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
+    install_backend_with_progress(options, None).await
+}
+
+// New API — koji-web calls this.
+pub async fn install_backend_with_progress(
+    options: InstallOptions,
+    progress: Option<Arc<dyn ProgressSink>>,
+) -> Result<PathBuf> {
+    // ... existing body, routing println! through `emit(&progress, ...)` ...
 }
 ```
 
-Internally the installer routes milestone lines and captured child-process stdout/stderr through the sink. If `progress` is `None`, the existing `println!` behavior is preserved (CLI path unchanged).
+Analogous wrapper `update_backend_with_progress` in `updater.rs`. The CLI keeps calling the original `install_backend` / `update_backend` — no code change in `koji-cli/src/commands/backend.rs`.
+
+Internally, milestone `println!`s in the installer are replaced with an `emit` helper:
+
+```rust
+fn emit(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>) {
+    let line = line.into();
+    match sink {
+        Some(s) => s.log(&line),
+        None => println!("{line}"),
+    }
+}
+```
 
 **Scope guard:** we do not rewrite every `println!` in one pass. We route:
-1. High-level milestones in `install_backend` ("Cloning…", "Building…", "Downloading…", "Extracting…", "Installation complete").
-2. Child-process output from `git clone`, `cmake`, `make`/`ninja`, and the prebuilt download progress.
-3. Extract-step output.
+1. High-level milestones in `install_backend_with_progress` ("Cloning…", "Building…", "Downloading…", "Extracting…", "Installation complete").
+2. Child-process output from `git clone`, `cmake`, `make`/`ninja`.
+3. Prebuilt download progress (see below).
+4. Extract-step output.
 
 Anything missed still goes to stdout/stderr unchanged (captured by the koji log file).
 
-**Child-process capture** replaces the current inherited stdio on spawned commands (`git`, `cmake`, `make`/`ninja`) with piped stdout/stderr, line-buffered readers that forward each line via `progress.log(...)`. Exit-code error handling is preserved.
+**Child-process capture** replaces the current inherited stdio on spawned commands in `source.rs` with `Stdio::piped()` for both stdout and stderr. Two line-buffered reader tasks (via `tokio::io::AsyncBufReadExt::lines()`) forward each line via `emit(...)`. Exit-code error handling is preserved.
 
-**Prebuilt download progress** is throttled to at most one emitted line per ~250 ms to avoid flooding the log.
+**Prebuilt download progress — `indicatif` handling.** Today `download.rs` writes a TTY `ProgressBar` to stderr unconditionally. We refactor `download_file` to take an optional progress callback:
+
+```rust
+pub async fn download_file(
+    url: &str,
+    dest: &Path,
+    progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<()>
+```
+
+- If `progress` is `Some`, `indicatif` is **skipped entirely** (no TTY bar) and progress is reported via the sink, throttled to at most one emitted line per ~250 ms (format: `"downloaded 12.3 MiB / 45.6 MiB (27%)"`).
+- If `progress` is `None`, the existing `indicatif` TTY bar is preserved — CLI UX is unchanged.
+
+CLI `cmd_install` continues to see its progress bar; the web path gets throttled log lines. No CLI call-site changes required because `download_file` is only called from inside `install_prebuilt`, which is called from `install_backend_with_progress`, which threads the sink down.
 
 ### 6.3 SSE handler
 
@@ -312,6 +391,27 @@ async fn job_events_sse(
 ```
 
 Uses `axum::response::sse::Sse`. Replay-on-connect lets clients reconnect mid-install without losing context.
+
+Implementation notes for the `async_stream::stream!` block:
+- `Event::default().event(..).json_data(..)` returns `Result<Event, axum::Error>`.
+- The `Stream` yielded to `Sse::new` must have item type `Result<Event, E>` where `E: Into<BoxError>`. Use `axum::Error` as the error type and propagate via `?` — don't invent a fresh error type.
+- `async_stream` is already a transitive dependency (`koji-core` pulls it in; confirmed in `Cargo.lock`). Declare it explicitly in `crates/koji-web/Cargo.toml` under `[dependencies]` gated to the `ssr` feature.
+
+### 6.4 Process shutdown, orphans, and stale build dirs
+
+`axum::serve(...)` is called without `with_graceful_shutdown` today (`server.rs:161`). If the Koji process dies while a source build is running:
+
+- On Unix, the spawned `git`/`cmake`/`make` are reparented to init and continue building, leaving a partial tree under `<config_dir>/backends/<name>/build/`.
+- On Windows, they survive (they are not placed into a Job Object).
+- The next install attempt sees a dirty `target_dir` and fails because `allow_overwrite=false`.
+
+Two complementary mitigations:
+
+1. **Graceful shutdown with child-process teardown.** The spawned install-job task stores the child `Child` PIDs in the `Job` struct. On SIGINT/SIGTERM the `JobManager` kills any `Running` job (`Child::kill().await`) and the HTTP server exits via `with_graceful_shutdown`. This is best-effort and does not cover `SIGKILL` or panics.
+
+2. **Stale-install recovery on startup.** On `JobManager::new`, scan `backends_dir()` for per-backend subdirectories that contain a `build/` directory **but** have no corresponding `BackendRegistry` entry with a valid binary path. These are leftover partial installs from a previous crash. The manager logs a warning listing them; the UI exposes a "Clean up" button that `remove_dir_all`s the stale dirs (gated on the same canonical-path safety check as `safe_remove_installation`).
+
+   We do **not** auto-delete on startup — a user with a half-built backend from five minutes ago might want to inspect the build log first. The cleanup UI surface is a single button in the Backends section header that only appears when stale dirs are detected.
 
 ---
 
@@ -367,14 +467,20 @@ Opens on Install click. Fetches `/api/system/capabilities` on open.
 
 Fields:
 - **GPU acceleration** — radio group (CUDA / ROCm / Vulkan / Metal / CPU). Default selected from detection.
-- **CUDA version** dropdown — shown only when CUDA selected. Options: `11.1`, `12.4`, `13.1`. Default from `detected_cuda_version`.
-- **ROCm version** dropdown — shown only when ROCm selected. Options: `5.7`, `6.1`.
+- **CUDA version** dropdown — shown only when CUDA selected. Options come from a shared constant table (see below). Default from `detected_cuda_version` nearest-match. The same constant table is used by `urls.rs` so UI and URL mapping cannot drift.
+- **ROCm version** — **no selector.** `urls.rs:31` hardcodes `rocm-7.2` regardless of the version field in `GpuType::RocM`. The modal shows static text "ROCm 7.2 (hardcoded)" and sends `GpuType::RocM { version: "7.2".into() }`. Revisit when `urls.rs` honors the version parameter.
 - **Version** — free text, placeholder `latest`. Hidden for `ik_llama`.
-- **Build from source** checkbox. Forced on + disabled for `ik_llama` with help text "ik_llama always builds from source".
+- **Build from source** checkbox.
+  - Forced on + disabled for `ik_llama` with help text "ik_llama always builds from source".
+  - Forced on + disabled when `os == linux && gpu == cuda` with help text "No prebuilt CUDA binary available for Linux; will build from source."
 - **Force overwrite** checkbox.
 
-Warning banner shown at the top when `cmake_available` / `git_available` / `compiler_available` is false **and** source build is selected (forced for `ik_llama`):
+**Constant table** (shared between `urls.rs` and the modal): `pub const SUPPORTED_CUDA_VERSIONS: &[&str] = &["11.1", "12.4", "13.1"];` in `koji_core::backends::installer::urls`. The UI imports this via a new `GET /api/system/capabilities` field `supported_cuda_versions: Vec<String>` populated from the same constant, so the modal has no hardcoded list.
+
+Warning banner shown at the top when `cmake_available` / `git_available` / `compiler_available` is false **and** source build is selected (forced or otherwise):
 > ⚠ cmake not found — source build will fail.
+
+When the warning is active, the Install button is **disabled**; the backend handler will also reject such requests with 400 (defense in depth).
 
 Buttons: `Cancel`, `Install`. Submitting POSTs `/api/backends/install`, closes the modal, transitions the card to "Job running" state.
 
@@ -394,14 +500,40 @@ Clicking **Update** does **not** open a modal. The request reuses the existing r
 
 Kebab menu `⋮` → Uninstall → confirm modal:
 > Remove **llama.cpp** (b8407)?
-> This will delete the registry entry and binary files at `<path>`.
+> This will delete the registry entry and the backend directory at `<parent_of_path>/`.
 > `Cancel`  `Remove`
 
-DELETE `/api/backends/:name`. Synchronous. On success, refresh the card.
+The modal shows the **parent directory** of `info.path` because that is what `safe_remove_installation` actually removes (matching the existing CLI `cmd_remove` behavior). DELETE `/api/backends/:name`. Synchronous. On success, refresh the card.
+
+Interactive CLI confirmation prompts (`inquire::Confirm` in `cmd_remove` and `cmd_update`) stay in the CLI; the web path skips them entirely — the UI's modal confirmation is the equivalent.
 
 ### 7.8 Check for updates
 
 Top-right of the Backends section. POSTs `/api/backends/check-updates`, populates each card's `update` field, updates the badge. Manual only.
+
+---
+
+## 7a. Security & threat model
+
+The existing web API is configured with `CorsLayer::permissive()` (`server.rs:141`) and has no authentication. The default proxy host in `types/config.rs:208` is `0.0.0.0`.
+
+The new endpoints materially expand the blast radius over "edit a TOML file":
+- `POST /api/backends/install` runs `git clone`, `cmake`, `make`, arbitrary network downloads from GitHub, and writes binaries into the user's home directory.
+- `DELETE /api/backends/:name` runs `remove_dir_all` on a path under the user's home directory.
+
+This spec does not introduce authentication (that's a bigger design). It does take the following hardening steps, specific to the new endpoints:
+
+1. **CORS hardening for state-changing backend routes.** The new `/api/backends/*` and `/api/system/capabilities` routes are grouped under a router whose `CorsLayer` only allows `GET` from other origins and requires same-origin for `POST`/`DELETE`. Implementation: a dedicated `CorsLayer::new().allow_origin(AllowOrigin::mirror_request()).allow_methods([GET])` plus an `axum::middleware::from_fn` that checks `Origin`/`Host` equality on non-GET methods and rejects with 403.
+
+2. **Origin-header enforcement.** For `POST`/`DELETE` on the new routes, reject any request where `Origin` is present and does not match `Host`. This blocks CSRF from a malicious page when the user has Koji bound to a LAN address.
+
+3. **Documentation warning.** The Backends section UI shows a one-time dismissible banner on first use:
+   > ⚠ Koji is bound to `0.0.0.0`. Anyone on your network can install backends here. Bind to `127.0.0.1` in `config.toml` if you don't want that.
+   The banner is shown only when the server detects it is bound to a non-loopback address.
+
+4. **No change to existing endpoints.** The hardening applies only to the new routes so we don't regress any current UI flows.
+
+Full authentication (API tokens, session cookies, etc.) is explicitly out of scope — tracked as future work.
 
 ---
 
@@ -420,28 +552,40 @@ Top-right of the Backends section. POSTs `/api/backends/check-updates`, populate
 ### 8.2 Modified files
 
 **`crates/koji-core/src/backends/mod.rs`**
-- Add `pub trait ProgressSink` and `pub struct StdoutSink`.
+- Add `pub trait ProgressSink` (with `NullSink` impl).
+- Add `pub fn backends_dir() -> Result<PathBuf>` (lifted from `koji-cli`).
+- Add `pub fn safe_remove_installation(info: &BackendInfo) -> Result<()>` (lifted from `cmd_remove`, preserves Windows `PermissionDenied` handling).
 - Re-export from `koji_core::backends`.
 
 **`crates/koji-core/src/backends/installer/mod.rs`**
-- Add `progress: Option<Arc<dyn ProgressSink>>` to `InstallOptions` (skipped from any serde).
-- Internal `emit!` helper / function that routes to sink or `println!`.
-- Replace top-level milestone `println!`s with `emit!(...)`.
+- Add `install_backend_with_progress(options, progress)` wrapper.
+- Keep `install_backend(options)` as thin wrapper calling `_with_progress(options, None)` — **zero call-site churn, no `InstallOptions` struct changes, no Debug/Default breakage**.
+- Internal `fn emit(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>)` routes to sink or `println!`.
+- Route top-level milestone `println!`s through `emit`.
 
 **`crates/koji-core/src/backends/installer/source.rs`**
-- Replace inherited stdio on `git`, `cmake`, `make`/`ninja` with piped stdout/stderr.
-- Line-reader tasks forward each line through the progress sink.
+- Accept an optional `&Arc<dyn ProgressSink>` parameter (internal API; not breaking).
+- Replace `Stdio::inherit()` on `git`, `cmake`, `make`/`ninja` with `Stdio::piped()` for stdout + stderr.
+- Spawn two `tokio::io::BufReader::lines()` reader tasks per process; forward each line through the sink.
 - Preserve existing exit-code error handling.
 
-**`crates/koji-core/src/backends/installer/prebuilt.rs`**
-- Route download progress reporter through the sink, throttled to ~1 line per 250 ms.
+**`crates/koji-core/src/backends/installer/prebuilt.rs`** & **`download.rs`**
+- `download_file` gains optional `progress: Option<&Arc<dyn ProgressSink>>`.
+- When `Some`, skip `indicatif` entirely and emit throttled progress lines (~1/250 ms).
+- When `None`, preserve existing `indicatif` TTY bar (CLI UX unchanged).
 - Route extract-step output through the sink.
 
+**`crates/koji-core/src/backends/installer/urls.rs`**
+- Export `pub const SUPPORTED_CUDA_VERSIONS: &[&str] = &["11.1", "12.4", "13.1"];` — used by both the URL mapping and the capabilities endpoint.
+
 **`crates/koji-core/src/backends/updater.rs`**
-- No signature change; `update_backend` already takes `InstallOptions`, so the sink rides along.
+- Add `update_backend_with_progress(registry, name, options, latest_version, progress)` wrapper.
+- Keep `update_backend` as thin wrapper calling `_with_progress` with `None`.
 
 **`crates/koji-cli/src/commands/backend.rs`**
-- No behavioral change. `progress: None` (or `..Default::default()`); existing `println!`s in CLI code remain for CLI-local output.
+- Remove local `backends_dir()` helper, import `koji_core::backends::backends_dir` instead.
+- Replace the filesystem-removal block in `cmd_remove` with a call to `koji_core::backends::safe_remove_installation`.
+- No other behavioral changes; CLI continues calling `install_backend` / `update_backend` (no progress sink).
 
 **`crates/koji-web/src/server.rs`**
 - Add `pub jobs: Arc<JobManager>` to `AppState`.
@@ -472,9 +616,12 @@ Top-right of the Backends section. POSTs `/api/backends/check-updates`, populate
 
 ### 9.1 `koji-core` unit tests
 
-1. `ProgressSink` trait object: a `MockSink` collects lines into a `Vec<String>`. Install and update code paths emit the expected milestone lines.
-2. `InstallOptions::default()` still works without progress sink.
-3. CLI path still compiles; existing backend command tests pass unchanged.
+1. `ProgressSink` trait object: a `MockSink` collects lines into a `Vec<String>`. `install_backend_with_progress` emits the expected milestone lines.
+2. **Parity**: `install_backend(opts)` and `install_backend_with_progress(opts, None)` produce identical behavior (same final binary path, same stdout, same errors on a mocked installer).
+3. **Debug-derive smoke test**: `fn _assert<T: Debug>() {}; _assert::<InstallOptions>();` — guards against future regressions of the "don't add fields with non-Debug types" invariant.
+4. `backends_dir()` and `safe_remove_installation()` tests (lifted from existing CLI test coverage): refuses paths outside `backends_dir`, handles canonicalization failures safely.
+5. `SUPPORTED_CUDA_VERSIONS` constant matches the match arms in `get_prebuilt_url` (test asserts every listed version produces a successful URL).
+6. CLI path still compiles; existing backend command tests pass unchanged.
 
 ### 9.2 `koji-web` job manager unit tests
 
@@ -486,13 +633,23 @@ Top-right of the Backends section. POSTs `/api/backends/check-updates`, populate
 
 ### 9.3 `koji-web` API integration tests
 
-9. `GET /api/system/capabilities` returns the expected shape.
-10. `GET /api/backends` with empty registry → both known backends with `installed: false`.
-11. `GET /api/backends` with a fake registry entry → `installed: true` + populated `info`.
-12. `POST /api/backends/install` returns 202 + `job_id`; second call while running → 409 with existing `job_id`.
-13. `POST /api/backends/check-updates` populates `update` for installed backends only.
-14. `DELETE /api/backends/:name` → 404 on unknown; 200 + `{ "removed": true }` on known.
-15. `GET /api/backends/jobs/:id/events` SSE — connect after a job has completed → receives buffered logs + final status, then closes. Connect mid-job → receives buffered logs + live logs.
+9. `GET /api/system/capabilities` returns the expected shape and includes `supported_cuda_versions`.
+10. **JSON snapshot test** against a fixture file: `GET /api/backends` with a seeded registry returns exactly the documented wire shape (catches serde drift from §4.1).
+11. `GET /api/backends` with empty registry → both known backends with `installed: false`, `custom: []`.
+12. `GET /api/backends` with a fake registry entry → `installed: true` + populated `info`.
+13. `GET /api/backends` with a `BackendType::Custom` entry → custom row appears in `custom`, not in the two known cards.
+14. `POST /api/backends/install` returns 202 + `job_id`; second call while running → 409 with existing `job_id`.
+15. `POST /api/backends/install` for `ik_llama` with `build_from_source: false` → server upgrades to source build and includes a notice.
+16. `POST /api/backends/install` for `llama_cpp` with `os=linux, gpu=cuda, build_from_source: false` → server upgrades to source build and includes a notice.
+17. `POST /api/backends/install` with source build requested and `cmake_available: false` → 400 with a clear error, no job started.
+18. `POST /api/backends/check-updates` populates `update` for installed backends only.
+19. `DELETE /api/backends/:name` → 404 on unknown; 200 + `{ "removed": true }` on known.
+20. **Path-traversal guard**: `DELETE /api/backends/:name` where the registry-stored `path` points outside `backends_dir()` (e.g. `/usr/local/bin/llama-server`) → 409, no filesystem mutation.
+21. **DELETE while running**: `DELETE /api/backends/:name` while a `Running` job targets the same backend → 409.
+22. **Origin-header enforcement**: `POST /api/backends/install` with `Origin: http://evil.example` and `Host: 127.0.0.1:8080` → 403.
+23. `GET /api/backends/jobs/:id/events` SSE — connect after a job has completed → receives buffered head + tail + final status, then closes. Connect mid-job → receives buffered logs + live logs.
+24. **SSE disconnect**: client disconnects mid-stream; the worker task continues to completion and the job ends in `Succeeded` (verified via `GET /api/backends/jobs/:id`).
+25. **SSE lagged marker**: force a slow subscriber; verify a `[N lines dropped]` event is observable.
 
 ### 9.4 `koji-web` component tests
 
