@@ -8,7 +8,6 @@ pub fn Nav() -> impl IntoView {
             <span class="logo">"⚡ Koji"</span>
             <A href="/" attr:class="nav-link">"Dashboard"</A>
             <A href="/models" attr:class="nav-link">"Models"</A>
-            <A href="/pull" attr:class="nav-link">"Pull Model"</A>
             <A href="/logs" attr:class="nav-link">"Logs"</A>
             <A href="/config" attr:class="nav-link">"Config"</A>
         </nav>
