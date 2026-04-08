@@ -6,3 +6,4 @@ pub mod modal;
 pub mod nav;
 pub mod pull_quant_wizard;
 pub mod sparkline;
+pub mod supervisor_section;
