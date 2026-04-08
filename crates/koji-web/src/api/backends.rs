@@ -373,41 +373,33 @@ pub async fn system_capabilities(State(state): State<Arc<AppState>>) -> impl Int
 
 /// GET /api/backends
 pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let jobs = match &state.jobs {
-        Some(j) => j,
-        None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "job manager not configured"})),
-            )
-                .into_response();
-        }
+    // active_job is only available when job manager is configured
+    let active_job = if let Some(jobs) = &state.jobs {
+        jobs.active()
+            .await
+            .filter(|j| {
+                let st = j.state.try_read().ok();
+                if let Some(s) = &st {
+                    matches!(s.status, crate::jobs::JobStatus::Running)
+                } else {
+                    false
+                }
+            })
+            .map(|j| ActiveJobDto {
+                id: j.id.to_string(),
+                kind: match j.kind {
+                    crate::jobs::JobKind::Install => "install".to_string(),
+                    crate::jobs::JobKind::Update => "update".to_string(),
+                },
+                backend_type: match j.backend_type {
+                    koji_core::backends::BackendType::LlamaCpp => "llama_cpp".to_string(),
+                    koji_core::backends::BackendType::IkLlama => "ik_llama".to_string(),
+                    koji_core::backends::BackendType::Custom => "custom".to_string(),
+                },
+            })
+    } else {
+        None
     };
-
-    // Get active job if any
-    let active_job = jobs
-        .active()
-        .await
-        .filter(|j| {
-            let state = j.state.try_read().ok();
-            if let Some(s) = &state {
-                matches!(s.status, crate::jobs::JobStatus::Running)
-            } else {
-                false
-            }
-        })
-        .map(|j| ActiveJobDto {
-            id: j.id.to_string(),
-            kind: match j.kind {
-                crate::jobs::JobKind::Install => "install".to_string(),
-                crate::jobs::JobKind::Update => "update".to_string(),
-            },
-            backend_type: match j.backend_type {
-                koji_core::backends::BackendType::LlamaCpp => "llama_cpp".to_string(),
-                koji_core::backends::BackendType::IkLlama => "ik_llama".to_string(),
-                koji_core::backends::BackendType::Custom => "custom".to_string(),
-            },
-        });
 
     // Open registry
     let config_path = match &state.config_path {

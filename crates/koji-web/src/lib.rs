@@ -2,7 +2,7 @@
 pub mod server;
 
 #[cfg(feature = "ssr")]
-mod api;
+pub mod api;
 
 #[cfg(feature = "ssr")]
 pub mod jobs;

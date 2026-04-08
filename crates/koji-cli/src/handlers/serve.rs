@@ -84,6 +84,8 @@ async fn start_proxy_server(
         let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
         tracing::info!("Starting koji web UI on http://{}", web_addr);
         let proxy_config = Some(Arc::clone(&state.config));
+        let jobs = std::sync::Arc::new(koji_web::jobs::JobManager::new());
+        let capabilities = std::sync::Arc::new(koji_web::api::backends::CapabilitiesCache::new());
         tokio::spawn(async move {
             if let Err(e) = koji_web::server::run_with_opts(
                 web_addr,
@@ -91,8 +93,8 @@ async fn start_proxy_server(
                 logs_dir,
                 config_path,
                 proxy_config,
-                None, // jobs
-                None, // capabilities
+                Some(jobs),
+                Some(capabilities),
             )
             .await
             {

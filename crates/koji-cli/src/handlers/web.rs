@@ -6,6 +6,18 @@ pub async fn cmd_web(
     logs_dir: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    use std::sync::Arc;
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    koji_web::server::run_with_opts(addr, proxy_url, logs_dir, config_path, None, None, None).await
+    let jobs = Arc::new(koji_web::jobs::JobManager::new());
+    let capabilities = Arc::new(koji_web::api::backends::CapabilitiesCache::new());
+    koji_web::server::run_with_opts(
+        addr,
+        proxy_url,
+        logs_dir,
+        config_path,
+        None,
+        Some(jobs),
+        Some(capabilities),
+    )
+    .await
 }

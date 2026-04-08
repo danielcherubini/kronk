@@ -262,6 +262,9 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                     .or_else(|| koji_core::config::Config::config_path().ok());
                 let web_addr: std::net::SocketAddr = "0.0.0.0:11435".parse().unwrap();
                 tracing::info!("Starting Koji web UI on http://{}", web_addr);
+                let jobs = std::sync::Arc::new(koji_web::jobs::JobManager::new());
+                let capabilities =
+                    std::sync::Arc::new(koji_web::api::backends::CapabilitiesCache::new());
                 tokio::spawn(async move {
                     if let Err(e) = koji_web::server::run_with_opts(
                         web_addr,
@@ -269,8 +272,8 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         logs_dir,
                         config_path,
                         proxy_config,
-                        None, // JobManager
-                        None, // CapabilitiesCache
+                        Some(jobs),
+                        Some(capabilities),
                     )
                     .await
                     {
