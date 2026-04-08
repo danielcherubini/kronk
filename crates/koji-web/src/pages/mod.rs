@@ -1,3 +1,4 @@
+#[cfg(feature = "ssr")]
 pub mod config_editor;
 pub mod dashboard;
 pub mod logs;
