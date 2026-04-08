@@ -15,6 +15,7 @@ use leptos_router::{
 mod components;
 mod pages;
 
+#[cfg(feature = "ssr")]
 #[component]
 pub fn App() -> impl IntoView {
     view! {
@@ -28,6 +29,25 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/pull") view=pages::pull::Pull />
                     <Route path=path!("/logs") view=pages::logs::Logs />
                     <Route path=path!("/config") view=pages::config_editor::ConfigEditor />
+                </Routes>
+            </main>
+        </Router>
+    }
+}
+
+#[cfg(not(feature = "ssr"))]
+#[component]
+pub fn App() -> impl IntoView {
+    view! {
+        <Router>
+            <components::nav::Nav />
+            <main>
+                <Routes fallback=|| "Page not found">
+                    <Route path=path!("/") view=pages::dashboard::Dashboard />
+                    <Route path=path!("/models") view=pages::models::Models />
+                    <Route path=path!("/models/:id/edit") view=pages::model_editor::ModelEditor />
+                    <Route path=path!("/pull") view=pages::pull::Pull />
+                    <Route path=path!("/logs") view=pages::logs::Logs />
                 </Routes>
             </main>
         </Router>
