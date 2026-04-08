@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 
+pub mod backends;
+pub mod middleware;
+
 /// Query parameters for GET /api/logs
 #[derive(serde::Deserialize)]
 pub struct LogsQuery {

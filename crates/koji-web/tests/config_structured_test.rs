@@ -80,6 +80,8 @@ fn build_test_app_state(config_content: &str) -> (Arc<AppState>, TempDir) {
     std::fs::write(&config_path, config_content).expect("write config");
 
     let state = AppState {
+        jobs: None,
+        capabilities: None,
         logs_dir: Some(temp_dir.path().join("logs")),
         config_path: Some(config_path),
         proxy_config: None,
@@ -189,6 +191,8 @@ async fn test_400_on_invalid_json() {
 #[tokio::test]
 async fn test_404_when_config_path_not_configured() {
     let state = Arc::new(AppState {
+        jobs: None,
+        capabilities: None,
         logs_dir: None,
         config_path: None,
         proxy_config: None,

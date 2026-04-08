@@ -2,8 +2,9 @@ use axum::{
     body::Body,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode},
+    middleware,
     response::{Html, IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
     Router,
 };
 use include_dir::{include_dir, Dir};
@@ -11,6 +12,11 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::api;
+use crate::api::backends::{
+    check_backend_updates, install_backend, list_backends, remove_backend, system_capabilities,
+    update_backend, CapabilitiesCache,
+};
+use crate::jobs::JobManager;
 
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/dist");
 
@@ -21,6 +27,8 @@ pub struct AppState {
     pub logs_dir: Option<std::path::PathBuf>,
     pub config_path: Option<std::path::PathBuf>,
     pub proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
+    pub jobs: Option<Arc<JobManager>>,
+    pub capabilities: Option<Arc<CapabilitiesCache>>,
 }
 
 /// Serve a static file from the embedded `dist/` directory.
@@ -116,6 +124,26 @@ async fn serve_index() -> Response {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    // Build sub-router for backends API with origin enforcement and dedicated CORS
+    let backend_routes = Router::new()
+        .route("/api/system/capabilities", get(system_capabilities))
+        .route("/api/backends", get(list_backends))
+        .route("/api/backends/install", post(install_backend))
+        .route("/api/backends/:name/update", post(update_backend))
+        .route("/api/backends/:name", delete(remove_backend))
+        .route("/api/backends/check-updates", post(check_backend_updates))
+        .layer(middleware::from_fn(api::middleware::enforce_same_origin))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers(tower_http::cors::Any),
+        );
+
     Router::new()
         .route("/api/logs", get(api::get_logs))
         .route("/api/config", get(api::get_config).post(api::save_config))
@@ -131,6 +159,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(api::delete_model),
         )
         .route("/api/models/:id/rename", post(api::rename_model))
+        .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))
         .route(
@@ -147,6 +176,8 @@ pub async fn run_with_opts(
     logs_dir: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
     proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
+    jobs: Option<Arc<JobManager>>,
+    capabilities: Option<Arc<CapabilitiesCache>>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
@@ -154,6 +185,8 @@ pub async fn run_with_opts(
         logs_dir,
         config_path,
         proxy_config,
+        jobs,
+        capabilities,
     });
     let app = build_router(state);
     tracing::info!("Koji web UI listening on http://{}", addr);
@@ -164,5 +197,5 @@ pub async fn run_with_opts(
 
 /// Convenience wrapper with no logs_dir/config_path.
 pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
-    run_with_opts(addr, proxy_base_url, None, None, None).await
+    run_with_opts(addr, proxy_base_url, None, None, None, None, None).await
 }
