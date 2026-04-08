@@ -42,9 +42,16 @@ name = "server_test"
 path = "tests/server_test.rs"
 required-features = ["ssr"]
 
+[[test]]
+name = "config_structured_test"
+path = "tests/config_structured_test.rs"
+required-features = ["ssr"]
+
 [dev-dependencies]
 tokio = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+urlencoding = "2.1"

@@ -119,6 +119,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/logs", get(api::get_logs))
         .route("/api/config", get(api::get_config).post(api::save_config))
+        .route(
+            "/api/config/structured",
+            get(api::get_structured_config).post(api::save_structured_config),
+        )
         .route("/api/models", get(api::list_models).post(api::create_model))
         .route(
             "/api/models/:id",

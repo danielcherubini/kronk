@@ -82,6 +82,23 @@ async fn sync_proxy_config(state: &AppState, new_config: koji_core::config::Conf
     }
 }
 
+/// Body for structured config save.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StructuredConfigBody {
+    pub general: crate::types::config::General,
+    #[serde(default)]
+    pub backends: std::collections::BTreeMap<String, crate::types::config::BackendConfig>,
+    #[serde(default)]
+    pub models: std::collections::BTreeMap<String, crate::types::config::ModelConfig>,
+    #[serde(default)]
+    pub supervisor: crate::types::config::Supervisor,
+    #[serde(default)]
+    pub sampling_templates:
+        std::collections::BTreeMap<String, crate::types::config::SamplingParams>,
+    #[serde(default)]
+    pub proxy: crate::types::config::ProxyConfig,
+}
+
 pub async fn save_config(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ConfigBody>,
@@ -121,6 +138,118 @@ pub async fn save_config(
                 }
                 sync_proxy_config(&state, new_config).await;
             }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Structured Config API (JSON-based for WASM) ─────────────────────────────────
+
+/// GET /api/config/structured — returns full Config as JSON.
+pub async fn get_structured_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let config_path = match &state.config_path {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "config_path not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Load config from disk using koji_core (SSR-only path)
+    let cfg = match tokio::task::spawn_blocking(move || {
+        koji_core::config::Config::load_from(&config_dir)
+    })
+    .await
+    {
+        Ok(Ok(cfg)) => cfg,
+        Ok(Err(e)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    // Convert to mirror types for JSON serialization
+    let structured: crate::types::config::Config = cfg.into();
+
+    Json(structured).into_response()
+}
+
+/// POST /api/config/structured — accept JSON Config, persist as TOML.
+pub async fn save_structured_config(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<StructuredConfigBody>,
+) -> impl IntoResponse {
+    let config_path = match &state.config_path {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "config_path not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Convert mirror types back to koji_core::Config
+    let mut new_config: koji_core::config::Config = body.into();
+
+    // Restore loaded_from from existing proxy config (it has #[serde(skip)])
+    if let Some(ref proxy_config) = state.proxy_config {
+        new_config.loaded_from = proxy_config.read().await.loaded_from.clone();
+    }
+
+    // Persist to disk using koji_core's save_to (consistent with other endpoints)
+    let config_dir_clone = config_dir.clone();
+    let new_config_clone = new_config.clone();
+    match tokio::task::spawn_blocking(move || new_config_clone.save_to(&config_dir_clone)).await {
+        Ok(Ok(_)) => {
+            // Sync proxy config for hot-reload
+            sync_proxy_config(&state, new_config).await;
             Json(serde_json::json!({ "ok": true })).into_response()
         }
         Ok(Err(e)) => (
