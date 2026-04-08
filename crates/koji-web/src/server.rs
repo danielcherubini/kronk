@@ -13,8 +13,8 @@ use tower_http::cors::CorsLayer;
 
 use crate::api;
 use crate::api::backends::{
-    check_backend_updates, install_backend, list_backends, remove_backend, system_capabilities,
-    update_backend, CapabilitiesCache,
+    check_backend_updates, get_job, install_backend, job_events_sse, list_backends, remove_backend,
+    system_capabilities, update_backend, CapabilitiesCache,
 };
 use crate::jobs::JobManager;
 
@@ -132,6 +132,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/backends/:name/update", post(update_backend))
         .route("/api/backends/:name", delete(remove_backend))
         .route("/api/backends/check-updates", post(check_backend_updates))
+        .route("/api/backends/jobs/:id", get(get_job))
+        .route("/api/backends/jobs/:id/events", get(job_events_sse))
         .layer(middleware::from_fn(api::middleware::enforce_same_origin))
         .layer(
             CorsLayer::new()
