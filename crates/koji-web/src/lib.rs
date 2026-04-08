@@ -4,6 +4,9 @@ pub mod server;
 #[cfg(feature = "ssr")]
 mod api;
 
+#[cfg(feature = "ssr")]
+mod types;
+
 use leptos::prelude::*;
 use leptos_router::{
     components::{Route, Router, Routes},
