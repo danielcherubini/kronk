@@ -1,4 +1,10 @@
+pub mod backends_section;
+pub mod config_nav;
+pub mod form_validation;
+pub mod general_section;
 pub mod modal;
 pub mod nav;
 pub mod pull_quant_wizard;
+pub mod sampling_templates_section;
 pub mod sparkline;
+pub mod supervisor_section;

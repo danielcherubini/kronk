@@ -217,6 +217,10 @@ pub struct Supervisor {
     pub restart_delay_ms: u64,
     #[serde(default = "default_health_check_interval_ms")]
     pub health_check_interval_ms: u64,
+    #[serde(default = "default_health_check_timeout_ms")]
+    pub health_check_timeout_ms: u64,
+    #[serde(default = "default_health_check_retries")]
+    pub health_check_retries: u32,
 }
 
 impl Default for Supervisor {
@@ -226,6 +230,8 @@ impl Default for Supervisor {
             max_restarts: default_max_restarts(),
             restart_delay_ms: default_restart_delay_ms(),
             health_check_interval_ms: default_health_check_interval_ms(),
+            health_check_timeout_ms: default_health_check_timeout_ms(),
+            health_check_retries: default_health_check_retries(),
         }
     }
 }
@@ -282,6 +288,14 @@ fn default_restart_delay_ms() -> u64 {
 
 fn default_health_check_interval_ms() -> u64 {
     5000
+}
+
+fn default_health_check_timeout_ms() -> u64 {
+    30000
+}
+
+fn default_health_check_retries() -> u32 {
+    3
 }
 
 /// Maximum request body size in bytes (16 MB)
