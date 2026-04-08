@@ -1,7 +1,5 @@
-#[cfg(feature = "ssr")]
 use leptos::prelude::*;
 
-#[cfg(feature = "ssr")]
 /// Main configuration editor page - placeholder for section-based UI
 #[component]
 pub fn ConfigEditor() -> impl IntoView {
