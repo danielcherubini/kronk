@@ -16,7 +16,7 @@ use tokio::time::Duration;
 
 use crate::jobs::JobManager;
 use crate::server::AppState;
-use koji_core::backends::ProgressSink;
+use koji_core::backends::{BackendInfo, ProgressSink};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wire DTOs (koji-web only, not exposed from koji-core)
@@ -447,51 +447,60 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     match registry_result {
         Ok(registry) => {
+            // List all installed backends from registry
+            let all_backends = registry.list().unwrap_or_default();
+
+            // Build a map of installed backends by backend_type
+            // (take the first/latest installation for each type)
+            let mut installed_by_type: std::collections::HashMap<String, BackendInfo> =
+                std::collections::HashMap::new();
+            for info in &all_backends {
+                let bt = info.backend_type.to_string();
+                // Only keep one entry per backend type (latest installation)
+                installed_by_type.entry(bt).or_insert(info.clone());
+            }
+
             // Always emit both known cards
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                match registry.get(type_) {
-                    Ok(Some(info)) => {
-                        backends.push(BackendCardDto {
-                            r#type: type_.to_string(),
-                            display_name: display_name.to_string(),
-                            installed: true,
-                            info: Some(BackendInfoDto::from(info)),
-                            update: UpdateStatusDto::default(),
-                            release_notes_url: release_notes_url.map(String::from),
-                        });
-                    }
-                    Ok(None) => {
-                        backends.push(BackendCardDto::default_uninstalled(
-                            type_,
-                            display_name,
-                            *release_notes_url,
-                        ));
-                    }
-                    Err(_) => {
-                        // Registry error for this backend — treat as not installed
-                        backends.push(BackendCardDto::default_uninstalled(
-                            type_,
-                            display_name,
-                            *release_notes_url,
-                        ));
-                    }
+                #[allow(clippy::unnecessary_to_owned)]
+                let installed = installed_by_type.get(&type_.to_string());
+                if let Some(info) = installed {
+                    backends.push(BackendCardDto {
+                        r#type: type_.to_string(),
+                        display_name: display_name.to_string(),
+                        installed: true,
+                        info: Some(BackendInfoDto::from(info.clone())),
+                        update: UpdateStatusDto::default(),
+                        release_notes_url: release_notes_url.map(String::from),
+                    });
+                } else {
+                    backends.push(BackendCardDto::default_uninstalled(
+                        type_,
+                        display_name,
+                        *release_notes_url,
+                    ));
                 }
             }
 
             // List all backends and filter for custom ones
-            let all_backends = registry.list().unwrap_or_default();
-            for info in all_backends {
-                // Skip known backends (they're already in the backends list)
+            for info in &all_backends {
                 let bt = info.backend_type.to_string();
+                // Skip known backends (they're already in the backends list)
                 if bt != "llama_cpp" && bt != "ik_llama" {
-                    custom.push(BackendCardDto {
-                        r#type: format!("{}", info.backend_type),
-                        display_name: format!("Custom ({})", info.name),
-                        installed: true,
-                        info: Some(BackendInfoDto::from(info)),
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: None,
-                    });
+                    // Avoid duplicates - only show custom backends we haven't seen
+                    if !custom
+                        .iter()
+                        .any(|c| c.r#type == format!("{}", info.backend_type))
+                    {
+                        custom.push(BackendCardDto {
+                            r#type: format!("{}", info.backend_type),
+                            display_name: format!("Custom ({})", info.name),
+                            installed: true,
+                            info: Some(BackendInfoDto::from(info.clone())),
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: None,
+                        });
+                    }
                 }
             }
         }
