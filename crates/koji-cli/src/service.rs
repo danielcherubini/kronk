@@ -269,6 +269,8 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         logs_dir,
                         config_path,
                         proxy_config,
+                        None, // JobManager
+                        None, // CapabilitiesCache
                     )
                     .await
                     {
