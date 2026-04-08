@@ -96,8 +96,6 @@ pub struct Supervisor {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProxyConfig {
     #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
     pub host: String,
     #[serde(default)]
     pub port: u16,
@@ -303,14 +301,6 @@ fn target_value(ev: &leptos::ev::Event) -> String {
         .unwrap_or_default()
 }
 
-fn target_checked(ev: &leptos::ev::Event) -> bool {
-    use wasm_bindgen::JsCast;
-    ev.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-        .map(|i| i.checked())
-        .unwrap_or(false)
-}
-
 // ─── General Form ─────────────────────────────────────────────────────────
 
 #[component]
@@ -386,20 +376,6 @@ fn ProxyForm(config: RwSignal<Option<Config>>) -> impl IntoView {
             <p class="text-muted">"Configure the proxy server that routes OpenAI/Ollama-compatible requests."</p>
 
             <div style="display:flex;flex-direction:column;gap:1rem;margin-top:1rem;">
-                <div>
-                    <label>
-                        <input
-                            type="checkbox"
-                            prop:checked=move || get_proxy().enabled
-                            on:change=move |ev| {
-                                let v = target_checked(&ev);
-                                config.update(|c| if let Some(c) = c { c.proxy.enabled = v; });
-                            }
-                        />
-                        " Enabled"
-                    </label>
-                </div>
-
                 <div>
                     <label>"Host"</label>
                     <input
