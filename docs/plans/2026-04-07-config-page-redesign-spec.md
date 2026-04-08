@@ -2,7 +2,8 @@
 
 **Date:** 2026-04-07  
 **Author:** Daniel Cherubini  
-**Status:** Draft - Awaiting Review
+**Status:** ✅ COMPLETED
+**PR:** https://github.com/danielcherubini/koji/pull/41
 
 ## Overview
 
