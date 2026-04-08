@@ -206,7 +206,6 @@ pub struct Config {
 }
 
 /// Default helper functions for Config fields.
-
 fn default_proxy_enabled() -> bool {
     false
 }

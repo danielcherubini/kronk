@@ -5,7 +5,7 @@ pub mod server;
 mod api;
 
 #[cfg(feature = "ssr")]
-mod types;
+pub mod types;
 
 use leptos::prelude::*;
 use leptos_router::{
