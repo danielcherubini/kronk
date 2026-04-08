@@ -588,6 +588,25 @@ fn BackendsForm(config: RwSignal<Option<Config>>) -> impl IntoView {
         });
     });
 
+    let on_check_updates_click = Callback::new(move |_backend_type: String| {
+        action_error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            let url = "/api/backends/check-updates".to_string();
+            match gloo_net::http::Request::post(&url).send().await {
+                Ok(resp) => {
+                    if resp.ok() {
+                        // Success - refresh the list to show updated status
+                        refresh_tick.update(|n| *n += 1);
+                    } else {
+                        let text = resp.text().await.unwrap_or_default();
+                        action_error.set(Some(format!("Check updates failed: {text}")));
+                    }
+                }
+                Err(e) => action_error.set(Some(format!("Check updates request failed: {e}"))),
+            }
+        });
+    });
+
     let on_delete_click = Callback::new(move |backend_type: String| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
@@ -685,6 +704,7 @@ fn BackendsForm(config: RwSignal<Option<Config>>) -> impl IntoView {
                                 backend=backend
                                 on_install=on_install_click
                                 on_update=on_update_click
+                                on_check_updates=on_check_updates_click
                                 on_delete=on_delete_click
                             />
                         }.into_any());

@@ -94,12 +94,16 @@ pub fn BackendCard(
     /// Called with the backend type when "Update" is clicked.
     #[prop(optional)]
     on_update: Option<Callback<String>>,
+    /// Called with the backend type when "Check for updates" is clicked.
+    #[prop(optional)]
+    on_check_updates: Option<Callback<String>>,
     /// Called with the backend type when "Uninstall" is clicked.
     #[prop(optional)]
     on_delete: Option<Callback<String>>,
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
+    let type_check = backend.r#type.clone();
     let type_delete = backend.r#type.clone();
 
     let installed = backend.installed;
@@ -181,6 +185,28 @@ pub fn BackendCard(
                             "Install"
                         </button>
                     }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }}
+
+                {if installed {
+                    // Always show "Check for updates" button
+                    if let Some(cb) = on_check_updates {
+                        let bt = type_check.clone();
+                        view! {
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                on:click=move |_| {
+                                    cb.run(bt.clone());
+                                }
+                            >
+                                "Check for updates"
+                            </button>
+                        }.into_any()
+                    } else {
+                        view! { <span/> }.into_any()
+                    }
                 } else {
                     view! { <span/> }.into_any()
                 }}
