@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
@@ -6,6 +7,16 @@ use super::download::download_file;
 use super::extract::extract_archive;
 use super::urls::get_prebuilt_url;
 use super::InstallOptions;
+use super::ProgressSink;
+
+/// Emit a log line through the progress sink, or println if no sink is provided.
+fn emit(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>) {
+    let line = line.into();
+    match sink {
+        Some(s) => s.log(&line),
+        None => println!("{line}"),
+    }
+}
 
 /// Prepare the target directory for installation.
 ///
@@ -29,11 +40,17 @@ pub fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()
 }
 
 /// Install a pre-built backend binary from GitHub releases.
-pub async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result<PathBuf> {
-    tracing::info!(
-        "Installing pre-built binary for {:?} version {}",
-        options.backend_type,
-        version
+pub async fn install_prebuilt(
+    options: &InstallOptions,
+    version: &str,
+    progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<PathBuf> {
+    emit(
+        progress,
+        format!(
+            "Installing pre-built binary for {:?} version {}",
+            options.backend_type, version
+        ),
     );
 
     prepare_target_dir(&options.target_dir, options.allow_overwrite)?;
@@ -49,7 +66,7 @@ pub async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result
         options.gpu_type.as_ref(),
     )?;
 
-    println!("Downloading from: {}", url);
+    emit(progress, format!("Downloading from: {}", url));
 
     let download_dir = tempfile::tempdir()?;
     let archive_name = url
@@ -58,11 +75,11 @@ pub async fn install_prebuilt(options: &InstallOptions, version: &str) -> Result
         .ok_or_else(|| anyhow!("Invalid download URL: {}", url))?;
     let archive_path = download_dir.path().join(archive_name);
 
-    download_file(&url, &archive_path).await?;
+    download_file(&url, &archive_path, progress).await?;
 
-    println!("Extracting archive...");
+    emit(progress, "Extracting archive...");
     let binary_path = extract_archive(&archive_path, &options.target_dir)?;
 
-    println!("Backend installed at: {:?}", binary_path);
+    emit(progress, format!("Backend installed at: {:?}", binary_path));
     Ok(binary_path)
 }

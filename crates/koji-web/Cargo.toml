@@ -28,15 +28,18 @@ reqwest = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
+async-stream = { version = "0.3", optional = true }
 koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [features]
 csr = []
 ssr = [
-  "dep:axum", "dep:tokio", "dep:anyhow", "dep:include_dir",
+  "dep:axum", "dep:tokio", "dep:async-stream", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
-  "dep:koji-core", "dep:toml", "dep:tower-http",
+  "dep:koji-core", "dep:toml", "dep:tower-http", "dep:thiserror", "dep:uuid",
 ]
 
 [[test]]

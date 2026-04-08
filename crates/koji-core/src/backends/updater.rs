@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
-use super::installer::{install_backend, InstallOptions};
+use super::installer::{install_backend_with_progress, InstallOptions};
 use super::registry::{BackendInfo, BackendRegistry, BackendType};
+use super::ProgressSink;
 
 /// Check for GitHub token for authenticated API requests (5000 req/hour vs 60 unauth)
 fn github_token() -> Option<String> {
@@ -101,11 +103,13 @@ pub async fn check_updates(backend_info: &BackendInfo) -> Result<UpdateCheck> {
     })
 }
 
-pub async fn update_backend(
+/// Update a backend with progress tracking.
+pub async fn update_backend_with_progress(
     registry: &mut BackendRegistry,
     backend_name: &str,
     options: InstallOptions,
     latest_version: String,
+    progress: Option<Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // Validate backend exists before installing to prevent orphaned files
     registry
@@ -117,8 +121,8 @@ pub async fn update_backend(
     // Clone backend_type before install_backend moves options
     let backend_type = options.backend_type.clone();
 
-    // Install the new version
-    let new_binary_path = install_backend(options).await?;
+    // Install the new version with progress
+    let new_binary_path = install_backend_with_progress(options, progress).await?;
 
     // Resolve "latest" to actual tag before storing in registry
     let resolved_version = if latest_version.to_lowercase() == "latest" {
@@ -139,4 +143,17 @@ pub async fn update_backend(
 
     tracing::info!("Update complete!");
     Ok(())
+}
+
+/// Update a backend (no progress tracking).
+///
+/// This is a thin wrapper around `update_backend_with_progress` that passes `None`
+/// for the progress sink, preserving the original CLI behavior.
+pub async fn update_backend(
+    registry: &mut BackendRegistry,
+    backend_name: &str,
+    options: InstallOptions,
+    latest_version: String,
+) -> Result<()> {
+    update_backend_with_progress(registry, backend_name, options, latest_version, None).await
 }

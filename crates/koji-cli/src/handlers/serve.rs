@@ -91,6 +91,8 @@ async fn start_proxy_server(
                 logs_dir,
                 config_path,
                 proxy_config,
+                None, // jobs
+                None, // capabilities
             )
             .await
             {

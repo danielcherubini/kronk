@@ -1,0 +1,26 @@
+{
+  "active_job": null,
+  "backends": [
+    {
+      "type": "llama_cpp",
+      "display_name": "llama.cpp",
+      "installed": false,
+      "info": null,
+      "update": {
+        "checked": false
+      },
+      "release_notes_url": "https://github.com/ggml-org/llama.cpp/releases"
+    },
+    {
+      "type": "ik_llama",
+      "display_name": "ik_llama.cpp",
+      "installed": false,
+      "info": null,
+      "update": {
+        "checked": false
+      },
+      "release_notes_url": "https://github.com/ikawrakow/ik_llama.cpp/commits/main"
+    }
+  ],
+  "custom": []
+}

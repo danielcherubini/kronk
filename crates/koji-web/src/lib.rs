@@ -5,6 +5,9 @@ pub mod server;
 mod api;
 
 #[cfg(feature = "ssr")]
+pub mod jobs;
+
+#[cfg(feature = "ssr")]
 pub mod types;
 
 use leptos::prelude::*;

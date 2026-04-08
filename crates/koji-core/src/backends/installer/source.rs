@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
 use anyhow::Context;
@@ -7,7 +8,17 @@ use anyhow::{anyhow, Result};
 use super::extract::find_backend_binary;
 use super::prebuilt::prepare_target_dir;
 use super::InstallOptions;
+use super::ProgressSink;
 use crate::gpu::GpuType;
+
+/// Emit a log line through the progress sink, or println if no sink is provided.
+fn emit(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>) {
+    let line = line.into();
+    match sink {
+        Some(s) => s.log(&line),
+        None => println!("{line}"),
+    }
+}
 
 /// Build and install a backend from source using git + cmake.
 pub async fn install_from_source(
@@ -15,8 +26,12 @@ pub async fn install_from_source(
     version: &str,
     git_url: &str,
     commit: Option<&str>,
+    progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<PathBuf> {
-    tracing::info!("Building from source: {} version {}", git_url, version);
+    emit(
+        progress,
+        format!("Building from source: {} version {}", git_url, version),
+    );
 
     prepare_target_dir(&options.target_dir, options.allow_overwrite)?;
 
@@ -59,16 +74,16 @@ pub async fn install_from_source(
     std::fs::create_dir_all(&build_output)?;
 
     // Clone repository
-    clone_repository(version, git_url, &source_dir, commit).await?;
+    clone_repository(version, git_url, &source_dir, commit, progress).await?;
 
     // Configure with CMake
-    configure_cmake(options, &source_dir, &build_output).await?;
+    configure_cmake(options, &source_dir, &build_output, progress).await?;
 
     // Build
-    build_cmake(&build_output).await?;
+    build_cmake(&build_output, progress).await?;
 
     // Install binary
-    let result = install_binary(&build_output, options).await;
+    let result = install_binary(&build_output, options, progress).await;
 
     // Clean up build artifacts on success — the binary is installed and the
     // multi-GB build tree is no longer needed. On failure, leave it in place
@@ -91,12 +106,16 @@ async fn clone_repository(
     git_url: &str,
     source_dir: &Path,
     commit: Option<&str>,
+    progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // When a specific commit is requested, do a deeper clone of main then checkout.
     if let Some(commit_hash) = commit {
-        println!(
-            "Cloning repository for commit {} (depth 500)...",
-            commit_hash
+        emit(
+            progress,
+            format!(
+                "Cloning repository for commit {} (depth 500)...",
+                commit_hash
+            ),
         );
         let clone_status = tokio::process::Command::new("git")
             .args([
@@ -118,7 +137,7 @@ async fn clone_repository(
             ));
         }
 
-        println!("Checking out commit {}...", commit_hash);
+        emit(progress, format!("Checking out commit {}...", commit_hash));
         let checkout_status = tokio::process::Command::new("git")
             .args(["-C", &source_dir.to_string_lossy(), "checkout", commit_hash])
             .status()
@@ -133,14 +152,14 @@ async fn clone_repository(
             ));
         }
 
-        println!("Checked out commit {}.", commit_hash);
+        emit(progress, format!("Checked out commit {}.", commit_hash));
         return Ok(());
     }
 
-    println!("Cloning repository (shallow)...");
+    emit(progress, "Cloning repository (shallow)...");
 
     // For "latest", resolve the most recent tag first before trying branch clone
-    if version == "latest" && try_clone_latest_tag(git_url, source_dir).await? {
+    if version == "latest" && try_clone_latest_tag(git_url, source_dir, progress).await? {
         return Ok(());
     }
 
@@ -182,7 +201,10 @@ async fn clone_repository(
         "Tag/branch '{}' not found, cloning HEAD as fallback. Use an explicit version tag or --build flag.",
         version
     );
-    println!("Tag/branch '{}' not found, cloning HEAD...", version);
+    emit(
+        progress,
+        format!("Tag/branch '{}' not found, cloning HEAD...", version),
+    );
     let status = tokio::process::Command::new("git")
         .args([
             "clone",
@@ -203,7 +225,11 @@ async fn clone_repository(
 
 /// Attempt to find and clone the latest tag from a git repository.
 /// Returns true if successfully cloned from a tag.
-async fn try_clone_latest_tag(git_url: &str, source_dir: &Path) -> Result<bool> {
+async fn try_clone_latest_tag(
+    git_url: &str,
+    source_dir: &Path,
+    progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<bool> {
     let tags_output = tokio::process::Command::new("git")
         .args(["ls-remote", "--tags", "--sort=-v:refname", git_url])
         .output()
@@ -226,7 +252,7 @@ async fn try_clone_latest_tag(git_url: &str, source_dir: &Path) -> Result<bool> 
                 let tag_name: &str = ref_field
                     .trim_start_matches("refs/tags/")
                     .trim_end_matches("^{}");
-                println!("Resolving 'latest' to tag: {}", tag_name);
+                emit(progress, format!("Resolving 'latest' to tag: {}", tag_name));
                 let tag_clone = tokio::process::Command::new("git")
                     .args([
                         "clone",
@@ -383,7 +409,11 @@ fn find_vcvarsall() -> Option<std::path::PathBuf> {
 /// quoting complexity (the "network path not found" class of errors that
 /// occur when trying to inline a quoted UNC-like path after `cmd /c`).
 #[cfg(target_os = "windows")]
-async fn configure_cmake_windows(cmake_args: &[String], build_output: &Path) -> Result<()> {
+async fn configure_cmake_windows(
+    cmake_args: &[String],
+    build_output: &Path,
+    _progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<()> {
     // Build the cmake invocation line for inside the .bat file.
     // Each arg containing spaces gets double-quoted (safe in .bat context).
     let cmake_invocation = std::iter::once("cmake".to_string())
@@ -456,12 +486,13 @@ async fn configure_cmake(
     options: &InstallOptions,
     source_dir: &Path,
     build_output: &Path,
+    _progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     let cmake_args = build_cmake_args(options, source_dir, build_output);
 
     #[cfg(target_os = "windows")]
     {
-        return configure_cmake_windows(&cmake_args, build_output).await;
+        return configure_cmake_windows(&cmake_args, build_output, _progress).await;
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -582,14 +613,17 @@ mod tests {
 }
 
 /// Run CMake build step with parallel jobs.
-async fn build_cmake(build_output: &Path) -> Result<()> {
+async fn build_cmake(build_output: &Path, progress: Option<&Arc<dyn ProgressSink>>) -> Result<()> {
     let num_jobs = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
 
-    println!(
-        "Building with {} parallel jobs (this may take several minutes)...",
-        num_jobs
+    emit(
+        progress,
+        format!(
+            "Building with {} parallel jobs (this may take several minutes)...",
+            num_jobs
+        ),
     );
 
     // On Windows, nvcc requires cl.exe to be on PATH (it's the CUDA host
@@ -652,8 +686,12 @@ async fn build_cmake(build_output: &Path) -> Result<()> {
 }
 
 /// Copy the built binary (and shared libs) to the target directory.
-async fn install_binary(build_output: &Path, options: &InstallOptions) -> Result<PathBuf> {
-    println!("Installing binary...");
+async fn install_binary(
+    build_output: &Path,
+    options: &InstallOptions,
+    progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<PathBuf> {
+    emit(progress, "Installing binary...");
     let binary_src = find_backend_binary(build_output)?;
 
     std::fs::create_dir_all(&options.target_dir)?;
@@ -704,6 +742,9 @@ async fn install_binary(build_output: &Path, options: &InstallOptions) -> Result
     }
     copy_shared_libs(build_output, &options.target_dir);
 
-    println!("Backend built and installed at: {:?}", binary_dest);
+    emit(
+        progress,
+        format!("Backend built and installed at: {:?}", binary_dest),
+    );
     Ok(binary_dest)
 }
