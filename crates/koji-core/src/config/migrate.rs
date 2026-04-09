@@ -42,6 +42,14 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
     // 4. For each (key, model_config) in config.models
     let mut migrated_count = 0;
     for model_config in config.models.values_mut() {
+        // Derive api_name from model field (HF repo ID) if not set
+        // This applies to ALL models, not just those with card files
+        if model_config.api_name.is_none() {
+            if let Some(repo_id) = &model_config.model {
+                model_config.api_name = Some(repo_id.clone());
+            }
+        }
+
         // First, handle sampling resolution for ALL models (with or without model field)
         if model_config.sampling.is_none() {
             if let Some(profile_name) = &model_config.profile {
@@ -86,10 +94,6 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
 
             // If there's a card, migrate card data
             if let Some(card) = card_data.get(&filename) {
-                // Set api_name from card.model.name if api_name is None
-                if model_config.api_name.is_none() {
-                    model_config.api_name = Some(card.model.name.clone());
-                }
                 // Set gpu_layers from card.model.default_gpu_layers if gpu_layers is None
                 if model_config.gpu_layers.is_none() {
                     model_config.gpu_layers = card.model.default_gpu_layers;
@@ -565,7 +569,7 @@ top_k = 40
 
         // Assertions
         let model_config = config.models.get("test-model").unwrap();
-        assert_eq!(model_config.api_name, Some("TestModel".to_string()));
+        assert_eq!(model_config.api_name, Some("org/repo".to_string()));
         assert_eq!(model_config.gpu_layers, Some(99));
         assert_eq!(model_config.context_length, Some(8192));
         assert_eq!(
@@ -675,7 +679,7 @@ top_k = 40
 
         // Verify migration happened
         let model_config = config.models.get("test-model").unwrap();
-        assert_eq!(model_config.api_name, Some("TestModel".to_string()));
+        assert_eq!(model_config.api_name, Some("org/repo".to_string()));
         assert_eq!(model_config.gpu_layers, Some(99));
         assert_eq!(model_config.context_length, Some(8192));
         assert!(!card_path.exists());
@@ -685,7 +689,7 @@ top_k = 40
 
         // Verify nothing changed
         let model_config = config.models.get("test-model").unwrap();
-        assert_eq!(model_config.api_name, Some("TestModel".to_string()));
+        assert_eq!(model_config.api_name, Some("org/repo".to_string()));
         assert_eq!(model_config.gpu_layers, Some(99));
         assert_eq!(model_config.context_length, Some(8192));
     }
@@ -785,8 +789,8 @@ size_bytes = 8000000000
             "model-Q8_0.gguf"
         );
 
-        // api_name should be set
-        assert_eq!(model_config.api_name, Some("TestModel".to_string()));
+        // api_name should be set from model field (HF repo ID)
+        assert_eq!(model_config.api_name, Some("org/repo".to_string()));
     }
 
     /// Helper that builds a minimal `ModelConfig` with a quants map containing
@@ -934,5 +938,63 @@ size_bytes = 8000000000
         assert!(!changed);
         let m = &config.models["m"];
         assert_eq!(m.args, vec!["-fa 1".to_string(), "-c 4096".to_string()]);
+    }
+
+    #[test]
+    fn test_api_name_derived_from_model_field_without_card() {
+        let dir = tempdir().unwrap();
+        let config_dir = dir.path();
+
+        // Create configs/ directory (empty - no card files)
+        let configs_dir = config_dir.join("configs");
+        fs::create_dir_all(&configs_dir).unwrap();
+
+        // Create config.toml with api_name: None and model: Some(...)
+        let config_path = config_dir.join("config.toml");
+        let config_toml = r#"
+[models.test-model]
+backend = "llama_cpp"
+model = "org/model-name"
+quant = "Q4_K_M"
+"#;
+        fs::write(&config_path, config_toml).unwrap();
+
+        // Setup config object with api_name: None and model: Some("org/model-name")
+        let mut config = Config {
+            general: crate::config::types::General::default(),
+            backends: HashMap::new(),
+            models: {
+                let mut m = HashMap::new();
+                let model = crate::config::ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    args: vec![],
+                    sampling: None,
+                    model: Some("org/model-name".to_string()),
+                    quant: Some("Q4_K_M".to_string()),
+                    mmproj: None,
+                    port: None,
+                    health_check: None,
+                    enabled: true,
+                    context_length: None,
+                    profile: None,
+                    api_name: None, // This is what should be derived during migration
+                    gpu_layers: None,
+                    quants: BTreeMap::new(),
+                };
+                m.insert("test-model".to_string(), model);
+                m
+            },
+            supervisor: crate::config::types::Supervisor::default(),
+            sampling_templates: HashMap::new(),
+            proxy: crate::config::types::ProxyConfig::default(),
+            loaded_from: Some(config_dir.to_path_buf()),
+        };
+
+        // Run migration (no card files exist)
+        migrate_cards_to_unified_config(&mut config).unwrap();
+
+        // After migration, api_name should be derived from model field
+        let model_config = config.models.get("test-model").unwrap();
+        assert_eq!(model_config.api_name, Some("org/model-name".to_string()));
     }
 }
