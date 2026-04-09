@@ -234,45 +234,56 @@ pub async fn forward_request(
                     match chunk_result {
                         Ok(chunk) => {
                             // SSE format: each line is either a comment, empty, or data: ...
-                            // We need to process data: lines and rewrite the model field
+                            // We need to process data: lines and rewrite the model field.
+                            // Buffer partial lines to handle chunks split mid-line.
                             let chunk_str = String::from_utf8_lossy(&chunk);
                             let mut result = String::new();
+                            let mut buffer = String::new();
 
-                            for line in chunk_str.lines() {
-                                // Process complete SSE line
-                                if let Some(data_content) = line.strip_prefix("data: ") {
-                                    if data_content == "[DONE]" {
-                                        // Pass through unchanged
-                                        result.push_str(line);
-                                        result.push('\n');
-                                    } else {
-                                        // Try to parse and rewrite model field
-                                        if let Ok(mut json_value) =
-                                            serde_json::from_str::<JsonValue>(data_content)
-                                        {
-                                            json_value["model"] =
-                                                JsonValue::String(model_name.clone());
-                                            let reserialized = serde_json::to_string(&json_value)
-                                                .unwrap_or_else(|_| data_content.to_string());
-                                            result.push_str("data: ");
-                                            result.push_str(&reserialized);
-                                            result.push('\n');
+                            for ch in chunk_str.chars() {
+                                buffer.push(ch);
+                                if ch == '\n' {
+                                    // Process complete line from buffer
+                                    let line = buffer.clone();
+                                    buffer.clear();
+
+                                    // Process complete SSE line
+                                    if let Some(data_content) = line.strip_prefix("data: ") {
+                                        if data_content == "[DONE]" {
+                                            // Pass through unchanged
+                                            result.push_str(&line);
                                         } else {
-                                            // Not valid JSON, pass through unchanged
-                                            result.push_str(line);
-                                            result.push('\n');
+                                            // Try to parse and rewrite model field
+                                            if let Ok(mut json_value) =
+                                                serde_json::from_str::<JsonValue>(data_content)
+                                            {
+                                                json_value["model"] =
+                                                    JsonValue::String(model_name.clone());
+                                                let reserialized = serde_json::to_string(&json_value)
+                                                    .unwrap_or_else(|_| data_content.to_string());
+                                                result.push_str("data: ");
+                                                result.push_str(&reserialized);
+                                                result.push('\n');
+                                            } else {
+                                                // Not valid JSON, pass through unchanged
+                                                result.push_str(&line);
+                                            }
                                         }
+                                    } else if line.is_empty() || line.starts_with(':') {
+                                        // Comments and empty lines pass through unchanged
+                                        result.push_str(&line);
+                                    } else {
+                                        // Other lines pass through
+                                        result.push_str(&line);
                                     }
-                                } else if line.is_empty() || line.starts_with(':') {
-                                    // Comments and empty lines pass through unchanged
-                                    result.push_str(line);
-                                    result.push('\n');
-                                } else {
-                                    // Other lines pass through
-                                    result.push_str(line);
-                                    result.push('\n');
                                 }
                             }
+
+                            // Handle any remaining partial line (chunk ended mid-line)
+                            if !buffer.is_empty() {
+                                result.push_str(&buffer);
+                            }
+
                             Ok(Bytes::from(result.into_bytes()))
                         }
                         Err(e) => Err(e),
