@@ -535,73 +535,71 @@ async fn run_verification(
     let hash_quant = quant_hint.clone();
     let hash_db_dir = db_dir.clone();
 
-    let blocking_result = tokio::task::spawn_blocking(
-        move || -> (Option<bool>, Option<String>) {
-            // Compute the SHA-256 of the downloaded file.
-            let actual = match crate::models::verify::sha256_file(&hash_dest, |n| {
-                hash_progress.store(n, Ordering::Relaxed);
-            }) {
-                Ok(h) => Some(h),
-                Err(e) => {
-                    tracing::warn!(error = %e, path = %hash_dest.display(), "Hashing failed");
-                    None
-                }
+    let blocking_result = tokio::task::spawn_blocking(move || -> (Option<bool>, Option<String>) {
+        // Compute the SHA-256 of the downloaded file.
+        let actual = match crate::models::verify::sha256_file(&hash_dest, |n| {
+            hash_progress.store(n, Ordering::Relaxed);
+        }) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %hash_dest.display(), "Hashing failed");
+                None
+            }
+        };
+
+        let (ok, err): (Option<bool>, Option<String>) =
+            match (hash_expected.as_deref(), actual.as_deref()) {
+                (None, _) => (None, Some("no upstream hash".to_string())),
+                (Some(_), None) => (
+                    Some(false),
+                    Some("hash error: failed to read file".to_string()),
+                ),
+                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
+                (Some(exp), Some(act)) => (
+                    Some(false),
+                    Some(format!(
+                        "hash mismatch: expected {} got {}",
+                        &exp.chars().take(10).collect::<String>(),
+                        &act.chars().take(10).collect::<String>()
+                    )),
+                ),
             };
 
-            let (ok, err): (Option<bool>, Option<String>) =
-                match (hash_expected.as_deref(), actual.as_deref()) {
-                    (None, _) => (None, Some("no upstream hash".to_string())),
-                    (Some(_), None) => (
-                        Some(false),
-                        Some("hash error: failed to read file".to_string()),
-                    ),
-                    (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
-                    (Some(exp), Some(act)) => (
-                        Some(false),
-                        Some(format!(
-                            "hash mismatch: expected {} got {}",
-                            &exp.chars().take(10).collect::<String>(),
-                            &act.chars().take(10).collect::<String>()
-                        )),
-                    ),
-                };
-
-            // Persist to DB (best-effort). We upsert the model_files row with the
-            // authoritative size (actual downloaded bytes) and the HF lfs_oid, then
-            // write the verification outcome. Only attempt if a db_dir is configured.
-            if let Some(dir) = hash_db_dir.as_ref() {
-                match crate::db::open(dir) {
-                    Ok(open_res) => {
-                        let conn = open_res.conn;
-                        if let Err(e) = crate::db::queries::upsert_model_file(
-                            &conn,
-                            &hash_repo,
-                            &hash_filename,
-                            hash_quant.as_deref(),
-                            hash_expected.as_deref(),
-                            Some(bytes as i64),
-                        ) {
-                            tracing::warn!(error = %e, "Failed to upsert model_files row");
-                        }
-                        if let Err(e) = crate::db::queries::update_verification(
-                            &conn,
-                            &hash_repo,
-                            &hash_filename,
-                            ok,
-                            err.as_deref(),
-                        ) {
-                            tracing::warn!(error = %e, "Failed to write verification result");
-                        }
+        // Persist to DB (best-effort). We upsert the model_files row with the
+        // authoritative size (actual downloaded bytes) and the HF lfs_oid, then
+        // write the verification outcome. Only attempt if a db_dir is configured.
+        if let Some(dir) = hash_db_dir.as_ref() {
+            match crate::db::open(dir) {
+                Ok(open_res) => {
+                    let conn = open_res.conn;
+                    if let Err(e) = crate::db::queries::upsert_model_file(
+                        &conn,
+                        &hash_repo,
+                        &hash_filename,
+                        hash_quant.as_deref(),
+                        hash_expected.as_deref(),
+                        Some(bytes as i64),
+                    ) {
+                        tracing::warn!(error = %e, "Failed to upsert model_files row");
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to open DB for verification write");
+                    if let Err(e) = crate::db::queries::update_verification(
+                        &conn,
+                        &hash_repo,
+                        &hash_filename,
+                        ok,
+                        err.as_deref(),
+                    ) {
+                        tracing::warn!(error = %e, "Failed to write verification result");
                     }
                 }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to open DB for verification write");
+                }
             }
+        }
 
-            (ok, err)
-        },
-    )
+        (ok, err)
+    })
     .await;
 
     // Stop the progress poll.

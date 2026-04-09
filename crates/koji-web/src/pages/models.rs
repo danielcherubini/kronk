@@ -104,7 +104,8 @@ pub fn Models() -> impl IntoView {
             let list = match resp.json::<serde_json::Value>().await {
                 Ok(v) => v,
                 Err(e) => {
-                    check_all_status.set(Some((false, format!("Failed to parse models list: {}", e))));
+                    check_all_status
+                        .set(Some((false, format!("Failed to parse models list: {}", e))));
                     check_all_busy.set(false);
                     return;
                 }

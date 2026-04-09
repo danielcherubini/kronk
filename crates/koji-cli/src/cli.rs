@@ -239,6 +239,14 @@ pub enum ModelCommands {
         /// Model ID to verify (e.g. "bartowski/OmniCoder-8B-GGUF"). Verifies all if omitted.
         model: Option<String>,
     },
+    /// Verify existing models and backfill missing LFS hashes from HuggingFace
+    VerifyExisting {
+        /// Model ID to verify (e.g. "bartowski/OmniCoder-8B-GGUF"). Verifies all if omitted.
+        model: Option<String>,
+        /// Show detailed progress for each file
+        #[arg(long, default_value = "true")]
+        verbose: bool,
+    },
 }
 
 #[derive(Parser, Debug)]

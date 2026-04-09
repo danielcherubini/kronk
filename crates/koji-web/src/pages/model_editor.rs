@@ -871,10 +871,7 @@ pub fn ModelEditor() -> impl IntoView {
                     let msg = if resp.ok && !resp.any_unknown {
                         format!("All {} file(s) verified successfully.", n)
                     } else if resp.ok {
-                        format!(
-                            "Verified {} file(s) (some without an upstream hash).",
-                            n
-                        )
+                        format!("Verified {} file(s) (some without an upstream hash).", n)
                     } else {
                         "Verification failed for one or more files.".to_string()
                     };

@@ -123,6 +123,9 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
             pull,
         } => cmd_search(config, &query, &sort, limit, pull).await,
         ModelCommands::Verify { model } => cmd_verify(config, model).await,
+        ModelCommands::VerifyExisting { model, verbose } => {
+            cmd_verify_existing(config, model, verbose).await
+        }
     }
 }
 
@@ -1207,9 +1210,7 @@ async fn cmd_verify(config: &Config, model_filter: Option<String>) -> Result<()>
                     any_failed = true;
                     (
                         "✗",
-                        r.error
-                            .clone()
-                            .unwrap_or_else(|| "mismatch".to_string()),
+                        r.error.clone().unwrap_or_else(|| "mismatch".to_string()),
                     )
                 }
                 None => {
@@ -1234,6 +1235,232 @@ async fn cmd_verify(config: &Config, model_filter: Option<String>) -> Result<()>
 
     if any_failed {
         // Non-zero exit so scripting/CI can detect corruption.
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Verify existing models and backfill missing LFS hashes from HuggingFace.
+///
+/// This command:
+/// 1. Scans for all installed models
+/// 2. For models without LFS hashes, fetches metadata from HuggingFace
+/// 3. Verifies all files against their stored LFS SHA-256 hashes
+/// 4. Provides detailed progress output
+///
+/// Returns exit code 1 if any file fails verification.
+async fn cmd_verify_existing(
+    config: &Config,
+    model_filter: Option<String>,
+    verbose: bool,
+) -> Result<()> {
+    use koji_core::models::verify;
+
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult {
+        conn,
+        needs_backfill: _,
+    } = koji_core::db::open(&db_dir)?;
+
+    let models_dir = config.models_dir()?;
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
+
+    let models: Vec<koji_core::models::InstalledModel> = match model_filter {
+        Some(ref id) => {
+            let found = registry
+                .find(id)?
+                .with_context(|| format!("Model '{}' not found.", id))?;
+            vec![found]
+        }
+        None => registry.scan()?,
+    };
+
+    if models.is_empty() {
+        println!("No installed models found.");
+        return Ok(());
+    }
+
+    println!(
+        "Verifying {} model(s) and backfilling missing hashes...",
+        models.len()
+    );
+    println!();
+
+    let mut any_failed = false;
+    let mut total_files: usize = 0;
+    let mut total_ok: usize = 0;
+    let mut total_unknown: usize = 0;
+    let mut total_bad: usize = 0;
+    let mut total_backfilled: usize = 0;
+
+    for model in &models {
+        let repo_id: &str = if model.card.model.source.is_empty() {
+            &model.id
+        } else {
+            &model.card.model.source
+        };
+        let model_dir = &model.dir;
+
+        println!("Model: {}", repo_id);
+
+        // Check if any files need hash backfilling
+        let records = match koji_core::db::queries::get_model_files(&conn, repo_id) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("  Error reading database: {}", e);
+                any_failed = true;
+                continue;
+            }
+        };
+
+        if records.is_empty() {
+            println!(
+                "  (no files tracked — run `koji model pull {}` first)",
+                repo_id
+            );
+            println!();
+            continue;
+        }
+
+        let needs_backfill = records.iter().any(|r| r.lfs_oid.is_none());
+
+        if needs_backfill {
+            // Count how many records need backfilling before we fetch
+            let records_needing_backfill = records.iter().filter(|r| r.lfs_oid.is_none()).count();
+
+            if verbose {
+                println!(
+                    "  Fetching metadata from HuggingFace to backfill {} missing hash(es)...",
+                    records_needing_backfill
+                );
+            }
+
+            // Always refresh metadata when needed, regardless of verbose flag
+            match koji_core::models::update::refresh_metadata(&conn, repo_id).await {
+                Ok(_) => {
+                    // Re-fetch records to see how many were successfully backfilled
+                    let updated_records =
+                        match koji_core::db::queries::get_model_files(&conn, repo_id) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                println!("  Error reading database: {}", e);
+                                any_failed = true;
+                                continue;
+                            }
+                        };
+                    // Count how many still need backfilling after the refresh
+                    let still_needing_backfill = updated_records
+                        .iter()
+                        .filter(|r| r.lfs_oid.is_none())
+                        .count();
+                    // The difference is how many were successfully backfilled
+                    let backfilled_count =
+                        records_needing_backfill.saturating_sub(still_needing_backfill);
+                    if verbose {
+                        println!("  Backfilled {} missing hash(es)", backfilled_count);
+                    }
+                    total_backfilled += backfilled_count;
+                }
+                Err(e) => {
+                    if verbose {
+                        println!(
+                            "  Warning: Failed to fetch metadata: {}. Proceeding with verification; files without hashes will be marked as unverifiable.",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        let results = match verify::verify_model(&conn, repo_id, model_dir) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("  verify error: {}", e);
+                any_failed = true;
+                continue;
+            }
+        };
+
+        if results.is_empty() {
+            println!("  (no files tracked)");
+            continue;
+        }
+
+        for r in &results {
+            total_files += 1;
+            let (icon, label) = match r.ok {
+                Some(true) => {
+                    total_ok += 1;
+                    if verbose {
+                        (
+                            "✓",
+                            format!(
+                                "ok ({}...)",
+                                r.expected_sha
+                                    .as_deref()
+                                    .unwrap_or("unknown")
+                                    .chars()
+                                    .take(10)
+                                    .collect::<String>()
+                            ),
+                        )
+                    } else {
+                        ("✓", "ok".to_string())
+                    }
+                }
+                Some(false) => {
+                    total_bad += 1;
+                    any_failed = true;
+                    if verbose {
+                        (
+                            "✗",
+                            r.error.clone().unwrap_or_else(|| "mismatch".to_string()),
+                        )
+                    } else {
+                        ("✗", "failed".to_string())
+                    }
+                }
+                None => {
+                    total_unknown += 1;
+                    if verbose {
+                        (
+                            "—",
+                            r.error
+                                .clone()
+                                .unwrap_or_else(|| "no upstream hash".to_string()),
+                        )
+                    } else {
+                        ("—", "unverifiable".to_string())
+                    }
+                }
+            };
+            if verbose {
+                println!("  {} {}  {}", icon, r.filename, label);
+            }
+        }
+        println!();
+    }
+
+    // Build summary
+    let mut summary_parts: Vec<String> = Vec::new();
+    summary_parts.push(format!("{} file(s) total", total_files));
+    summary_parts.push(format!("{} verified OK", total_ok));
+    if total_bad > 0 {
+        summary_parts.push(format!("{} failed", total_bad));
+    }
+    if total_unknown > 0 {
+        summary_parts.push(format!("{} unverifiable", total_unknown));
+    }
+    if total_backfilled > 0 {
+        summary_parts.push(format!("{} hashes backfilled", total_backfilled));
+    }
+
+    println!("Summary: {}", summary_parts.join(", "));
+    println!();
+
+    if any_failed {
         std::process::exit(1);
     }
 

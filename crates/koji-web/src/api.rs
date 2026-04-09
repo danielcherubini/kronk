@@ -441,13 +441,8 @@ pub async fn get_model(
             match cfg.models.get(&id) {
                 Some(m) => {
                     let meta = load_repo_db_meta(&config_dir, m.model.as_deref());
-                    let mut val = model_entry_json(
-                        &id,
-                        m,
-                        &configs_dir,
-                        Some(&backends),
-                        Some(&meta),
-                    );
+                    let mut val =
+                        model_entry_json(&id, m, &configs_dir, Some(&backends), Some(&meta));
                     val["backends"] = backends.into();
                     Json(val).into_response()
                 }
@@ -771,10 +766,7 @@ pub async fn delete_model(
 fn resolve_model_repo_id(
     state: &AppState,
     id: &str,
-) -> Result<
-    (String, std::path::PathBuf, std::path::PathBuf),
-    (StatusCode, serde_json::Value),
-> {
+) -> Result<(String, std::path::PathBuf, std::path::PathBuf), (StatusCode, serde_json::Value)> {
     let (cfg, config_dir) = load_config_from_state(state)?;
     let model = cfg.models.get(id).ok_or_else(|| {
         (
@@ -826,8 +818,7 @@ pub async fn refresh_model_metadata(
     // Step 1: resolve repo_id (config load on blocking pool).
     let state1 = state.clone();
     let id1 = id.clone();
-    let resolved =
-        tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, &id1)).await;
+    let resolved = tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, &id1)).await;
     let (repo_id, config_dir, _models_dir) = match resolved {
         Ok(Ok(x)) => x,
         Ok(Err((s, b))) => return (s, Json(b)).into_response(),
@@ -925,8 +916,7 @@ pub async fn verify_model_files(
 ) -> impl IntoResponse {
     let state1 = state.clone();
     let id1 = id.clone();
-    let resolved =
-        tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, &id1)).await;
+    let resolved = tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, &id1)).await;
     let (repo_id, config_dir, models_dir) = match resolved {
         Ok(Ok(x)) => x,
         Ok(Err((s, b))) => return (s, Json(b)).into_response(),
