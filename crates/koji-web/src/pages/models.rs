@@ -2,6 +2,9 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 
+use crate::components::modal::Modal;
+use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
     id: String,
@@ -24,10 +27,16 @@ fn partition_models_by_loaded(models: Vec<ModelEntry>) -> (Vec<ModelEntry>, Vec<
     (loaded, unloaded)
 }
 
+fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
+    let (read, _) = sig.split();
+    read.into()
+}
+
 #[component]
 pub fn Models() -> impl IntoView {
     // Refresh trigger signal — increment to force a refetch
     let refresh = RwSignal::new(0u32);
+    let pull_modal_open = RwSignal::new(false);
 
     let models = LocalResource::new(move || async move {
         let _ = refresh.get(); // track the signal
@@ -61,9 +70,9 @@ pub fn Models() -> impl IntoView {
     view! {
         <div class="page-header">
             <h1>"Models"</h1>
-            <A href="/models/new/edit">
-                <button class="btn btn-primary">"+ New Model"</button>
-            </A>
+            <button class="btn btn-primary" on:click=move |_| pull_modal_open.set(true)>
+                "Pull Model"
+            </button>
         </div>
         <Suspense fallback=|| view! {
             <div class="card card--centered">
@@ -77,7 +86,9 @@ pub fn Models() -> impl IntoView {
                         Some(data) if data.models.is_empty() => view! {
                             <div class="card card--centered">
                                 <p class="text-muted">"No models configured yet."</p>
-                                <a href="/pull"><button class="btn btn-primary mt-2">"Pull a Model"</button></a>
+                                <button class="btn btn-primary mt-2" on:click=move |_| pull_modal_open.set(true)>
+                                    "Pull a Model"
+                                </button>
                             </div>
                         }.into_any(),
                         Some(data) => {
@@ -256,6 +267,21 @@ pub fn Models() -> impl IntoView {
                 })
             }}
         </Suspense>
+        <Modal
+            open=rw_signal_to_signal(pull_modal_open)
+            on_close=Callback::new(move |_| pull_modal_open.set(false))
+            title="Pull Model".to_string()
+        >
+            <PullQuantWizard
+                initial_repo=Signal::derive(String::new)
+                is_open=rw_signal_to_signal(pull_modal_open)
+                on_complete=Callback::new(move |_completed: Vec<CompletedQuant>| {
+                    pull_modal_open.set(false);
+                    refresh.update(|n| *n += 1);
+                })
+                on_close=Callback::new(move |_| pull_modal_open.set(false))
+            />
+        </Modal>
     }
 }
 
