@@ -96,7 +96,7 @@ pub async fn handle_chat_completions(
 
     state.update_last_accessed(&server_name).await;
 
-    forward_request(&state, &server_name, &parts, &body_bytes).await
+    forward_request(&state, &server_name, &parts, &body_bytes, model_name).await
 }
 
 #[axum::debug_handler]
@@ -169,7 +169,7 @@ pub async fn handle_stream_chat_completions(
 
     state.update_last_accessed(&server_name).await;
 
-    forward_request(&state, &server_name, &parts, &body_bytes).await
+    forward_request(&state, &server_name, &parts, &body_bytes, model_name).await
 }
 
 #[axum::debug_handler]

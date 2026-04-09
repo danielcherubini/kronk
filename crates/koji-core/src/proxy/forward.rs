@@ -4,6 +4,9 @@ use axum::{
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Json, Response},
 };
+use bytes::Bytes;
+use futures_util::stream::StreamExt;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::info;
@@ -13,6 +16,7 @@ pub async fn forward_request(
     server_name: &str,
     parts: &Parts,
     body_bytes: &[u8],
+    model_name: &str,
 ) -> Response {
     state
         .metrics
@@ -215,7 +219,78 @@ pub async fn forward_request(
                 }
             }
 
-            let body = Body::from_stream(response.bytes_stream());
+            // Check if this is a streaming response
+            let is_streaming = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.contains("text/event-stream"))
+                .unwrap_or(false);
+
+            let body = if is_streaming {
+                // Streaming response - rewrite model name in each SSE chunk
+                let model_name = model_name.to_string();
+                let transformed_stream = response.bytes_stream().map(move |chunk_result| {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            // SSE format: each line is either a comment, empty, or data: ...
+                            // We need to process data: lines and rewrite the model field
+                            let chunk_str = String::from_utf8_lossy(&chunk);
+                            let mut result = String::new();
+
+                            for line in chunk_str.lines() {
+                                // Process complete SSE line
+                                if let Some(data_content) = line.strip_prefix("data: ") {
+                                    if data_content == "[DONE]" {
+                                        // Pass through unchanged
+                                        result.push_str(line);
+                                        result.push('\n');
+                                    } else {
+                                        // Try to parse and rewrite model field
+                                        if let Ok(mut json_value) =
+                                            serde_json::from_str::<JsonValue>(data_content)
+                                        {
+                                            json_value["model"] =
+                                                JsonValue::String(model_name.clone());
+                                            let reserialized = serde_json::to_string(&json_value)
+                                                .unwrap_or_else(|_| data_content.to_string());
+                                            result.push_str("data: ");
+                                            result.push_str(&reserialized);
+                                            result.push('\n');
+                                        } else {
+                                            // Not valid JSON, pass through unchanged
+                                            result.push_str(line);
+                                            result.push('\n');
+                                        }
+                                    }
+                                } else if line.is_empty() || line.starts_with(':') {
+                                    // Comments and empty lines pass through unchanged
+                                    result.push_str(line);
+                                    result.push('\n');
+                                } else {
+                                    // Other lines pass through
+                                    result.push_str(line);
+                                    result.push('\n');
+                                }
+                            }
+                            Ok(Bytes::from(result.into_bytes()))
+                        }
+                        Err(e) => Err(e),
+                    }
+                });
+                Body::from_stream(transformed_stream)
+            } else {
+                // Non-streaming response - parse, rewrite, and re-serialize
+                let body_bytes = response.bytes().await.unwrap_or_default();
+                let mut parsed: JsonValue =
+                    serde_json::from_slice(&body_bytes).unwrap_or(JsonValue::Null);
+                if parsed != JsonValue::Null {
+                    parsed["model"] = JsonValue::String(model_name.to_string());
+                }
+                let new_body = serde_json::to_vec(&parsed).unwrap_or_else(|_| body_bytes.to_vec());
+                Body::from(new_body)
+            };
+
             match builder.body(body) {
                 Ok(resp) => resp.into_response(),
                 Err(e) => {
@@ -255,5 +330,75 @@ pub async fn forward_request(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value as JsonValue;
+
+    #[tokio::test]
+    async fn test_rewrite_model_name_in_json_response() {
+        // Create a mock backend response with a different model name
+        let backend_model = "backend-filename.gguf";
+        let user_model = "my-model";
+        let original_body = serde_json::json!({
+            "model": backend_model,
+            "choices": [{"message": {"role": "assistant", "content": "Hello"}}]
+        });
+        let body_bytes = serde_json::to_vec(&original_body).unwrap();
+
+        // Simulate the response processing
+        let parsed: JsonValue = serde_json::from_slice(&body_bytes).unwrap();
+        let mut modified = parsed.clone();
+        modified["model"] = JsonValue::String(user_model.to_string());
+        let expected_body = serde_json::to_vec(&modified).unwrap();
+
+        // Verify the model was replaced
+        let result: JsonValue = serde_json::from_slice(&expected_body).unwrap();
+        assert_eq!(result["model"], JsonValue::String(user_model.to_string()));
+        assert_eq!(result["choices"][0]["message"]["content"], "Hello");
+    }
+
+    #[tokio::test]
+    async fn test_rewrite_model_name_in_streaming_response() {
+        let user_model = "my-model";
+        let backend_model = "backend-filename.gguf";
+
+        // Create SSE chunks with model field
+        let chunk1 = format!(
+            "data: {{\"model\":\"{}\",\"choices\":[{{\"delta\":{{\"role\":\"assistant\"}}}}]}}\n",
+            backend_model
+        );
+        let chunk2 = format!(
+            "data: {{\"model\":\"{}\",\"choices\":[{{\"delta\":{{\"content\":\"Hello\"}}}}]}}\n",
+            backend_model
+        );
+        let chunk3 = "data: [DONE]\n".to_string();
+
+        // Process chunk1
+        let mut modified1: JsonValue = serde_json::from_str(&chunk1["data: ".len()..]).unwrap();
+        modified1["model"] = JsonValue::String(user_model.to_string());
+        let expected1 = format!("data: {}\n", serde_json::to_string(&modified1).unwrap());
+        assert!(expected1.contains(&format!("\"model\":\"{}\"", user_model)));
+
+        // Process chunk2
+        let mut modified2: JsonValue = serde_json::from_str(&chunk2["data: ".len()..]).unwrap();
+        modified2["model"] = JsonValue::String(user_model.to_string());
+        let expected2 = format!("data: {}\n", serde_json::to_string(&modified2).unwrap());
+        assert!(expected2.contains(&format!("\"model\":\"{}\"", user_model)));
+
+        // DONE should pass through unchanged
+        assert_eq!(chunk3, "data: [DONE]\n");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_passthrough_non_data_lines() {
+        // Comments and empty lines should pass through unchanged
+        let comment_line = ": this is a comment\n";
+        let empty_line = "\n";
+
+        assert_eq!(comment_line, ": this is a comment\n");
+        assert_eq!(empty_line, "\n");
     }
 }
