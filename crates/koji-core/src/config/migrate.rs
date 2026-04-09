@@ -49,6 +49,26 @@ pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()
         }
     }
 
+    // 3.5. Migrate card model.name to use full repo ID instead of truncated name
+    // Cards created before this fix had model.name set to just the last part after "/"
+    // We update them to use model.source (which has the full repo ID)
+    for (filename, card) in card_data.iter_mut() {
+        if card.model.name != card.model.source {
+            tracing::info!(
+                "Migrating card {}: updating model.name from '{}' to '{}'",
+                filename,
+                card.model.name,
+                card.model.source
+            );
+            card.model.name = card.model.source.clone();
+            // Save the updated card back to disk
+            let card_path = configs_dir.join(filename);
+            if let Err(e) = card.save(&card_path) {
+                tracing::warn!("Failed to save migrated card {}: {}", filename, e);
+            }
+        }
+    }
+
     // 4. For each (key, model_config) in config.models
     let mut migrated_count = 0;
     for model_config in config.models.values_mut() {
