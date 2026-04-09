@@ -339,8 +339,7 @@ mod tests {
                 status: PullJobStatus::Running,
                 bytes_downloaded: 1000,
                 total_bytes: Some(2000),
-                error: None,
-                completed_at: None,
+                ..Default::default()
             },
         );
         drop(pull_jobs);

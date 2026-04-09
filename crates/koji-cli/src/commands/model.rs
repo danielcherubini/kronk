@@ -122,6 +122,7 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
             limit,
             pull,
         } => cmd_search(config, &query, &sort, limit, pull).await,
+        ModelCommands::Verify { model } => cmd_verify(config, model).await,
     }
 }
 
@@ -1119,4 +1120,122 @@ fn format_downloads(n: u64) -> String {
     } else {
         n.to_string()
     }
+}
+
+/// `koji model verify [<model>]`
+///
+/// Re-hashes every downloaded GGUF file and compares it to the HuggingFace
+/// LFS SHA-256 stored at pull time. Writes the outcome back to the DB so the
+/// web UI verified column stays consistent across invocations.
+///
+/// Exits with status 1 if any file fails verification.
+async fn cmd_verify(config: &Config, model_filter: Option<String>) -> Result<()> {
+    use koji_core::models::verify;
+
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult {
+        conn,
+        needs_backfill: _,
+    } = koji_core::db::open(&db_dir)?;
+
+    let models_dir = config.models_dir()?;
+    let configs_dir = config.configs_dir()?;
+    let registry = ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
+
+    let models: Vec<koji_core::models::InstalledModel> = match model_filter {
+        Some(ref id) => {
+            let found = registry
+                .find(id)?
+                .with_context(|| format!("Model '{}' not found.", id))?;
+            vec![found]
+        }
+        None => registry.scan()?,
+    };
+
+    if models.is_empty() {
+        println!("No installed models found.");
+        return Ok(());
+    }
+
+    println!("Verifying {} model(s)...", models.len());
+    println!();
+
+    let mut any_failed = false;
+    let mut total_files: usize = 0;
+    let mut total_ok: usize = 0;
+    let mut total_unknown: usize = 0;
+    let mut total_bad: usize = 0;
+
+    for model in &models {
+        // Mirror cmd_rm: legacy/hand-edited cards may have an empty
+        // card.model.source, in which case fall back to the model id so we
+        // still hit the right rows in the model_files table.
+        let repo_id: &str = if model.card.model.source.is_empty() {
+            &model.id
+        } else {
+            &model.card.model.source
+        };
+        // Use the registry-resolved directory from the InstalledModel itself
+        // rather than reconstructing the path — legacy/hand-edited cards may
+        // live under a directory that doesn't match `models_dir/repo_id`.
+        let model_dir = &model.dir;
+        println!("{}", repo_id);
+
+        let results = match verify::verify_model(&conn, repo_id, model_dir) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("  verify error: {}", e);
+                any_failed = true;
+                continue;
+            }
+        };
+
+        if results.is_empty() {
+            println!("  (no files tracked — run `koji model update --refresh` first)");
+            continue;
+        }
+
+        for r in &results {
+            total_files += 1;
+            let (icon, label) = match r.ok {
+                Some(true) => {
+                    total_ok += 1;
+                    ("✓", "ok".to_string())
+                }
+                Some(false) => {
+                    total_bad += 1;
+                    any_failed = true;
+                    (
+                        "✗",
+                        r.error
+                            .clone()
+                            .unwrap_or_else(|| "mismatch".to_string()),
+                    )
+                }
+                None => {
+                    total_unknown += 1;
+                    (
+                        "—",
+                        r.error
+                            .clone()
+                            .unwrap_or_else(|| "no upstream hash".to_string()),
+                    )
+                }
+            };
+            println!("  {} {}  {}", icon, r.filename, label);
+        }
+        println!();
+    }
+
+    println!(
+        "Summary: {} file(s) total — {} ok, {} failed, {} unverifiable.",
+        total_files, total_ok, total_bad, total_unknown
+    );
+
+    if any_failed {
+        // Non-zero exit so scripting/CI can detect corruption.
+        std::process::exit(1);
+    }
+
+    Ok(())
 }

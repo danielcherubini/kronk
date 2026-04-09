@@ -282,6 +282,9 @@ mod tests {
             lfs_oid: lfs_oid.map(|s| s.to_string()),
             size_bytes: size,
             downloaded_at: "2024-01-01T00:00:00.000Z".to_string(),
+            last_verified_at: None,
+            verified_ok: None,
+            verify_error: None,
         }
     }
 

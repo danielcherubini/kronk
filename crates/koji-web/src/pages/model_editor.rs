@@ -35,6 +35,19 @@ pub struct QuantInfo {
     pub size_bytes: Option<u64>,
     #[serde(default)]
     pub context_length: Option<u32>,
+    // --- DB-enriched fields returned by /api/models/:id ---
+    // These are skipped on save so the backend never receives them (it
+    // authoritatively owns this data in the SQLite DB).
+    #[serde(default, skip_serializing)]
+    pub lfs_oid: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub db_size_bytes: Option<u64>,
+    #[serde(default, skip_serializing)]
+    pub last_verified_at: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub verified_ok: Option<bool>,
+    #[serde(default, skip_serializing)]
+    pub verify_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +67,35 @@ pub struct ModelDetail {
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
+    #[serde(default)]
+    pub repo_commit_sha: Option<String>,
+    #[serde(default)]
+    pub repo_pulled_at: Option<String>,
+}
+
+// ── Helpers for display ───────────────────────────────────────────────────────
+
+fn format_bytes_opt(bytes: Option<u64>) -> String {
+    let Some(b) = bytes else {
+        return "—".to_string();
+    };
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bf = b as f64;
+    if bf >= GIB {
+        format!("{:.2} GiB", bf / GIB)
+    } else if bf >= MIB {
+        format!("{:.1} MiB", bf / MIB)
+    } else if bf >= KIB {
+        format!("{:.1} KiB", bf / KIB)
+    } else {
+        format!("{} B", b)
+    }
+}
+
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(10).collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +152,8 @@ async fn fetch_model(id: String) -> Option<ModelDetail> {
             quants: BTreeMap::new(),
             backends: list.backends,
             mmproj: None,
+            repo_commit_sha: None,
+            repo_pulled_at: None,
         });
     }
     let resp = gloo_net::http::Request::get(&format!("/api/models/{}", id))
@@ -260,6 +304,80 @@ async fn delete_model_api(id: String) -> Result<(), String> {
     }
 }
 
+/// Response from POST /api/models/:id/refresh — surfaces the updated repo
+/// commit SHA and the full per-file DB records for merging back into the editor.
+#[derive(Debug, Clone, Deserialize)]
+struct RefreshResponse {
+    #[serde(default)]
+    pub repo_commit_sha: Option<String>,
+    #[serde(default)]
+    pub repo_pulled_at: Option<String>,
+    #[serde(default)]
+    pub files: Vec<FileRecordJson>,
+}
+
+/// Response from POST /api/models/:id/verify.
+#[derive(Debug, Clone, Deserialize)]
+struct VerifyResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub any_unknown: bool,
+    #[serde(default)]
+    pub files: Vec<FileRecordJson>,
+}
+
+/// Subset of `ModelFileRecord` as serialized by `file_record_json` in the
+/// web backend — carries the DB-authoritative size, LFS hash and verify state
+/// for a single file. Used to merge refresh/verify responses back into the
+/// editor `quants` signal without a full page reload.
+#[derive(Debug, Clone, Deserialize)]
+struct FileRecordJson {
+    pub filename: String,
+    #[serde(default)]
+    pub lfs_oid: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    #[serde(default)]
+    pub last_verified_at: Option<String>,
+    #[serde(default)]
+    pub verified_ok: Option<bool>,
+    #[serde(default)]
+    pub verify_error: Option<String>,
+}
+
+async fn refresh_model_api(id: String) -> Result<RefreshResponse, String> {
+    // Percent-encode the id for safe path interpolation; model ids may
+    // contain `/`, spaces, or other reserved characters.
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/refresh", encoded_id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status() != 200 {
+        let text = resp.text().await.unwrap_or_else(|_| "Unknown error".into());
+        return Err(text);
+    }
+    resp.json::<RefreshResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse refresh response: {}", e))
+}
+
+async fn verify_model_api(id: String) -> Result<VerifyResponse, String> {
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/verify", encoded_id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status() != 200 {
+        let text = resp.text().await.unwrap_or_else(|_| "Unknown error".into());
+        return Err(text);
+    }
+    resp.json::<VerifyResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse verify response: {}", e))
+}
+
 async fn fetch_sampling_templates() -> Option<std::collections::HashMap<String, serde_json::Value>>
 {
     let resp = gloo_net::http::Request::get("/api/models")
@@ -313,6 +431,16 @@ pub fn ModelEditor() -> impl IntoView {
     let model_status = RwSignal::new(Option::<(bool, String)>::None);
     let deleted = RwSignal::new(false);
     let original_id = RwSignal::new(String::new());
+
+    // Repo-level DB metadata (from Phase 3 API enrichment)
+    let repo_commit_sha = RwSignal::new(Option::<String>::None);
+    let repo_pulled_at = RwSignal::new(Option::<String>::None);
+
+    // Status for refresh / verify actions (busy flag + last message)
+    let refresh_busy = RwSignal::new(false);
+    let verify_busy = RwSignal::new(false);
+    let refresh_status = RwSignal::new(Option::<(bool, String)>::None);
+    let verify_status = RwSignal::new(Option::<(bool, String)>::None);
 
     // Populate signals when resource loads
     Effect::new(move |_| {
@@ -432,6 +560,9 @@ pub fn ModelEditor() -> impl IntoView {
                     }
                 }
                 sampling_fields.set(fields);
+
+                repo_commit_sha.set(d.repo_commit_sha.clone());
+                repo_pulled_at.set(d.repo_pulled_at.clone());
 
                 let rows: Vec<(String, QuantInfo)> = d.quants.into_iter().collect();
                 quants.set(rows);
@@ -663,6 +794,97 @@ pub fn ModelEditor() -> impl IntoView {
                 Ok(()) => deleted.set(true),
                 Err(e) => model_status.set(Some((false, format!("Delete failed: {}", e)))),
             }
+        });
+
+    // Merge a list of DB file records back into the `quants` signal, matching
+    // on `QuantInfo.file`. Only updates DB-enrichment fields; TOML fields
+    // (name, kind, context_length) are left untouched.
+    let merge_file_records = move |files: Vec<FileRecordJson>| {
+        quants.update(|rows| {
+            for rec in files {
+                for (_name, q) in rows.iter_mut() {
+                    if q.file == rec.filename {
+                        q.lfs_oid = rec.lfs_oid.clone();
+                        q.db_size_bytes = rec.size_bytes;
+                        // Authoritative size from HF blob metadata — update
+                        // the visible size_bytes too, since the editable input
+                        // is now read-only.
+                        if rec.size_bytes.is_some() {
+                            q.size_bytes = rec.size_bytes;
+                        }
+                        q.last_verified_at = rec.last_verified_at.clone();
+                        q.verified_ok = rec.verified_ok;
+                        q.verify_error = rec.verify_error.clone();
+                        break;
+                    }
+                }
+            }
+        });
+    };
+
+    let refresh_action: Action<(), (), LocalStorage> =
+        Action::new_unsync(move |_: &()| async move {
+            refresh_busy.set(true);
+            refresh_status.set(None);
+            // Use the persisted id, not the editable form_id — otherwise
+            // mid-rename edits would cause the backend to look up a model
+            // that isn't saved yet.
+            let persisted = original_id.get();
+            let id = if persisted.is_empty() {
+                form_id.get()
+            } else {
+                persisted
+            };
+            match refresh_model_api(id).await {
+                Ok(resp) => {
+                    repo_commit_sha.set(resp.repo_commit_sha.clone());
+                    repo_pulled_at.set(resp.repo_pulled_at.clone());
+                    let n = resp.files.len();
+                    merge_file_records(resp.files);
+                    refresh_status.set(Some((
+                        true,
+                        format!("Refreshed metadata for {} file(s).", n),
+                    )));
+                }
+                Err(e) => {
+                    refresh_status.set(Some((false, format!("Refresh failed: {}", e))));
+                }
+            }
+            refresh_busy.set(false);
+        });
+
+    let verify_action: Action<(), (), LocalStorage> =
+        Action::new_unsync(move |_: &()| async move {
+            verify_busy.set(true);
+            verify_status.set(None);
+            // Same reasoning as refresh_action: target the saved id.
+            let persisted = original_id.get();
+            let id = if persisted.is_empty() {
+                form_id.get()
+            } else {
+                persisted
+            };
+            match verify_model_api(id).await {
+                Ok(resp) => {
+                    let n = resp.files.len();
+                    merge_file_records(resp.files);
+                    let msg = if resp.ok && !resp.any_unknown {
+                        format!("All {} file(s) verified successfully.", n)
+                    } else if resp.ok {
+                        format!(
+                            "Verified {} file(s) (some without an upstream hash).",
+                            n
+                        )
+                    } else {
+                        "Verification failed for one or more files.".to_string()
+                    };
+                    verify_status.set(Some((resp.ok, msg)));
+                }
+                Err(e) => {
+                    verify_status.set(Some((false, format!("Verify failed: {}", e))));
+                }
+            }
+            verify_busy.set(false);
         });
 
     // View
@@ -1151,13 +1373,62 @@ pub fn ModelEditor() -> impl IntoView {
                             </div>
 
                             <h3 class="form-section-title">"Quantizations"</h3>
+
+                            // Repo-level metadata + refresh/verify actions
+                            <div class="quants-meta-bar">
+                                <div class="quants-meta">
+                                    {move || match repo_commit_sha.get() {
+                                        Some(sha) => view! {
+                                            <span class="text-muted">"Commit: "</span>
+                                            <code class="quants-sha">{short_sha(&sha)}</code>
+                                        }.into_any(),
+                                        None => view! {
+                                            <span class="text-muted">"No commit recorded"</span>
+                                        }.into_any(),
+                                    }}
+                                    {move || repo_pulled_at.get().map(|when| view! {
+                                        <span class="text-muted ml-2">"· Pulled: "{when}</span>
+                                    })}
+                                </div>
+                                <div class="quants-actions">
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary btn-sm"
+                                        prop:disabled=move || is_new() || refresh_busy.get()
+                                        on:click=move |_| { refresh_action.dispatch(()); }
+                                        title="Check HuggingFace for updated quant metadata"
+                                    >
+                                        {move || if refresh_busy.get() { "Checking..." } else { "Check for updates" }}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary btn-sm ml-1"
+                                        prop:disabled=move || is_new() || verify_busy.get()
+                                        on:click=move |_| { verify_action.dispatch(()); }
+                                        title="Verify downloaded files against HuggingFace LFS hashes"
+                                    >
+                                        {move || if verify_busy.get() { "Verifying..." } else { "Verify files" }}
+                                    </button>
+                                </div>
+                            </div>
+                            {move || refresh_status.get().map(|(ok, msg)| {
+                                let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+                                view! { <div class=cls>{msg}</div> }
+                            })}
+                            {move || verify_status.get().map(|(ok, msg)| {
+                                let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+                                view! { <div class=cls>{msg}</div> }
+                            })}
+
                             <table class="quants-table">
                                 <thead>
                                     <tr>
                                         <th>"Name"</th>
                                         <th>"File"</th>
-                                        <th>"Size (bytes)"</th>
+                                        <th>"Size"</th>
                                         <th>"Context length"</th>
+                                        <th>"SHA"</th>
+                                        <th>"Verified"</th>
                                         <th></th>
                                     </tr>
                                 </thead>
@@ -1194,25 +1465,16 @@ pub fn ModelEditor() -> impl IntoView {
                                                          />
                                                     </td>
                                                     <td>
-                                                        <input
-                                                             class="form-input"
-                                                             type="number"
-                                                             placeholder="optional"
-                                                             prop:value=move || q.size_bytes.map(|v| v.to_string()).unwrap_or_default()
-                                                             on:input={
-                                                                 let name_ref = Arc::clone(&name_arc);
-                                                                 move |e| {
-                                                                     let size = event_target_value(&e).parse::<u64>().ok();
-                                                                     quants.update(|rows| {
-                                                                         if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
-                                                                             if let Some((_, ref mut qq)) = rows.get_mut(pos) {
-                                                                                 qq.size_bytes = size;
-                                                                             }
-                                                                         }
-                                                                     });
-                                                                 }
-                                                             }
-                                                         />
+                                                        // Read-only: size is authoritative from HF/filesystem.
+                                                        // Use `Check for updates` or `Verify files` to refresh.
+                                                        <span
+                                                            class="text-muted"
+                                                            title=move || q.size_bytes
+                                                                .map(|v| format!("{} bytes", v))
+                                                                .unwrap_or_else(|| "Unknown".to_string())
+                                                        >
+                                                            {move || format_bytes_opt(q.size_bytes)}
+                                                        </span>
                                                     </td>
                                                    <td>
                                                         <input
@@ -1234,6 +1496,26 @@ pub fn ModelEditor() -> impl IntoView {
                                                                  }
                                                              }
                                                          />
+                                                     </td>
+                                                     <td>
+                                                         {
+                                                             let sha_opt = q.lfs_oid.clone();
+                                                             let title = sha_opt.clone().unwrap_or_else(|| "No hash".to_string());
+                                                             let display = sha_opt.as_deref().map(short_sha).unwrap_or_else(|| "—".to_string());
+                                                             view! {
+                                                                 <code class="text-muted" title=title>{display}</code>
+                                                             }
+                                                         }
+                                                     </td>
+                                                     <td>
+                                                         {
+                                                             let (icon, cls, title) = match q.verified_ok {
+                                                                 Some(true) => ("✓", "text-success", q.last_verified_at.clone().unwrap_or_else(|| "Verified".to_string())),
+                                                                 Some(false) => ("✗", "text-error", q.verify_error.clone().unwrap_or_else(|| "Verification failed".to_string())),
+                                                                 None => ("—", "text-muted", "Not verified".to_string()),
+                                                             };
+                                                             view! { <span class=cls title=title>{icon}</span> }
+                                                         }
                                                      </td>
                                                      <td>
                                                           <button
@@ -1434,6 +1716,7 @@ pub fn ModelEditor() -> impl IntoView {
                                                 } else {
                                                     None
                                                 },
+                                                ..Default::default()
                                             }));
                                         }
                                     }

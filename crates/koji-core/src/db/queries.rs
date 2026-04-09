@@ -27,6 +27,14 @@ pub struct ModelFileRecord {
     pub lfs_oid: Option<String>,
     pub size_bytes: Option<i64>,
     pub downloaded_at: String,
+    /// ISO 8601 timestamp of the most recent verification attempt. None if never verified.
+    pub last_verified_at: Option<String>,
+    /// Some(true) = hash matched. Some(false) = mismatch. None = never verified
+    /// or no upstream hash available to compare against.
+    pub verified_ok: Option<bool>,
+    /// Short human-readable error when `verified_ok = Some(false)` or when verification
+    /// could not complete (e.g. "no upstream hash", "hash mismatch: expected X got Y").
+    pub verify_error: Option<String>,
 }
 
 /// An entry in the download log (append-only).
@@ -96,6 +104,11 @@ pub fn get_model_pull(conn: &Connection, repo_id: &str) -> Result<Option<ModelPu
 /// Insert or update a file record for a downloaded GGUF.
 /// Uses INSERT ... ON CONFLICT(repo_id, filename) DO UPDATE.
 /// Timestamp generated via SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now').
+///
+/// **Verification state preservation:** if a row already exists and the incoming
+/// `lfs_oid` equals the stored one, the existing `last_verified_at` / `verified_ok`
+/// / `verify_error` fields are preserved. If the hash changed (file was re-uploaded
+/// on HF) the verification columns are cleared so the file will be re-verified.
 pub fn upsert_model_file(
     conn: &Connection,
     repo_id: &str,
@@ -105,25 +118,76 @@ pub fn upsert_model_file(
     size_bytes: Option<i64>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO model_files (repo_id, filename, quant, lfs_oid, size_bytes, downloaded_at)
+        "INSERT INTO model_files
+             (repo_id, filename, quant, lfs_oid, size_bytes, downloaded_at)
          VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          ON CONFLICT(repo_id, filename) DO UPDATE SET
-             quant        = excluded.quant,
-             lfs_oid      = excluded.lfs_oid,
-             size_bytes   = excluded.size_bytes,
-             downloaded_at = excluded.downloaded_at",
+             quant         = excluded.quant,
+             lfs_oid       = excluded.lfs_oid,
+             size_bytes    = excluded.size_bytes,
+             downloaded_at = excluded.downloaded_at,
+             -- Only clear verification when the hash actually changed.
+             last_verified_at = CASE
+                 WHEN model_files.lfs_oid IS NOT excluded.lfs_oid THEN NULL
+                 ELSE model_files.last_verified_at END,
+             verified_ok = CASE
+                 WHEN model_files.lfs_oid IS NOT excluded.lfs_oid THEN NULL
+                 ELSE model_files.verified_ok END,
+             verify_error = CASE
+                 WHEN model_files.lfs_oid IS NOT excluded.lfs_oid THEN NULL
+                 ELSE model_files.verify_error END",
         (repo_id, filename, quant, lfs_oid, size_bytes),
     )?;
+    Ok(())
+}
+
+/// Update the verification columns for a single file.
+///
+/// - `verified_ok = Some(true)`: hash matched; `verify_error` cleared.
+/// - `verified_ok = Some(false)`: hash mismatch or verification failure; caller
+///   should supply a short `verify_error` message.
+/// - `verified_ok = None`: no upstream hash available; `verify_error` optionally
+///   set to a reason like `"no upstream hash"`.
+///
+/// `last_verified_at` is set to the current time via SQLite's `strftime`.
+/// The file row must already exist (caller is responsible for ensuring it does
+/// via `upsert_model_file` at download time).
+pub fn update_verification(
+    conn: &Connection,
+    repo_id: &str,
+    filename: &str,
+    verified_ok: Option<bool>,
+    verify_error: Option<&str>,
+) -> Result<()> {
+    let verified_ok_int = verified_ok.map(|b| b as i64);
+    let affected = conn.execute(
+        "UPDATE model_files SET
+             last_verified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+             verified_ok      = ?3,
+             verify_error     = ?4
+         WHERE repo_id = ?1 AND filename = ?2",
+        (repo_id, filename, verified_ok_int, verify_error),
+    )?;
+    if affected == 0 {
+        anyhow::bail!(
+            "update_verification: no row found for repo_id={} filename={} \
+             (call upsert_model_file first)",
+            repo_id,
+            filename
+        );
+    }
     Ok(())
 }
 
 /// Get all stored file records for a repo.
 pub fn get_model_files(conn: &Connection, repo_id: &str) -> Result<Vec<ModelFileRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT repo_id, filename, quant, lfs_oid, size_bytes, downloaded_at
+        "SELECT repo_id, filename, quant, lfs_oid, size_bytes, downloaded_at,
+                last_verified_at, verified_ok, verify_error
          FROM model_files WHERE repo_id = ?1",
     )?;
     let rows = stmt.query_map([repo_id], |row| {
+        let verified_ok: Option<i64> = row.get(7)?;
         Ok(ModelFileRecord {
             repo_id: row.get(0)?,
             filename: row.get(1)?,
@@ -131,6 +195,9 @@ pub fn get_model_files(conn: &Connection, repo_id: &str) -> Result<Vec<ModelFile
             lfs_oid: row.get(3)?,
             size_bytes: row.get(4)?,
             downloaded_at: row.get(5)?,
+            last_verified_at: row.get(6)?,
+            verified_ok: verified_ok.map(|v| v != 0),
+            verify_error: row.get(8)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -609,6 +676,113 @@ mod tests {
             .unwrap();
         assert_eq!(updated.lfs_oid.as_deref(), Some("sha256_new"));
         assert_eq!(updated.size_bytes, Some(4_300_000_000));
+    }
+
+    #[test]
+    fn test_upsert_preserves_verification_when_hash_unchanged() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let repo = "test/repo";
+
+        // Initial insert with a hash
+        upsert_model_file(
+            &conn,
+            repo,
+            "Model-Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            Some("sha_abc"),
+            Some(1000),
+        )
+        .unwrap();
+
+        // Mark it as verified
+        update_verification(&conn, repo, "Model-Q4_K_M.gguf", Some(true), None).unwrap();
+
+        // Re-upsert with the SAME hash (e.g. refresh_metadata from HF)
+        upsert_model_file(
+            &conn,
+            repo,
+            "Model-Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            Some("sha_abc"),
+            Some(1000),
+        )
+        .unwrap();
+
+        let files = get_model_files(&conn, repo).unwrap();
+        let file = files
+            .iter()
+            .find(|f| f.filename == "Model-Q4_K_M.gguf")
+            .unwrap();
+        assert_eq!(
+            file.verified_ok,
+            Some(true),
+            "verification state should be preserved when lfs_oid is unchanged"
+        );
+        assert!(file.last_verified_at.is_some());
+    }
+
+    #[test]
+    fn test_upsert_clears_verification_when_hash_changes() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let repo = "test/repo";
+
+        upsert_model_file(
+            &conn,
+            repo,
+            "Model-Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            Some("sha_old"),
+            Some(1000),
+        )
+        .unwrap();
+        update_verification(&conn, repo, "Model-Q4_K_M.gguf", Some(true), None).unwrap();
+
+        // Re-upsert with a DIFFERENT hash (file was updated on HF)
+        upsert_model_file(
+            &conn,
+            repo,
+            "Model-Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            Some("sha_new"),
+            Some(1100),
+        )
+        .unwrap();
+
+        let files = get_model_files(&conn, repo).unwrap();
+        let file = files
+            .iter()
+            .find(|f| f.filename == "Model-Q4_K_M.gguf")
+            .unwrap();
+        assert_eq!(
+            file.verified_ok, None,
+            "verification state should be cleared when lfs_oid changes"
+        );
+        assert!(file.last_verified_at.is_none());
+        assert!(file.verify_error.is_none());
+    }
+
+    #[test]
+    fn test_update_verification_writes_error() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let repo = "test/repo";
+
+        upsert_model_file(&conn, repo, "x.gguf", None, Some("sha"), Some(1)).unwrap();
+        update_verification(
+            &conn,
+            repo,
+            "x.gguf",
+            Some(false),
+            Some("hash mismatch: expected ab got cd"),
+        )
+        .unwrap();
+
+        let files = get_model_files(&conn, repo).unwrap();
+        let f = &files[0];
+        assert_eq!(f.verified_ok, Some(false));
+        assert_eq!(
+            f.verify_error.as_deref(),
+            Some("hash mismatch: expected ab got cd")
+        );
     }
 
     #[test]

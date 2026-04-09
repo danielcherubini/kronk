@@ -38,6 +38,10 @@ pub fn Models() -> impl IntoView {
     let refresh = RwSignal::new(0u32);
     let pull_modal_open = RwSignal::new(false);
 
+    // Global "Check all for updates" status
+    let check_all_busy = RwSignal::new(false);
+    let check_all_status = RwSignal::new(Option::<(bool, String)>::None);
+
     let models = LocalResource::new(move || async move {
         let _ = refresh.get(); // track the signal
         let resp = gloo_net::http::Request::get("/koji/v1/models")
@@ -67,13 +71,113 @@ pub fn Models() -> impl IntoView {
         }
     });
 
+    // Fire POST /api/models/:id/refresh for every model sequentially. Safe to
+    // run without progress streaming because refresh is a pair of small HTTP
+    // calls per model (no downloads, no hashing).
+    let check_all_action: Action<(), (), LocalStorage> =
+        Action::new_unsync(move |_: &()| async move {
+            check_all_busy.set(true);
+            check_all_status.set(None);
+            // Fetch the list directly from the backend that exposes `id`s with
+            // DB metadata so we iterate over the same set the editor operates on.
+            let resp = match gloo_net::http::Request::get("/api/models").send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    check_all_status.set(Some((false, format!("Failed to list models: {}", e))));
+                    check_all_busy.set(false);
+                    return;
+                }
+            };
+            // Surface non-2xx HTTP responses instead of silently falling
+            // through to an empty list, which would report "Refreshed 0/0
+            // models successfully" on a real server error.
+            if !resp.ok() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                check_all_status.set(Some((
+                    false,
+                    format!("Failed to list models: HTTP {} {}", status, body),
+                )));
+                check_all_busy.set(false);
+                return;
+            }
+            let list = match resp.json::<serde_json::Value>().await {
+                Ok(v) => v,
+                Err(e) => {
+                    check_all_status.set(Some((false, format!("Failed to parse models list: {}", e))));
+                    check_all_busy.set(false);
+                    return;
+                }
+            };
+            let ids: Vec<String> = list
+                .get("models")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let total = ids.len();
+            let mut ok_count = 0usize;
+            let mut failed = Vec::<String>::new();
+            for id in ids {
+                // Percent-encode the id so values containing `/`, spaces or
+                // other reserved characters route correctly to the backend.
+                let encoded_id = urlencoding::encode(&id);
+                let url = format!("/api/models/{}/refresh", encoded_id);
+                match gloo_net::http::Request::post(&url).send().await {
+                    Ok(r) if r.status() == 200 => ok_count += 1,
+                    Ok(r) => {
+                        let text = r.text().await.unwrap_or_default();
+                        failed.push(format!("{}: {}", id, text));
+                    }
+                    Err(e) => failed.push(format!("{}: {}", id, e)),
+                }
+            }
+
+            if failed.is_empty() {
+                check_all_status.set(Some((
+                    true,
+                    format!("Refreshed {}/{} models successfully.", ok_count, total),
+                )));
+            } else {
+                check_all_status.set(Some((
+                    false,
+                    format!(
+                        "Refreshed {}/{} models. Failures: {}",
+                        ok_count,
+                        total,
+                        failed.join("; ")
+                    ),
+                )));
+            }
+            check_all_busy.set(false);
+            refresh.update(|n| *n += 1);
+        });
+
     view! {
         <div class="page-header">
             <h1>"Models"</h1>
-            <button class="btn btn-primary" on:click=move |_| pull_modal_open.set(true)>
-                "Pull Model"
-            </button>
+            <div class="page-header__actions">
+                <button
+                    class="btn btn-secondary"
+                    prop:disabled=move || check_all_busy.get()
+                    on:click=move |_| { check_all_action.dispatch(()); }
+                    title="Check HuggingFace for updated metadata on every model"
+                >
+                    {move || if check_all_busy.get() { "Checking..." } else { "Check all for updates" }}
+                </button>
+                <button class="btn btn-primary" on:click=move |_| pull_modal_open.set(true)>
+                    "Pull Model"
+                </button>
+            </div>
         </div>
+        {move || check_all_status.get().map(|(ok, msg)| {
+            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+            view! { <div class=cls>{msg}</div> }
+        })}
         <Suspense fallback=|| view! {
             <div class="card card--centered">
                 <span class="spinner">"Loading models..."</span>

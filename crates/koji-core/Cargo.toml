@@ -33,6 +33,7 @@ async-stream = "0.3"
 libc = "0.2.183"
 rusqlite.workspace = true
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

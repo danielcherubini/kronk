@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "koji"
-version = "1.16.3"
+version = "1.17.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "koji-core"
-version = "1.16.3"
+version = "1.17.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1664,6 +1664,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "shlex",
  "sysinfo",
  "tar",
@@ -1683,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "koji-mock"
-version = "1.16.1"
+version = "1.17.0"
 dependencies = [
  "tokio",
  "tracing",
@@ -1692,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "koji-web"
-version = "1.16.3"
+version = "1.17.0"
 dependencies = [
  "anyhow",
  "async-stream",

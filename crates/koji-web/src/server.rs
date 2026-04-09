@@ -161,6 +161,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(api::delete_model),
         )
         .route("/api/models/:id/rename", post(api::rename_model))
+        .route(
+            "/api/models/:id/refresh",
+            post(api::refresh_model_metadata),
+        )
+        .route("/api/models/:id/verify", post(api::verify_model_files))
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))

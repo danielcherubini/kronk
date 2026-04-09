@@ -234,6 +234,11 @@ pub enum ModelCommands {
         #[arg(long)]
         pull: bool,
     },
+    /// Verify downloaded GGUF files against their HuggingFace LFS SHA-256 hashes
+    Verify {
+        /// Model ID to verify (e.g. "bartowski/OmniCoder-8B-GGUF"). Verifies all if omitted.
+        model: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]

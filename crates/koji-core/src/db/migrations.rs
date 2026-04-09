@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 4;
+pub const LATEST_VERSION: i32 = 5;
 
 /// Run all applicable migrations on the database
 ///
@@ -112,6 +112,18 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
                 );
                 CREATE INDEX IF NOT EXISTS idx_system_metrics_ts
                     ON system_metrics_history(ts_unix_ms);
+                "#,
+        ),
+        (
+            5,
+            r#"
+                -- Local SHA-256 verification tracking for previously downloaded quants.
+                -- last_verified_at is ISO 8601 of the most recent verification attempt.
+                -- verified_ok is nullable: NULL = never verified or no upstream hash available.
+                -- verify_error holds a short message on mismatch or verification failure.
+                ALTER TABLE model_files ADD COLUMN last_verified_at TEXT;
+                ALTER TABLE model_files ADD COLUMN verified_ok INTEGER;
+                ALTER TABLE model_files ADD COLUMN verify_error TEXT;
                 "#,
         ),
     ];
