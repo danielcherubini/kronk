@@ -14,8 +14,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 27
-- **Completed**: 26 ✅
+- **Total Plans**: 28
+- **Completed**: 27 ✅
 - **Remaining**: 1 🚧 (VLLM Backend)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -67,6 +67,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 |------|-------------|----------------|
 | [Web UI Redesign](2026-04-04-web-ui-redesign.md) | Dark theme, nav bar, sparkline charts, dashboard polish | `734623d`, `d585ba4`, `9dc78d3`, `502e2f6` |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
+| [Pull Model Modal Refactor](2026-04-08-pull-model-modal-refactor.md) | Replace /pull page with modal on Models tab, fix wizard reset | `8dc2a8f`, `ca1d3cf`, `ec3abc3` |
 
 ### Configuration
 
@@ -113,6 +114,14 @@ Only **one major feature** remains to be implemented:
 | [Koji Web Control Plane](2026-04-03-koji-web-control-plane.md) | Core UI implemented, some features pending | ✅ PARTIALLY COMPLETED |
 | [Dashboard Time Series Graphs](2026-04-06-dashboard-time-series-graphs.md) | Superseded by persist-dashboard-metrics | 🔁 SUPERSEDED |
 
+## Deferred Cleanup
+
+The following items were scoped out of existing plans and are tracked here for future implementation:
+
+| Item | Context | File |
+|------|---------|------|
+| Remove `is_new` sentinel pattern | The `model_editor.rs` component uses `id == "new"` and an `is_new` derived signal to distinguish create vs edit mode. This was not removed when the `/models/new/edit` entry point was removed (Pull Model Modal Refactor). Deferred to avoid scope creep. | `crates/koji-web/src/components/model_editor.rs` (multiple call sites) |
+
 ## Related Documentation
 
 - [README.md](../README.md) - Project overview
@@ -146,4 +155,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-06
+**Last Updated**: 2026-04-08

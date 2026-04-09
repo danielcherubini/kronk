@@ -229,22 +229,24 @@ pub fn PullQuantWizard(
             if !open {
                 return;
             }
-            let repo = initial_repo.get_untracked();
-            if repo.trim().is_empty() {
-                return;
-            }
             let step = wizard_step.get_untracked();
             if !matches!(step, WizardStep::RepoInput | WizardStep::Done) {
                 // Mid-flow session — preserve it across close/reopen.
                 return;
             }
-            // Reset session state.
+            // Always reset session state when (re)opening at a terminal step.
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
             context_lengths.set(std::collections::HashMap::new());
             download_jobs.set(Vec::new());
             error_msg.set(None);
             did_complete.set(false);
+            wizard_step.set(WizardStep::RepoInput);
+
+            let repo = initial_repo.get_untracked();
+            if repo.trim().is_empty() {
+                return; // No auto-fetch for empty repo — user will type one in.
+            }
             repo_id.set(repo.clone());
             wizard_step.set(WizardStep::LoadingQuants);
 
