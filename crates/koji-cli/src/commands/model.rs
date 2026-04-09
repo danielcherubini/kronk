@@ -207,10 +207,9 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
             community_card.quants.clear();
             community_card
         } else {
-            let name = repo_id.rsplit('/').next().unwrap_or(repo_id).to_string();
             let mut new_card = ModelCard {
                 model: ModelMeta {
-                    name,
+                    name: repo_id.to_string(),
                     source: repo_id.to_string(),
                     default_context_length: None, // set by interactive context prompt
                     default_gpu_layers: Some(999),
