@@ -8,10 +8,10 @@ impl Config {
             .models
             .get(name)
             .or_else(|| {
-                // Fallback: search for a server where the 'model' field matches the requested name
-                self.models
-                    .values()
-                    .find(|s| s.model.as_deref() == Some(name))
+                // Fallback: search for a server where api_name or model field matches the requested name
+                self.models.values().find(|s| {
+                    s.api_name.as_deref() == Some(name) || s.model.as_deref() == Some(name)
+                })
             })
             .with_context(|| format!("Model '{}' not found in config", name))?;
 
@@ -40,8 +40,11 @@ impl Config {
                 None => continue,
             };
 
-            // Match on config key (alias) or full model ID
-            if config_name == model_name || server.model.as_deref() == Some(model_name) {
+            // Match on api_name (highest priority), then config key, then model field
+            if server.api_name.as_deref() == Some(model_name)
+                || config_name == model_name
+                || server.model.as_deref() == Some(model_name)
+            {
                 results.push((config_name.clone(), server, backend));
             }
         }
@@ -1055,5 +1058,210 @@ mod tests {
             path_token
         );
         assert!(path_token.ends_with("model.gguf"));
+    }
+
+    #[test]
+    fn test_resolve_by_api_name() {
+        let mut config = Config::default();
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: Some("/usr/local/bin/llama-server".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model.Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        // Model where api_name differs from model field
+        config.models.insert(
+            "my-custom-name".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: Some("other-model-id".to_string()),
+                quant: Some("Q4_K_M".to_string()),
+                mmproj: None,
+                port: Some(8080),
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                api_name: Some("bartowski/Qwen3-8B-GGUF".to_string()),
+                gpu_layers: None,
+                quants,
+            },
+        );
+
+        // Should find model by api_name (not by model field)
+        let results = config.resolve_servers_for_model("bartowski/Qwen3-8B-GGUF");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "my-custom-name");
+    }
+
+    #[test]
+    fn test_api_name_takes_priority() {
+        let mut config = Config::default();
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: Some("/usr/local/bin/llama-server".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model.Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        config.models.insert(
+            "slug".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: Some("other-model".to_string()),
+                quant: Some("Q4_K_M".to_string()),
+                mmproj: None,
+                port: Some(8080),
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                api_name: Some("friendly-name".to_string()),
+                gpu_layers: None,
+                quants,
+            },
+        );
+
+        // Querying by "friendly-name" (api_name) should resolve correctly
+        let results = config.resolve_servers_for_model("friendly-name");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "slug");
+    }
+
+    #[test]
+    fn test_backward_compat_no_api_name() {
+        let mut config = Config::default();
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: Some("/usr/local/bin/llama-server".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model.Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        // Model with api_name: None
+        config.models.insert(
+            "config-key-name".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: Some("org/repo".to_string()),
+                quant: Some("Q4_K_M".to_string()),
+                mmproj: None,
+                port: Some(8080),
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                api_name: None,
+                gpu_layers: None,
+                quants,
+            },
+        );
+
+        // Should still resolve by config key
+        let results = config.resolve_servers_for_model("config-key-name");
+        assert_eq!(results.len(), 1);
+
+        // Should also resolve by model field
+        let results = config.resolve_servers_for_model("org/repo");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_server_by_api_name() {
+        let mut config = Config::default();
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: Some("/usr/local/bin/llama-server".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let mut quants = std::collections::BTreeMap::new();
+        quants.insert(
+            "Q4_K_M".to_string(),
+            crate::config::types::QuantEntry {
+                file: "model.Q4_K_M.gguf".to_string(),
+                kind: Default::default(),
+                size_bytes: None,
+                context_length: None,
+            },
+        );
+
+        // Model where api_name differs from config key and model field
+        config.models.insert(
+            "my-custom-name".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                args: vec![],
+                sampling: None,
+                model: Some("other-model-id".to_string()),
+                quant: Some("Q4_K_M".to_string()),
+                mmproj: None,
+                port: Some(8080),
+                health_check: None,
+                enabled: true,
+                context_length: None,
+                profile: None,
+                api_name: Some("bartowski/Qwen3-8B-GGUF".to_string()),
+                gpu_layers: None,
+                quants,
+            },
+        );
+
+        // Should find model by api_name via resolve_server
+        let result = config.resolve_server("bartowski/Qwen3-8B-GGUF");
+        assert!(result.is_ok());
     }
 }
