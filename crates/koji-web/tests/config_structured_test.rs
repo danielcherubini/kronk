@@ -58,7 +58,7 @@ quant = "Q4_K_M"
 args = []
 enabled = true
 context_length = 32768
-display_name = "Test Model"
+api_name = "Test Model"
 gpu_layers = 35
 
 [sampling_templates.coding]

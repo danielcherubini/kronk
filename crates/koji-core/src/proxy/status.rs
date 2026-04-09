@@ -28,6 +28,7 @@ impl ProxyState {
             );
             out.push(crate::gpu::ModelStatus {
                 id: model_id.clone(),
+                api_name: model_cfg.api_name.clone(),
                 backend: model_cfg.backend.clone(),
                 loaded,
             });
@@ -89,6 +90,7 @@ impl ProxyState {
                         "quant": model_config.quant,
                         "context_length": model_config.context_length,
                         "enabled": model_config.enabled,
+                        "api_name": model_config.api_name,
                         "loaded": true,
                         "backend_pid": *backend_pid,
                         "load_time_secs": load_time_secs,
@@ -108,6 +110,7 @@ impl ProxyState {
                         "quant": model_config.quant,
                         "context_length": model_config.context_length,
                         "enabled": model_config.enabled,
+                        "api_name": model_config.api_name,
                         "loaded": false,
                         "backend_pid": null,
                         "load_time_secs": null,
@@ -125,6 +128,7 @@ impl ProxyState {
                         "quant": model_config.quant,
                         "context_length": model_config.context_length,
                         "enabled": model_config.enabled,
+                        "api_name": model_config.api_name,
                         "loaded": false,
                         "backend_pid": null,
                         "load_time_secs": null,
@@ -184,7 +188,7 @@ mod tests {
             enabled: true,
             context_length: None,
             profile: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants: BTreeMap::new(),
         }

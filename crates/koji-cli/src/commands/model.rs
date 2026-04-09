@@ -581,7 +581,7 @@ async fn cmd_create(
             health_check: None,
             enabled: true,
             context_length: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants: std::collections::BTreeMap::new(),
         },

@@ -96,7 +96,7 @@ pub async fn handle_chat_completions(
 
     state.update_last_accessed(&server_name).await;
 
-    forward_request(&state, &server_name, &parts, &body_bytes).await
+    forward_request(&state, &server_name, &parts, &body_bytes, model_name).await
 }
 
 #[axum::debug_handler]
@@ -169,7 +169,7 @@ pub async fn handle_stream_chat_completions(
 
     state.update_last_accessed(&server_name).await;
 
-    forward_request(&state, &server_name, &parts, &body_bytes).await
+    forward_request(&state, &server_name, &parts, &body_bytes, model_name).await
 }
 
 #[axum::debug_handler]
@@ -177,39 +177,54 @@ pub async fn handle_get_model(
     state: State<Arc<ProxyState>>,
     Path(model_id): Path<String>,
 ) -> Response {
-    // Check if already loaded (by server name or model name)
-    let model_state = state.get_model_state(&model_id).await;
+    // Acquire both locks upfront
+    let config = state.config.read().await;
+    let loaded_models = state.models.read().await;
 
-    if let Some(ms) = model_state {
+    // First check: runtime state found by config key
+    if let Some(ms) = loaded_models.get(&model_id) {
         let load_time = ms.load_time().unwrap_or(SystemTime::now());
         let owned_by = ms.backend();
         let created = load_time
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs();
-        return Json(serde_json::json!({
-            "id": model_id,
-            "object": "model",
-            "created": created,
-            "owned_by": owned_by,
-            "ready": ms.is_ready()
-        }))
-        .into_response();
+        // Look up config to get api_name
+        if let Some(server_cfg) = config.models.get(&model_id) {
+            let model_id_val = server_cfg.api_name.as_deref().unwrap_or(&model_id);
+            return Json(serde_json::json!({
+                "id": model_id_val,
+                "object": "model",
+                "created": created,
+                "owned_by": owned_by,
+                "ready": ms.is_ready()
+            }))
+            .into_response();
+        }
     }
 
-    // Check if it's a configured (but not loaded) model
-    let config = state.config.read().await;
+    // Fallback: check if model_id matches config_name, api_name, or model field
     for (config_name, server_cfg) in &config.models {
         if !server_cfg.enabled {
             continue;
         }
-        if config_name == &model_id || server_cfg.model.as_deref() == Some(model_id.as_str()) {
+        // Check if model_id matches config_name, api_name, or model field
+        if config_name == &model_id
+            || server_cfg.api_name.as_deref() == Some(&*model_id)
+            || server_cfg.model.as_deref() == Some(model_id.as_str())
+        {
+            let model_id_val = server_cfg.api_name.as_deref().unwrap_or(config_name);
+            // Check runtime state for accurate ready status
+            let ready = loaded_models
+                .get(config_name)
+                .map(|ms| ms.is_ready())
+                .unwrap_or(false);
             return Json(serde_json::json!({
-                "id": config_name,
+                "id": model_id_val,
                 "object": "model",
                 "created": 0,
                 "owned_by": server_cfg.backend,
-                "ready": false
+                "ready": ready
             }))
             .into_response();
         }
@@ -266,6 +281,8 @@ pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_jso
             continue;
         }
 
+        let model_id = server_cfg.api_name.as_deref().unwrap_or(config_name);
+
         if let Some(model_state) = loaded_models.get(config_name) {
             let created = model_state
                 .load_time()
@@ -273,7 +290,7 @@ pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_jso
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             data.push(serde_json::json!({
-                "id": config_name,
+                "id": model_id,
                 "object": "model",
                 "created": created,
                 "owned_by": model_state.backend(),
@@ -281,7 +298,7 @@ pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_jso
             }));
         } else {
             data.push(serde_json::json!({
-                "id": config_name,
+                "id": model_id,
                 "object": "model",
                 "created": 0,
                 "owned_by": server_cfg.backend,
@@ -299,4 +316,122 @@ pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_jso
 #[axum::debug_handler]
 pub async fn handle_fallback() -> StatusCode {
     StatusCode::NOT_FOUND
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, ModelConfig};
+    use crate::proxy::ProxyState;
+    use axum::{http::StatusCode, response::IntoResponse};
+    use serde_json::Value as JsonValue;
+
+    fn create_test_state() -> ProxyState {
+        let mut config = Config::default();
+        config.models.insert(
+            "config-key-1".to_string(),
+            ModelConfig {
+                backend: "llama.cpp".to_string(),
+                api_name: Some("api-name-1".to_string()),
+                model: Some("test/model-1".to_string()),
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        config.models.insert(
+            "config-key-2".to_string(),
+            ModelConfig {
+                backend: "llama.cpp".to_string(),
+                api_name: None,
+                model: Some("test/model-2".to_string()),
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        ProxyState::new(config, None)
+    }
+
+    #[tokio::test]
+    async fn test_handle_list_models_returns_api_name() {
+        let state = create_test_state();
+        let state_arc = Arc::new(state);
+        let state = State(state_arc);
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+        assert_eq!(data.len(), 2);
+
+        // Collect all model ids
+        let ids: Vec<&str> = data
+            .iter()
+            .map(|m| m.get("id").unwrap().as_str().unwrap())
+            .collect();
+
+        // Verify all expected ids are present
+        assert!(
+            ids.contains(&"api-name-1"),
+            "Expected 'api-name-1' in model ids, got: {:?}",
+            ids
+        );
+        assert!(
+            ids.contains(&"config-key-2"),
+            "Expected 'config-key-2' in model ids, got: {:?}",
+            ids
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_model_by_config_key_returns_api_name() {
+        let state = create_test_state();
+        let state_arc = Arc::new(state);
+        let state = State(state_arc);
+
+        let response = handle_get_model(state, Path("config-key-1".to_string())).await;
+        let status = response.status();
+        assert_eq!(status, StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json.get("id").unwrap().as_str(), Some("api-name-1"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_model_by_api_name_returns_api_name() {
+        let state = create_test_state();
+        let state_arc = Arc::new(state);
+        let state = State(state_arc);
+
+        let response = handle_get_model(state, Path("api-name-1".to_string())).await;
+        let status = response.status();
+        assert_eq!(status, StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json.get("id").unwrap().as_str(), Some("api-name-1"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_model_without_api_name_falls_back_to_config_key() {
+        let state = create_test_state();
+        let state_arc = Arc::new(state);
+        let state = State(state_arc);
+
+        let response = handle_get_model(state, Path("config-key-2".to_string())).await;
+        let status = response.status();
+        assert_eq!(status, StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json.get("id").unwrap().as_str(), Some("config-key-2"));
+    }
 }

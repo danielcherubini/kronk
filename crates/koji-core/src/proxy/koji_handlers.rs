@@ -1160,7 +1160,7 @@ async fn _setup_model_after_pull_with_config(
                 port: None,
                 health_check: None,
                 profile: None,
-                display_name: None,
+                api_name: Some(repo_id.to_string()),
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             });

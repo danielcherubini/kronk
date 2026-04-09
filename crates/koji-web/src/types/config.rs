@@ -133,9 +133,13 @@ pub struct ModelConfig {
     /// DEPRECATED — kept for migration deserialization only.
     #[serde(default, skip_serializing)]
     pub profile: Option<String>,
-    /// Display name for UI
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    /// API name for model identifier in OpenAI API responses
+    #[serde(
+        default,
+        alias = "display_name",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub api_name: Option<String>,
     /// Default GPU layers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_layers: Option<u32>,
@@ -425,7 +429,7 @@ impl From<CoreModelConfig> for ModelConfig {
             enabled: m.enabled,
             context_length: m.context_length,
             profile: None, // Skip serializing - deprecated field
-            display_name: m.display_name,
+            api_name: m.api_name,
             gpu_layers: m.gpu_layers,
             quants: m.quants.into_iter().map(|(k, v)| (k, v.into())).collect(),
             extra: None, // Forward-compat field - preserve unknown fields on POST
@@ -448,7 +452,7 @@ impl From<ModelConfig> for CoreModelConfig {
             enabled: m.enabled,
             context_length: m.context_length,
             profile: None, // Skip serializing - deprecated field
-            display_name: m.display_name,
+            api_name: m.api_name,
             gpu_layers: m.gpu_layers,
             quants: m.quants.into_iter().map(|(k, v)| (k, v.into())).collect(),
         }

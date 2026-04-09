@@ -65,7 +65,7 @@ pub struct ModelConfig {
     #[serde(default)]
     pub context_length: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    pub api_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_layers: Option<u32>,
     /// Forward-compat: preserve any additional fields we don't know about

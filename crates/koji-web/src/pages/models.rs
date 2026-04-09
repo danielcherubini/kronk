@@ -13,6 +13,8 @@ struct ModelEntry {
     quant: Option<String>,
     enabled: bool,
     loaded: bool,
+    #[serde(default)]
+    api_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +32,12 @@ fn partition_models_by_loaded(models: Vec<ModelEntry>) -> (Vec<ModelEntry>, Vec<
 fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
     let (read, _) = sig.split();
     read.into()
+}
+
+/// Returns the preferred display name for a model, preferring `api_name` if
+/// available, falling back to the model `id` otherwise.
+fn model_display_name(m: &ModelEntry) -> String {
+    m.api_name.as_deref().unwrap_or(m.id.as_str()).to_string()
 }
 
 #[component]
@@ -214,7 +222,7 @@ pub fn Models() -> impl IntoView {
                                                         view! {
                                                             <div class="model-card card">
                                                                 <div class="model-card__header">
-                                                                    <span class="model-card__id text-mono">{m.id.clone()}</span>
+                                                                    <span class="model-card__id text-mono">{model_display_name(&m)}</span>
                                                                     <div class="model-card__badges">
                                                                         <span class=enabled_class>
                                                                             {if m.enabled { "Enabled" } else { "Disabled" }}
@@ -296,7 +304,7 @@ pub fn Models() -> impl IntoView {
                                                         view! {
                                                             <div class="model-card card">
                                                                 <div class="model-card__header">
-                                                                    <span class="model-card__id text-mono">{m.id.clone()}</span>
+                                                                    <span class="model-card__id text-mono">{model_display_name(&m)}</span>
                                                                     <div class="model-card__badges">
                                                                         <span class=enabled_class>
                                                                             {if m.enabled { "Enabled" } else { "Disabled" }}
@@ -406,18 +414,20 @@ mod tests {
             ModelEntry {
                 id: "model-1".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama2".to_string(),
+                model: Some("llama2".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama3".to_string(),
+                model: Some("llama3".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -431,18 +441,20 @@ mod tests {
             ModelEntry {
                 id: "model-1".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama2".to_string(),
+                model: Some("llama2".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: false,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama3".to_string(),
+                model: Some("llama3".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: false,
+                api_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -456,26 +468,29 @@ mod tests {
             ModelEntry {
                 id: "model-1".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama2".to_string(),
+                model: Some("llama2".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama3".to_string(),
+                model: Some("llama3".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: false,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-3".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama4".to_string(),
+                model: Some("llama4".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -497,34 +512,38 @@ mod tests {
             ModelEntry {
                 id: "model-2".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama3".to_string(),
+                model: Some("llama3".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-1".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama2".to_string(),
+                model: Some("llama2".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: true,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-4".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama5".to_string(),
+                model: Some("llama5".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: false,
+                api_name: None,
             },
             ModelEntry {
                 id: "model-3".to_string(),
                 backend: "llama.cpp".to_string(),
-                model: "llama4".to_string(),
+                model: Some("llama4".to_string()),
                 quant: None,
                 enabled: true,
                 loaded: false,
+                api_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);

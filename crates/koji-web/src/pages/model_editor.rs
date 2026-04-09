@@ -63,7 +63,7 @@ pub struct ModelDetail {
     pub enabled: bool,
     pub context_length: Option<u32>,
     pub port: Option<u16>,
-    pub display_name: Option<String>,
+    pub api_name: Option<String>,
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
@@ -123,7 +123,7 @@ pub struct ModelForm {
     pub enabled: bool,
     pub context_length: Option<u32>,
     pub port: Option<u16>,
-    pub display_name: Option<String>,
+    pub api_name: Option<String>,
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
 }
@@ -147,7 +147,7 @@ async fn fetch_model(id: String) -> Option<ModelDetail> {
             enabled: true,
             context_length: None,
             port: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants: BTreeMap::new(),
             backends: list.backends,
@@ -242,7 +242,7 @@ async fn save_model(form: ModelForm, is_new: bool) -> Result<(), String> {
         "enabled": form.enabled,
         "context_length": form.context_length,
         "port": form.port,
-        "display_name": form.display_name,
+        "api_name": form.api_name,
         "gpu_layers": form.gpu_layers,
         "quants": form.quants,
     });
@@ -414,7 +414,7 @@ pub fn ModelEditor() -> impl IntoView {
     let form_enabled = RwSignal::new(true);
     let form_context_length = RwSignal::new(String::new());
     let form_port = RwSignal::new(String::new());
-    let form_display_name = RwSignal::new(String::new());
+    let api_name_field = RwSignal::new(String::new());
     let form_gpu_layers = RwSignal::new(String::new());
     let form_vision_enabled = RwSignal::new(false);
     let available_mmprojs_for_select = RwSignal::new(Vec::<String>::new());
@@ -457,7 +457,7 @@ pub fn ModelEditor() -> impl IntoView {
                 form_context_length
                     .set(d.context_length.map(|v| v.to_string()).unwrap_or_default());
                 form_port.set(d.port.map(|v| v.to_string()).unwrap_or_default());
-                form_display_name.set(d.display_name.unwrap_or_default());
+                api_name_field.set(d.api_name.unwrap_or_default());
                 form_gpu_layers.set(d.gpu_layers.map(|v| v.to_string()).unwrap_or_default());
 
                 // Load mmproj from model detail
@@ -728,10 +728,10 @@ pub fn ModelEditor() -> impl IntoView {
             enabled: form_enabled.get(),
             context_length: form_context_length.get().parse::<u32>().ok(),
             port: form_port.get().parse::<u16>().ok(),
-            display_name: if form_display_name.get().is_empty() {
+            api_name: if api_name_field.get().is_empty() {
                 None
             } else {
-                Some(form_display_name.get())
+                Some(api_name_field.get())
             },
             gpu_layers: form_gpu_layers.get().parse::<u32>().ok(),
             quants: quants
@@ -948,14 +948,14 @@ pub fn ModelEditor() -> impl IntoView {
                                     }).collect::<Vec<_>>()}
                                 </select>
 
-                                <label class="form-label" for="field-display-name">"Display Name"</label>
+                                <label class="form-label" for="field-api-name">"API Name"</label>
                                 <input
-                                    id="field-display-name"
+                                    id="field-api-name"
                                     class="form-input"
                                     type="text"
                                     placeholder="e.g. My Awesome Model"
-                                    prop:value=move || form_display_name.get()
-                                    on:input=move |e| form_display_name.set(event_target_value(&e))
+                                    prop:value=move || api_name_field.get()
+                                    on:input=move |e| api_name_field.set(event_target_value(&e))
                                 />
 
                                 <label class="form-label" for="field-model">"Model (HF repo)"</label>

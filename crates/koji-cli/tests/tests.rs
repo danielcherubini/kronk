@@ -253,7 +253,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             health_check: None,
             enabled: true,
             context_length: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants: std::collections::BTreeMap::new(),
         },

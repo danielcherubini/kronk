@@ -24,7 +24,7 @@ mod tests {
     mod restart_test;
 
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, ModelConfig};
     use crate::proxy::pull_jobs::PullJob;
     use std::sync::Arc;
 
@@ -71,17 +71,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_status_response_model_fields() {
-        let config = Config::default();
+        // Create a config with a model for testing
+        let mut config = Config::default();
+        config.models.insert(
+            "test-model".to_string(),
+            ModelConfig {
+                backend: "llama_cpp".to_string(),
+                model: Some("test/model".to_string()),
+                enabled: true,
+                ..Default::default()
+            },
+        );
         let state = ProxyState::new(config, None);
 
         let response = state.build_status_response().await;
 
-        // models is an object, default config has a "default" model
+        // models is an object, check that our test model is present
         let models = response.get("models").unwrap().as_object().unwrap();
-        assert!(
-            !models.is_empty(),
-            "default config should have at least one model"
-        );
+        assert!(!models.is_empty(), "config should have at least one model");
 
         let (_, first_model) = models.iter().next().unwrap();
 
@@ -117,7 +124,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -151,7 +158,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -171,7 +178,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -205,7 +212,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -239,7 +246,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -270,7 +277,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },

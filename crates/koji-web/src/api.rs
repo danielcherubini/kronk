@@ -379,7 +379,7 @@ fn model_entry_json(
         "enabled": m.enabled,
         "context_length": m.context_length,
         "port": m.port,
-        "display_name": m.display_name,
+        "api_name": m.api_name,
         "gpu_layers": m.gpu_layers,
         "quants": quants_json,
     });
@@ -483,8 +483,8 @@ pub struct ModelBody {
     #[serde(default)]
     pub port: Option<u16>,
     // NEW:
-    #[serde(default)]
-    pub display_name: Option<String>,
+    #[serde(default, alias = "display_name")]
+    pub api_name: Option<String>,
     #[serde(default)]
     pub gpu_layers: Option<u32>,
     #[serde(default)]
@@ -507,7 +507,7 @@ fn apply_model_body(
         enabled: true,
         context_length: None,
         profile: None,
-        display_name: None,
+        api_name: None,
         gpu_layers: None,
         quants: std::collections::BTreeMap::new(),
     });
@@ -527,7 +527,7 @@ fn apply_model_body(
         port: body.port,
         health_check: base.health_check,
         profile: None,
-        display_name: body.display_name,
+        api_name: body.api_name,
         gpu_layers: body.gpu_layers,
         // Preserve server-side `size_bytes` on update: the UI exposes the field
         // read-only and callers must not be able to rewrite it via the API. The
@@ -999,7 +999,7 @@ mod tests {
             enabled: Some(true),
             context_length: None,
             port: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants: Some(quants),
         }
@@ -1028,7 +1028,7 @@ mod tests {
             enabled: true,
             context_length: None,
             profile: None,
-            display_name: None,
+            api_name: None,
             gpu_layers: None,
             quants,
         }

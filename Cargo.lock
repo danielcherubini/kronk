@@ -1691,7 +1691,7 @@ dependencies = [
 
 [[package]]
 name = "koji-mock"
-version = "1.18.0"
+version = "1.19.0"
 dependencies = [
  "tokio",
  "tracing",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "koji-web"
-version = "1.18.0"
+version = "1.19.0"
 dependencies = [
  "anyhow",
  "async-stream",

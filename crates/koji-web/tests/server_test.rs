@@ -239,7 +239,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: Some("Hot Reload Test".to_string()),
+                api_name: Some("Hot Reload Test".to_string()),
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
             },
@@ -266,9 +266,9 @@ mod tests {
                 "proxy config should contain 'hot-reload-model' after POST /api/config"
             );
             assert_eq!(
-                cfg.models["hot-reload-model"].display_name,
+                cfg.models["hot-reload-model"].api_name,
                 Some("Hot Reload Test".to_string()),
-                "display_name should survive the hot-reload round-trip"
+                "api_name should survive the hot-reload round-trip"
             );
         }
 

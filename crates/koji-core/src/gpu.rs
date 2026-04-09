@@ -81,6 +81,7 @@ pub struct MetricSample {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelStatus {
     pub id: String,
+    pub api_name: Option<String>,
     pub backend: String,
     pub loaded: bool,
 }

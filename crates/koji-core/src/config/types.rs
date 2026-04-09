@@ -158,7 +158,7 @@ pub struct HealthCheck {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     pub backend: String,
     #[serde(default)]
@@ -193,9 +193,13 @@ pub struct ModelConfig {
     /// Must NOT be serialized back (skip_serializing).
     #[serde(default, skip_serializing)]
     pub profile: Option<String>,
-    /// Display name for UI
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    /// API name for model identifier in OpenAI API responses
+    #[serde(
+        default,
+        alias = "display_name",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub api_name: Option<String>,
     /// Default GPU layers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_layers: Option<u32>,

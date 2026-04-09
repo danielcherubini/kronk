@@ -16,8 +16,6 @@ use super::registry::{BackendSource, BackendType};
 use super::ProgressSink;
 use crate::gpu::GpuType;
 
-
-
 #[derive(Debug, Clone)]
 pub struct InstallOptions {
     pub backend_type: BackendType,
@@ -58,7 +56,8 @@ pub async fn install_backend_with_progress(
                     "Resolving 'latest' version tag for {:?}",
                     options.backend_type
                 );
-                let tag = crate::backends::updater::check_latest_version(&options.backend_type).await?;
+                let tag =
+                    crate::backends::updater::check_latest_version(&options.backend_type).await?;
                 tracing::info!(
                     target: "koji_core::backends::installer",
                     "Resolved 'latest' -> {}",

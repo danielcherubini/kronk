@@ -334,6 +334,7 @@ mod tests {
             info: None,
             update: UpdateStatusDto::default(),
             release_notes_url: Some("https://example.com".to_string()),
+            default_args: vec![],
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains("llama_cpp"));

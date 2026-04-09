@@ -131,7 +131,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/backends/install", post(install_backend))
         .route("/api/backends/:name/update", post(update_backend))
         .route("/api/backends/:name", delete(remove_backend))
-        .route("/api/backends/:name/default-args", post(update_backend_default_args))
+        .route(
+            "/api/backends/:name/default-args",
+            post(update_backend_default_args),
+        )
         .route("/api/backends/check-updates", post(check_backend_updates))
         .route("/api/backends/jobs/:id", get(get_job))
         .route("/api/backends/jobs/:id/events", get(job_events_sse))

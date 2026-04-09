@@ -1,3 +1,5 @@
+#![allow(clippy::unnecessary_to_owned)]
+
 use async_stream::stream;
 use axum::response::sse::{Event, KeepAlive};
 use axum::{
@@ -781,8 +783,7 @@ pub async fn install_backend(
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
                     let reg_result = tokio::task::spawn_blocking(move || {
-                        let mut registry =
-                            koji_core::backends::BackendRegistry::open(&config_dir)?;
+                        let mut registry = koji_core::backends::BackendRegistry::open(&config_dir)?;
                         registry.add(koji_core::backends::BackendInfo {
                             name: reg_backend_name,
                             backend_type: reg_backend_type,
@@ -1528,7 +1529,7 @@ pub async fn update_backend_default_args(
 
     // Clone config for proxy sync
     let config_clone = config.clone();
-    
+
     // Save config
     match tokio::task::spawn_blocking(move || config.save_to(&config_path)).await {
         Ok(Ok(())) => {

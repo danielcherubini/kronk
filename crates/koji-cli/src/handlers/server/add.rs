@@ -146,7 +146,7 @@ pub async fn cmd_server_add(
         health_check: None,
         enabled: true,
         context_length: extracted.context_length,
-        display_name: None,
+        api_name: None,
         gpu_layers: None,
         quants: std::collections::BTreeMap::new(),
     };

@@ -47,7 +47,7 @@ pub async fn main() -> Result<()> {
         args.command,
         Commands::Serve { .. } | Commands::ServiceRun { proxy: true, .. }
     );
-    
+
     if use_file_logging {
         if let Ok(logs_dir) = config.logs_dir() {
             if let Err(e) = koji_core::logging::init_with_file(&logs_dir) {

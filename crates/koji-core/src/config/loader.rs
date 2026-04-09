@@ -273,6 +273,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ModelConfig;
     use std::collections::BTreeMap;
 
     #[test]
@@ -331,7 +332,7 @@ mod tests {
                 enabled: true,
                 context_length: None,
                 profile: None,
-                display_name: None,
+                api_name: None,
                 gpu_layers: None,
                 quants: BTreeMap::new(),
             },

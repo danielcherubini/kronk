@@ -72,7 +72,10 @@ pub async fn install_prebuilt(
     );
 
     if let Err(e) = prepare_target_dir(&options.target_dir, options.allow_overwrite) {
-        emit_error(progress, format!("Failed to prepare target directory: {}", e));
+        emit_error(
+            progress,
+            format!("Failed to prepare target directory: {}", e),
+        );
         return Err(e);
     }
 
