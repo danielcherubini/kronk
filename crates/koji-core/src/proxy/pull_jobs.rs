@@ -7,6 +7,8 @@ use std::time::Instant;
 pub enum PullJobStatus {
     Pending,
     Running,
+    /// Download finished, now hashing the file and comparing to the HF LFS SHA-256.
+    Verifying,
     Completed,
     Failed,
 }
@@ -21,6 +23,21 @@ pub struct PullJob {
     pub bytes_downloaded: u64,
     pub total_bytes: Option<u64>,
     pub error: Option<String>,
+    /// Bytes hashed during the verify phase. Updated by the progress-poll task.
+    #[serde(default)]
+    pub verify_bytes_hashed: u64,
+    /// Total bytes to hash during the verify phase (== downloaded file size).
+    /// Set when the verify phase starts so the client can render a progress bar.
+    #[serde(default)]
+    pub verify_total_bytes: Option<u64>,
+    /// Verification outcome. `None` when verification has not completed or when
+    /// no upstream LFS hash was available (can't verify). `Some(true)` on match,
+    /// `Some(false)` on mismatch or hashing error.
+    #[serde(default)]
+    pub verified_ok: Option<bool>,
+    /// Human-readable verification error detail. Mutually set with `verified_ok`.
+    #[serde(default)]
+    pub verify_error: Option<String>,
     /// Set when status transitions to Completed or Failed; used for eviction.
     #[serde(skip)]
     pub completed_at: Option<Instant>,
@@ -36,6 +53,10 @@ impl Default for PullJob {
             bytes_downloaded: 0,
             total_bytes: None,
             error: None,
+            verify_bytes_hashed: 0,
+            verify_total_bytes: None,
+            verified_ok: None,
+            verify_error: None,
             completed_at: None,
         }
     }

@@ -407,14 +407,14 @@ fn spawn_download_job(
 
         match download_result {
             Ok(bytes) => {
+                // Record final downloaded byte count. Status stays Running until we
+                // enter the Verifying phase below.
                 {
                     let mut jobs = pull_jobs_arc.write().await;
                     if let Some(job) = jobs.get_mut(&job_id_clone) {
                         job.bytes_downloaded = bytes;
                         job.total_bytes = Some(bytes);
-                        job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
-                        job.completed_at = Some(std::time::Instant::now());
-                        tracing::info!(job_id = %job_id_clone, bytes, "Job transitioned to Completed");
+                        tracing::info!(job_id = %job_id_clone, bytes, "Download finished, entering verify phase");
                     }
                 }
                 // Release the in-flight lock before the post-download setup so
@@ -429,6 +429,21 @@ fn spawn_download_job(
                     &dest_dir,
                 )
                 .await;
+
+                // Automatic verification phase: re-hash the downloaded file and
+                // compare against HF's `lfs.sha256`. This catches silent corruption,
+                // truncated downloads, and tampering. See docs in models::verify.
+                run_verification(
+                    Arc::clone(&pull_jobs_arc),
+                    state_clone.db_dir.clone(),
+                    job_id_clone.clone(),
+                    repo_id_clone.clone(),
+                    filename_clone.clone(),
+                    spec_clone.quant.clone(),
+                    dest_path.clone(),
+                    bytes,
+                )
+                .await;
             }
             Err(e) => {
                 in_flight_clone.lock().await.remove(&dest_path);
@@ -436,11 +451,200 @@ fn spawn_download_job(
                 if let Some(job) = jobs.get_mut(&job_id_clone) {
                     job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
                     job.error = Some(e.to_string());
+                    job.completed_at = Some(std::time::Instant::now());
                     tracing::error!(job_id = %job_id_clone, error = %e, "Job failed");
                 }
             }
         }
     });
+}
+
+/// Run the post-download verification phase for a pull job.
+///
+/// 1. Fetches HF blob metadata to learn the expected LFS SHA-256.
+/// 2. Transitions the job to `Verifying` and starts a progress-poll task that
+///    reads a shared atomic counter and writes `verify_bytes_hashed` back into
+///    the `PullJob`.
+/// 3. Hashes the on-disk file in a blocking thread, writes the authoritative
+///    `model_files` row (with `size_bytes` from disk and `lfs_oid` from HF), and
+///    persists the verification outcome to the DB.
+/// 4. Transitions the job to `Completed` (match or no upstream hash) or
+///    `Failed` (mismatch or hash error).
+#[allow(clippy::too_many_arguments)]
+async fn run_verification(
+    pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
+    db_dir: Option<std::path::PathBuf>,
+    job_id: String,
+    repo_id: String,
+    filename: String,
+    quant_hint: Option<String>,
+    dest_path: std::path::PathBuf,
+    bytes: u64,
+) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // Step 1: fetch upstream LFS hash. Best-effort — if HF is unreachable, we
+    // still want to mark the download as Completed rather than Failed.
+    let expected_sha: Option<String> = match crate::models::pull::fetch_blob_metadata(&repo_id)
+        .await
+    {
+        Ok(blobs) => blobs.get(&filename).and_then(|b| b.lfs_sha256.clone()),
+        Err(e) => {
+            tracing::warn!(job_id = %job_id, repo = %repo_id, error = %e, "Failed to fetch HF blob metadata for verification");
+            None
+        }
+    };
+
+    // Step 2: transition to Verifying and init progress fields.
+    {
+        let mut jobs = pull_jobs.write().await;
+        if let Some(job) = jobs.get_mut(&job_id) {
+            job.status = crate::proxy::pull_jobs::PullJobStatus::Verifying;
+            job.verify_bytes_hashed = 0;
+            job.verify_total_bytes = Some(bytes);
+            tracing::info!(job_id = %job_id, "Job transitioned to Verifying");
+        }
+    }
+
+    // Step 3: hash the file in a blocking thread, with a separate async task
+    // polling a shared atomic counter to surface progress over SSE.
+    let progress = Arc::new(AtomicU64::new(0));
+    let poll_progress = Arc::clone(&progress);
+    let poll_jobs = Arc::clone(&pull_jobs);
+    let poll_job_id = job_id.clone();
+    let poll_handle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let hashed = poll_progress.load(Ordering::Relaxed);
+            let mut jobs = poll_jobs.write().await;
+            let Some(job) = jobs.get_mut(&poll_job_id) else {
+                break;
+            };
+            if !matches!(job.status, PullJobStatus::Verifying) {
+                break;
+            }
+            job.verify_bytes_hashed = hashed;
+        }
+    });
+
+    let hash_progress = Arc::clone(&progress);
+    let hash_dest = dest_path.clone();
+    let hash_expected = expected_sha.clone();
+    let hash_repo = repo_id.clone();
+    let hash_filename = filename.clone();
+    let hash_quant = quant_hint.clone();
+    let hash_db_dir = db_dir.clone();
+
+    let blocking_result = tokio::task::spawn_blocking(
+        move || -> (Option<bool>, Option<String>) {
+            // Compute the SHA-256 of the downloaded file.
+            let actual = match crate::models::verify::sha256_file(&hash_dest, |n| {
+                hash_progress.store(n, Ordering::Relaxed);
+            }) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %hash_dest.display(), "Hashing failed");
+                    None
+                }
+            };
+
+            let (ok, err): (Option<bool>, Option<String>) =
+                match (hash_expected.as_deref(), actual.as_deref()) {
+                    (None, _) => (None, Some("no upstream hash".to_string())),
+                    (Some(_), None) => (
+                        Some(false),
+                        Some("hash error: failed to read file".to_string()),
+                    ),
+                    (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
+                    (Some(exp), Some(act)) => (
+                        Some(false),
+                        Some(format!(
+                            "hash mismatch: expected {} got {}",
+                            &exp.chars().take(10).collect::<String>(),
+                            &act.chars().take(10).collect::<String>()
+                        )),
+                    ),
+                };
+
+            // Persist to DB (best-effort). We upsert the model_files row with the
+            // authoritative size (actual downloaded bytes) and the HF lfs_oid, then
+            // write the verification outcome. Only attempt if a db_dir is configured.
+            if let Some(dir) = hash_db_dir.as_ref() {
+                match crate::db::open(dir) {
+                    Ok(open_res) => {
+                        let conn = open_res.conn;
+                        if let Err(e) = crate::db::queries::upsert_model_file(
+                            &conn,
+                            &hash_repo,
+                            &hash_filename,
+                            hash_quant.as_deref(),
+                            hash_expected.as_deref(),
+                            Some(bytes as i64),
+                        ) {
+                            tracing::warn!(error = %e, "Failed to upsert model_files row");
+                        }
+                        if let Err(e) = crate::db::queries::update_verification(
+                            &conn,
+                            &hash_repo,
+                            &hash_filename,
+                            ok,
+                            err.as_deref(),
+                        ) {
+                            tracing::warn!(error = %e, "Failed to write verification result");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to open DB for verification write");
+                    }
+                }
+            }
+
+            (ok, err)
+        },
+    )
+    .await;
+
+    // Stop the progress poll.
+    poll_handle.abort();
+
+    let (ok, err) = blocking_result.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "Verification blocking task panicked");
+        (
+            Some(false),
+            Some(format!("verification task panicked: {}", e)),
+        )
+    });
+
+    // Step 4: transition to final state.
+    {
+        let mut jobs = pull_jobs.write().await;
+        if let Some(job) = jobs.get_mut(&job_id) {
+            // Stamp full progress on the hash bar.
+            job.verify_bytes_hashed = bytes;
+            job.verified_ok = ok;
+            job.verify_error = err.clone();
+            job.completed_at = Some(std::time::Instant::now());
+
+            // Mismatch or hash error is a hard failure. `None` (no upstream hash)
+            // is treated as success — the download itself finished and we just
+            // couldn't verify it.
+            if ok == Some(false) {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                job.error = err;
+                tracing::error!(
+                    job_id = %job_id,
+                    "Job transitioned to Failed after verification mismatch"
+                );
+            } else {
+                job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
+                tracing::info!(
+                    job_id = %job_id,
+                    verified_ok = ?ok,
+                    "Job transitioned to Completed after verification"
+                );
+            }
+        }
+    }
 }
 
 /// Handle starting a pull job (Koji management API).
@@ -530,11 +734,7 @@ pub async fn handle_koji_pull_model(
                 job_id: job_id.clone(),
                 repo_id: repo_id.clone(),
                 filename: spec.filename.clone(),
-                status: crate::proxy::pull_jobs::PullJobStatus::Pending,
-                bytes_downloaded: 0,
-                total_bytes: None,
-                error: None,
-                completed_at: None,
+                ..Default::default()
             };
 
             {
@@ -649,11 +849,7 @@ pub async fn handle_koji_pull_model(
         job_id: job_id.clone(),
         repo_id: repo_id.clone(),
         filename: filename.clone(),
-        status: crate::proxy::pull_jobs::PullJobStatus::Pending,
-        bytes_downloaded: 0,
-        total_bytes: None,
-        error: None,
-        completed_at: None,
+        ..Default::default()
     };
 
     // Store the job
@@ -701,6 +897,7 @@ pub async fn handle_koji_get_pull_job(
             let status_str = match j.status {
                 crate::proxy::pull_jobs::PullJobStatus::Pending => "pending",
                 crate::proxy::pull_jobs::PullJobStatus::Running => "running",
+                crate::proxy::pull_jobs::PullJobStatus::Verifying => "verifying",
                 crate::proxy::pull_jobs::PullJobStatus::Completed => "completed",
                 crate::proxy::pull_jobs::PullJobStatus::Failed => "failed",
             };
@@ -1136,8 +1333,7 @@ mod tests {
             status: PullJobStatus::Running,
             bytes_downloaded: 1_234_567,
             total_bytes: Some(4_800_000_000),
-            error: None,
-            completed_at: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&job).expect("PullJob serialization failed");
@@ -1151,6 +1347,39 @@ mod tests {
             "missing running status value in: {json}"
         );
         assert!(json.contains("\"job_id\""), "missing job_id in: {json}");
+        // New verification fields must be present in the SSE payload so the
+        // wizard can render the verify-phase progress bar.
+        assert!(
+            json.contains("\"verify_bytes_hashed\""),
+            "missing verify_bytes_hashed in: {json}"
+        );
+        assert!(
+            json.contains("\"verify_total_bytes\""),
+            "missing verify_total_bytes in: {json}"
+        );
+        assert!(
+            json.contains("\"verified_ok\""),
+            "missing verified_ok in: {json}"
+        );
+        assert!(
+            json.contains("\"verify_error\""),
+            "missing verify_error in: {json}"
+        );
+    }
+
+    /// Verifies that `PullJobStatus::Verifying` serializes as the snake_case
+    /// string `"verifying"` so frontends can match on it.
+    #[test]
+    fn test_pull_job_status_verifying_serializes() {
+        let job = PullJob {
+            status: PullJobStatus::Verifying,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&job).unwrap();
+        assert!(
+            json.contains("\"status\":\"verifying\""),
+            "expected verifying status string in: {json}"
+        );
     }
 
     /// Verifies that `QuantEntry` serializes to JSON with all expected keys.
