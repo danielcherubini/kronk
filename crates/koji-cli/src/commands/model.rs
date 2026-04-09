@@ -1167,7 +1167,14 @@ async fn cmd_verify(config: &Config, model_filter: Option<String>) -> Result<()>
     let mut total_bad: usize = 0;
 
     for model in &models {
-        let repo_id = &model.card.model.source;
+        // Mirror cmd_rm: legacy/hand-edited cards may have an empty
+        // card.model.source, in which case fall back to the model id so we
+        // still hit the right rows in the model_files table.
+        let repo_id: &str = if model.card.model.source.is_empty() {
+            &model.id
+        } else {
+            &model.card.model.source
+        };
         // Use the registry-resolved directory from the InstalledModel itself
         // rather than reconstructing the path — legacy/hand-edited cards may
         // live under a directory that doesn't match `models_dir/repo_id`.

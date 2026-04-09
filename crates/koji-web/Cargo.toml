@@ -33,6 +33,7 @@ koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+urlencoding = "2.1"
 
 [features]
 csr = []
@@ -59,4 +60,3 @@ serde_json = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
-urlencoding = "2.1"

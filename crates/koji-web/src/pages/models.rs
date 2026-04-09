@@ -123,7 +123,10 @@ pub fn Models() -> impl IntoView {
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
             for id in ids {
-                let url = format!("/api/models/{}/refresh", id);
+                // Percent-encode the id so values containing `/`, spaces or
+                // other reserved characters route correctly to the backend.
+                let encoded_id = urlencoding::encode(&id);
+                let url = format!("/api/models/{}/refresh", encoded_id);
                 match gloo_net::http::Request::post(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
                     Ok(r) => {

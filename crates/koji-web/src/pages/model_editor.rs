@@ -347,7 +347,10 @@ struct FileRecordJson {
 }
 
 async fn refresh_model_api(id: String) -> Result<RefreshResponse, String> {
-    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/refresh", id))
+    // Percent-encode the id for safe path interpolation; model ids may
+    // contain `/`, spaces, or other reserved characters.
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/refresh", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -361,7 +364,8 @@ async fn refresh_model_api(id: String) -> Result<RefreshResponse, String> {
 }
 
 async fn verify_model_api(id: String) -> Result<VerifyResponse, String> {
-    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/verify", id))
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/verify", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;
