@@ -230,6 +230,8 @@ pub async fn forward_request(
             let body = if is_streaming {
                 // Streaming response - rewrite model name in each SSE chunk
                 let model_name = model_name.to_string();
+                // Use RefCell to persist buffer across chunk boundaries
+                let buffer = std::cell::RefCell::new(String::new());
                 let transformed_stream = response.bytes_stream().map(move |chunk_result| {
                     match chunk_result {
                         Ok(chunk) => {
@@ -238,7 +240,7 @@ pub async fn forward_request(
                             // Buffer partial lines to handle chunks split mid-line.
                             let chunk_str = String::from_utf8_lossy(&chunk);
                             let mut result = String::new();
-                            let mut buffer = String::new();
+                            let mut buffer = buffer.borrow_mut();
 
                             for ch in chunk_str.chars() {
                                 buffer.push(ch);
@@ -259,8 +261,11 @@ pub async fn forward_request(
                                             {
                                                 json_value["model"] =
                                                     JsonValue::String(model_name.clone());
-                                                let reserialized = serde_json::to_string(&json_value)
-                                                    .unwrap_or_else(|_| data_content.to_string());
+                                                let reserialized =
+                                                    serde_json::to_string(&json_value)
+                                                        .unwrap_or_else(|_| {
+                                                            data_content.to_string()
+                                                        });
                                                 result.push_str("data: ");
                                                 result.push_str(&reserialized);
                                                 result.push('\n');
