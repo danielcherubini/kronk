@@ -1062,11 +1062,7 @@ async fn _setup_model_after_pull_with_config(
     let mut card = crate::models::card::ModelCard::load(&card_path).unwrap_or_else(|_| {
         crate::models::card::ModelCard {
             model: crate::models::card::ModelMeta {
-                name: repo_id
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(repo_id)
-                    .to_string(),
+                name: repo_id.to_string(),
                 source: repo_id.to_string(),
                 default_context_length: None,
                 default_gpu_layers: None,
