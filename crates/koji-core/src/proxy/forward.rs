@@ -199,7 +199,12 @@ pub async fn forward_request(
             let mut builder = Response::builder().status(status);
 
             for (key, value) in response.headers().iter() {
-                // Skip hop-by-hop headers in response
+                // Skip hop-by-hop headers and content-length in response.
+                // content-length must be removed because we rewrite the JSON
+                // body (model name substitution) which changes its size; keeping
+                // the original value would cause HTTP framing errors on
+                // keep-alive connections. Hyper will set the correct
+                // content-length (or use chunked encoding) automatically.
                 if [
                     "connection",
                     "keep-alive",
@@ -209,6 +214,7 @@ pub async fn forward_request(
                     "transfer-encoding",
                     "upgrade",
                     "trailer",
+                    "content-length",
                 ]
                 .contains(&key.as_str())
                 {
@@ -418,5 +424,69 @@ mod tests {
 
         assert_eq!(comment_line, ": this is a comment\n");
         assert_eq!(empty_line, "\n");
+    }
+
+    /// Verify that the response header skip-list used by forward_request
+    /// includes `content-length`.  The proxy rewrites the JSON body (model
+    /// name substitution) which changes its size; forwarding the backend's
+    /// original Content-Length would cause HTTP framing errors on keep-alive
+    /// connections (the client reads too few/many bytes, then interprets
+    /// leftover body data as the next HTTP response → "Expected HTTP/" error).
+    #[test]
+    fn test_content_length_is_stripped_from_forwarded_response_headers() {
+        // This is the exact skip-list from forward_request's response-header
+        // copying loop.  If someone removes "content-length" from the list
+        // this test will fail, reminding them why it must be there.
+        let skip_list: &[&str] = &[
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "transfer-encoding",
+            "upgrade",
+            "trailer",
+            "content-length",
+        ];
+
+        assert!(
+            skip_list.contains(&"content-length"),
+            "content-length MUST be stripped from forwarded response headers \
+             because the proxy rewrites the JSON body, changing its size"
+        );
+    }
+
+    /// Demonstrates the size mismatch that occurs when the model name in a
+    /// JSON response body is rewritten to a longer name.  If the original
+    /// Content-Length were forwarded, the HTTP client would see fewer bytes
+    /// than actually sent, corrupting keep-alive connections.
+    #[test]
+    fn test_body_size_changes_after_model_rewrite() {
+        let short_model = "m.gguf";
+        let long_model = "unsloth/gemma-4-E2B-it-GGUF";
+
+        let original = serde_json::json!({
+            "model": short_model,
+            "choices": [{"message": {"role": "assistant", "content": "Hello"}}]
+        });
+        let original_bytes = serde_json::to_vec(&original).unwrap();
+
+        let mut rewritten: JsonValue = serde_json::from_slice(&original_bytes).unwrap();
+        rewritten["model"] = JsonValue::String(long_model.to_string());
+        let rewritten_bytes = serde_json::to_vec(&rewritten).unwrap();
+
+        // The rewritten body is longer because the model name grew.
+        // If Content-Length from the backend (original_bytes.len()) were kept,
+        // the client would only read that many bytes and the remaining bytes
+        // would corrupt the next HTTP response on a keep-alive connection.
+        assert_ne!(
+            original_bytes.len(),
+            rewritten_bytes.len(),
+            "Body size should differ after model name rewrite"
+        );
+        assert!(
+            rewritten_bytes.len() > original_bytes.len(),
+            "Rewritten body with longer model name should be larger"
+        );
     }
 }
