@@ -1,267 +1,18 @@
-use std::convert::Infallible;
-use std::sync::Arc;
-
 use axum::{
     extract::{Path, State},
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        IntoResponse, Response,
-    },
+    response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
     Json,
 };
-use futures_util::stream::{self, Stream};
+use futures_util::stream;
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Instant;
 
-use crate::gpu::VramInfo;
-use crate::proxy::{
-    pull_jobs::{PullJob, PullJobStatus},
-    ProxyState,
+use super::types::{
+    is_safe_path_component, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK, MAX_CONCURRENT_PULLS,
 };
-
-/// Maximum number of quants that can be downloaded in a single pull request.
-const MAX_CONCURRENT_PULLS: usize = 4;
-
-/// Global mutex serialising post-pull config writes to prevent concurrent-completion races.
-static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-/// A single quantisation variant available for a HuggingFace GGUF repo.
-#[derive(Debug, Serialize)]
-pub struct QuantEntry {
-    pub filename: String,
-    pub quant: Option<String>,
-    pub size_bytes: Option<i64>,
-    /// What kind of file this is (model quant vs vision projector). Used by
-    /// the frontend wizard to group files into the correct step.
-    pub kind: crate::config::QuantKind,
-}
-
-/// A single quantisation variant to download (used in multi-quant wizard format).
-#[derive(Debug, Deserialize, Clone)]
-pub struct QuantDownloadSpec {
-    pub filename: String,
-    pub quant: Option<String>,
-    pub context_length: Option<u32>,
-}
-
-/// Request body for pull job.
-#[derive(Debug, Deserialize)]
-pub struct PullRequest {
-    pub repo_id: String,
-    /// Quant to download, e.g. "Q4_K_M". Required — omitting returns a 422 with available quants.
-    /// Legacy single-quant support (kept for backward compat).
-    #[serde(default)]
-    pub quant: Option<String>,
-    /// New multi-quant wizard format: list of quants to download.
-    #[serde(default)]
-    pub quants: Vec<QuantDownloadSpec>,
-    #[serde(default)]
-    pub context_length: Option<u32>,
-}
-
-/// Response for a pull job.
-#[derive(Debug, Serialize)]
-pub struct PullResponse {
-    pub job_id: String,
-    pub status: String,
-    pub repo_id: String,
-    pub filename: String,
-    pub bytes_downloaded: u64,
-    pub total_bytes: Option<u64>,
-    pub error: Option<String>,
-}
-
-/// Response for model load/unload.
-#[derive(Debug, Serialize)]
-pub struct ModelResponse {
-    pub id: String,
-    pub loaded: bool,
-}
-
-/// Response for system restart.
-#[derive(Debug, Serialize)]
-pub struct RestartResponse {
-    pub message: String,
-}
-
-/// Handle listing all configured models (Koji management API).
-pub async fn handle_koji_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
-    let models = state.build_status_response().await;
-    let models_obj = models.get("models").and_then(|v| v.as_object());
-
-    let result: Vec<serde_json::Value> = models_obj
-        .into_iter()
-        .flat_map(|models_obj| {
-            models_obj.iter().filter_map(|(id, model)| {
-                model.as_object().and_then(|model| {
-                    serde_json::to_value(model).ok().map(|mut m| {
-                        m["id"] = serde_json::Value::String(id.clone());
-                        m
-                    })
-                })
-            })
-        })
-        .collect();
-
-    Json(serde_json::json!({
-        "models": result
-    }))
-}
-
-/// Handle getting a single model's state (Koji management API).
-pub async fn handle_koji_get_model(
-    state: State<Arc<ProxyState>>,
-    Path(model_id): Path<String>,
-) -> Response {
-    // Check if already loaded (by server name or model name)
-    let model_state = state.get_model_state(&model_id).await;
-
-    if let Some(ms) = model_state {
-        let load_time = ms.load_time().unwrap_or(std::time::SystemTime::now());
-        let owned_by = ms.backend();
-        let created = load_time
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
-        return Json(serde_json::json!({
-            "id": model_id,
-            "object": "model",
-            "created": created,
-            "owned_by": owned_by,
-            "ready": ms.is_ready()
-        }))
-        .into_response();
-    }
-
-    // Check if it's a configured (but not loaded) model
-    let config = state.config.read().await;
-    for (config_name, server_cfg) in &config.models {
-        if !server_cfg.enabled {
-            continue;
-        }
-        if config_name == &model_id || server_cfg.model.as_deref() == Some(model_id.as_str()) {
-            return Json(serde_json::json!({
-                "id": config_name,
-                "object": "model",
-                "created": 0,
-                "owned_by": server_cfg.backend,
-                "ready": false
-            }))
-            .into_response();
-        }
-    }
-
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({
-            "error": {
-                "message": "Model not found",
-                "type": "NotFoundError"
-            }
-        })),
-    )
-        .into_response()
-}
-
-/// Handle loading a model (Koji management API).
-pub async fn handle_koji_load_model(
-    state: State<Arc<ProxyState>>,
-    Path(model_id): Path<String>,
-) -> Response {
-    // Check the model is present in config (model card is optional)
-    if !state.config.read().await.models.contains_key(&model_id) {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": {
-                    "message": "Model not configured",
-                    "type": "NotFoundError"
-                }
-            })),
-        )
-            .into_response();
-    }
-
-    // Model card is optional — pass None if it doesn't exist on disk
-    let model_card = state.get_model_card(&model_id).await;
-
-    match state.load_model(&model_id, model_card.as_ref()).await {
-        Ok(_) => {
-            let model_state = state.get_model_state(&model_id).await;
-            let loaded = model_state.as_ref().is_some_and(|ms| ms.is_ready());
-            Json(ModelResponse {
-                id: model_id,
-                loaded,
-            })
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": {
-                    "message": format!("Failed to load model: {}", e),
-                    "type": "LoadModelError"
-                }
-            })),
-        )
-            .into_response(),
-    }
-}
-
-/// Handle unloading a model (Koji management API).
-pub async fn handle_koji_unload_model(
-    state: State<Arc<ProxyState>>,
-    Path(model_id): Path<String>,
-) -> Response {
-    // Get the server name for this model
-    let server_name = state.get_available_server_for_model(&model_id).await;
-
-    match server_name {
-        Some(server_name) => {
-            // Unload the model
-            match state.unload_model(&server_name).await {
-                Ok(_) => {
-                    let model_state = state.get_model_state(&model_id).await;
-                    let loaded = model_state.as_ref().is_some_and(|ms| ms.is_ready());
-                    Json(ModelResponse {
-                        id: model_id,
-                        loaded,
-                    })
-                    .into_response()
-                }
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": {
-                            "message": format!("Failed to unload model: {}", e),
-                            "type": "UnloadModelError"
-                        }
-                    })),
-                )
-                    .into_response(),
-            }
-        }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": {
-                    "message": "Model not configured or not loaded",
-                    "type": "NotFoundError"
-                }
-            })),
-        )
-            .into_response(),
-    }
-}
-
-/// Returns `false` if the path component contains traversal sequences or invalid characters.
-fn is_safe_path_component(s: &str) -> bool {
-    !s.is_empty()
-        && !s.contains("..")
-        && !s.starts_with('/')
-        && !s.starts_with('\\')
-        && !s.contains('\0')
-}
+use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
+use crate::proxy::ProxyState;
 
 /// Spawn a real download task for a single file and return the created `PullJob`.
 ///
@@ -451,7 +202,7 @@ fn spawn_download_job(
                 if let Some(job) = jobs.get_mut(&job_id_clone) {
                     job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
                     job.error = Some(e.to_string());
-                    job.completed_at = Some(std::time::Instant::now());
+                    job.completed_at = Some(Instant::now());
                     tracing::error!(job_id = %job_id_clone, error = %e, "Job failed");
                 }
             }
@@ -621,7 +372,7 @@ async fn run_verification(
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = err.clone();
-            job.completed_at = Some(std::time::Instant::now());
+            job.completed_at = Some(Instant::now());
 
             // Mismatch or hash error is a hard failure. `None` (no upstream hash)
             // is treated as success — the download itself finished and we just
@@ -643,6 +394,149 @@ async fn run_verification(
             }
         }
     }
+}
+
+/// Inner implementation of post-download setup, accepting an explicit config.
+/// Separated for testability — `setup_model_after_pull` delegates to this.
+pub(crate) async fn _setup_model_after_pull_with_config(
+    config: &mut crate::config::Config,
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let configs_dir = match config.configs_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let repo_slug = repo_id.replace('/', "--");
+    let card_path = configs_dir.join(format!("{}.toml", repo_slug));
+
+    // Load existing or build a new card
+    let mut card = crate::models::card::ModelCard::load(&card_path).unwrap_or_else(|_| {
+        crate::models::card::ModelCard {
+            model: crate::models::card::ModelMeta {
+                name: repo_id.to_string(),
+                source: repo_id.to_string(),
+                default_context_length: None,
+                default_gpu_layers: None,
+            },
+            sampling: std::collections::HashMap::new(),
+            quants: std::collections::HashMap::new(),
+        }
+    });
+
+    // Try community card for sampling presets and context defaults (best-effort, no network in tests).
+    // We intentionally do NOT overwrite card.model.name from the community card — community cards
+    // often have the GGUF suffix stripped (e.g. "OmniCoder-9B" instead of "OmniCoder-9B-GGUF"),
+    // which loses information. The name is derived from the repo_id above and kept as-is.
+    if let Some(community) = crate::models::pull::fetch_community_card(repo_id).await {
+        for (k, v) in community.sampling {
+            card.sampling.entry(k).or_insert(v);
+        }
+        if card.model.default_context_length.is_none() {
+            card.model.default_context_length = community.model.default_context_length;
+        }
+        if card.model.default_gpu_layers.is_none() {
+            card.model.default_gpu_layers = community.model.default_gpu_layers;
+        }
+    }
+
+    // Determine the quant key
+    let quant_key = spec.quant.clone().unwrap_or_else(|| {
+        crate::models::pull::infer_quant_from_filename(&spec.filename).unwrap_or_else(|| {
+            // Fallback: use last component after splitting by `-` or `_`
+            spec.filename
+                .trim_end_matches(".gguf")
+                .split(|c| ['-', '_'].contains(&c))
+                .next_back()
+                .unwrap_or("unknown")
+                .to_string()
+        })
+    });
+
+    // Get actual file size from disk
+    let size_bytes = std::fs::metadata(dest_dir.join(&spec.filename))
+        .ok()
+        .map(|m| m.len());
+
+    // Insert/update quant entry in card. Detect mmproj files by filename so
+    // they get tagged with `kind = Mmproj` and tracked separately from real
+    // model quants.
+    card.quants.insert(
+        quant_key.clone(),
+        crate::models::card::QuantInfo {
+            file: spec.filename.clone(),
+            kind: crate::config::QuantKind::from_filename(&spec.filename),
+            size_bytes,
+            context_length: spec.context_length,
+        },
+    );
+
+    // Find an existing model entry for this repo (if any), regardless of
+    // its key format. This prevents creating duplicate model entries when
+    // pulling additional quants for a model that's already in the config.
+    // Matching is by the `model` field rather than the key, so user-renamed
+    // entries are preserved.
+    let existing_key: Option<String> = config
+        .models
+        .iter()
+        .find(|(_, m)| m.model.as_deref() == Some(repo_id))
+        .map(|(k, _)| k.clone());
+
+    // For mmproj files: don't create or modify a model entry. The mmproj is
+    // a sibling file that gets attached to an existing model only when the
+    // user explicitly enables it via the editor's vision toggle.
+    let is_mmproj = matches!(
+        crate::config::QuantKind::from_filename(&spec.filename),
+        crate::config::QuantKind::Mmproj
+    );
+    if !is_mmproj {
+        // Reuse the existing model key if we found one, otherwise create a
+        // new entry keyed by the bare repo slug (no per-quant suffix).
+        let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
+        config
+            .models
+            .entry(model_key)
+            .or_insert_with(|| crate::config::ModelConfig {
+                backend: "llama_cpp".to_string(),
+                model: Some(repo_id.to_string()),
+                quant: Some(quant_key),
+                mmproj: None,
+                context_length: spec.context_length,
+                enabled: true,
+                args: vec![],
+                sampling: None,
+                port: None,
+                health_check: None,
+                profile: None,
+                api_name: Some(repo_id.to_string()),
+                gpu_layers: None,
+                quants: std::collections::BTreeMap::new(),
+            });
+    }
+
+    // Save card and config (best-effort — download is already marked Completed)
+    let _ = std::fs::create_dir_all(&configs_dir);
+    let _ = card.save(&card_path);
+    let _ = config.save();
+}
+
+/// Post-download: auto-create model card and config entries.
+///
+/// Called after a quant download completes. Updates the model card, saves config to
+/// disk, and — critically — also inserts the new model entry into the live
+/// `ProxyState.config` so it appears immediately in the models list without a restart.
+pub(crate) async fn setup_model_after_pull(
+    state: Arc<ProxyState>,
+    repo_id: &str,
+    spec: &QuantDownloadSpec,
+    dest_dir: &std::path::Path,
+) {
+    let _guard = CONFIG_WRITE_LOCK.lock().await;
+    let mut config = state.config.write().await;
+    _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+    // _guard dropped here, releasing the lock
+    // config write guard also dropped here, making the new model entry visible immediately
 }
 
 /// Handle starting a pull job (Koji management API).
@@ -934,7 +828,7 @@ pub async fn handle_koji_get_pull_job(
 pub async fn handle_pull_job_stream(
     state: State<Arc<ProxyState>>,
     Path(job_id): Path<String>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl futures_util::stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     // State tuple: (proxy_state, job_id, just_emitted_done)
     let stream = stream::unfold(
         (state.0, job_id, false),
@@ -970,464 +864,4 @@ pub async fn handle_pull_job_stream(
     );
 
     Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-/// Typed response for the system health endpoint.
-#[derive(Debug, Serialize)]
-pub struct SystemHealthResponse {
-    pub status: &'static str,
-    pub service: &'static str,
-    pub models_loaded: usize,
-    pub cpu_usage_pct: f32,
-    pub ram_used_mib: u64,
-    pub ram_total_mib: u64,
-    pub gpu_utilization_pct: Option<u8>,
-    pub vram: Option<VramInfo>,
-}
-
-/// Handle system health check (Koji management API).
-pub async fn handle_koji_system_health(
-    state: State<Arc<ProxyState>>,
-) -> Json<SystemHealthResponse> {
-    let models_loaded = state.models.read().await.len();
-    let metrics = state.system_metrics.read().await;
-
-    Json(SystemHealthResponse {
-        status: "ok",
-        service: "koji",
-        models_loaded,
-        cpu_usage_pct: metrics.cpu_usage_pct,
-        ram_used_mib: metrics.ram_used_mib,
-        ram_total_mib: metrics.ram_total_mib,
-        gpu_utilization_pct: metrics.gpu_utilization_pct,
-        vram: metrics.vram.clone(),
-    })
-}
-
-/// Handle listing available GGUF quants for a HuggingFace repo (Koji management API).
-///
-/// `repo_id` is captured as a wildcard path segment (e.g. `bartowski/Qwen3-8B-GGUF`)
-/// because HF repo IDs contain a `/`. Registered as `GET /koji/v1/hf/*repo_id`.
-pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
-    // Reject repo_id segments containing traversal sequences or null bytes (SSRF mitigation).
-    if !repo_id.split('/').all(is_safe_path_component) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "Invalid repo_id" })),
-        )
-            .into_response();
-    }
-
-    match crate::models::pull::fetch_blob_metadata(&repo_id).await {
-        Ok(blobs) => {
-            let mut quants: Vec<QuantEntry> = blobs
-                .into_values()
-                .map(|b| {
-                    let kind = crate::config::QuantKind::from_filename(&b.filename);
-                    QuantEntry {
-                        quant: crate::models::pull::infer_quant_from_filename(&b.filename),
-                        filename: b.filename,
-                        size_bytes: b.size,
-                        kind,
-                    }
-                })
-                .collect();
-            quants.sort_by(|a, b| a.filename.cmp(&b.filename));
-            (StatusCode::OK, Json(quants)).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Inner implementation of post-download setup, accepting an explicit config.
-/// Separated for testability — `setup_model_after_pull` delegates to this.
-async fn _setup_model_after_pull_with_config(
-    config: &mut crate::config::Config,
-    repo_id: &str,
-    spec: &QuantDownloadSpec,
-    dest_dir: &std::path::Path,
-) {
-    let configs_dir = match config.configs_dir() {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    let repo_slug = repo_id.replace('/', "--");
-    let card_path = configs_dir.join(format!("{}.toml", repo_slug));
-
-    // Load existing or build a new card
-    let mut card = crate::models::card::ModelCard::load(&card_path).unwrap_or_else(|_| {
-        crate::models::card::ModelCard {
-            model: crate::models::card::ModelMeta {
-                name: repo_id.to_string(),
-                source: repo_id.to_string(),
-                default_context_length: None,
-                default_gpu_layers: None,
-            },
-            sampling: std::collections::HashMap::new(),
-            quants: std::collections::HashMap::new(),
-        }
-    });
-
-    // Try community card for sampling presets and context defaults (best-effort, no network in tests).
-    // We intentionally do NOT overwrite card.model.name from the community card — community cards
-    // often have the GGUF suffix stripped (e.g. "OmniCoder-9B" instead of "OmniCoder-9B-GGUF"),
-    // which loses information. The name is derived from the repo_id above and kept as-is.
-    if let Some(community) = crate::models::pull::fetch_community_card(repo_id).await {
-        for (k, v) in community.sampling {
-            card.sampling.entry(k).or_insert(v);
-        }
-        if card.model.default_context_length.is_none() {
-            card.model.default_context_length = community.model.default_context_length;
-        }
-        if card.model.default_gpu_layers.is_none() {
-            card.model.default_gpu_layers = community.model.default_gpu_layers;
-        }
-    }
-
-    // Determine the quant key
-    let quant_key = spec.quant.clone().unwrap_or_else(|| {
-        crate::models::pull::infer_quant_from_filename(&spec.filename).unwrap_or_else(|| {
-            // Fallback: use last component after splitting by `-` or `_`
-            spec.filename
-                .trim_end_matches(".gguf")
-                .split(|c| ['-', '_'].contains(&c))
-                .next_back()
-                .unwrap_or("unknown")
-                .to_string()
-        })
-    });
-
-    // Get actual file size from disk
-    let size_bytes = std::fs::metadata(dest_dir.join(&spec.filename))
-        .ok()
-        .map(|m| m.len());
-
-    // Insert/update quant entry in card. Detect mmproj files by filename so
-    // they get tagged with `kind = Mmproj` and tracked separately from real
-    // model quants.
-    card.quants.insert(
-        quant_key.clone(),
-        crate::models::card::QuantInfo {
-            file: spec.filename.clone(),
-            kind: crate::config::QuantKind::from_filename(&spec.filename),
-            size_bytes,
-            context_length: spec.context_length,
-        },
-    );
-
-    // Find an existing model entry for this repo (if any), regardless of
-    // its key format. This prevents creating duplicate model entries when
-    // pulling additional quants for a model that's already in the config.
-    // Matching is by the `model` field rather than the key, so user-renamed
-    // entries are preserved.
-    let existing_key: Option<String> = config
-        .models
-        .iter()
-        .find(|(_, m)| m.model.as_deref() == Some(repo_id))
-        .map(|(k, _)| k.clone());
-
-    // For mmproj files: don't create or modify a model entry. The mmproj is
-    // a sibling file that gets attached to an existing model only when the
-    // user explicitly enables it via the editor's vision toggle.
-    let is_mmproj = matches!(
-        crate::config::QuantKind::from_filename(&spec.filename),
-        crate::config::QuantKind::Mmproj
-    );
-    if !is_mmproj {
-        // Reuse the existing model key if we found one, otherwise create a
-        // new entry keyed by the bare repo slug (no per-quant suffix).
-        let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
-        config
-            .models
-            .entry(model_key)
-            .or_insert_with(|| crate::config::ModelConfig {
-                backend: "llama_cpp".to_string(),
-                model: Some(repo_id.to_string()),
-                quant: Some(quant_key),
-                mmproj: None,
-                context_length: spec.context_length,
-                enabled: true,
-                args: vec![],
-                sampling: None,
-                port: None,
-                health_check: None,
-                profile: None,
-                api_name: Some(repo_id.to_string()),
-                gpu_layers: None,
-                quants: std::collections::BTreeMap::new(),
-            });
-    }
-
-    // Save card and config (best-effort — download is already marked Completed)
-    let _ = std::fs::create_dir_all(&configs_dir);
-    let _ = card.save(&card_path);
-    let _ = config.save();
-}
-
-/// Post-download: auto-create model card and config entries.
-///
-/// Called after a quant download completes. Updates the model card, saves config to
-/// disk, and — critically — also inserts the new model entry into the live
-/// `ProxyState.config` so it appears immediately in the models list without a restart.
-async fn setup_model_after_pull(
-    state: Arc<ProxyState>,
-    repo_id: &str,
-    spec: &QuantDownloadSpec,
-    dest_dir: &std::path::Path,
-) {
-    let _guard = CONFIG_WRITE_LOCK.lock().await;
-    let mut config = state.config.write().await;
-    _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
-    // _guard dropped here, releasing the lock
-    // config write guard also dropped here, making the new model entry visible immediately
-}
-
-/// Handle system restart (Koji management API).
-/// Triggers a graceful shutdown and then exits the process.
-pub async fn handle_koji_system_restart(state: State<Arc<ProxyState>>) -> Response {
-    // Trigger graceful shutdown first
-    state.0.shutdown().await;
-
-    // Schedule process exit on a short delay so the HTTP response can be delivered
-    tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        std::process::exit(0);
-    });
-
-    // Return a response to the client
-    Response::builder()
-        .status(200)
-        .body(axum::body::Body::from("Koji is shutting down"))
-        .unwrap()
-}
-
-/// Stream live system metrics samples as SSE events.
-///
-/// Subscribes to the `metrics_tx` broadcast channel in `ProxyState`. Each
-/// sample emitted by the metrics task (every 2s) is forwarded as an
-/// `event: "sample"` SSE event with a JSON-serialized `MetricSample` body.
-/// On subscriber lag, emits an `event: "lagged"` event with `{"missed": N}`
-/// and continues. On channel close, the stream ends.
-///
-/// No historical backfill — the stream begins from the next live sample.
-///
-/// Registered as `GET /koji/v1/system/metrics/stream`.
-pub async fn handle_system_metrics_stream(
-    State(state): State<Arc<ProxyState>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.metrics_tx.subscribe();
-    let stream = async_stream::stream! {
-        loop {
-            match rx.recv().await {
-                Ok(sample) => {
-                    match serde_json::to_string(&sample) {
-                        Ok(data) => yield Ok(Event::default().event("sample").data(data)),
-                        Err(e) => tracing::warn!("failed to serialize MetricSample: {}", e),
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    let data = format!("{{\"missed\":{}}}", n);
-                    yield Ok(Event::default().event("lagged").data(data));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-            }
-        }
-    };
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
-
-    /// Verifies that `setup_model_after_pull` creates a model card and config entry.
-    #[tokio::test]
-    async fn test_setup_model_creates_card() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config_dir = tmp.path().to_path_buf();
-        let configs_dir = config_dir.join("configs");
-        let models_dir = config_dir.join("models");
-        std::fs::create_dir_all(&configs_dir).unwrap();
-
-        let repo_id = "bartowski/Qwen3-8B-GGUF";
-        let filename = "Qwen3-8B-Q4_K_M.gguf";
-        let repo_slug = repo_id.replace('/', "--");
-        // dest_dir uses the two-level org/repo structure (matches production behaviour)
-        let dest_dir = models_dir.join(repo_id);
-        std::fs::create_dir_all(&dest_dir).unwrap();
-
-        // Write a dummy GGUF file
-        std::fs::write(dest_dir.join(filename), b"dummy gguf content").unwrap();
-
-        // Build a config with loaded_from pointing to our temp dir
-        let mut config = crate::config::Config {
-            loaded_from: Some(config_dir.clone()),
-            ..Default::default()
-        };
-        // Save it so Config::load_from can find it
-        config.save_to(&config_dir).unwrap();
-
-        let spec = QuantDownloadSpec {
-            filename: filename.to_string(),
-            quant: Some("Q4_K_M".to_string()),
-            context_length: Some(8192),
-        };
-
-        // Call the inner helper directly (avoids relying on system Config::load())
-        _setup_model_after_pull_with_config(&mut config, repo_id, &spec, &dest_dir).await;
-
-        // Assert the card file exists
-        let card_path = configs_dir.join(format!("{}.toml", repo_slug));
-        assert!(
-            card_path.exists(),
-            "Expected card file at {}",
-            card_path.display()
-        );
-
-        // Load and inspect the card
-        let card =
-            crate::models::card::ModelCard::load(&card_path).expect("Card should be loadable");
-        assert!(
-            card.quants.contains_key("Q4_K_M"),
-            "Expected Q4_K_M quant in card, got: {:?}",
-            card.quants.keys().collect::<Vec<_>>()
-        );
-        assert_eq!(card.quants["Q4_K_M"].file, filename);
-        assert_eq!(card.quants["Q4_K_M"].context_length, Some(8192));
-
-        // Assert model config entry was added. Key is now derived from the
-        // bare repo slug (no per-quant suffix), so all quants of the same
-        // repo share one model entry.
-        let model_key = repo_slug.to_lowercase();
-        assert!(
-            config.models.contains_key(&model_key),
-            "Expected model key '{}' in config, got: {:?}",
-            model_key,
-            config.models.keys().collect::<Vec<_>>()
-        );
-        // Verify the entry's `model` field points to the original repo (this
-        // is what the dedupe-by-model logic uses).
-        assert_eq!(config.models[&model_key].model.as_deref(), Some(repo_id));
-    }
-
-    /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
-    #[test]
-    fn test_pull_job_serializes_for_sse() {
-        let job = PullJob {
-            job_id: "pull-test-123".to_string(),
-            repo_id: "bartowski/Qwen3-8B-GGUF".to_string(),
-            filename: "Qwen3-8B-Q4_K_M.gguf".to_string(),
-            status: PullJobStatus::Running,
-            bytes_downloaded: 1_234_567,
-            total_bytes: Some(4_800_000_000),
-            ..Default::default()
-        };
-
-        let json = serde_json::to_string(&job).expect("PullJob serialization failed");
-        assert!(
-            json.contains("\"bytes_downloaded\""),
-            "missing bytes_downloaded in: {json}"
-        );
-        assert!(json.contains("\"status\""), "missing status in: {json}");
-        assert!(
-            json.contains("\"running\""),
-            "missing running status value in: {json}"
-        );
-        assert!(json.contains("\"job_id\""), "missing job_id in: {json}");
-        // New verification fields must be present in the SSE payload so the
-        // wizard can render the verify-phase progress bar.
-        assert!(
-            json.contains("\"verify_bytes_hashed\""),
-            "missing verify_bytes_hashed in: {json}"
-        );
-        assert!(
-            json.contains("\"verify_total_bytes\""),
-            "missing verify_total_bytes in: {json}"
-        );
-        assert!(
-            json.contains("\"verified_ok\""),
-            "missing verified_ok in: {json}"
-        );
-        assert!(
-            json.contains("\"verify_error\""),
-            "missing verify_error in: {json}"
-        );
-    }
-
-    /// Verifies that `PullJobStatus::Verifying` serializes as the snake_case
-    /// string `"verifying"` so frontends can match on it.
-    #[test]
-    fn test_pull_job_status_verifying_serializes() {
-        let job = PullJob {
-            status: PullJobStatus::Verifying,
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&job).unwrap();
-        assert!(
-            json.contains("\"status\":\"verifying\""),
-            "expected verifying status string in: {json}"
-        );
-    }
-
-    /// Verifies that `QuantEntry` serializes to JSON with all expected keys.
-    #[test]
-    fn test_quant_entry_serializes() {
-        let entry = QuantEntry {
-            filename: "Model-Q4_K_M.gguf".to_string(),
-            quant: Some("Q4_K_M".to_string()),
-            size_bytes: Some(4_200_000_000),
-            kind: crate::config::QuantKind::Model,
-        };
-
-        let value = serde_json::to_value(&entry).expect("serialization failed");
-        assert!(value.get("filename").is_some(), "missing filename");
-        assert!(value.get("quant").is_some(), "missing quant");
-        assert!(value.get("size_bytes").is_some(), "missing size_bytes");
-        assert!(value.get("kind").is_some(), "missing kind");
-        assert_eq!(value["filename"], "Model-Q4_K_M.gguf");
-        assert_eq!(value["quant"], "Q4_K_M");
-        assert_eq!(value["size_bytes"], 4_200_000_000_i64);
-        assert_eq!(value["kind"], "model");
-    }
-
-    /// Verifies that `SystemHealthResponse` serializes to JSON with all expected fields.
-    #[test]
-    fn test_system_health_response_serializes() {
-        let response = SystemHealthResponse {
-            status: "ok",
-            service: "koji",
-            models_loaded: 2,
-            cpu_usage_pct: 42.5,
-            ram_used_mib: 1024,
-            ram_total_mib: 8192,
-            gpu_utilization_pct: Some(75),
-            vram: Some(crate::gpu::VramInfo {
-                used_mib: 4000,
-                total_mib: 8000,
-            }),
-        };
-
-        let value = serde_json::to_value(&response).expect("serialization failed");
-        assert!(
-            value.get("cpu_usage_pct").is_some(),
-            "missing cpu_usage_pct"
-        );
-        assert!(value.get("ram_used_mib").is_some(), "missing ram_used_mib");
-        assert!(
-            value.get("ram_total_mib").is_some(),
-            "missing ram_total_mib"
-        );
-        assert!(
-            value.get("gpu_utilization_pct").is_some(),
-            "missing gpu_utilization_pct"
-        );
-        assert!(value.get("vram").is_some(), "missing vram");
-    }
 }
