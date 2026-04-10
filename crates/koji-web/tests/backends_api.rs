@@ -8,6 +8,7 @@ mod fixtures {
     use std::fs;
     use std::path::Path;
 
+    #[allow(dead_code)]
     pub fn read_fixture(name: &str) -> String {
         let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
