@@ -1,19 +1,19 @@
 use std::sync::Arc;
- use std::time::Instant;
+use std::time::Instant;
 
- use axum::{
-     extract::{Path, State},
-     response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
-     Json,
- };
- use futures_util::stream;
- use reqwest::StatusCode;
+use axum::{
+    extract::{Path, State},
+    response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
+    Json,
+};
+use futures_util::stream;
+use reqwest::StatusCode;
 
- use super::types::{
-     is_safe_path_component, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK, MAX_CONCURRENT_PULLS,
- };
- use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
- use crate::proxy::ProxyState;
+use super::types::{
+    is_safe_path_component, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK, MAX_CONCURRENT_PULLS,
+};
+use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
+use crate::proxy::ProxyState;
 
 /// Spawn a real download task for a single file and return the created `PullJob`.
 ///

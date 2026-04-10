@@ -407,7 +407,6 @@ fn test_build_full_args_no_quants() {
     assert!(!args.iter().any(|a| a == "-m"));
 }
 
-#[test]
 /// Tests that backend flags are deduplicated when both backend and model args contain them
 #[test]
 fn test_build_args_dedupes_backend_vs_model_flags() {
@@ -462,7 +461,6 @@ fn test_build_args_dedupes_backend_vs_model_flags() {
     assert!(!flat.iter().any(|t| t.contains("512")));
 }
 
-#[test]
 /// Tests that inline temperature in args is overridden by sampling params
 #[test]
 fn test_build_args_sampling_overrides_inline_temp_in_args() {
@@ -517,7 +515,6 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
     assert!(!flat.iter().any(|t| t.contains("0.10")));
 }
 
-#[test]
 /// Tests that backend flags are deduplicated in full args when both backend and model args contain them
 #[test]
 fn test_build_full_args_dedupes_backend_vs_model_flags() {
@@ -598,7 +595,6 @@ fn test_build_full_args_dedupes_backend_vs_model_flags() {
     assert!(!args.iter().any(|t| t == "512"));
 }
 
-#[test]
 /// Tests that flat tokens are preserved with quoted paths in full args
 #[test]
 fn test_build_full_args_returns_flat_tokens_with_quoted_path() {

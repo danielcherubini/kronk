@@ -42,15 +42,15 @@ pub async fn handle_koji_get_model(
     // Check if already loaded (by server name or model name)
     let model_state = state.get_model_state(&model_id).await;
 
- if let Some(ms) = model_state {
-         let owned_by = ms.backend();
-         let created = match ms.load_time() {
-             Some(load_time) => load_time
-                 .duration_since(std::time::UNIX_EPOCH)
-                 .unwrap_or(std::time::Duration::ZERO)
-                 .as_secs(),
-             None => 0,
-         };
+    if let Some(ms) = model_state {
+        let owned_by = ms.backend();
+        let created = match ms.load_time() {
+            Some(load_time) => load_time
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::ZERO)
+                .as_secs(),
+            None => 0,
+        };
         return Json(serde_json::json!({
             "id": model_id,
             "object": "model",
