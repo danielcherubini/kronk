@@ -1,0 +1,321 @@
+use std::sync::Arc;
+
+use leptos::prelude::*;
+
+use super::types::{ModelForm, QuantKind};
+use crate::utils::target_value;
+
+fn format_bytes_opt(bytes: Option<u64>) -> String {
+    let Some(b) = bytes else {
+        return "—".to_string();
+    };
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bf = b as f64;
+    if bf >= GIB {
+        format!("{:.2} GiB", bf / GIB)
+    } else if bf >= MIB {
+        format!("{:.1} MiB", bf / MIB)
+    } else if bf >= KIB {
+        format!("{:.1} KiB", bf / KIB)
+    } else {
+        format!("{} B", b)
+    }
+}
+
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(10).collect()
+}
+
+#[component]
+pub fn ModelEditorQuantsVisionForm(
+    form: RwSignal<Option<ModelForm>>,
+    repo_commit_sha: RwSignal<Option<String>>,
+    repo_pulled_at: RwSignal<Option<String>>,
+    refresh_busy: RwSignal<bool>,
+    verify_busy: RwSignal<bool>,
+    refresh_status: RwSignal<Option<(bool, String)>>,
+    verify_status: RwSignal<Option<(bool, String)>>,
+    pull_modal_open_signal: RwSignal<bool>,
+    delete_quant_action: Action<(String, String), (), LocalStorage>,
+    original_id: RwSignal<String>,
+    refresh_action: Action<(), (), LocalStorage>,
+    verify_action: Action<(), (), LocalStorage>,
+) -> impl IntoView {
+    view! {
+        // Repo-level metadata + refresh/verify actions
+        <div class="quants-meta-bar">
+            <div class="quants-meta">
+                {move || match repo_commit_sha.get() {
+                    Some(sha) => view! {
+                        <span class="text-muted">"Commit: "</span>
+                        <code class="quants-sha">{short_sha(&sha)}</code>
+                    }.into_any(),
+                    None => view! {
+                        <span class="text-muted">"No commit recorded"</span>
+                    }.into_any(),
+                }}
+                {move || repo_pulled_at.get().map(|when| view! {
+                    <span class="text-muted ml-2">"· Pulled: "{when}</span>
+                })}
+            </div>
+            <div class="quants-actions">
+                <button
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    prop:disabled=move || refresh_busy.get()
+                    on:click=move |_| { refresh_action.dispatch(()); }
+                    title="Check HuggingFace for updated quant metadata"
+                >
+                    {move || if refresh_busy.get() { "Checking..." } else { "Check for updates" }}
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-secondary btn-sm ml-1"
+                    prop:disabled=move || verify_busy.get()
+                    on:click=move |_| { verify_action.dispatch(()); }
+                    title="Verify downloaded files against HuggingFace LFS hashes"
+                >
+                    {move || if verify_busy.get() { "Verifying..." } else { "Verify files" }}
+                </button>
+            </div>
+        </div>
+        {move || refresh_status.get().map(|(ok, msg)| {
+            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+            view! { <div class=cls>{msg}</div> }
+        })}
+        {move || verify_status.get().map(|(ok, msg)| {
+            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+            view! { <div class=cls>{msg}</div> }
+        })}
+
+        <table class="quants-table">
+            <thead>
+                <tr>
+                    <th>"Name"</th>
+                    <th>"File"</th>
+                    <th>"Size"</th>
+                    <th>"Context length"</th>
+                    <th>"SHA"</th>
+                    <th>"Verified"</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                <For
+                    each=move || {
+                        form.get().map(|f| {
+                            f.quants.iter()
+                                .filter(|(_, q)| q.kind == QuantKind::Model)
+                                .enumerate()
+                                .map(|(i, (name, q))| (i, name.clone(), q.clone()))
+                                .collect::<Vec<_>>()
+                        }).unwrap_or_default()
+                    }
+                    key=|(_i, name, _)| name.clone()
+                    children=move |(_i, name, q)| {
+                        let name_arc = Arc::new(name.clone());
+                        let q_arc = Arc::new(q);
+                        let q_arc_file = Arc::clone(&q_arc);
+                        let q_arc_size = Arc::clone(&q_arc);
+                        let q_arc_ctx = Arc::clone(&q_arc);
+                        let q_arc_sha = Arc::clone(&q_arc);
+                        let q_arc_verified = Arc::clone(&q_arc);
+                        let q_arc_del = Arc::clone(&q_arc);
+                        view! {
+                            <tr>
+                                <td>{name.clone()}</td>
+                                <td>
+                                    <input
+                                         class="form-input"
+                                         type="text"
+                                         placeholder="model-Q4_K_M.gguf"
+                                         prop:value=move || q_arc_file.file.clone()
+                                         on:input={
+                                             let name_ref = Arc::clone(&name_arc);
+                                             move |e| {
+                                                 let file = target_value(&e);
+                                                 form.update(|f| {
+                                                     if let Some(form) = f {
+                                                         if let Some(existing) = form.quants.get_mut(&*name_ref) {
+                                                             existing.file = file;
+                                                         }
+                                                     }
+                                                 });
+                                             }
+                                         }
+                                     />
+                                </td>
+                                <td>
+                                    // Read-only: size is authoritative from HF/filesystem.
+                                    // Use `Check for updates` or `Verify files` to refresh.
+                                    <span
+                                        class="text-muted"
+                                        title=move || q_arc_size.size_bytes
+                                            .map(|v| format!("{} bytes", v))
+                                            .unwrap_or_else(|| "Unknown".to_string())
+                                    >
+                                        {move || format_bytes_opt(q_arc.size_bytes)}
+                                    </span>
+                                </td>
+                                <td>
+                                    <input
+                                         class="form-input"
+                                         type="number"
+                                         placeholder="optional"
+                                         prop:value=move || q_arc_ctx.context_length.map(|v| v.to_string()).unwrap_or_default()
+                                         on:input={
+                                             let name_ref = Arc::clone(&name_arc);
+                                             move |e| {
+                                                 let ctx = target_value(&e).parse::<u32>().ok();
+                                                 form.update(|f| {
+                                                     if let Some(form) = f {
+                                                         if let Some(existing) = form.quants.get_mut(&*name_ref) {
+                                                             existing.context_length = ctx;
+                                                         }
+                                                     }
+                                                 });
+                                             }
+                                         }
+                                     />
+                                </td>
+                                <td>
+                                    {
+                                        let sha_opt = q_arc_sha.lfs_oid.clone();
+                                        let title = sha_opt.clone().unwrap_or_else(|| "No hash".to_string());
+                                        let display = sha_opt.as_deref().map(short_sha).unwrap_or_else(|| "—".to_string());
+                                        view! {
+                                            <code class="text-muted" title=title>{display}</code>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    {
+                                        let (icon, cls, title) = match q_arc_verified.verified_ok {
+                                            Some(true) => ("✓", "text-success", q_arc_verified.last_verified_at.clone().unwrap_or_else(|| "Verified".to_string())),
+                                            Some(false) => ("✗", "text-error", q_arc_verified.verify_error.clone().unwrap_or_else(|| "Verification failed".to_string())),
+                                            None => ("—", "text-muted", "Not verified".to_string()),
+                                        };
+                                        view! { <span class=cls title=title>{icon}</span> }
+                                    }
+                                </td>
+                                <td>
+                                    {
+                                        let name_ref = Arc::clone(&name_arc);
+                                        let size_display = format_bytes_opt(q_arc_del.size_bytes);
+                                        let key_for_action = name_arc.to_string();
+                                        view! {
+                                            <button
+                                                type="button"
+                                                class="btn btn-danger btn-sm"
+                                                on:click=move |_| {
+                                                    let msg = format!(
+                                                        "Delete \"{}\" ({}) from disk?\nThis cannot be undone.",
+                                                        name_ref.as_str(),
+                                                        size_display
+                                                    );
+                                                    let confirmed = web_sys::window()
+                                                        .and_then(|w| w.confirm_with_message(&msg).ok())
+                                                        .unwrap_or(false);
+                                                    if confirmed {
+                                                        let current_id = original_id.get();
+                                                        delete_quant_action.dispatch((current_id, key_for_action.clone()));
+                                                    }
+                                                }
+                                            >"✕"</button>
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                />
+            </tbody>
+        </table>
+        <div class="mt-1">
+            <span title=move || {
+                if let Some(form) = form.get() {
+                    if form.model.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                        "Enter the HuggingFace repo above before pulling quants".to_string()
+                    } else {
+                        "Pull a new quant from HuggingFace".to_string()
+                    }
+                } else {
+                    "Loading...".to_string()
+                }
+            }>
+                <button
+                    type="button"
+                    class="btn btn-primary btn-sm"
+                    prop:disabled=move || form.get().map(|f| f.model.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)).unwrap_or(true)
+                    on:click=move |_| pull_modal_open_signal.set(true)
+                >"+ Pull Quant"</button>
+            </span>
+        </div>
+
+        // Vision Projector section
+        <div class="mt-3">
+            <h3 class="form-section-title">"Vision Projector"</h3>
+            <div class="form-check">
+                <input
+                    id="field-vision-enabled"
+                    type="checkbox"
+                    prop:checked=move || form.get().as_ref().map(|f| f.mmproj.is_some()).unwrap_or(false)
+                    on:change=move |e| {
+                        use wasm_bindgen::JsCast;
+                        let checked = e.target()
+                            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                            .map(|el| el.checked())
+                            .unwrap_or(false);
+                        form.update(|f| {
+                            if let Some(form) = f {
+                                if !checked {
+                                    form.mmproj = None;
+                                }
+                            }
+                        });
+                    }
+                />
+                <label class="form-check-label" for="field-vision-enabled">"Enable Vision Projector"</label>
+            </div>
+
+            <div class="form-group" prop:style=move || {
+                if form.get().as_ref().map(|f| f.mmproj.is_some()).unwrap_or(false) {
+                    "display: block;"
+                } else {
+                    "display: none;"
+                }
+            }>
+                <label class="form-label" for="mmproj-select">"Select mmproj File"</label>
+                <select
+                    id="mmproj-select"
+                    class="form-select"
+                    prop:value=move || form.get().as_ref().and_then(|f| f.mmproj.clone()).unwrap_or_default()
+                    on:change=move |e| {
+                        let value = target_value(&e);
+                        form.update(|f| {
+                            if let Some(form) = f {
+                                form.mmproj = if value.is_empty() { None } else { Some(value) };
+                            }
+                        });
+                    }
+                >
+                    <option value="">"(none)"</option>
+                    {move || {
+                        form.get().map(|f| {
+                            f.quants.iter()
+                                .filter(|(_, q)| q.kind == QuantKind::Mmproj)
+                                .map(|(name, _)| name.clone())
+                                .collect::<Vec<_>>()
+                        }).unwrap_or_default()
+                    }.into_iter().map(|m| {
+                        let mm = m.clone();
+                        view! { <option value=mm.clone()>{mm.clone()}</option> }
+                    }).collect::<Vec<_>>()}
+                </select>
+                <span class="form-hint">"Choose the mmproj file to use for vision support"</span>
+            </div>
+        </div>
+    }
+}
