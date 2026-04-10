@@ -787,7 +787,12 @@ pub async fn delete_quant(
         model.quants.remove(&quant_key);
 
         // Save config
-        cfg.save_to(&config_dir)?;
+        cfg.save_to(&config_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
 
         Ok((
             cfg,
