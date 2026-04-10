@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Fix `Config::load_from`/`save_to` path bugs in API
+## Task 1: Fix `Config::load_from`/`save_to` path bugs in API
 
 **Context:**
 Four call sites in `crates/koji-web/src/api/backends.rs` pass the full file path (`config_path`) to functions that expect a directory path (`config_dir`). This causes `default_args` to never load from disk (silently fails), and saving also fails. The `config_dir` variable is already computed but unused in two of these locations. The other two locations (`update_backend_default_args`) don't compute `config_dir` at all.
@@ -55,7 +55,7 @@ Four call sites in `crates/koji-web/src/api/backends.rs` pass the full file path
 
 ---
 
-### Task 2: Remove `skip_serializing_if` from `default_args` DTO fields
+## Task 2: Remove `skip_serializing_if` from `default_args` DTO fields
 
 **Context:**
 Both the server-side and client-side `BackendCardDto` use `#[serde(default, skip_serializing_if = "Vec::is_empty")]` on `default_args`. When `default_args` is an empty vec (which is the common case due to the bug), the field is omitted from the JSON response entirely. Even after fixing the bug, backends with genuinely empty `default_args` would have the field missing. Removing `skip_serializing_if` ensures the field is always present, matching how the config editor handles fields.
@@ -100,7 +100,7 @@ Both the server-side and client-side `BackendCardDto` use `#[serde(default, skip
 
 ---
 
-### Task 3: Restructure BackendCard — remove per-card save, add page-level save
+## Task 3: Restructure BackendCard — remove per-card save, add page-level save
 
 **Context:**
 Currently `BackendCard` contains per-card save logic: a "Save" button and an `on:blur` handler that both POST directly to `/api/backends/{name}/default-args`. This needs to be replaced with a pattern where the `Backends` page manages all edits and has a single "Save Changes" button.
@@ -273,7 +273,7 @@ For the backends page, we need:
 
 ---
 
-### Task 4: End-to-end manual verification
+## Task 4: End-to-end manual verification
 
 **Context:**
 The changes span both server and client side. We need to verify the full flow works: config loads `default_args` correctly, API serves them, frontend displays them, and saving updates them.
