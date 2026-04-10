@@ -827,6 +827,10 @@ pub fn ModelEditor() -> impl IntoView {
                                 rows.remove(pos);
                             }
                         });
+                        // Remove from available mmprojs list if present
+                        available_mmprojs_for_select.update(|mmprojs| {
+                            mmprojs.retain(|m| m != &key);
+                        });
                         // Clear active quant/mmproj references if needed
                         if form_quant.get().as_deref() == Some(key.as_str()) {
                             form_quant.set(None);
@@ -1562,33 +1566,35 @@ pub fn ModelEditor() -> impl IntoView {
                                                              view! { <span class=cls title=title>{icon}</span> }
                                                          }
                                                      </td>
-                                                     <td>
-                                                          {
-                                                              let name_ref = Arc::clone(&name_arc);
-                                                              let size_display = format_bytes_opt(q.size_bytes);
-                                                              let persisted_id = original_id.get();
-                                                              let key_for_action = name_arc.to_string();
-                                                              view! {
-                                                                  <button
-                                                                      type="button"
-                                                                      class="btn btn-danger btn-sm"
-                                                                      on:click=move |_| {
-                                                                          let msg = format!(
-                                                                              "Delete \"{}\" ({}) from disk?\nThis cannot be undone.",
-                                                                              name_ref.as_str(),
-                                                                              size_display
-                                                                          );
-                                                                          let confirmed = web_sys::window()
-                                                                              .and_then(|w| w.confirm_with_message(&msg).ok())
-                                                                              .unwrap_or(false);
-                                                                          if confirmed {
-                                                                              delete_quant_action.dispatch((persisted_id.clone(), key_for_action.clone()));
-                                                                          }
-                                                                      }
-                                                                  >"✕"</button>
-                                                              }
-                                                          }
-                                                       </td>
+                                                    <td>
+                                                           {
+                                                               let name_ref = Arc::clone(&name_arc);
+                                                               let size_display = format_bytes_opt(q.size_bytes);
+                                                               let key_for_action = name_arc.to_string();
+                                                               view! {
+                                                                   <button
+                                                                       type="button"
+                                                                       class="btn btn-danger btn-sm"
+                                                                       on:click=move |_| {
+                                                                           let msg = format!(
+                                                                               "Delete \"{}\" ({}) from disk?\nThis cannot be undone.",
+                                                                               name_ref.as_str(),
+                                                                               size_display
+                                                                           );
+                                                                           let confirmed = web_sys::window()
+                                                                               .and_then(|w| w.confirm_with_message(&msg).ok())
+                                                                               .unwrap_or(false);
+                                                                           if confirmed {
+                                                                               // Read original_id at click time, not at render time
+                                                                               // so it's correct even after a rename
+                                                                               let current_id = original_id.get();
+                                                                               delete_quant_action.dispatch((current_id, key_for_action.clone()));
+                                                                           }
+                                                                       }
+                                                                   >"✕"</button>
+                                                               }
+                                                           }
+                                                        </td>
                                                 </tr>
                                             }
                                         }

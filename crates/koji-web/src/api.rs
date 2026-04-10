@@ -739,22 +739,64 @@ pub async fn delete_quant(
             )
         })?;
 
-        // Find the quant entry
+        // Find the quant entry and clone needed values
         let quant_entry = model_config
             .quants
             .get(&quant_key)
             .ok_or_else(|| (StatusCode::NOT_FOUND, serde_json::json!({"error": "Quant not found"})))?;
 
-        // Clone the filename before we mutate
+// Clone the filename and repo_id before we mutate
         let filename = quant_entry.file.clone();
+        let repo_id = model_config.model.clone().unwrap_or_default();
 
-        // Resolve file path: models_dir / repo_id / filename
-        let repo_id = model_config.model.as_deref().unwrap_or("");
-        let mut deleted_file = None;
+        let mut deleted_file = None; // Track deleted file for response
 
         if !repo_id.is_empty() {
             if let Ok(models_dir) = cfg.models_dir() {
-                let file_path = models_dir.join(repo_id).join(&filename);
+                let file_path = models_dir.join(&repo_id).join(&filename);
+                if file_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&file_path) {
+                        tracing::warn!("Failed to delete quant file {}: {}", file_path.display(), e);
+                    } else {
+                        deleted_file = Some(filename.clone());
+                    }
+                }
+            }
+
+            // Clean up DB record (best-effort)
+            if let Ok(open) = koji_core::db::open(&config_dir) {
+                let _ = koji_core::db::queries::delete_model_file(&open.conn, &repo_id, &filename);
+            }
+        }
+
+ // Get mutable reference to model config and remove the quant entry
+        {
+            let model = cfg.models.get_mut(&id).unwrap();
+
+            // Clear active quant/mmproj if they referenced this quant
+            if model.quant.as_deref() == Some(&quant_key) {
+                model.quant = None;
+            }
+            if model.mmproj.as_deref() == Some(&quant_key) {
+                model.mmproj = None;
+            }
+
+            // Remove the quant entry
+            model.quants.remove(&quant_key);
+        } // Drop mutable borrow here
+
+        // Save config first - if this fails, don't proceed with cleanup
+        cfg.save_to(&config_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+
+        // Clean up file (best-effort) - only after config is saved
+        if !repo_id.is_empty() {
+            if let Ok(models_dir) = cfg.models_dir() {
+                let file_path = models_dir.join(&repo_id).join(&filename);
                 if file_path.exists() {
                     if let Err(e) = std::fs::remove_file(&file_path) {
                         tracing::warn!("Failed to delete quant file {}: {}", file_path.display(), e);
@@ -765,34 +807,12 @@ pub async fn delete_quant(
             }
         }
 
-        // Clean up DB record (best-effort)
+        // Clean up DB record (best-effort) - only after config is saved
         if !repo_id.is_empty() {
             if let Ok(open) = koji_core::db::open(&config_dir) {
-                let _ = koji_core::db::queries::delete_model_file(&open.conn, repo_id, &filename);
+                let _ = koji_core::db::queries::delete_model_file(&open.conn, &repo_id, &filename);
             }
         }
-
-        // Get mutable reference to model config
-        let model = cfg.models.get_mut(&id).unwrap();
-
-        // Clear active quant/mmproj if they referenced this quant
-        if model.quant.as_deref() == Some(&quant_key) {
-            model.quant = None;
-        }
-        if model.mmproj.as_deref() == Some(&quant_key) {
-            model.mmproj = None;
-        }
-
-        // Remove the quant entry
-        model.quants.remove(&quant_key);
-
-        // Save config
-        cfg.save_to(&config_dir).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": e.to_string()}),
-            )
-        })?;
 
         Ok((
             cfg,

@@ -1079,45 +1079,55 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
         }
     }
 
-    // Scan for orphaned GGUF files
-    let mut orphaned_files: Vec<(String, std::path::PathBuf, u64)> = Vec::new();
+    // Scan for orphaned GGUF files recursively
+    // Tuple: (repo_id, filename, file_path, size)
+    let mut orphaned_files: Vec<(String, String, std::path::PathBuf, u64)> = Vec::new();
 
     if models_dir.exists() {
-        for entry in std::fs::read_dir(&models_dir)? {
-            let entry = entry?;
-            if !entry.path().is_dir() {
-                continue;
-            }
-            let company = entry.file_name().to_string_lossy().to_string();
+        // Recursively walk models_dir to find all GGUF files
+        fn scan_for_ggufs(
+            dir: &std::path::Path,
+            base_dir: &std::path::Path,
+            referenced_files: &std::collections::HashSet<(String, String)>,
+            orphaned_files: &mut Vec<(String, String, std::path::PathBuf, u64)>,
+        ) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
 
-            for model_entry in std::fs::read_dir(entry.path())? {
-                let model_entry = model_entry?;
-                let model_path = model_entry.path();
-                if !model_path.is_dir() {
-                    continue;
-                }
-
-                let model_name = model_entry.file_name().to_string_lossy().to_string();
-                let repo_id = format!("{}/{}", company, model_name);
-
-                for file_entry in std::fs::read_dir(&model_path)? {
-                    let file_entry = file_entry?;
-                    let file_path = file_entry.path();
-                    if file_path.extension().is_none_or(|e| e != "gguf") {
+                if path.is_file() {
+                    if path.extension().is_none_or(|e| e != "gguf") {
                         continue;
                     }
 
-                    let filename = file_entry.file_name().to_string_lossy().to_string();
+                    // Compute repo_id from relative path
+                    let relative_path = path.strip_prefix(base_dir)
+                        .map_err(|_| std::io::Error::other("Failed to compute relative path"))?;
+                    let repo_id = relative_path
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("")
+                        .replace(std::path::MAIN_SEPARATOR, "/");
+
+                    let filename = path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
                     let file_key = (repo_id.clone(), filename.clone());
 
                     if !referenced_files.contains(&file_key) {
-                        if let Ok(metadata) = file_entry.metadata() {
-                            orphaned_files.push((filename, file_path, metadata.len()));
+                        if let Ok(metadata) = std::fs::metadata(&path) {
+                            orphaned_files.push((repo_id, filename, path, metadata.len()));
                         }
                     }
+                } else if path.is_dir() {
+                    scan_for_ggufs(&path, base_dir, referenced_files, orphaned_files)?;
                 }
             }
+            Ok(())
         }
+
+        scan_for_ggufs(&models_dir, &models_dir, &referenced_files, &mut orphaned_files)?;
     }
 
     if orphaned_files.is_empty() {
@@ -1128,8 +1138,8 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
     // Display what would be deleted
     println!("Found {} orphaned GGUF file(s):", orphaned_files.len());
     let mut total_size = 0u64;
-    for (filename, _, size) in &orphaned_files {
-        println!("  {} ({})", filename, format_bytes(*size));
+    for (repo_id, filename, _, size) in &orphaned_files {
+        println!("  {} ({}) [{}]", filename, format_bytes(*size), repo_id);
         total_size += size;
     }
     println!();
@@ -1152,18 +1162,21 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
         }
     }
 
-    // Delete files
+    // Delete files and track which ones succeeded for DB cleanup
     let mut deleted_count = 0;
-    for (_filename, file_path, _) in &orphaned_files {
+    let mut actually_deleted: Vec<(String, String)> = Vec::new();
+
+    for (repo_id, filename, file_path, _) in &orphaned_files {
         if let Err(e) = std::fs::remove_file(file_path) {
             tracing::warn!("Failed to delete {}: {}", file_path.display(), e);
         } else {
             deleted_count += 1;
+            actually_deleted.push((repo_id.clone(), filename.clone()));
         }
     }
 
     // Clean up empty directories
-    for (_filename, file_path, _) in &orphaned_files {
+    for (_, _, file_path, _) in &orphaned_files {
         if let Some(parent) = file_path.parent() {
             if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
                 let _ = std::fs::remove_dir(parent);
@@ -1196,24 +1209,11 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
         let _ = std::fs::remove_file(card_path);
     }
 
-    // Clean up DB records for deleted files
+    // Clean up DB records for actually deleted files
     if let Ok(db_dir) = koji_core::config::Config::config_dir() {
         if let Ok(koji_core::db::OpenResult { conn, .. }) = koji_core::db::open(&db_dir) {
-            for (_, file_path, _) in &orphaned_files {
-                // Extract repo_id and filename from file path
-                // Path: models_dir/org/model/file.gguf
-                // We need to reconstruct repo_id = "org/model"
-                if let Some(parent) = file_path.parent() {
-                    if let Some(grandparent) = parent.parent() {
-                        if let Some(repo_id) = grandparent.file_name() {
-                            let repo_id = repo_id.to_string_lossy().to_string();
-                            if let Some(filename) = file_path.file_name() {
-                                let filename = filename.to_string_lossy().to_string();
-                                let _ = koji_core::db::queries::delete_model_file(&conn, &repo_id, &filename);
-                            }
-                        }
-                    }
-                }
+            for (repo_id, filename) in &actually_deleted {
+                let _ = koji_core::db::queries::delete_model_file(&conn, repo_id, filename);
             }
         }
     }
