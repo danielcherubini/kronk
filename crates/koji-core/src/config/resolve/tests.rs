@@ -1,10 +1,13 @@
-use super::*;
+use std::collections::BTreeMap;
+
+use tempfile::tempdir;
+
 use crate::config::types::QuantEntry;
 use crate::config::BackendConfig;
 use crate::db::queries::BackendInstallationRecord;
 use crate::db::{open_in_memory, queries::insert_backend_installation};
-use std::collections::BTreeMap;
-use tempfile::tempdir;
+
+use super::*;
 
 fn make_test_config(llama_cpp_path: Option<&str>) -> Config {
     let mut config = Config::default();
@@ -405,7 +408,9 @@ fn test_build_full_args_no_quants() {
 }
 
 #[test]
-fn build_args_dedupes_backend_vs_model_flags() {
+/// Tests that backend flags are deduplicated when both backend and model args contain them
+#[test]
+fn test_build_args_dedupes_backend_vs_model_flags() {
     let mut config = Config::default();
     config.backends.insert(
         "test_backend".to_string(),
@@ -458,7 +463,9 @@ fn build_args_dedupes_backend_vs_model_flags() {
 }
 
 #[test]
-fn build_args_sampling_overrides_inline_temp_in_args() {
+/// Tests that inline temperature in args is overridden by sampling params
+#[test]
+fn test_build_args_sampling_overrides_inline_temp_in_args() {
     // Requires SamplingParams::to_args to already be in grouped form
     // (done earlier in this same task, section 2a.1). If this test
     // fails with a flat-token mismatch instead of a dedup failure,
@@ -511,7 +518,9 @@ fn build_args_sampling_overrides_inline_temp_in_args() {
 }
 
 #[test]
-fn build_full_args_dedupes_backend_vs_model_flags() {
+/// Tests that backend flags are deduplicated in full args when both backend and model args contain them
+#[test]
+fn test_build_full_args_dedupes_backend_vs_model_flags() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let models_dir = temp_dir.path().join("models");
     let org_dir = models_dir.join("org").join("repo");
@@ -590,7 +599,9 @@ fn build_full_args_dedupes_backend_vs_model_flags() {
 }
 
 #[test]
-fn build_full_args_returns_flat_tokens_with_quoted_path() {
+/// Tests that flat tokens are preserved with quoted paths in full args
+#[test]
+fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
     // Path with spaces must round-trip through grouped → flat correctly.
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let models_dir = temp_dir.path().join("models with space");

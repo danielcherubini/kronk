@@ -98,13 +98,19 @@ pub fn update_verification(
     verify_error: Option<&str>,
 ) -> Result<()> {
     let verified_ok_int = verified_ok.map(|b| b as i64);
+    // When verified_ok is Some(true), pass NULL for verify_error to clear it
+    let verify_error_param = if verified_ok == Some(true) {
+        None
+    } else {
+        verify_error
+    };
     let affected = conn.execute(
         "UPDATE model_files SET
-             last_verified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-             verified_ok      = ?3,
-             verify_error     = ?4
-         WHERE repo_id = ?1 AND filename = ?2",
-        (repo_id, filename, verified_ok_int, verify_error),
+              last_verified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+              verified_ok      = ?3,
+              verify_error     = ?4
+          WHERE repo_id = ?1 AND filename = ?2",
+        (repo_id, filename, verified_ok_int, verify_error_param),
     )?;
     if affected == 0 {
         anyhow::bail!(

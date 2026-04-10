@@ -1,17 +1,18 @@
-use async_stream;
-use axum::{
-    extract::{Path, State},
-    response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
-    Json,
-};
-use futures_util::Stream;
-use reqwest::StatusCode;
-use serde::Serialize;
 use std::sync::Arc;
 
-use super::types::{is_safe_path_component, QuantEntry};
-use crate::gpu::VramInfo;
-use crate::proxy::ProxyState;
+ use async_stream;
+ use axum::{
+     extract::{Path, State},
+     http::StatusCode,
+     response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
+     Json,
+ };
+ use futures_util::Stream;
+ use serde::Serialize;
+
+ use super::types::{is_safe_path_component, QuantEntry};
+ use crate::gpu::VramInfo;
+ use crate::proxy::ProxyState;
 
 /// Typed response for the system health endpoint.
 #[derive(Debug, Serialize)]

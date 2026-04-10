@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Split `db/queries.rs` (1343 LOC) into submodules
+## Task 1: Split `db/queries.rs` (1343 LOC) into submodules
 
 **Context:**
 `queries.rs` is 1343 lines with clear section comments (`// ---`) separating domain groups: types, model queries, active model queries, backend queries, metrics queries, and tests. This is the cleanest split — the file already has natural boundaries and the module changes from a flat file to a directory with 5 submodule files + `mod.rs`.
@@ -94,7 +94,7 @@ The `db/mod.rs` currently declares `pub mod queries;` and all external code refe
 
 ---
 
-### Task 2: Split `proxy/koji_handlers.rs` (1433 LOC) into submodules
+## Task 2: Split `proxy/koji_handlers.rs` (1433 LOC) into submodules
 
 **Context:**
 `koji_handlers.rs` is 1433 lines containing handler functions for the Koji management API. The file has a natural split into three domains: model lifecycle endpoints (list/get/load/unload), pull/download endpoints (pull model, get pull job, pull job stream), and system endpoints (health, HF quants, restart, metrics stream). The `QuantEntry`, `QuantDownloadSpec`, `PullRequest`, `PullResponse`, `ModelResponse`, `RestartResponse` structs and `SystemHealthResponse` are shared types used across handlers. Note: `is_safe_path_component` is used in both `spawn_download_job` (pull) and `handle_hf_list_quants` (system), so it must live in `types.rs` as `pub(super)`. The `CONFIG_WRITE_LOCK` static and `spawn_download_job` private helper are used only by pull-related handlers.
@@ -193,7 +193,7 @@ The router at `proxy/server/router.rs` imports 10 handler functions via `use cra
 
 ---
 
-### Task 3: Split `config/resolve.rs` (1267 LOC) — extract tests
+## Task 3: Split `config/resolve.rs` (1267 LOC) — extract tests
 
 **Context:**
 `resolve.rs` is 1267 lines but the implementation itself is only ~400 lines (lines 1-404). The remaining ~860 lines are all tests (lines 405-1267 under `#[cfg(test)]`). This is the simplest split: move tests to a separate file, keep implementation in place.
@@ -236,7 +236,7 @@ The router at `proxy/server/router.rs` imports 10 handler functions via `use cra
 
 ---
 
-### Task 4: Split `config/migrate.rs` (1022 LOC) — extract tests
+## Task 4: Split `config/migrate.rs` (1022 LOC) — extract tests
 
 **Context:**
 Same pattern as Task 3. `migrate.rs` is 1022 lines: ~500 lines of implementation (lines 1-496), ~500 lines of tests (lines 497-1022). Move tests to a separate file.

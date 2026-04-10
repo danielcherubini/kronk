@@ -1,9 +1,13 @@
-use super::*;
-use crate::profiles::SamplingParams;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+
 use tempfile::tempdir;
 
+use crate::profiles::SamplingParams;
+
+use super::*;
+
+/// Tests migration of model cards to unified config format
 #[test]
 fn test_migrate_cards_to_unified() {
     let dir = tempdir().unwrap();
@@ -114,6 +118,7 @@ top_k = 40
         .exists());
 }
 
+/// Tests that migration is idempotent when run multiple times
 #[test]
 fn test_migrate_idempotent() {
     let dir = tempdir().unwrap();
@@ -218,6 +223,7 @@ top_k = 40
     assert_eq!(model_config.context_length, Some(8192));
 }
 
+/// Tests that existing quants field is preserved during migration
 #[test]
 fn test_migrate_preserves_existing_quants() {
     let dir = tempdir().unwrap();
@@ -360,8 +366,9 @@ fn build_test_model_config_with_mmproj(
     }
 }
 
+/// Tests that grouped --mmproj arg is stripped and selection recovered from filename
 #[test]
-fn cleanup_strips_grouped_mmproj_arg_and_recovers_selection() {
+fn test_cleanup_strips_grouped_mmproj_arg_and_recovers_selection() {
     let mut config = Config::default();
     config.models.insert(
         "m".to_string(),
@@ -384,8 +391,9 @@ fn cleanup_strips_grouped_mmproj_arg_and_recovers_selection() {
     assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
 }
 
+/// Tests that two-token --mmproj arg is stripped and selection recovered
 #[test]
-fn cleanup_strips_two_token_mmproj_arg() {
+fn test_cleanup_strips_two_token_mmproj_arg() {
     let mut config = Config::default();
     config.models.insert(
         "m".to_string(),
@@ -408,8 +416,9 @@ fn cleanup_strips_two_token_mmproj_arg() {
     assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
 }
 
+/// Tests that inline equals --mmproj=arg is stripped and selection recovered
 #[test]
-fn cleanup_strips_inline_equals_mmproj_arg() {
+fn test_cleanup_strips_inline_equals_mmproj_arg() {
     let mut config = Config::default();
     config.models.insert(
         "m".to_string(),
@@ -427,8 +436,9 @@ fn cleanup_strips_inline_equals_mmproj_arg() {
     assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
 }
 
+/// Tests that pre-existing mmproj field is preserved when cleaning stale args
 #[test]
-fn cleanup_preserves_existing_mmproj_field() {
+fn test_cleanup_preserves_existing_mmproj_field() {
     // If the user has already set mmproj via the editor, the recovered
     // value from a stale arg must NOT overwrite it.
     let mut config = Config::default();
@@ -449,8 +459,9 @@ fn cleanup_preserves_existing_mmproj_field() {
     assert_eq!(m.mmproj.as_deref(), Some("mmproj-F16"));
 }
 
+/// Tests that cleanup returns false when no stale mmproj args are present
 #[test]
-fn cleanup_returns_false_when_no_stale_args() {
+fn test_cleanup_returns_false_when_no_stale_args() {
     let mut config = Config::default();
     config.models.insert(
         "m".to_string(),

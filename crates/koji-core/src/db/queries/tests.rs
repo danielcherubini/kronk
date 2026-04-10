@@ -1,8 +1,10 @@
 //! Tests for database query functions.
 
-use super::*;
 use crate::db::{open_in_memory, OpenResult};
 
+use super::*;
+
+/// Tests upserting and retrieving a model pull record
 #[test]
 fn test_upsert_and_get_model_pull() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
@@ -24,6 +26,7 @@ fn test_upsert_and_get_model_pull() {
     assert_eq!(updated.commit_sha, "def456");
 }
 
+/// Tests upserting and retrieving model files
 #[test]
 fn test_upsert_and_get_model_files() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
@@ -455,7 +458,7 @@ fn test_rename_active_model_not_found() {
 // backend_installations tests
 // -----------------------------------------------------------------------
 
-fn make_record(name: &str, version: &str, installed_at: i64) -> BackendInstallationRecord {
+fn _make_record(name: &str, version: &str, installed_at: i64) -> BackendInstallationRecord {
     BackendInstallationRecord {
         id: 0,
         name: name.to_string(),
@@ -473,10 +476,10 @@ fn make_record(name: &str, version: &str, installed_at: i64) -> BackendInstallat
 fn test_insert_and_get_active_backend() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+    let r1 = _make_record("llama_cpp", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
-    let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+    let r2 = _make_record("llama_cpp", "v2.0.0", 2000);
     insert_backend_installation(&conn, &r2).unwrap();
 
     let active = get_active_backend(&conn, "llama_cpp").unwrap().unwrap();
@@ -488,10 +491,10 @@ fn test_insert_and_get_active_backend() {
 fn test_list_active_backends() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+    let r1 = _make_record("llama_cpp", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
-    let r2 = make_record("ik_llama", "v1.0.0", 1000);
+    let r2 = _make_record("ik_llama", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r2).unwrap();
 
     let active = list_active_backends(&conn).unwrap();
@@ -502,10 +505,10 @@ fn test_list_active_backends() {
 fn test_list_backend_versions() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+    let r1 = _make_record("llama_cpp", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
-    let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+    let r2 = _make_record("llama_cpp", "v2.0.0", 2000);
     insert_backend_installation(&conn, &r2).unwrap();
 
     let versions = list_backend_versions(&conn, "llama_cpp").unwrap();
@@ -519,10 +522,10 @@ fn test_list_backend_versions() {
 fn test_delete_single_backend_version() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+    let r1 = _make_record("llama_cpp", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
-    let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+    let r2 = _make_record("llama_cpp", "v2.0.0", 2000);
     insert_backend_installation(&conn, &r2).unwrap();
 
     delete_backend_installation(&conn, "llama_cpp", "v1.0.0").unwrap();
@@ -536,10 +539,10 @@ fn test_delete_single_backend_version() {
 fn test_delete_all_backend_versions() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "v1.0.0", 1000);
+    let r1 = _make_record("llama_cpp", "v1.0.0", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
-    let r2 = make_record("llama_cpp", "v2.0.0", 2000);
+    let r2 = _make_record("llama_cpp", "v2.0.0", 2000);
     insert_backend_installation(&conn, &r2).unwrap();
 
     delete_all_backend_versions(&conn, "llama_cpp").unwrap();
@@ -602,11 +605,11 @@ fn test_get_backend_by_version() {
 fn test_insert_same_version_is_idempotent() {
     let OpenResult { conn, .. } = open_in_memory().unwrap();
 
-    let r1 = make_record("llama_cpp", "b8407", 1000);
+    let r1 = _make_record("llama_cpp", "b8407", 1000);
     insert_backend_installation(&conn, &r1).unwrap();
 
     // Same (name, version) — should succeed (INSERT OR REPLACE), not error
-    let r2 = make_record("llama_cpp", "b8407", 2000);
+    let r2 = _make_record("llama_cpp", "b8407", 2000);
     let result = insert_backend_installation(&conn, &r2);
     assert!(
         result.is_ok(),

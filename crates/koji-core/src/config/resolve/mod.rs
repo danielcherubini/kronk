@@ -4,16 +4,33 @@ use anyhow::Result;
 impl Config {
     pub fn resolve_server(&self, name: &str) -> Result<(&ModelConfig, &BackendConfig)> {
         use anyhow::Context;
-        let server = self
+
+        // First, search by api_name to avoid config key precedence issues
+        let mut api_name_matches: Vec<_> = self
             .models
-            .get(name)
-            .or_else(|| {
-                // Fallback: search for a server where api_name or model field matches the requested name
-                self.models.values().find(|s| {
-                    s.api_name.as_deref() == Some(name) || s.model.as_deref() == Some(name)
-                })
-            })
-            .with_context(|| format!("Model '{}' not found in config", name))?;
+            .values()
+            .filter(|s| s.api_name.as_deref() == Some(name))
+            .collect();
+
+        let server = if api_name_matches.len() == 1 {
+            // Single api_name match - use it
+            api_name_matches.pop().unwrap()
+        } else if api_name_matches.len() > 1 {
+            // Ambiguous api_name - error out
+            anyhow::bail!(
+                "Ambiguous api_name '{}': multiple models share this api_name",
+                name
+            );
+        } else if let Some(server) = self.models.get(name) {
+            // No api_name match, try direct config key lookup
+            server
+        } else {
+            // Fall back to searching model field
+            self.models
+                .values()
+                .find(|s| s.model.as_deref() == Some(name))
+                .with_context(|| format!("Model '{}' not found in config", name))?
+        };
 
         let backend = self.backends.get(&server.backend).with_context(|| {
             format!(
