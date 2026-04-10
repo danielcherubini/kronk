@@ -721,6 +721,99 @@ pub async fn rename_model(
     }
 }
 
+/// DELETE /api/models/:id/quants/:quant_key — delete a single quant's file
+/// and remove it from the config.
+pub async fn delete_quant(
+    State(state): State<Arc<AppState>>,
+    Path((id, quant_key)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let state_clone = state.clone();
+    match tokio::task::spawn_blocking(move || {
+        let (mut cfg, config_dir) = load_config_from_state(&state)?;
+
+        // Find the model
+        let model_config = cfg.models.get(&id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({"error": "Model not found"}),
+            )
+        })?;
+
+        // Find the quant entry
+        let quant_entry = model_config
+            .quants
+            .get(&quant_key)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, serde_json::json!({"error": "Quant not found"})))?;
+
+        // Clone the filename before we mutate
+        let filename = quant_entry.file.clone();
+
+        // Resolve file path: models_dir / repo_id / filename
+        let repo_id = model_config.model.as_deref().unwrap_or("");
+        let mut deleted_file = None;
+
+        if !repo_id.is_empty() {
+            if let Ok(models_dir) = cfg.models_dir() {
+                let file_path = models_dir.join(repo_id).join(&filename);
+                if file_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&file_path) {
+                        tracing::warn!("Failed to delete quant file {}: {}", file_path.display(), e);
+                    } else {
+                        deleted_file = Some(filename.clone());
+                    }
+                }
+            }
+        }
+
+        // Clean up DB record (best-effort)
+        if !repo_id.is_empty() {
+            if let Ok(open) = koji_core::db::open(&config_dir) {
+                let _ = koji_core::db::queries::delete_model_file(&open.conn, repo_id, &filename);
+            }
+        }
+
+        // Get mutable reference to model config
+        let model = cfg.models.get_mut(&id).unwrap();
+
+        // Clear active quant/mmproj if they referenced this quant
+        if model.quant.as_deref() == Some(&quant_key) {
+            model.quant = None;
+        }
+        if model.mmproj.as_deref() == Some(&quant_key) {
+            model.mmproj = None;
+        }
+
+        // Remove the quant entry
+        model.quants.remove(&quant_key);
+
+        // Save config
+        cfg.save_to(&config_dir)?;
+
+        Ok((
+            cfg,
+            serde_json::json!({
+                "ok": true,
+                "id": id,
+                "quant_key": quant_key,
+                "deleted_file": deleted_file.unwrap_or(filename)
+            }),
+        ))
+    })
+    .await
+    {
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            Json(val).into_response()
+        }
+        Ok(Err((status, body))) => (status, Json(body)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 /// DELETE /api/models/:id — delete a model.
 pub async fn delete_model(
     State(state): State<Arc<AppState>>,
