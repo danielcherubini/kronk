@@ -80,7 +80,7 @@ pub struct BackendCardDto {
     pub update: UpdateStatusDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub default_args: Vec<String>,
 }
 
@@ -103,6 +103,9 @@ pub fn BackendCard(
     /// Called with the backend type when "Uninstall" is clicked.
     #[prop(optional)]
     on_delete: Option<Callback<String>>,
+    /// Called when default_args input changes with (backend_type, new_value)
+    #[prop(optional)]
+    on_default_args_change: Option<Callback<(String, String)>>,
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
@@ -113,9 +116,7 @@ pub fn BackendCard(
     let display_name = backend.display_name.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
-    let backend_type_save = backend_type.clone();
-    let bt_blur = backend_type_save.clone();
-    let bt_click = backend_type_save.clone();
+    let bt_input = backend_type.clone();
 
     let update_available = backend.update.update_available.unwrap_or(false);
     let latest_version = backend.update.latest_version.clone();
@@ -168,51 +169,21 @@ pub fn BackendCard(
                 }}
 
                  <div style="display:flex;flex-direction:column;gap:0.25rem;">
-                    <label style="font-size:0.875rem;font-weight:600;">"Default Args"</label>
-                    <input
-                        type="text"
-                        placeholder="No default args set"
-                        style="font-size:0.875rem;padding:0.375rem;border:1px solid var(--border,#ccc);border-radius:4px;font-family:monospace;"
-                        prop:value=move || default_args_signal.get()
-                        on:input=move |ev| {
-                            if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                default_args_signal.set(input.value());
-                            }
-                        }
-                        on:blur=move |_| {
-                            let args_str = default_args_signal.get();
-                            let bt = bt_blur.clone();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
-                                let body = serde_json::json!({ "default_args": parts });
-                                let url = format!("/api/backends/{}/default-args", bt);
-                                let _ = gloo_net::http::Request::post(&url)
-                                    .json(&body)
-                                    .unwrap()
-                                    .send()
-                                    .await;
-                            });
-                        }
-                    />
-                    <button
-                        on:click=move |_| {
-                            let args_str = default_args_signal.get();
-                            let bt = bt_click.clone();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
-                                let body = serde_json::json!({ "default_args": parts });
-                                let url = format!("/api/backends/{}/default-args", bt);
-                                let _ = gloo_net::http::Request::post(&url)
-                                    .json(&body)
-                                    .unwrap()
-                                    .send()
-                                    .await;
-                            });
-                        }
-                        style="background:#3b82f6;color:white;padding:0.5rem 1rem;border-radius:4px;border:none;font-size:0.875rem;cursor:pointer;margin-top:0.25rem;"
-                    >
-                        "Save"
-                    </button>
+                     <label style="font-size:0.875rem;font-weight:600;">"Default Args"</label>
+                     <input
+                         type="text"
+                         placeholder="No default args set"
+                         style="font-size:0.875rem;padding:0.375rem;border:1px solid var(--border,#ccc);border-radius:4px;font-family:monospace;"
+                         prop:value=move || default_args_signal.get()
+                         on:input=move |ev| {
+                             if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                 default_args_signal.set(input.value());
+                                 if let Some(cb) = &on_default_args_change {
+                                     cb.run((bt_input.clone(), input.value()));
+                                 }
+                             }
+                         }
+                     />
                 </div>
 
                 {if update_available {
