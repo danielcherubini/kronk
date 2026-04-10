@@ -179,3 +179,97 @@ pub fn delete_model_records(conn: &Connection, repo_id: &str) -> Result<()> {
     tx.commit()?;
     Ok(())
 }
+
+/// Delete a single model file record by (repo_id, filename).
+/// Does NOT touch model_pulls — the repo-level pull record stays.
+/// Use this when removing a single quant from a model, not the entire model.
+pub fn delete_model_file(conn: &Connection, repo_id: &str, filename: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM model_files WHERE repo_id = ?1 AND filename = ?2",
+        [repo_id, filename],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use crate::db::OpenResult;
+
+    #[test]
+    fn test_delete_model_file() {
+        // Create in-memory SQLite DB with migrations
+        let OpenResult { conn, .. } = db::open_in_memory().unwrap();
+
+        // Insert a model file record
+        upsert_model_file(
+            &conn,
+            "test-repo",
+            "test-model.Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            Some("sha256-abc123"),
+            Some(1_000_000),
+        )
+        .unwrap();
+
+        // Verify it exists
+        let files_before = get_model_files(&conn, "test-repo").unwrap();
+        assert_eq!(files_before.len(), 1);
+        assert_eq!(files_before[0].filename, "test-model.Q4_K_M.gguf");
+
+        // Delete the file record
+        delete_model_file(&conn, "test-repo", "test-model.Q4_K_M.gguf").unwrap();
+
+        // Verify it's gone
+        let files_after = get_model_files(&conn, "test-repo").unwrap();
+        assert_eq!(files_after.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_model_file_preserves_other_files() {
+        // Create in-memory SQLite DB with migrations
+        let OpenResult { conn, .. } = db::open_in_memory().unwrap();
+
+        // Insert two model file records
+        upsert_model_file(
+            &conn,
+            "test-repo",
+            "model.Q4_K_M.gguf",
+            Some("Q4_K_M"),
+            None,
+            None,
+        )
+        .unwrap();
+        upsert_model_file(
+            &conn,
+            "test-repo",
+            "model.Q8_0.gguf",
+            Some("Q8_0"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Delete only one
+        delete_model_file(&conn, "test-repo", "model.Q4_K_M.gguf").unwrap();
+
+        // Verify the other still exists
+        let files = get_model_files(&conn, "test-repo").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "model.Q8_0.gguf");
+    }
+
+    #[test]
+    fn test_delete_model_file_nonexistent() {
+        // Create in-memory SQLite DB with migrations
+        let OpenResult { conn, .. } = db::open_in_memory().unwrap();
+
+        // Try to delete a file that doesn't exist — should succeed (no-op)
+        delete_model_file(&conn, "test-repo", "nonexistent.gguf").unwrap();
+
+        // Verify nothing broke
+        let files = get_model_files(&conn, "test-repo").unwrap();
+        assert_eq!(files.len(), 0);
+    }
+}
