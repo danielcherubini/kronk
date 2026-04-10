@@ -44,7 +44,7 @@ pub struct BackendCardDto {
     pub update: UpdateStatusDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_notes_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub default_args: Vec<String>,
 }
 
