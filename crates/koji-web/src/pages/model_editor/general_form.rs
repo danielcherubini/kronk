@@ -55,12 +55,13 @@ pub fn ModelEditorGeneralForm(
                 placeholder="e.g. My Awesome Model"
                 prop:value=move || form.get().as_ref().and_then(|f| f.api_name.clone()).unwrap_or_default()
                 on:input=move |ev| {
+                    let val = target_value(&ev);
                     form.update(|f| {
                         if let Some(form) = f {
-                            form.api_name = if target_value(&ev).is_empty() {
+                            form.api_name = if val.is_empty() {
                                 None
                             } else {
-                                Some(target_value(&ev))
+                                Some(val)
                             };
                         }
                     });

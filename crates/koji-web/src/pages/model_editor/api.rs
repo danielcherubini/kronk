@@ -28,7 +28,8 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             repo_pulled_at: None,
         });
     }
-    let resp = gloo_net::http::Request::get(&format!("/api/models/{}", id))
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::get(&format!("/api/models/{}", encoded_id))
         .send()
         .await
         .ok()?;
@@ -117,10 +118,11 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
         "quants": form.quants,
     });
 
+    let encoded_id = urlencoding::encode(&form.id);
     let (url, method) = if is_new {
         ("/api/models".to_string(), "POST")
     } else {
-        (format!("/api/models/{}", form.id), "PUT")
+        (format!("/api/models/{}", encoded_id), "PUT")
     };
 
     let req = if method == "POST" {
@@ -146,7 +148,8 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
 
 pub async fn rename_model(old_id: &str, new_id: &str) -> Result<(), String> {
     let body = serde_json::json!({ "new_id": new_id });
-    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/rename", old_id))
+    let encoded_id = urlencoding::encode(old_id);
+    let resp = gloo_net::http::Request::post(&format!("/api/models/{}/rename", encoded_id))
         .json(&body)
         .map_err(|e| e.to_string())?
         .send()
@@ -162,7 +165,8 @@ pub async fn rename_model(old_id: &str, new_id: &str) -> Result<(), String> {
 }
 
 pub async fn delete_model_api(id: String) -> Result<(), String> {
-    let resp = gloo_net::http::Request::delete(&format!("/api/models/{}", id))
+    let encoded_id = urlencoding::encode(&id);
+    let resp = gloo_net::http::Request::delete(&format!("/api/models/{}", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;

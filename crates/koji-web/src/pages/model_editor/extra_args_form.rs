@@ -11,7 +11,7 @@ pub fn ModelEditorExtraArgsForm(form: RwSignal<Option<ModelForm>>) -> impl IntoV
             id="field-args"
             class="form-textarea"
             rows="6"
-            placeholder="One flag per line, e.g.:\n-fa 1\n-b 4096\n--mlock"
+            placeholder="One flag per line, e.g. -fa 1, -b 4096, --mlock"
             prop:value=move || form.get().as_ref().map(|f| f.args.clone()).unwrap_or_default()
             on:input=move |e| {
                 form.update(|f| {
