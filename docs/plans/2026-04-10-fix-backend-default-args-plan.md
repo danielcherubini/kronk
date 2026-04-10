@@ -124,7 +124,7 @@ For the backends page, we need:
 
 **What to implement:**
 
-#### backend_card.rs changes:
+### backend_card.rs changes:
 
 1. **Add `on_default_args_change` callback prop** to the `BackendCard` component:
    ```rust
@@ -154,7 +154,7 @@ For the backends page, we need:
 
 4. **Remove the "Save" button** (lines 197-215) — the entire `<button>` element from inside the `<div>` that wraps the default_args input section.
 
-#### backends.rs changes:
+### backends.rs changes:
 
 1. **Add edit tracking signals:**
    ```rust
