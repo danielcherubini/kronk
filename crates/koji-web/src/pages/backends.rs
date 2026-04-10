@@ -228,24 +228,16 @@ pub fn Backends() -> impl IntoView {
     view! {
         <div class="page-header">
             <h1>"Backends"</h1>
-            {move || {
-                if !default_args_edits.get().is_empty() || saving.get() {
-                    view! {
-                        <div style="display:flex;gap:0.5rem;align-items:center;">
-                            {move || save_status.get().map(|s| view! { <span class="text-muted">{s}</span> })}
-                            <button
-                                class="btn btn-primary"
-                                disabled=move || saving.get()
-                                on:click=save
-                            >
-                                "Save Changes"
-                            </button>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <span/> }.into_any()
-                }
-            }}
+            <div style="display:flex;gap:0.5rem;align-items:center;">
+                {move || save_status.get().map(|s| view! { <span class="text-muted">{s}</span> })}
+                <button
+                    class="btn btn-primary"
+                    disabled=move || saving.get()
+                    on:click=save
+                >
+                    "Save Changes"
+                </button>
+            </div>
         </div>
 
         <div class="card">
