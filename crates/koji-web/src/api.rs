@@ -721,6 +721,102 @@ pub async fn rename_model(
     }
 }
 
+/// DELETE /api/models/:id/quants/:quant_key — delete a single quant's file
+/// and remove it from the config.
+pub async fn delete_quant(
+    State(state): State<Arc<AppState>>,
+    Path((id, quant_key)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let state_clone = state.clone();
+    match tokio::task::spawn_blocking(move || {
+        let (mut cfg, config_dir) = load_config_from_state(&state)?;
+
+        // Find the model
+        let model_config = cfg.models.get(&id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({"error": "Model not found"}),
+            )
+        })?;
+
+        // Find the quant entry and clone needed values
+        let quant_entry = model_config
+            .quants
+            .get(&quant_key)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, serde_json::json!({"error": "Quant not found"})))?;
+
+// Clone the filename and repo_id before we mutate
+        let filename = quant_entry.file.clone();
+        let repo_id = model_config.model.clone().unwrap_or_default();
+
+        // Get mutable reference to model config and remove the quant entry
+        {
+            let model = cfg.models.get_mut(&id).unwrap();
+
+            // Clear active quant/mmproj if they referenced this quant
+            if model.quant.as_deref() == Some(&quant_key) {
+                model.quant = None;
+            }
+            if model.mmproj.as_deref() == Some(&quant_key) {
+                model.mmproj = None;
+            }
+
+            // Remove the quant entry
+            model.quants.remove(&quant_key);
+        } // Drop mutable borrow here
+
+        // Save config first - if this fails, don't proceed with cleanup
+        cfg.save_to(&config_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+
+        // Clean up file (best-effort) - only after config is saved
+        if !repo_id.is_empty() {
+            if let Ok(models_dir) = cfg.models_dir() {
+                let file_path = models_dir.join(&repo_id).join(&filename);
+                if file_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&file_path) {
+                        tracing::warn!("Failed to delete quant file {}: {}", file_path.display(), e);
+                    }
+                }
+            }
+        }
+
+        // Clean up DB record (best-effort) - only after config is saved
+        if !repo_id.is_empty() {
+            if let Ok(open) = koji_core::db::open(&config_dir) {
+                let _ = koji_core::db::queries::delete_model_file(&open.conn, &repo_id, &filename);
+            }
+        }
+
+        Ok((
+            cfg,
+            serde_json::json!({
+                "ok": true,
+                "id": id,
+                "quant_key": quant_key,
+                "deleted_file": filename
+            }),
+        ))
+    })
+    .await
+    {
+        Ok(Ok((cfg, val))) => {
+            sync_proxy_config(&state_clone, cfg).await;
+            Json(val).into_response()
+        }
+        Ok(Err((status, body))) => (status, Json(body)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 /// DELETE /api/models/:id — delete a model.
 pub async fn delete_model(
     State(state): State<Arc<AppState>>,
@@ -729,12 +825,46 @@ pub async fn delete_model(
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
-        if cfg.models.remove(&id).is_none() {
-            return Err((
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model not found"}),
-            ));
+
+        // Capture the removed model for cleanup
+        let model_config = match cfg.models.remove(&id) {
+            Some(m) => m,
+            None => return Err((StatusCode::NOT_FOUND, serde_json::json!({"error": "Model not found"}))),
+        };
+
+        // File cleanup (mirrors CLI model rm logic)
+        let repo_id = model_config.model.as_deref().unwrap_or("");
+        if !repo_id.is_empty() {
+            // 1. Delete model directory: models_dir / repo_id
+            if let Ok(models_dir) = cfg.models_dir() {
+                let model_dir = models_dir.join(repo_id);
+                if model_dir.exists() {
+                    if let Err(e) = std::fs::remove_dir_all(&model_dir) {
+                        tracing::warn!("Failed to remove model directory {}: {}", model_dir.display(), e);
+                    } else {
+                        // Clean up empty parent dir
+                        if let Some(parent) = model_dir.parent() {
+                            if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+                                let _ = std::fs::remove_dir(parent);
+                            }
+                        }
+                    }
+                }
+            }
+            // 2. Delete model card
+            if let Ok(configs_dir) = cfg.configs_dir() {
+                let card_path = configs_dir.join(format!("{}.toml", repo_id.replace('/', "--")));
+                if card_path.exists() {
+                    let _ = std::fs::remove_file(&card_path);
+                }
+            }
+            // 3. Delete DB records (best-effort)
+            // config_dir is the directory containing config.toml (and koji.db)
+            if let Ok(open) = koji_core::db::open(&config_dir) {
+                let _ = koji_core::db::queries::delete_model_records(&open.conn, repo_id);
+            }
         }
+
         cfg.save_to(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

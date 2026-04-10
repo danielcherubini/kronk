@@ -206,6 +206,15 @@ pub enum ModelCommands {
     },
     /// Scan for untracked GGUF files and update model cards
     Scan,
+    /// Remove orphaned GGUF files not referenced by any server config
+    Prune {
+        /// Show what would be deleted without actually deleting
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Check for and download model updates from HuggingFace
     Update {
         /// Model ID to update (e.g. "bartowski/OmniCoder-8B-GGUF"). Checks all if omitted.
