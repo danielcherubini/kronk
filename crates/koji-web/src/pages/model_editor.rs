@@ -1671,7 +1671,7 @@ pub fn ModelEditor() -> impl IntoView {
                                      class="btn btn-danger ml-auto"
                                      on:click=move |_| {
                                          let confirmed = web_sys::window()
-                                             .and_then(|w| w.confirm_with_message("Delete this model? This cannot be undone.").ok())
+                                             .and_then(|w| w.confirm_with_message("Delete this model and all its files from disk? This cannot be undone.").ok())
                                              .unwrap_or(false);
                                          if confirmed { delete_action.dispatch(()); }
                                      }
