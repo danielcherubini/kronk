@@ -304,6 +304,24 @@ async fn delete_model_api(id: String) -> Result<(), String> {
     }
 }
 
+async fn delete_quant_api(id: String, quant_key: String) -> Result<(), String> {
+    let encoded_id = urlencoding::encode(&id);
+    let encoded_key = urlencoding::encode(&quant_key);
+    let resp = gloo_net::http::Request::delete(&format!(
+        "/api/models/{}/quants/{}",
+        encoded_id, encoded_key
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if resp.status() == 200 {
+        Ok(())
+    } else {
+        let text = resp.text().await.unwrap_or_else(|_| "Unknown error".into());
+        Err(text)
+    }
+}
+
 /// Response from POST /api/models/:id/refresh — surfaces the updated repo
 /// commit SHA and the full per-file DB records for merging back into the editor.
 #[derive(Debug, Clone, Deserialize)]
@@ -793,6 +811,36 @@ pub fn ModelEditor() -> impl IntoView {
             match delete_model_api(form_id.get()).await {
                 Ok(()) => deleted.set(true),
                 Err(e) => model_status.set(Some((false, format!("Delete failed: {}", e)))),
+            }
+        });
+
+    let delete_quant_action: Action<(String, String), (), LocalStorage> =
+        Action::new_unsync(move |(id, key): &(String, String)| {
+            let id = id.clone();
+            let key = key.clone();
+            async move {
+                match delete_quant_api(id.clone(), key.clone()).await {
+                    Ok(()) => {
+                        // Remove from local state on success
+                        quants.update(|rows| {
+                            if let Some(pos) = rows.iter().position(|(n, _)| n == &key) {
+                                rows.remove(pos);
+                            }
+                        });
+                        // Clear active quant/mmproj references if needed
+                        if form_quant.get().as_deref() == Some(key.as_str()) {
+                            form_quant.set(None);
+                        }
+                        if selected_mmproj_for_config.get() == key.as_str() {
+                            selected_mmproj_for_config.set(String::new());
+                            form_vision_enabled.set(false);
+                        }
+                        model_status.set(Some((true, "Quant deleted from disk.".into())));
+                    }
+                    Err(e) => {
+                        model_status.set(Some((false, format!("Delete failed: {}", e))));
+                    }
+                }
             }
         });
 
@@ -1515,21 +1563,32 @@ pub fn ModelEditor() -> impl IntoView {
                                                          }
                                                      </td>
                                                      <td>
-                                                          <button
-                                                              type="button"
-                                                              class="btn btn-danger btn-sm"
-                                                              on:click={
-                                                                  let name_ref = Arc::clone(&name_arc);
-                                                                  move |_| {
-                                                                      quants.update(|rows| {
-                                                                          if let Some(pos) = rows.iter().position(|(n, _)| n.as_str() == name_ref.as_str()) {
-                                                                              rows.remove(pos);
+                                                          {
+                                                              let name_ref = Arc::clone(&name_arc);
+                                                              let size_display = format_bytes_opt(q.size_bytes);
+                                                              let persisted_id = original_id.get();
+                                                              let key_for_action = name_arc.to_string();
+                                                              view! {
+                                                                  <button
+                                                                      type="button"
+                                                                      class="btn btn-danger btn-sm"
+                                                                      on:click=move |_| {
+                                                                          let msg = format!(
+                                                                              "Delete \"{}\" ({}) from disk?\nThis cannot be undone.",
+                                                                              name_ref.as_str(),
+                                                                              size_display
+                                                                          );
+                                                                          let confirmed = web_sys::window()
+                                                                              .and_then(|w| w.confirm_with_message(&msg).ok())
+                                                                              .unwrap_or(false);
+                                                                          if confirmed {
+                                                                              delete_quant_action.dispatch((persisted_id.clone(), key_for_action.clone()));
                                                                           }
-                                                                      });
-                                                                  }
+                                                                      }
+                                                                  >"✕"</button>
                                                               }
-                                                          >"✕"</button>
-                                                      </td>
+                                                          }
+                                                       </td>
                                                 </tr>
                                             }
                                         }
