@@ -113,6 +113,9 @@ pub fn BackendCard(
     let display_name = backend.display_name.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
+    let backend_type_save = backend_type.clone();
+    let bt_blur = backend_type_save.clone();
+    let bt_click = backend_type_save.clone();
 
     let update_available = backend.update.update_available.unwrap_or(false);
     let latest_version = backend.update.latest_version.clone();
@@ -164,11 +167,11 @@ pub fn BackendCard(
                     view! { <span/> }.into_any()
                 }}
 
-                <div style="display:flex;flex-direction:column;gap:0.25rem;">
+                 <div style="display:flex;flex-direction:column;gap:0.25rem;">
                     <label style="font-size:0.875rem;font-weight:600;">"Default Args"</label>
                     <input
                         type="text"
-                        placeholder="--arg value --another-arg"
+                        placeholder="No default args set"
                         style="font-size:0.875rem;padding:0.375rem;border:1px solid var(--border,#ccc);border-radius:4px;font-family:monospace;"
                         prop:value=move || default_args_signal.get()
                         on:input=move |ev| {
@@ -178,11 +181,11 @@ pub fn BackendCard(
                         }
                         on:blur=move |_| {
                             let args_str = default_args_signal.get();
-                            let backend_type_clone = backend_type.clone();
+                            let bt = bt_blur.clone();
                             wasm_bindgen_futures::spawn_local(async move {
                                 let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
                                 let body = serde_json::json!({ "default_args": parts });
-                                let url = format!("/api/backends/{}/default-args", backend_type_clone);
+                                let url = format!("/api/backends/{}/default-args", bt);
                                 let _ = gloo_net::http::Request::post(&url)
                                     .json(&body)
                                     .unwrap()
@@ -191,6 +194,25 @@ pub fn BackendCard(
                             });
                         }
                     />
+                    <button
+                        on:click=move |_| {
+                            let args_str = default_args_signal.get();
+                            let bt = bt_click.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
+                                let body = serde_json::json!({ "default_args": parts });
+                                let url = format!("/api/backends/{}/default-args", bt);
+                                let _ = gloo_net::http::Request::post(&url)
+                                    .json(&body)
+                                    .unwrap()
+                                    .send()
+                                    .await;
+                            });
+                        }
+                        style="background:#3b82f6;color:white;padding:0.5rem 1rem;border-radius:4px;border:none;font-size:0.875rem;cursor:pointer;margin-top:0.25rem;"
+                    >
+                        "Save"
+                    </button>
                 </div>
 
                 {if update_available {
