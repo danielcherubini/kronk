@@ -1,0 +1,54 @@
+//! Record types for database query results.
+
+/// A stored pull record for a HuggingFace repo.
+#[derive(Debug, Clone)]
+pub struct ModelPullRecord {
+    pub repo_id: String,
+    pub commit_sha: String,
+    pub pulled_at: String, // ISO 8601 from SQLite
+}
+
+/// A stored file record for a downloaded GGUF.
+#[derive(Debug, Clone)]
+pub struct ModelFileRecord {
+    pub repo_id: String,
+    pub filename: String,
+    pub quant: Option<String>,
+    pub lfs_oid: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub downloaded_at: String,
+    /// ISO 8601 timestamp of the most recent verification attempt. None if never verified.
+    pub last_verified_at: Option<String>,
+    /// Some(true) = hash matched. Some(false) = mismatch. None = never verified
+    /// or no upstream hash available to compare against.
+    pub verified_ok: Option<bool>,
+    /// Short human-readable error when `verified_ok = Some(false)` or when verification
+    /// could not complete (e.g. "no upstream hash", "hash mismatch: expected X got Y").
+    pub verify_error: Option<String>,
+}
+
+/// An entry in the download log (append-only).
+#[derive(Debug, Clone)]
+pub struct DownloadLogEntry {
+    pub repo_id: String,
+    pub filename: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+/// An active model entry tracking a running backend process.
+#[derive(Debug, Clone)]
+pub struct ActiveModelRecord {
+    pub server_name: String,
+    pub model_name: String,
+    pub backend: String,
+    pub pid: i64,
+    pub port: i64,
+    pub backend_url: String,
+    pub loaded_at: String,
+    pub last_accessed: String,
+}
