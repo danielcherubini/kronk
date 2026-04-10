@@ -441,7 +441,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         .and_then(|r| r);
 
     // Load config to get default_args
-    let config_result = koji_core::config::Config::load_from(&config_path);
+    let config_result = koji_core::config::Config::load_from(&config_dir);
     let default_args_map: std::collections::HashMap<String, Vec<String>> = config_result
         .ok()
         .map(|cfg| {
@@ -1208,7 +1208,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         .and_then(|r| r);
 
     // Load config to get default_args
-    let config_result = koji_core::config::Config::load_from(&config_path);
+    let config_result = koji_core::config::Config::load_from(&config_dir);
     let default_args_map: std::collections::HashMap<String, Vec<String>> = config_result
         .ok()
         .map(|cfg| {
@@ -1499,8 +1499,19 @@ pub async fn update_backend_default_args(
         }
     };
 
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
     // Load config
-    let mut config = match koji_core::config::Config::load_from(&config_path) {
+    let mut config = match koji_core::config::Config::load_from(&config_dir) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -1531,7 +1542,7 @@ pub async fn update_backend_default_args(
     let config_clone = config.clone();
 
     // Save config
-    match tokio::task::spawn_blocking(move || config.save_to(&config_path)).await {
+    match tokio::task::spawn_blocking(move || config.save_to(&config_dir)).await {
         Ok(Ok(())) => {
             // Sync proxy config if available
             if let Some(ref proxy_config) = state.proxy_config {
