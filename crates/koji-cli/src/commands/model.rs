@@ -110,6 +110,7 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         } => cmd_create(config, name, &model, quant, profile, backend).await,
         ModelCommands::Rm { model } => cmd_rm(config, &model),
         ModelCommands::Scan => cmd_scan(config),
+        ModelCommands::Prune { dry_run, yes } => cmd_prune(config, dry_run, yes),
         ModelCommands::Update {
             model,
             check,
@@ -1039,6 +1040,188 @@ fn cmd_scan(config: &Config) -> Result<()> {
     } else {
         println!();
         println!("Model cards updated.");
+    }
+
+     Ok(())
+}
+
+/// Remove orphaned GGUF files not referenced by any server config
+fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
+    use std::collections::HashSet;
+
+    // Helper to format bytes
+    fn format_bytes(b: u64) -> String {
+        const KIB: f64 = 1024.0;
+        const MIB: f64 = KIB * 1024.0;
+        const GIB: f64 = MIB * 1024.0;
+        let bf = b as f64;
+        if bf >= GIB {
+            format!("{:.2} GiB", bf / GIB)
+        } else if bf >= MIB {
+            format!("{:.1} MiB", bf / MIB)
+        } else if bf >= KIB {
+            format!("{:.1} KiB", bf / KIB)
+        } else {
+            format!("{} B", b)
+        }
+    }
+
+    let models_dir = config.models_dir()?;
+    let configs_dir = config.configs_dir()?;
+
+    // Build set of referenced files: (repo_id, filename)
+    let mut referenced_files: HashSet<(String, String)> = HashSet::new();
+    for model_config in config.models.values() {
+        if let Some(ref repo_id) = model_config.model {
+            for quant_entry in model_config.quants.values() {
+                referenced_files.insert((repo_id.clone(), quant_entry.file.clone()));
+            }
+        }
+    }
+
+    // Scan for orphaned GGUF files
+    let mut orphaned_files: Vec<(String, std::path::PathBuf, u64)> = Vec::new();
+
+    if models_dir.exists() {
+        for entry in std::fs::read_dir(&models_dir)? {
+            let entry = entry?;
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let company = entry.file_name().to_string_lossy().to_string();
+
+            for model_entry in std::fs::read_dir(entry.path())? {
+                let model_entry = model_entry?;
+                let model_path = model_entry.path();
+                if !model_path.is_dir() {
+                    continue;
+                }
+
+                let model_name = model_entry.file_name().to_string_lossy().to_string();
+                let repo_id = format!("{}/{}", company, model_name);
+
+                for file_entry in std::fs::read_dir(&model_path)? {
+                    let file_entry = file_entry?;
+                    let file_path = file_entry.path();
+                    if file_path.extension().is_none_or(|e| e != "gguf") {
+                        continue;
+                    }
+
+                    let filename = file_entry.file_name().to_string_lossy().to_string();
+                    let file_key = (repo_id.clone(), filename.clone());
+
+                    if !referenced_files.contains(&file_key) {
+                        if let Ok(metadata) = file_entry.metadata() {
+                            orphaned_files.push((filename, file_path, metadata.len()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if orphaned_files.is_empty() {
+        println!("No orphaned GGUF files found.");
+        return Ok(());
+    }
+
+    // Display what would be deleted
+    println!("Found {} orphaned GGUF file(s):", orphaned_files.len());
+    let mut total_size = 0u64;
+    for (filename, _, size) in &orphaned_files {
+        println!("  {} ({})", filename, format_bytes(*size));
+        total_size += size;
+    }
+    println!();
+    println!("Total size: {}", format_bytes(total_size));
+
+    if dry_run {
+        println!();
+        println!("Dry run complete. No files were deleted.");
+        return Ok(());
+    }
+
+    // Prompt for confirmation
+    if !yes {
+        let confirm = inquire::Confirm::new("Delete these files?")
+            .with_default(false)
+            .prompt()?;
+        if !confirm {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Delete files
+    let mut deleted_count = 0;
+    for (_filename, file_path, _) in &orphaned_files {
+        if let Err(e) = std::fs::remove_file(file_path) {
+            tracing::warn!("Failed to delete {}: {}", file_path.display(), e);
+        } else {
+            deleted_count += 1;
+        }
+    }
+
+    // Clean up empty directories
+    for (_filename, file_path, _) in &orphaned_files {
+        if let Some(parent) = file_path.parent() {
+            if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    }
+
+    // Clean up orphaned model cards
+    let mut orphaned_cards = Vec::new();
+    if configs_dir.exists() {
+        for entry in std::fs::read_dir(&configs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "toml") {
+                continue;
+            }
+            // Try to load card and check if model dir still exists
+            if let Ok(card) = ModelCard::load(&path) {
+                if !card.model.source.is_empty() {
+                    let model_dir = models_dir.join(&card.model.source);
+                    if !model_dir.exists() || model_dir.read_dir().map(|mut d| d.next().is_none()).unwrap_or(true) {
+                        orphaned_cards.push(path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    for card_path in &orphaned_cards {
+        let _ = std::fs::remove_file(card_path);
+    }
+
+    // Clean up DB records for deleted files
+    if let Ok(db_dir) = koji_core::config::Config::config_dir() {
+        if let Ok(koji_core::db::OpenResult { conn, .. }) = koji_core::db::open(&db_dir) {
+            for (_, file_path, _) in &orphaned_files {
+                // Extract repo_id and filename from file path
+                // Path: models_dir/org/model/file.gguf
+                // We need to reconstruct repo_id = "org/model"
+                if let Some(parent) = file_path.parent() {
+                    if let Some(grandparent) = parent.parent() {
+                        if let Some(repo_id) = grandparent.file_name() {
+                            let repo_id = repo_id.to_string_lossy().to_string();
+                            if let Some(filename) = file_path.file_name() {
+                                let filename = filename.to_string_lossy().to_string();
+                                let _ = koji_core::db::queries::delete_model_file(&conn, &repo_id, &filename);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("Deleted {} file(s).", deleted_count);
+    if !orphaned_cards.is_empty() {
+        println!("Deleted {} orphaned model card(s).", orphaned_cards.len());
     }
 
     Ok(())
