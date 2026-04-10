@@ -30,6 +30,10 @@ pub fn Backends() -> impl IntoView {
     let active_job_id = RwSignal::new(Option::<String>::None);
     let action_error = RwSignal::new(Option::<String>::None);
     let refresh_tick = RwSignal::new(0u32);
+    let default_args_edits: RwSignal<std::collections::HashMap<String, String>> =
+        RwSignal::new(std::collections::HashMap::new());
+    let save_status: RwSignal<Option<String>> = RwSignal::new(None);
+    let saving: RwSignal<bool> = RwSignal::new(false);
 
     // ── Fetch backends list (re-runs on refresh_tick) ────────────────────────
     Effect::new(move |_| {
@@ -168,10 +172,80 @@ pub fn Backends() -> impl IntoView {
         refresh_tick.update(|n| *n += 1);
     });
 
+    let on_default_args_change =
+        Callback::new(move |(backend_type, new_value): (String, String)| {
+            default_args_edits.update(|edits| {
+                edits.insert(backend_type, new_value);
+            });
+            save_status.set(None); // Clear status when user makes new edits
+        });
+
+    let save = move |_| {
+        if saving.get() {
+            return;
+        }
+        let edits = default_args_edits.get();
+        if edits.is_empty() {
+            return;
+        }
+        saving.set(true);
+        save_status.set(Some("Saving…".to_string()));
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut errors = Vec::new();
+            let edit_keys: Vec<String> = edits.keys().cloned().collect();
+            for bt in edit_keys {
+                let args_str = edits.get(&bt).cloned().unwrap_or_default();
+                let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
+                let body = serde_json::json!({ "default_args": parts });
+                let url = format!("/api/backends/{}/default-args", bt);
+                let res = gloo_net::http::Request::post(&url)
+                    .json(&body)
+                    .unwrap()
+                    .send()
+                    .await;
+                match res {
+                    Ok(response) if response.ok() => {}
+                    Ok(response) => {
+                        let status = response.status();
+                        let text = response.text().await.unwrap_or_default();
+                        errors.push(format!("{}: HTTP {} - {}", bt, status, text));
+                    }
+                    Err(e) => errors.push(format!("{}: {}", bt, e)),
+                }
+            }
+            if errors.is_empty() {
+                save_status.set(Some("✅ Saved".to_string()));
+                default_args_edits.set(std::collections::HashMap::new());
+                refresh_tick.update(|n| *n += 1);
+            } else {
+                save_status.set(Some(format!("❌ {}", errors.join(", "))));
+            }
+            saving.set(false);
+        });
+    };
+
     // ── View ─────────────────────────────────────────────────────────────────
     view! {
         <div class="page-header">
             <h1>"Backends"</h1>
+            {move || {
+                if !default_args_edits.get().is_empty() || saving.get() {
+                    view! {
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            {move || save_status.get().map(|s| view! { <span class="text-muted">{s}</span> })}
+                            <button
+                                class="btn btn-primary"
+                                disabled=move || saving.get()
+                                on:click=save
+                            >
+                                "Save Changes"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }
+            }}
         </div>
 
         <div class="card">
@@ -214,6 +288,7 @@ pub fn Backends() -> impl IntoView {
                                 on_update=on_update_click
                                 on_check_updates=on_check_updates_click
                                 on_delete=on_delete_click
+                                on_default_args_change=on_default_args_change
                             />
                         }.into_any());
                     }
