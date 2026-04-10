@@ -35,10 +35,13 @@ test: build-frontend-dev
 	cargo test --workspace
 	cargo test --package koji-web --features ssr
 
-check: fmt clippy test
+check: fmt-check clippy test
 
 fmt:
 	cargo fmt --all
+
+fmt-check:
+	cargo fmt --all --check
 
 # Lint everything including the server-side koji-web code
 clippy:
