@@ -116,7 +116,6 @@ pub fn BackendCard(
     let display_name = backend.display_name.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
-    let backend_type_save = backend_type.clone();
     let bt_input = backend_type.clone();
 
     let update_available = backend.update.update_available.unwrap_or(false);
