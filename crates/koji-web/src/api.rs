@@ -822,12 +822,46 @@ pub async fn delete_model(
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (mut cfg, config_dir) = load_config_from_state(&state)?;
-        if cfg.models.remove(&id).is_none() {
-            return Err((
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model not found"}),
-            ));
+
+        // Capture the removed model for cleanup
+        let model_config = match cfg.models.remove(&id) {
+            Some(m) => m,
+            None => return Err((StatusCode::NOT_FOUND, serde_json::json!({"error": "Model not found"}))),
+        };
+
+        // File cleanup (mirrors CLI model rm logic)
+        let repo_id = model_config.model.as_deref().unwrap_or("");
+        if !repo_id.is_empty() {
+            // 1. Delete model directory: models_dir / repo_id
+            if let Ok(models_dir) = cfg.models_dir() {
+                let model_dir = models_dir.join(repo_id);
+                if model_dir.exists() {
+                    if let Err(e) = std::fs::remove_dir_all(&model_dir) {
+                        tracing::warn!("Failed to remove model directory {}: {}", model_dir.display(), e);
+                    } else {
+                        // Clean up empty parent dir
+                        if let Some(parent) = model_dir.parent() {
+                            if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+                                let _ = std::fs::remove_dir(parent);
+                            }
+                        }
+                    }
+                }
+            }
+            // 2. Delete model card
+            if let Ok(configs_dir) = cfg.configs_dir() {
+                let card_path = configs_dir.join(format!("{}.toml", repo_id.replace('/', "--")));
+                if card_path.exists() {
+                    let _ = std::fs::remove_file(&card_path);
+                }
+            }
+            // 3. Delete DB records (best-effort)
+            // config_dir is the directory containing config.toml (and koji.db)
+            if let Ok(open) = koji_core::db::open(&config_dir) {
+                let _ = koji_core::db::queries::delete_model_records(&open.conn, repo_id);
+            }
         }
+
         cfg.save_to(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
