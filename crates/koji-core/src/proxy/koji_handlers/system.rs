@@ -2,17 +2,55 @@ use std::sync::Arc;
 
 use async_stream;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
     Json,
 };
 use futures_util::Stream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::types::{is_safe_path_component, QuantEntry};
+use crate::db::queries;
 use crate::gpu::VramInfo;
 use crate::proxy::ProxyState;
+
+/// Query parameters for the metrics history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct HistoryQueryParams {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+}
+
+fn default_limit() -> i64 {
+    100
+}
+
+/// One historical metrics sample returned by the history endpoint.
+#[derive(Debug, Serialize)]
+pub struct MetricsHistoryEntry {
+    pub ts_unix_ms: i64,
+    pub cpu_usage_pct: f32,
+    pub ram_used_mib: i64,
+    pub ram_total_mib: i64,
+    pub gpu_utilization_pct: Option<i64>,
+    pub vram_used_mib: Option<i64>,
+    pub vram_total_mib: Option<i64>,
+}
+
+impl From<queries::SystemMetricsRow> for MetricsHistoryEntry {
+    fn from(row: queries::SystemMetricsRow) -> Self {
+        MetricsHistoryEntry {
+            ts_unix_ms: row.ts_unix_ms,
+            cpu_usage_pct: row.cpu_usage_pct,
+            ram_used_mib: row.ram_used_mib,
+            ram_total_mib: row.ram_total_mib,
+            gpu_utilization_pct: row.gpu_utilization_pct,
+            vram_used_mib: row.vram_used_mib,
+            vram_total_mib: row.vram_total_mib,
+        }
+    }
+}
 
 /// Typed response for the system health endpoint.
 #[derive(Debug, Serialize)]
@@ -143,4 +181,29 @@ pub async fn handle_system_metrics_stream(
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Fetch historical system metrics from the database.
+///
+/// Returns up to `limit` most recent samples (oldest-first). If the database
+/// is unavailable or contains no rows, returns an empty array (HTTP 200).
+/// The `limit` parameter defaults to 100 and is clamped to 1–1000.
+pub async fn handle_system_metrics_history(
+    State(state): State<Arc<ProxyState>>,
+    Query(params): Query<HistoryQueryParams>,
+) -> Json<Vec<MetricsHistoryEntry>> {
+    let limit = params.limit.clamp(1, 1000);
+
+    let entries: Vec<MetricsHistoryEntry> = match state.open_db() {
+        Some(conn) => match queries::get_recent_system_metrics(&conn, limit) {
+            Ok(rows) => rows.into_iter().map(MetricsHistoryEntry::from).collect(),
+            Err(e) => {
+                tracing::warn!("failed to query metrics history: {}", e);
+                vec![]
+            }
+        },
+        None => vec![],
+    };
+
+    Json(entries)
 }

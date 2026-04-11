@@ -13,7 +13,8 @@ use crate::proxy::koji_handlers::{
     handle_hf_list_quants, handle_koji_get_model as handle_koji_get_model_fn,
     handle_koji_get_pull_job, handle_koji_list_models, handle_koji_load_model,
     handle_koji_pull_model, handle_koji_system_health, handle_koji_system_restart,
-    handle_koji_unload_model, handle_pull_job_stream, handle_system_metrics_stream,
+    handle_koji_unload_model, handle_pull_job_stream, handle_system_metrics_history,
+    handle_system_metrics_stream,
 };
 use crate::proxy::ProxyState;
 
@@ -46,6 +47,10 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         .route("/koji/v1/hf/*repo_id", get(handle_hf_list_quants))
         // System
         .route("/koji/v1/system/health", get(handle_koji_system_health))
+        .route(
+            "/koji/v1/system/metrics/history",
+            get(handle_system_metrics_history),
+        )
         .route(
             "/koji/v1/system/metrics/stream",
             get(handle_system_metrics_stream),
