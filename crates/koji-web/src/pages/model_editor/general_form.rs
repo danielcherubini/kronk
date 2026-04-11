@@ -83,43 +83,6 @@ pub fn ModelEditorGeneralForm(
                 }
             />
 
-            <label class="form-label" for="field-quant">"Quant"</label>
-            <select
-                id="field-quant"
-                class="form-select"
-                prop:value=move || form.get().as_ref().and_then(|f| f.quant.clone()).unwrap_or_default()
-                on:change=move |e| {
-                    let value = target_value(&e);
-                    form.update(|f| {
-                        if let Some(form) = f {
-                            form.quant = if value.is_empty() { None } else { Some(value) };
-                        }
-                    });
-                }
-            >
-                <option value="">"No quant selected"</option>
-                {move || {
-                    let quants = form.get().map(|f| f.quants.clone()).unwrap_or_default();
-                    if quants.is_empty() {
-                        view! { <option disabled>"No quants available"</option> }.into_any()
-                    } else {
-                        view! {
-                            <For
-                                each=move || {
-                                    let quants = quants.clone();
-                                    quants.into_keys()
-                                }
-                                key=|k| k.clone()
-                                children=move |quant_key| {
-                                    view! { <option value={quant_key.clone()}> {quant_key.clone()} </option> }.into_any()
-                                }
-                            />
-                        }
-                        .into_any()
-                    }
-                }}
-            </select>
-
             <label class="form-label" for="field-gpu-layers">"GPU Layers"</label>
             <input
                 id="field-gpu-layers"

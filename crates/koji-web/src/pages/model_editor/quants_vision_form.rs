@@ -93,8 +93,8 @@ pub fn ModelEditorQuantsVisionForm(
         <table class="quants-table">
             <thead>
                 <tr>
+                    <th>"Active"</th>
                     <th>"Name"</th>
-                    <th>"File"</th>
                     <th>"Size"</th>
                     <th>"Context length"</th>
                     <th>"SHA"</th>
@@ -116,8 +116,9 @@ pub fn ModelEditorQuantsVisionForm(
                     key=|(_i, name, _)| name.clone()
                     children=move |(_i, name, q)| {
                         let name_arc = Arc::new(name.clone());
+                        let name_for_check = Arc::clone(&name_arc);
+                        let name_for_change = Arc::clone(&name_arc);
                         let q_arc = Arc::new(q);
-                        let q_arc_file = Arc::clone(&q_arc);
                         let q_arc_size = Arc::clone(&q_arc);
                         let q_arc_ctx = Arc::clone(&q_arc);
                         let q_arc_sha = Arc::clone(&q_arc);
@@ -125,28 +126,35 @@ pub fn ModelEditorQuantsVisionForm(
                         let q_arc_del = Arc::clone(&q_arc);
                         view! {
                             <tr>
-                                <td>{name.clone()}</td>
                                 <td>
                                     <input
-                                         class="form-input"
-                                         type="text"
-                                         placeholder="model-Q4_K_M.gguf"
-                                         prop:value=move || q_arc_file.file.clone()
-                                         on:input={
-                                             let name_ref = Arc::clone(&name_arc);
-                                             move |e| {
-                                                 let file = target_value(&e);
-                                                 form.update(|f| {
-                                                     if let Some(form) = f {
-                                                         if let Some(existing) = form.quants.get_mut(&*name_ref) {
-                                                             existing.file = file;
-                                                         }
-                                                     }
-                                                 });
-                                             }
-                                         }
-                                     />
+                                        type="checkbox"
+                                        prop:checked=move || {
+                                            form.get()
+                                                .as_ref()
+                                                .and_then(|f| f.quant.as_deref())
+                                                == Some(name_for_check.as_str())
+                                        }
+                                        on:change=move |e| {
+                                            use wasm_bindgen::JsCast;
+                                            let checked = e.target()
+                                                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                .map(|el| el.checked())
+                                                .unwrap_or(false);
+                                            let selected_name = name_for_change.to_string();
+                                            form.update(|f| {
+                                                if let Some(form) = f {
+                                                    form.quant = if checked {
+                                                        Some(selected_name)
+                                                    } else {
+                                                        None
+                                                    };
+                                                }
+                                            });
+                                        }
+                                    />
                                 </td>
+                                <td><span class="text-muted">{name.clone()}</span></td>
                                 <td>
                                     // Read-only: size is authoritative from HF/filesystem.
                                     // Use `Check for updates` or `Verify files` to refresh.
