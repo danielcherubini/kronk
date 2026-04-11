@@ -60,38 +60,6 @@ code {
 }
 
 /* 3. Layout */
-.topbar {
-    background-color: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
-    height: 52px;
-    display: flex;
-    align-items: center;
-    padding: 0 1.5rem;
-    gap: 0.5rem;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
-.topbar .logo {
-    font-weight: 700;
-    font-size: 1.1rem;
-    color: var(--text-primary);
-    margin-right: 2rem;
-}
-.topbar a {
-    color: var(--text-secondary);
-    padding: 0.5rem 0.75rem;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-fast);
-}
-.topbar a:hover {
-    color: var(--text-primary);
-    background-color: var(--bg-tertiary);
-}
-.topbar a[aria-current="page"] {
-    color: var(--accent-blue);
-    background-color: var(--bg-tertiary);
-}
 
 /* Sidebar Layout */
 .sidebar {
@@ -271,9 +239,10 @@ code {
 }
 
 main {
-    max-width: 1200px;
-    margin: 0 auto;
+    margin-left: var(--sidebar-width-expanded);
     padding: 2rem 1.5rem;
+    min-height: 100vh;
+    transition: margin-left var(--transition-normal);
 }
 
 /* 4. Cards */
