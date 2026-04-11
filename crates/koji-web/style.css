@@ -321,6 +321,11 @@ main {
     transition: margin-left var(--transition-normal);
 }
 
+/* When sidebar is collapsed, reduce main's left margin */
+aside.sidebar--collapsed ~ main {
+    margin-left: var(--sidebar-width-collapsed);
+}
+
 /* 4. Cards */
 .card {
     background-color: var(--bg-secondary);
