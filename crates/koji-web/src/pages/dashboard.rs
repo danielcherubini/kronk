@@ -168,12 +168,12 @@ pub fn Dashboard() -> impl IntoView {
     let connect_trigger = RwSignal::new(0u32);
 
     // Fetch historical metrics on mount, before connecting to SSE.
-    // This populates the chart with up to 100 recent data points.
+    // This populates the chart with up to 450 recent data points (15 minutes at 2s intervals).
     {
         let history_signal = history;
         spawn_local(async move {
             if let Ok(resp) =
-                gloo_net::http::Request::get("/koji/v1/system/metrics/history?limit=100")
+                gloo_net::http::Request::get("/koji/v1/system/metrics/history?limit=450")
                     .send()
                     .await
             {
@@ -209,8 +209,8 @@ pub fn Dashboard() -> impl IntoView {
                         fetch_failed.set(false);
                         history.update(|buf| {
                             buf.push(sample);
-                            if buf.len() > 100 {
-                                buf.drain(..buf.len() - 100);
+                            if buf.len() > 450 {
+                                buf.drain(..buf.len() - 450);
                             }
                         });
                     }
