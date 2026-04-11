@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -29,6 +30,41 @@ struct VramInfo {
     total_mib: u64,
 }
 
+/// Frontend mirror of the backend `MetricsHistoryEntry` response type.
+///
+/// Uses `i64` for memory and GPU fields to match the JSON wire format
+/// (SQLite stores integers as i64). Converted to `MetricSample` on ingestion.
+#[derive(Debug, Clone, Deserialize)]
+struct MetricsHistoryEntry {
+    ts_unix_ms: i64,
+    cpu_usage_pct: f32,
+    ram_used_mib: i64,
+    ram_total_mib: i64,
+    gpu_utilization_pct: Option<i64>,
+    vram_used_mib: Option<i64>,
+    vram_total_mib: Option<i64>,
+}
+
+impl From<MetricsHistoryEntry> for MetricSample {
+    fn from(entry: MetricsHistoryEntry) -> Self {
+        MetricSample {
+            ts_unix_ms: entry.ts_unix_ms,
+            cpu_usage_pct: entry.cpu_usage_pct,
+            ram_used_mib: entry.ram_used_mib as u64,
+            ram_total_mib: entry.ram_total_mib as u64,
+            gpu_utilization_pct: entry.gpu_utilization_pct.map(|v| v as u8),
+            vram: entry.vram_used_mib.and_then(|used| {
+                entry.vram_total_mib.map(|total| VramInfo {
+                    used_mib: used as u64,
+                    total_mib: total as u64,
+                })
+            }),
+            models_loaded: 0,
+            models: vec![],
+        }
+    }
+}
+
 /// Frontend mirror of `koji_core::gpu::ModelStatus`.
 ///
 /// Kept private to this module so the dashboard owns its wire shape; the only
@@ -41,6 +77,19 @@ struct ModelStatus {
     api_name: Option<String>,
     backend: String,
     loaded: bool,
+}
+
+/// Format a number with comma separators (e.g. `8460` → `"8,460"`).
+fn format_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
 }
 
 /// Count how many models in `models` are currently loaded.
@@ -117,6 +166,28 @@ pub fn Dashboard() -> impl IntoView {
     let fetch_failed = RwSignal::new(false);
     // Incrementing this signal re-runs the Effect that opens the EventSource.
     let connect_trigger = RwSignal::new(0u32);
+
+    // Fetch historical metrics on mount, before connecting to SSE.
+    // This populates the chart with up to 100 recent data points.
+    {
+        let history_signal = history;
+        spawn_local(async move {
+            if let Ok(resp) =
+                gloo_net::http::Request::get("/koji/v1/system/metrics/history?limit=100")
+                    .send()
+                    .await
+            {
+                if let Ok(entries) = resp.json::<Vec<MetricsHistoryEntry>>().await {
+                    let samples: Vec<MetricSample> = entries.into_iter().map(Into::into).collect();
+                    if !samples.is_empty() {
+                        history_signal.update(|buf| {
+                            *buf = samples;
+                        });
+                    }
+                }
+            }
+        });
+    }
 
     // Open (or re-open) an EventSource each time connect_trigger changes.
     Effect::new(move |_| {
@@ -232,228 +303,265 @@ pub fn Dashboard() -> impl IntoView {
                     </div>
                 }.into_any();
             }
-            match buf.last().cloned() {
-                Some(h) => view! {
-                    <div class="grid-stats">
-                        // CPU card
-                        <div class="card">
-                            <div class="card-header">"CPU Usage"</div>
-                            <div class="card-value">{format!("{:.1}%", h.cpu_usage_pct)}</div>
+
+            // Extract data for sparkline charts
+            let cpu_data: Vec<f32> = buf.iter().map(|s| s.cpu_usage_pct).collect();
+            let mem_data: Vec<f32> = buf.iter().map(|s| s.ram_used_mib as f32).collect();
+            let timestamps: Vec<i64> = buf.iter().map(|s| s.ts_unix_ms).collect();
+            let mem_max = buf.last().map(|h| h.ram_total_mib as f32).unwrap_or(1.0);
+            let cpu_y_refs = vec![0.0, 100.0];
+            let mem_y_refs = vec![mem_max];
+
+            let gpu_data: Vec<f32> = buf.iter().map(|s| s.gpu_utilization_pct.unwrap_or(0) as f32).collect();
+            let vram_data: Vec<f32> = buf.iter().map(|s| s.vram.as_ref().map(|v| v.used_mib as f32).unwrap_or(0.0)).collect();
+            let vram_max = buf.last().and_then(|h| h.vram.as_ref().map(|v| v.total_mib as f32)).unwrap_or(1.0);
+            let vram_y_refs = vec![vram_max];
+
+            let models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
+
+            view! {
+                <div class="grid-stats">
+                    // CPU card
+                    <div class="stat-card">
+                        <div class="card-header">"CPU Usage"</div>
+                        {match buf.last() {
+                            Some(h) => view! {
+                                <div class="card-value">{format!("{:.1}%", h.cpu_usage_pct)}</div>
+                                <div class="card-secondary">"of 100%"</div>
+                            }.into_any(),
+                            None => view! {
+                                <div class="card-value-empty">"—"</div>
+                            }.into_any(),
+                        }}
+                        <div class="sparkline-container">
                             <SparklineChart
-                                data={buf.iter().map(|s| s.cpu_usage_pct).collect::<Vec<f32>>()}
+                                data=cpu_data
                                 max_value=100.0
                                 color="var(--accent-green)".to_string()
                                 height=60.0
+                                timestamps=timestamps.clone()
+                                unit_label="%".to_string()
+                                y_refs=cpu_y_refs
                             />
                         </div>
+                    </div>
 
-                        // Memory card
-                        <div class="card">
-                            <div class="card-header">"Memory"</div>
-                            <div class="card-value">{format!("{} / {} MiB", h.ram_used_mib, h.ram_total_mib)}</div>
+                    // Memory card
+                    <div class="stat-card">
+                        <div class="card-header">"Memory"</div>
+                        {match buf.last() {
+                            Some(h) => view! {
+                                <div class="card-value">{format_number(h.ram_used_mib)}</div>
+                                <div class="card-secondary">{format!("of {} MiB", format_number(h.ram_total_mib))}</div>
+                            }.into_any(),
+                            None => view! {
+                                <div class="card-value-empty">"—"</div>
+                            }.into_any(),
+                        }}
+                        <div class="sparkline-container">
                             <SparklineChart
-                                data={buf.iter().map(|s| s.ram_used_mib as f32).collect::<Vec<f32>>()}
-                                max_value={h.ram_total_mib as f32}
+                                data=mem_data
+                                max_value=mem_max
                                 color="var(--accent-blue)".to_string()
                                 height=60.0
+                                timestamps=timestamps.clone()
+                                unit_label="MiB".to_string()
+                                y_refs=mem_y_refs
                             />
                         </div>
+                    </div>
 
-                        // GPU card — only rendered if GPU data is present in the latest snapshot.
-                        // For the data Vec, use .map() with unwrap_or(0) instead of .filter_map()
-                        // to keep time-axis aligned with other charts.
-                        {h.gpu_utilization_pct.map(|pct| view! {
-                            <div class="card">
+                    // GPU card — only rendered if GPU data is present
+                    {if let Some(gpu_pct) = buf.last().and_then(|h| h.gpu_utilization_pct) {
+                        view! {
+                            <div class="stat-card">
                                 <div class="card-header">"GPU"</div>
-                                <div class="card-value">{format!("{}%", pct)}</div>
-                                <SparklineChart
-                                    data={buf.iter().map(|s| s.gpu_utilization_pct.unwrap_or(0) as f32).collect::<Vec<f32>>()}
-                                    max_value=100.0
-                                    color="var(--accent-yellow)".to_string()
-                                    height=60.0
-                                />
-                            </div>
-                        })}
-
-                        // VRAM card — only rendered if VRAM data is present in the latest snapshot.
-                        {h.vram.as_ref().map(|v| {
-                            let total = v.total_mib as f32;
-                            view! {
-                                <div class="card">
-                                    <div class="card-header">"VRAM"</div>
-                                    <div class="card-value">{format!("{} / {} MiB", v.used_mib, v.total_mib)}</div>
+                                <div class="card-value">{format!("{}%", gpu_pct)}</div>
+                                <div class="card-secondary">"of 100%"</div>
+                                <div class="sparkline-container">
                                     <SparklineChart
-                                        data={buf.iter().map(|s| s.vram.as_ref().map(|v| v.used_mib as f32).unwrap_or(0.0)).collect::<Vec<f32>>()}
-                                        max_value=total
-                                        color="var(--accent-purple)".to_string()
+                                        data=gpu_data
+                                        max_value=100.0
+                                        color="var(--accent-yellow)".to_string()
                                         height=60.0
+                                        timestamps=timestamps.clone()
+                                        unit_label="%".to_string()
+                                        y_refs=vec![0.0_f32, 100.0_f32]
                                     />
                                 </div>
-                            }
-                        })}
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <div></div> }.into_any()
+                    }}
 
+                    // VRAM card — only rendered if VRAM data is present
+                    {if let Some(vram_info) = buf.last().and_then(|h| h.vram.as_ref()) {
+                        view! {
+                            <div class="stat-card">
+                                <div class="card-header">"VRAM"</div>
+                                <div class="card-value">{format_number(vram_info.used_mib)}</div>
+                                <div class="card-secondary">{format!("of {} MiB", format_number(vram_info.total_mib))}</div>
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=vram_data
+                                        max_value=vram_max
+                                        color="var(--accent-purple)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps
+                                        unit_label="MiB".to_string()
+                                        y_refs=vram_y_refs
+                                    />
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <div></div> }.into_any()
+                    }}
+                </div>
+
+                // Active Models section
+                <section class="dashboard-models">
+                    <div class="page-header">
+                        <h2>"Active Models"</h2>
+                        <span class="text-muted">
+                            {format!("{} loaded", loaded_model_count(&models))}
+                        </span>
                     </div>
-
-                    // Active Models section — replaces the old single-value
-                    // "Models Loaded" card. Shows a summary line of how many
-                    // models are loaded, and either an empty-state card or a
-                    // grid of model entries.
-                    //
-                    // The wrapping `.dashboard-models` class hooks into the
-                    // CSS in `style.css` (section 24) for vertical spacing
-                    // between this section and the system metrics grid above.
-                    // The inner `.page-header` reuses the global header layout
-                    // (title on the left, status on the right) so the section
-                    // visually matches every other page header in the app.
-                    <section class="dashboard-models">
-                        <div class="page-header">
-                            <h2>"Active Models"</h2>
-                            <span class="text-muted">
-                                {format!("{} loaded", loaded_model_count(&h.models))}
-                            </span>
-                        </div>
-                        {
-                            if h.models.is_empty() {
-                                view! {
-                                    <div class="card card--centered">
-                                        <p class="text-muted">"No models configured yet."</p>
-                                    </div>
-                                }.into_any()
-                            } else {
-                                // Partition models into loaded and idle sections
-                                let (loaded, idle) = partition_model_statuses(h.models);
-                                view! {
-                                    // Plain wrapper div (NOT `.models-grid`) so the two
-                                    // `.model-section` children stack vertically, matching
-                                    // the Models page. The inner `.models-grid` inside each
-                                    // section is what flows the model cards horizontally.
-                                    <div>
-                                        // Loaded models section
-                                        {if !loaded.is_empty() {
-                                            view! {
-                                                <div class="model-section">
-                                                    <h2 class="model-section__title">"Loaded Models"</h2>
-                                                    <div class="models-grid">
-                                                        {loaded.into_iter().map(|m| {
-                                                            let id_for_action = m.id.clone();
-                                                            let badge_class = model_status_badge_class(m.loaded);
-                                                            let badge_label = model_status_badge_label(m.loaded);
-                                                            let button_class = model_action_button_class(m.loaded);
-                                                            let button_label = model_action_button_label(m.loaded);
-                                                            view! {
-                                                                <div class="model-card card">
-                                                                    <div class="model-card__header">
-                                                                        <span class="model-card__id">{model_display_name(&m)}</span>
-                                                                        <span class={badge_class}>{badge_label}</span>
-                                                                    </div>
-                                                                    <div class="model-card__body">
-                                                                        <div class="model-card__field">
-                                                                            <span class="model-card__label">"Backend"</span>
-                                                                            <span class="model-card__value text-mono">{m.backend}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                    <div class="model-card__actions">
-                                                                        {if m.loaded {
-                                                                            view! {
-                                                                                <button
-                                                                                    class={button_class}
-                                                                                    prop:disabled=move || unload_pending.get()
-                                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
-                                                                                >
-                                                                                    {button_label}
-                                                                                </button>
-                                                                            }.into_any()
-                                                                        } else {
-                                                                            view! {
-                                                                                <button
-                                                                                    class={button_class}
-                                                                                    prop:disabled=move || load_pending.get()
-                                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
-                                                                                >
-                                                                                    {button_label}
-                                                                                </button>
-                                                                            }.into_any()
-                                                                        }}
+                    {
+                        if models.is_empty() {
+                            view! {
+                                <div class="card card--centered">
+                                    <p class="text-muted">"No models configured yet."</p>
+                                </div>
+                            }.into_any()
+                        } else {
+                            // Partition models into loaded and idle sections
+                            let (loaded, idle) = partition_model_statuses(models);
+                            view! {
+                                // Plain wrapper div (NOT `.models-grid`) so the two
+                                // `.model-section` children stack vertically, matching
+                                // the Models page. The inner `.models-grid` inside each
+                                // section is what flows the model cards horizontally.
+                                <div>
+                                    // Loaded models section
+                                    {if !loaded.is_empty() {
+                                        view! {
+                                            <div class="model-section">
+                                                <h2 class="model-section__title">"Loaded Models"</h2>
+                                                <div class="models-grid">
+                                                    {loaded.into_iter().map(|m| {
+                                                        let id_for_action = m.id.clone();
+                                                        let badge_class = model_status_badge_class(m.loaded);
+                                                        let badge_label = model_status_badge_label(m.loaded);
+                                                        let button_class = model_action_button_class(m.loaded);
+                                                        let button_label = model_action_button_label(m.loaded);
+                                                        view! {
+                                                            <div class="model-card card">
+                                                                <div class="model-card__header">
+                                                                    <span class="model-card__id">{model_display_name(&m)}</span>
+                                                                    <span class={badge_class}>{badge_label}</span>
+                                                                </div>
+                                                                <div class="model-card__body">
+                                                                    <div class="model-card__field">
+                                                                        <span class="model-card__label">"Backend"</span>
+                                                                        <span class="model-card__value text-mono">{m.backend}</span>
                                                                     </div>
                                                                 </div>
-                                                            }
-                                                        }).collect::<Vec<_>>()}
-                                                    </div>
+                                                                <div class="model-card__actions">
+                                                                    {if m.loaded {
+                                                                        view! {
+                                                                            <button
+                                                                                class={button_class}
+                                                                                prop:disabled=move || unload_pending.get()
+                                                                                on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
+                                                                            >
+                                                                                {button_label}
+                                                                            </button>
+                                                                        }.into_any()
+                                                                    } else {
+                                                                        view! {
+                                                                            <button
+                                                                                class={button_class}
+                                                                                prop:disabled=move || load_pending.get()
+                                                                                on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
+                                                                            >
+                                                                                {button_label}
+                                                                            </button>
+                                                                        }.into_any()
+                                                                    }}
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    }).collect::<Vec<_>>()}
                                                 </div>
-                                            }.into_any()
-                                        } else {
-                                            let _: () = view! { <></> };
-                                            ().into_any()
-                                        }}
-                                        // Idle models section
-                                        {if !idle.is_empty() {
-                                            view! {
-                                                <div class="model-section">
-                                                    <h2 class="model-section__title">"Idle Models"</h2>
-                                                    <div class="models-grid">
-                                                        {idle.into_iter().map(|m| {
-                                                            let id_for_action = m.id.clone();
-                                                            let badge_class = model_status_badge_class(m.loaded);
-                                                            let badge_label = model_status_badge_label(m.loaded);
-                                                            let button_class = model_action_button_class(m.loaded);
-                                                            let button_label = model_action_button_label(m.loaded);
-                                                            view! {
-                                                                <div class="model-card card">
-                                                                    <div class="model-card__header">
-                                                                        <span class="model-card__id">{model_display_name(&m)}</span>
-                                                                        <span class={badge_class}>{badge_label}</span>
-                                                                    </div>
-                                                                    <div class="model-card__body">
-                                                                        <div class="model-card__field">
-                                                                            <span class="model-card__label">"Backend"</span>
-                                                                            <span class="model-card__value text-mono">{m.backend}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                    <div class="model-card__actions">
-                                                                        {if m.loaded {
-                                                                            view! {
-                                                                                <button
-                                                                                    class={button_class}
-                                                                                    prop:disabled=move || unload_pending.get()
-                                                                                    on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
-                                                                                >
-                                                                                    {button_label}
-                                                                                </button>
-                                                                            }.into_any()
-                                                                        } else {
-                                                                            view! {
-                                                                                <button
-                                                                                    class={button_class}
-                                                                                    prop:disabled=move || load_pending.get()
-                                                                                    on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
-                                                                                >
-                                                                                    {button_label}
-                                                                                </button>
-                                                                            }.into_any()
-                                                                        }}
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }}
+                                    // Idle models section
+                                    {if !idle.is_empty() {
+                                        view! {
+                                            <div class="model-section">
+                                                <h2 class="model-section__title">"Idle Models"</h2>
+                                                <div class="models-grid">
+                                                    {idle.into_iter().map(|m| {
+                                                        let id_for_action = m.id.clone();
+                                                        let badge_class = model_status_badge_class(m.loaded);
+                                                        let badge_label = model_status_badge_label(m.loaded);
+                                                        let button_class = model_action_button_class(m.loaded);
+                                                        let button_label = model_action_button_label(m.loaded);
+                                                        view! {
+                                                            <div class="model-card card">
+                                                                <div class="model-card__header">
+                                                                    <span class="model-card__id">{model_display_name(&m)}</span>
+                                                                    <span class={badge_class}>{badge_label}</span>
+                                                                </div>
+                                                                <div class="model-card__body">
+                                                                    <div class="model-card__field">
+                                                                        <span class="model-card__label">"Backend"</span>
+                                                                        <span class="model-card__value text-mono">{m.backend}</span>
                                                                     </div>
                                                                 </div>
-                                                            }
-                                                        }).collect::<Vec<_>>()}
-                                                    </div>
+                                                                <div class="model-card__actions">
+                                                                    {if m.loaded {
+                                                                        view! {
+                                                                            <button
+                                                                                class={button_class}
+                                                                                prop:disabled=move || unload_pending.get()
+                                                                                on:click=move |_| { unload_action.dispatch(id_for_action.clone()); }
+                                                                            >
+                                                                                {button_label}
+                                                                            </button>
+                                                                        }.into_any()
+                                                                    } else {
+                                                                        view! {
+                                                                            <button
+                                                                                class={button_class}
+                                                                                prop:disabled=move || load_pending.get()
+                                                                                on:click=move |_| { load_action.dispatch(id_for_action.clone()); }
+                                                                            >
+                                                                                {button_label}
+                                                                            </button>
+                                                                        }.into_any()
+                                                                    }}
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    }).collect::<Vec<_>>()}
                                                 </div>
-                                            }.into_any()
-                                        } else {
-                                            let _: () = view! { <></> };
-                                            ().into_any()
-                                        }}
-                                    </div>
-                                }.into_any()
-                            }
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }}
+                                </div>
+                            }.into_any()
                         }
-                    </section>
-                }.into_any(),
-                None => view! {
-                    <div class="card card--centered">
-                        <span class="spinner">"Loading dashboard..."</span>
-                    </div>
-                }.into_any(),
-            }
+                    }
+                </section>
+            }.into_any()
         }}
     }
 }
@@ -493,6 +601,89 @@ mod tests {
             sample.models.is_empty(),
             "missing `models` field must default to an empty Vec"
         );
+    }
+
+    /// `MetricsHistoryEntry` must correctly convert to `MetricSample`,
+    /// mapping i64 fields to their corresponding types.
+    #[test]
+    fn metrics_history_entry_converts_to_metric_sample() {
+        let entry = MetricsHistoryEntry {
+            ts_unix_ms: 1_700_000_000_000,
+            cpu_usage_pct: 45.5,
+            ram_used_mib: 8192,
+            ram_total_mib: 32768,
+            gpu_utilization_pct: Some(85),
+            vram_used_mib: Some(4096),
+            vram_total_mib: Some(8192),
+        };
+
+        let sample: MetricSample = entry.into();
+
+        assert_eq!(sample.ts_unix_ms, 1_700_000_000_000);
+        assert!((sample.cpu_usage_pct - 45.5).abs() < f32::EPSILON);
+        assert_eq!(sample.ram_used_mib, 8192);
+        assert_eq!(sample.ram_total_mib, 32768);
+        assert_eq!(sample.gpu_utilization_pct, Some(85));
+        assert!(sample.vram.is_some());
+        let vram = sample.vram.unwrap();
+        assert_eq!(vram.used_mib, 4096);
+        assert_eq!(vram.total_mib, 8192);
+        assert_eq!(sample.models_loaded, 0);
+        assert!(sample.models.is_empty());
+    }
+
+    /// `MetricsHistoryEntry` with null GPU/VRAM fields must produce a
+    /// `MetricSample` with `None` for both.
+    #[test]
+    fn metrics_history_entry_converts_with_null_gpu() {
+        let entry = MetricsHistoryEntry {
+            ts_unix_ms: 1_700_000_000_000,
+            cpu_usage_pct: 10.0,
+            ram_used_mib: 2048,
+            ram_total_mib: 16384,
+            gpu_utilization_pct: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+        };
+
+        let sample: MetricSample = entry.into();
+
+        assert!(sample.gpu_utilization_pct.is_none());
+        assert!(sample.vram.is_none());
+    }
+
+    /// `MetricsHistoryEntry` with `vram_used_mib` present but
+    /// `vram_total_mib` absent must produce `None` for `vram` (not a
+    /// partial `VramInfo`).
+    #[test]
+    fn metrics_history_entry_partial_vram_produces_none() {
+        let entry = MetricsHistoryEntry {
+            ts_unix_ms: 1_700_000_000_000,
+            cpu_usage_pct: 10.0,
+            ram_used_mib: 2048,
+            ram_total_mib: 16384,
+            gpu_utilization_pct: Some(50),
+            vram_used_mib: Some(4096),
+            vram_total_mib: None,
+        };
+
+        let sample: MetricSample = entry.into();
+
+        // vram should be None because total_mib is None
+        assert!(sample.vram.is_none());
+    }
+
+    /// The `format_number` helper must produce comma-separated thousands.
+    #[test]
+    fn format_number_adds_commas() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(999), "999");
+        assert_eq!(format_number(1000), "1,000");
+        assert_eq!(format_number(12345), "12,345");
+        assert_eq!(format_number(123456), "123,456");
+        assert_eq!(format_number(1234567), "1,234,567");
+        assert_eq!(format_number(16384), "16,384");
+        assert_eq!(format_number(65183), "65,183");
     }
 
     /// The dashboard's "Active Models" summary line shows how many of the

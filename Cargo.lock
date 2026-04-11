@@ -1709,6 +1709,7 @@ dependencies = [
  "gloo-net",
  "gloo-timers",
  "include_dir",
+ "js-sys",
  "koji-core",
  "leptos",
  "leptos_router",
