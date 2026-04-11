@@ -238,6 +238,82 @@ code {
     display: none;
 }
 
+/* Mobile toggle — hidden on desktop */
+.sidebar-mobile-toggle {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 998;
+    width: 52px;
+    height: 52px;
+    background-color: var(--bg-secondary);
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar-close {
+    display: none;
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+}
+
+.sidebar-close:hover {
+    color: var(--text-primary);
+}
+
+/* Overlay backdrop */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+}
+
+.sidebar-overlay--visible {
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%);
+        z-index: 1000;
+    }
+
+    .sidebar--mobile-open {
+        transform: translateX(0);
+    }
+
+    .sidebar-mobile-toggle {
+        display: flex;
+    }
+
+    .sidebar-close {
+        display: block;
+    }
+
+    main {
+        margin-left: 0;
+        padding-top: 52px; /* space for the hamburger bar */
+    }
+}
+
 main {
     margin-left: var(--sidebar-width-expanded);
     padding: 2rem 1.5rem;
