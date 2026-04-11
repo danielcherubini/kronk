@@ -242,7 +242,7 @@ pub fn ConfigEditor() -> impl IntoView {
                 view! {
                     <div style="display:flex;gap:1.5rem;align-items:flex-start;">
                         // Side nav
-                        <nav class="card" style="width:220px;flex-shrink:0;padding:0.75rem;position:sticky;top:1rem;">
+                        <nav class="card" style="width:220px;flex-shrink:0;padding:0.75rem;position:sticky;top:0;">
                             <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.25rem;">
                                 {[Section::General, Section::Proxy, Section::Supervisor, Section::Sampling]
                                     .into_iter().map(|s| {

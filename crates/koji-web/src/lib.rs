@@ -23,7 +23,7 @@ pub mod utils;
 pub fn App() -> impl IntoView {
     view! {
         <Router>
-            <components::nav::Nav />
+            <components::sidebar::Sidebar />
             <main>
                 <Routes fallback=|| "Page not found">
                     <Route path=path!("/") view=pages::dashboard::Dashboard />
