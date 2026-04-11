@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "koji"
-version = "1.23.2"
+version = "1.23.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1652,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "koji-core"
-version = "1.23.2"
+version = "1.23.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "koji-web"
-version = "1.23.2"
+version = "1.23.3"
 dependencies = [
  "anyhow",
  "async-stream",

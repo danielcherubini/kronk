@@ -1,6 +1,6 @@
 [package]
 name = "koji-core"
-version = "1.23.2"
+version = "1.23.3"
 edition.workspace = true
 
 [dependencies]
