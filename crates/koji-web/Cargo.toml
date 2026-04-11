@@ -11,7 +11,7 @@ leptos = { workspace = true, features = ["csr"] }
 leptos_router.workspace = true
 wasm-bindgen.workspace = true
 js-sys = "0.3"
-web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "EventSource", "EventSourceInit", "MessageEvent", "Event", "KeyboardEvent", "MouseEvent", "SvgElement", "SvgsvgElement", "DomRect", "console"] }
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "EventSource", "EventSourceInit", "MessageEvent", "Event", "KeyboardEvent", "MouseEvent", "SvgElement", "SvgsvgElement", "DomRect", "Storage", "console"] }
 gloo-net.workspace = true
 gloo-timers.workspace = true
 wasm-bindgen-futures.workspace = true
