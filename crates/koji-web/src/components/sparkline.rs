@@ -290,6 +290,7 @@ pub fn SparklineChart(
             <svg
                 viewBox=format!("0 0 100 {height}")
                 width="100%"
+                height="100%"
                 class="sparkline"
                 preserveAspectRatio="none"
                 on:mousemove=on_mouse_move

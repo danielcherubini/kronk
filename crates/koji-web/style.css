@@ -134,7 +134,8 @@ main {
 .stat-card {
     display: flex;
     flex-direction: column;
-    height: 200px;
+    min-height: 160px;
+    overflow: hidden;
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
@@ -353,18 +354,15 @@ label {
 .sparkline {
     display: block;
     width: 100%;
-    flex: 1;
-    min-height: 60px;
+    height: 60px;
+    flex-shrink: 0;
 }
 
 .sparkline-container {
     position: relative;
     width: 100%;
     margin-top: auto;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 .sparkline-time-axis {
