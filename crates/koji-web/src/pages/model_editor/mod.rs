@@ -646,15 +646,17 @@ pub fn ModelEditor() -> impl IntoView {
                                             <ModelEditorGeneralForm
                                                 form=form
                                                 backends=backends
-                                                templates=templates
-                                                load_preset_action=load_preset_action
                                             />
                                         </div>
                                     }.into_any(),
                                     Section::Sampling => view! {
                                         <div class="card">
                                             <h2 class="card__title">"Sampling"</h2>
-                                            <ModelEditorSamplingForm form=form />
+                                            <ModelEditorSamplingForm
+                                                form=form
+                                                templates=templates
+                                                load_preset_action=load_preset_action
+                                            />
                                         </div>
                                     }.into_any(),
                                     Section::QuantsVision => view! {

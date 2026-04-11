@@ -7,8 +7,6 @@ use crate::utils::target_value;
 pub fn ModelEditorGeneralForm(
     form: RwSignal<Option<ModelForm>>,
     backends: RwSignal<Vec<String>>,
-    templates: LocalResource<Option<std::collections::HashMap<String, serde_json::Value>>>,
-    load_preset_action: Action<String, (), LocalStorage>,
 ) -> impl IntoView {
     view! {
         <div class="form-grid">
@@ -137,34 +135,6 @@ pub fn ModelEditorGeneralForm(
                     });
                 }
             />
-
-            <label class="form-label" for="field-profile">"Load Preset"</label>
-            <select
-                id="field-profile"
-                class="form-select"
-                on:change=move |e| {
-                    let name = target_value(&e);
-                    if !name.is_empty() {
-                        load_preset_action.dispatch(name);
-                    }
-                }
-            >
-                <option value="">"(select a preset)"</option>
-                {move || {
-                    if let Some(guard) = templates.get() {
-                        if let Some(templates_map) = &*guard {
-                            templates_map.keys().cloned().map(|k| {
-                                let k_clone = k.clone();
-                                view! { <option value=k_clone>{k}</option> }
-                            }).collect::<Vec<_>>()
-                        } else {
-                            vec![]
-                        }
-                    } else {
-                        vec![]
-                    }
-                }}
-            </select>
 
             <label class="form-label" for="field-ctx">"Context length"</label>
             <input
