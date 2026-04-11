@@ -1,4 +1,5 @@
 use super::types::{BackendConfig, Config, HealthCheck, ModelConfig};
+use crate::models::repo_path;
 use anyhow::Result;
 
 impl Config {
@@ -204,13 +205,12 @@ impl Config {
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
             if let Some(quant_entry) = server.quants.get(quant_name.as_str()) {
                 let models_dir = self.models_dir()?;
-                let model_path = models_dir.join(model_id).join(&quant_entry.file);
+                let model_path = repo_path(&models_dir, model_id).join(&quant_entry.file);
                 let already_has_m = grouped
                     .iter()
                     .any(|e| matches!(crate::config::flag_name(e), Some("-m") | Some("--model")));
                 if !already_has_m {
-                    // Use as_os_str() for proper Windows path handling (forward slashes in model_id).
-                    let path_str = model_path.as_os_str().to_string_lossy();
+                    let path_str = model_path.to_string_lossy();
                     let quoted = crate::config::quote_value(&path_str);
                     grouped.push(format!("-m {}", quoted));
                 }
@@ -229,13 +229,12 @@ impl Config {
             if let Some(mmproj_entry) = server.quants.get(mmproj_name.as_str()) {
                 if mmproj_entry.kind == crate::config::QuantKind::Mmproj {
                     let models_dir = self.models_dir()?;
-                    let mmproj_path = models_dir.join(model_id).join(&mmproj_entry.file);
+                    let mmproj_path = repo_path(&models_dir, model_id).join(&mmproj_entry.file);
                     let already_has_mmproj = grouped
                         .iter()
                         .any(|e| matches!(crate::config::flag_name(e), Some("--mmproj")));
                     if !already_has_mmproj {
-                        // Use as_os_str() for proper Windows path handling (forward slashes in model_id).
-                        let path_str = mmproj_path.as_os_str().to_string_lossy();
+                        let path_str = mmproj_path.to_string_lossy();
                         let quoted = crate::config::quote_value(&path_str);
                         grouped.push(format!("--mmproj {}", quoted));
                     }

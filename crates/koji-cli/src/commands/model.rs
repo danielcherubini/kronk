@@ -452,7 +452,11 @@ fn cmd_ls(
                     .as_ref()
                     .and_then(|m| mc.quant.as_ref().map(|q| (m, q)))
                     .and_then(|(_m, q)| mc.quants.get(q.as_str()))
-                    .map(|qe| models_dir.join(repo).join(&qe.file).exists())
+                    .map(|qe| {
+                        koji_core::models::repo_path(&models_dir, repo)
+                            .join(&qe.file)
+                            .exists()
+                    })
                     .unwrap_or(false);
 
                 let disk_icon = if on_disk { "✓" } else { "✗" };
@@ -492,7 +496,7 @@ fn cmd_ls(
                 quants.sort_by_key(|(k, _)| k.as_str());
                 for (qname, qe) in quants {
                     let repo = mc.model.as_deref().unwrap_or("");
-                    let path = models_dir.join(repo).join(&qe.file);
+                    let path = koji_core::models::repo_path(&models_dir, repo).join(&qe.file);
                     let present = if path.exists() { "✓" } else { "✗" };
                     println!("    {} {}  ({})", present, qname, qe.file);
                 }
@@ -1042,7 +1046,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
         println!("Model cards updated.");
     }
 
-     Ok(())
+    Ok(())
 }
 
 /// Remove orphaned GGUF files not referenced by any server config
@@ -1101,7 +1105,8 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
                     }
 
                     // Compute repo_id from relative path
-                    let relative_path = path.strip_prefix(base_dir)
+                    let relative_path = path
+                        .strip_prefix(base_dir)
                         .map_err(|_| std::io::Error::other("Failed to compute relative path"))?;
                     let repo_id = relative_path
                         .parent()
@@ -1109,7 +1114,8 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
                         .unwrap_or("")
                         .replace(std::path::MAIN_SEPARATOR, "/");
 
-                    let filename = path.file_name()
+                    let filename = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
 
@@ -1127,7 +1133,12 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
             Ok(())
         }
 
-        scan_for_ggufs(&models_dir, &models_dir, &referenced_files, &mut orphaned_files)?;
+        scan_for_ggufs(
+            &models_dir,
+            &models_dir,
+            &referenced_files,
+            &mut orphaned_files,
+        )?;
     }
 
     if orphaned_files.is_empty() {
@@ -1178,7 +1189,11 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
     // Clean up empty directories
     for (_, _, file_path, _) in &orphaned_files {
         if let Some(parent) = file_path.parent() {
-            if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+            if parent
+                .read_dir()
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+            {
                 let _ = std::fs::remove_dir(parent);
             }
         }
@@ -1196,8 +1211,13 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
             // Try to load card and check if model dir still exists
             if let Ok(card) = ModelCard::load(&path) {
                 if !card.model.source.is_empty() {
-                    let model_dir = models_dir.join(&card.model.source);
-                    if !model_dir.exists() || model_dir.read_dir().map(|mut d| d.next().is_none()).unwrap_or(true) {
+                    let model_dir = koji_core::models::repo_path(&models_dir, &card.model.source);
+                    if !model_dir.exists()
+                        || model_dir
+                            .read_dir()
+                            .map(|mut d| d.next().is_none())
+                            .unwrap_or(true)
+                    {
                         orphaned_cards.push(path.clone());
                     }
                 }
@@ -1517,7 +1537,7 @@ async fn cmd_verify_existing(
 
     for repo_id in &repo_ids {
         let repo_id: &str = repo_id.as_str();
-        let model_dir = models_dir.join(repo_id);
+        let model_dir = koji_core::models::repo_path(&models_dir, repo_id);
 
         println!("Model: {}", repo_id);
 

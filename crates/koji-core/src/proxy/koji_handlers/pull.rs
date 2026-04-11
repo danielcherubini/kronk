@@ -9,6 +9,8 @@ use axum::{
 use futures_util::stream;
 use reqwest::StatusCode;
 
+use crate::models::repo_path;
+
 use super::types::{
     is_safe_path_component, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK, MAX_CONCURRENT_PULLS,
 };
@@ -77,7 +79,7 @@ fn spawn_download_job(
         };
         // Use the two-level org/repo directory structure (e.g. "unsloth/Qwen3.5-35B-A3B-GGUF")
         // to match the convention expected by ModelRegistry (models_dir/org/repo).
-        let dest_dir = models_dir.join(&repo_id_clone);
+        let dest_dir = repo_path(&models_dir, &repo_id_clone);
         if let Err(e) = std::fs::create_dir_all(&dest_dir) {
             let mut jobs = pull_jobs_arc.write().await;
             if let Some(job) = jobs.get_mut(&job_id_clone) {
