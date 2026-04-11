@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Create Sidebar CSS + Sidebar Component
+## Task 1: Create Sidebar CSS + Sidebar Component
 
 **Context:**
 The app currently has a topbar (`components/nav.rs` + `.topbar` CSS). We need to create the new sidebar component and its CSS styles. This task is additive — it creates new files and adds new CSS without removing the topbar, so the app still works with the topbar until we wire it up in Task 2.
@@ -321,7 +321,7 @@ The app currently has a topbar (`components/nav.rs` + `.topbar` CSS). We need to
 
 ---
 
-### Task 2: Wire Sidebar Into App Layout + Remove Topbar
+## Task 2: Wire Sidebar Into App Layout + Remove Topbar
 
 **Context:**
 The sidebar component and CSS are ready from Task 1. Now we need to swap the topbar for the sidebar in the app's root layout, remove the topbar CSS, and delete the old `nav.rs` component. After this task, the app will render with the left sidebar instead of the top bar.
@@ -420,7 +420,7 @@ The sidebar component and CSS are ready from Task 1. Now we need to swap the top
 
 ---
 
-### Task 3: Fix Page-Level Sidebar Sticky Offsets
+## Task 3: Fix Page-Level Sidebar Sticky Offsets
 
 **Context:**
 The Config Editor and Model Editor pages have inner section-navigation sidebars that previously used `position: sticky; top: 1rem` to stay visible while scrolling. This `1rem` offset was needed to avoid the 52px sticky topbar. Now that the topbar is gone, these sidebars should use `top: 0` so they stick flush to the top of the content area. Without this fix, the page sidebars will have a visual gap at the top when scrolled.
@@ -479,7 +479,7 @@ The Config Editor and Model Editor pages have inner section-navigation sidebars 
 
 ---
 
-### Task 4: Delete Dead Code (config_nav.rs)
+## Task 4: Delete Dead Code (config_nav.rs)
 
 **Context:**
 `crates/koji-web/src/components/config_nav.rs` contains an unused `ConfigNav` component marked with `#[allow(dead_code)]`. The Config Editor page (`config_editor.rs`) has its own inline sidebar implementation, making this component dead code. Now that we've confirmed the new sidebar works, we should clean up this unused file.
@@ -509,7 +509,7 @@ The Config Editor and Model Editor pages have inner section-navigation sidebars 
 
 ---
 
-### Task 5: Add Mobile Responsive Overlay
+## Task 5: Add Mobile Responsive Overlay
 
 **Context:**
 On narrow screens (<768px), the sidebar should not take up permanent space. Instead, it should be hidden by default and appear as an overlay when a hamburger button is tapped. This is the standard responsive pattern for admin sidebars. The hamburger button lives in a slim top bar that only appears on mobile.
