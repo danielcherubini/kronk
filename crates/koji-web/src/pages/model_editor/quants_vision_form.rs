@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
-use super::types::{ModelForm, QuantKind};
+use super::types::{ModelForm, QuantInfo, QuantKind};
 use crate::utils::target_value;
 
 fn format_bytes_opt(bytes: Option<u64>) -> String {
@@ -257,67 +257,95 @@ pub fn ModelEditorQuantsVisionForm(
         // Vision Projector section
         <div class="mt-3">
             <h3 class="form-section-title">"Vision Projector"</h3>
-            <div class="form-check">
-                <input
-                    id="field-vision-enabled"
-                    type="checkbox"
-                    prop:checked=move || form.get().as_ref().map(|f| f.mmproj.is_some()).unwrap_or(false)
-                    on:change=move |e| {
-                        use wasm_bindgen::JsCast;
-                        let checked = e.target()
-                            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                            .map(|el| el.checked())
-                            .unwrap_or(false);
-                        form.update(|f| {
-                            if let Some(form) = f {
-                                if !checked {
-                                    form.mmproj = None;
-                                }
-                            }
-                        });
-                    }
-                />
-                <label class="form-check-label" for="field-vision-enabled">"Enable Vision Projector"</label>
-            </div>
+            {move || {
+                let mmproj_entries: Vec<(String, QuantInfo)> = form.get().map(|f| {
+                    f.quants.iter()
+                        .filter(|(_, q)| q.kind == QuantKind::Mmproj)
+                        .map(|(name, q)| (name.clone(), q.clone()))
+                        .collect()
+                }).unwrap_or_default();
 
-            <div class="form-group" prop:style=move || {
-                if form.get().as_ref().map(|f| f.mmproj.is_some()).unwrap_or(false) {
-                    "display: block;"
+                if mmproj_entries.is_empty() {
+                    view! {
+                        <p class="text-muted form-hint">"No vision projector files pulled yet. Use \"+ Pull Quant\" to add one."</p>
+                    }.into_any()
                 } else {
-                    "display: none;"
+                    view! {
+                        <table class="quants-table">
+                            <thead>
+                                <tr>
+                                    <th>"Active"</th>
+                                    <th>"Name"</th>
+                                    <th>"File"</th>
+                                    <th>"Size"</th>
+                                    <th>"Verified"</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <For
+                                    each=move || {
+                                        form.get().map(|f| {
+                                            f.quants.iter()
+                                                .filter(|(_, q)| q.kind == QuantKind::Mmproj)
+                                                .map(|(name, q)| (name.clone(), q.clone()))
+                                                .collect::<Vec<_>>()
+                                        }).unwrap_or_default()
+                                    }
+                                    key=|(name, _)| name.clone()
+                                    children=move |(name, q)| {
+                                        let name_arc = Arc::new(name.clone());
+                                        let name_for_check = Arc::clone(&name_arc);
+                                        let file = q.file.clone();
+                                        let size = format_bytes_opt(q.size_bytes);
+                                        let (v_icon, v_cls, v_title) = match q.verified_ok {
+                                            Some(true) => ("✓", "text-success", q.last_verified_at.clone().unwrap_or_else(|| "Verified".to_string())),
+                                            Some(false) => ("✗", "text-error", q.verify_error.clone().unwrap_or_else(|| "Verification failed".to_string())),
+                                            None => ("—", "text-muted", "Not verified".to_string()),
+                                        };
+                                        view! {
+                                            <tr>
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=move || {
+                                                            form.get()
+                                                                .as_ref()
+                                                                .and_then(|f| f.mmproj.as_deref())
+                                                                == Some(name_for_check.as_str())
+                                                        }
+                                                        on:change=move |e| {
+                                                            use wasm_bindgen::JsCast;
+                                                            let checked = e.target()
+                                                                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                                .map(|el| el.checked())
+                                                                .unwrap_or(false);
+                                                            let selected_name = name_arc.to_string();
+                                                            form.update(|f| {
+                                                                if let Some(form) = f {
+                                                                    form.mmproj = if checked {
+                                                                        Some(selected_name)
+                                                                    } else {
+                                                                        None
+                                                                    };
+                                                                }
+                                                            });
+                                                        }
+                                                    />
+                                                </td>
+                                                <td>{name.clone()}</td>
+                                                <td><span class="text-muted">{file}</span></td>
+                                                <td><span class="text-muted">{size}</span></td>
+                                                <td><span class=v_cls title=v_title>{v_icon}</span></td>
+                                            </tr>
+                                        }
+                                    }
+                                />
+                            </tbody>
+                        </table>
+                        <span class="form-hint">"Check one file to use as the active vision projector."</span>
+                    }.into_any()
                 }
-            }>
-                <label class="form-label" for="mmproj-select">"Select mmproj File"</label>
-                <select
-                    id="mmproj-select"
-                    class="form-select"
-                    prop:value=move || form.get().as_ref().and_then(|f| f.mmproj.clone()).unwrap_or_default()
-                    on:change=move |e| {
-                        let value = target_value(&e);
-                        form.update(|f| {
-                            if let Some(form) = f {
-                                form.mmproj = if value.is_empty() { None } else { Some(value) };
-                            }
-                        });
-                    }
-                >
-                    <option value="">"(none)"</option>
-                    {move || {
-                        let current = form.get().as_ref().and_then(|f| f.mmproj.clone()).unwrap_or_default();
-                        form.get().map(|f| {
-                            f.quants.iter()
-                                .filter(|(_, q)| q.kind == QuantKind::Mmproj)
-                                .map(|(name, _)| name.clone())
-                                .collect::<Vec<_>>()
-                        }).unwrap_or_default()
-                    .into_iter().map(|m| {
-                        let mm = m.clone();
-                        let selected = mm == current;
-                        view! { <option value=mm.clone() selected=selected>{mm.clone()}</option> }
-                    }).collect::<Vec<_>>()}}
-                </select>
-                <span class="form-hint">"Choose the mmproj file to use for vision support"</span>
-            </div>
+            }}
         </div>
     }
 }
