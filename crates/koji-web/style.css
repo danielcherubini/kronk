@@ -947,7 +947,7 @@ label {
     flex-direction: column;
     gap: 0.25rem;
     position: sticky;
-    top: 1rem;
+    top: 0;
 }
 
 .model-editor-main {
