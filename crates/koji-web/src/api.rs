@@ -740,12 +740,14 @@ pub async fn delete_quant(
         })?;
 
         // Find the quant entry and clone needed values
-        let quant_entry = model_config
-            .quants
-            .get(&quant_key)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, serde_json::json!({"error": "Quant not found"})))?;
+        let quant_entry = model_config.quants.get(&quant_key).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({"error": "Quant not found"}),
+            )
+        })?;
 
-// Clone the filename and repo_id before we mutate
+        // Clone the filename and repo_id before we mutate
         let filename = quant_entry.file.clone();
         let repo_id = model_config.model.clone().unwrap_or_default();
 
@@ -776,10 +778,14 @@ pub async fn delete_quant(
         // Clean up file (best-effort) - only after config is saved
         if !repo_id.is_empty() {
             if let Ok(models_dir) = cfg.models_dir() {
-                let file_path = models_dir.join(&repo_id).join(&filename);
+                let file_path = koji_core::models::repo_path(&models_dir, &repo_id).join(&filename);
                 if file_path.exists() {
                     if let Err(e) = std::fs::remove_file(&file_path) {
-                        tracing::warn!("Failed to delete quant file {}: {}", file_path.display(), e);
+                        tracing::warn!(
+                            "Failed to delete quant file {}: {}",
+                            file_path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -829,7 +835,12 @@ pub async fn delete_model(
         // Capture the removed model for cleanup
         let model_config = match cfg.models.remove(&id) {
             Some(m) => m,
-            None => return Err((StatusCode::NOT_FOUND, serde_json::json!({"error": "Model not found"}))),
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                ))
+            }
         };
 
         // File cleanup (mirrors CLI model rm logic)
@@ -837,14 +848,22 @@ pub async fn delete_model(
         if !repo_id.is_empty() {
             // 1. Delete model directory: models_dir / repo_id
             if let Ok(models_dir) = cfg.models_dir() {
-                let model_dir = models_dir.join(repo_id);
+                let model_dir = koji_core::models::repo_path(&models_dir, repo_id);
                 if model_dir.exists() {
                     if let Err(e) = std::fs::remove_dir_all(&model_dir) {
-                        tracing::warn!("Failed to remove model directory {}: {}", model_dir.display(), e);
+                        tracing::warn!(
+                            "Failed to remove model directory {}: {}",
+                            model_dir.display(),
+                            e
+                        );
                     } else {
                         // Clean up empty parent dir
                         if let Some(parent) = model_dir.parent() {
-                            if parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+                            if parent
+                                .read_dir()
+                                .map(|mut d| d.next().is_none())
+                                .unwrap_or(false)
+                            {
                                 let _ = std::fs::remove_dir(parent);
                             }
                         }
@@ -1060,7 +1079,7 @@ pub async fn verify_model_files(
     };
 
     // Model files live at <models_dir>/<repo_id>/<filename>.gguf
-    let model_dir = models_dir.join(&repo_id);
+    let model_dir = koji_core::models::repo_path(&models_dir, &repo_id);
 
     let repo_for_task = repo_id.clone();
     let task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {

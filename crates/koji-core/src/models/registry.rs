@@ -1,4 +1,5 @@
 use crate::models::card::ModelCard;
+use crate::models::repo_path;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -65,7 +66,7 @@ impl ModelRegistry {
                 Some(pos) => format!("{}/{}", &stem[..pos], &stem[pos + 2..]),
                 None => continue, // skip files without the "--" delimiter
             };
-            let model_dir = self.models_dir.join(&id);
+            let model_dir = repo_path(&self.models_dir, &id);
 
             match ModelCard::load(&path) {
                 Ok(card) => {
@@ -94,7 +95,7 @@ impl ModelRegistry {
 
     /// Get the directory path for a model id. Does not check if the model exists.
     pub fn model_dir(&self, id: &str) -> PathBuf {
-        self.models_dir.join(id)
+        repo_path(&self.models_dir, id)
     }
 
     /// Get the path to the GGUF file for a specific model + quant.
