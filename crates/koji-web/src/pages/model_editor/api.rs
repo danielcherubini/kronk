@@ -27,6 +27,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             mmproj: None,
             repo_commit_sha: None,
             repo_pulled_at: None,
+            modalities: None,
         });
     }
     let encoded_id = urlencoding::encode(&id);
@@ -118,6 +119,7 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
         "display_name": form.display_name,
         "gpu_layers": form.gpu_layers,
         "quants": form.quants,
+        "modalities": form.modalities,
     });
 
     let encoded_id = urlencoding::encode(&form.id);

@@ -34,6 +34,16 @@ pub struct QuantInfo {
     pub verify_error: Option<String>,
 }
 
+/// Model modality configuration (input/output types like "text", "image").
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelModalities {
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDetail {
     pub id: String,
@@ -56,6 +66,8 @@ pub struct ModelDetail {
     pub repo_commit_sha: Option<String>,
     #[serde(default)]
     pub repo_pulled_at: Option<String>,
+    #[serde(default)]
+    pub modalities: Option<ModelModalities>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +99,8 @@ pub struct ModelForm {
     pub display_name: Option<String>,
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
+    #[serde(default)]
+    pub modalities: Option<ModelModalities>,
 }
 
 /// Response from POST /api/models/:id/refresh — surfaces the updated repo
