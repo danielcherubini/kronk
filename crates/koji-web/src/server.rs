@@ -9,6 +9,7 @@ use axum::{
 };
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::api;
@@ -29,6 +30,11 @@ pub struct AppState {
     pub proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
     pub jobs: Option<Arc<JobManager>>,
     pub capabilities: Option<Arc<CapabilitiesCache>>,
+    /// The version of the running koji binary (passed from the CLI at startup).
+    pub binary_version: String,
+    /// Broadcast sender for self-update progress messages.
+    /// `None` when no update is in progress.
+    pub update_tx: Arc<tokio::sync::Mutex<Option<broadcast::Sender<String>>>>,
 }
 
 /// Serve a static file from the embedded `dist/` directory.
@@ -138,6 +144,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/backends/check-updates", post(check_backend_updates))
         .route("/api/backends/jobs/:id", get(get_job))
         .route("/api/backends/jobs/:id/events", get(job_events_sse))
+        // Self-update POST is inside backend_routes for CSRF protection
+        .route(
+            "/api/self-update/update",
+            post(api::self_update::trigger_update),
+        )
         .layer(middleware::from_fn(api::middleware::enforce_same_origin))
         .layer(
             CorsLayer::new()
@@ -171,6 +182,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
+        // Self-update GET routes (safe methods, no CSRF protection needed)
+        .route(
+            "/api/self-update/check",
+            get(api::self_update::check_update),
+        )
+        .route(
+            "/api/self-update/events",
+            get(api::self_update::update_events),
+        )
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))
@@ -182,6 +202,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(CorsLayer::permissive())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_with_opts(
     addr: std::net::SocketAddr,
     proxy_base_url: String,
@@ -190,6 +211,7 @@ pub async fn run_with_opts(
     proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
     jobs: Option<Arc<JobManager>>,
     capabilities: Option<Arc<CapabilitiesCache>>,
+    binary_version: String,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
@@ -199,6 +221,8 @@ pub async fn run_with_opts(
         proxy_config,
         jobs,
         capabilities,
+        binary_version,
+        update_tx: Arc::new(tokio::sync::Mutex::new(None)),
     });
     let app = build_router(state);
     tracing::info!("Koji web UI listening on http://{}", addr);
@@ -209,5 +233,15 @@ pub async fn run_with_opts(
 
 /// Convenience wrapper with no logs_dir/config_path.
 pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
-    run_with_opts(addr, proxy_base_url, None, None, None, None, None).await
+    run_with_opts(
+        addr,
+        proxy_base_url,
+        None,
+        None,
+        None,
+        None,
+        None,
+        env!("CARGO_PKG_VERSION").to_string(),
+    )
+    .await
 }

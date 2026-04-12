@@ -6,6 +6,7 @@ use crate::server::AppState;
 
 pub mod backends;
 pub mod middleware;
+pub mod self_update;
 
 /// Query parameters for GET /api/logs
 #[derive(serde::Deserialize)]

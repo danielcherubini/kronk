@@ -99,6 +99,7 @@ async fn start_proxy_server(
                 proxy_config,
                 Some(jobs),
                 Some(capabilities),
+                env!("CARGO_PKG_VERSION").to_string(),
             )
             .await
             {
