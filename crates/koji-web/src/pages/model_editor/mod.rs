@@ -199,7 +199,8 @@ pub fn ModelEditor() -> impl IntoView {
                     enabled: d.enabled,
                     context_length: d.context_length,
                     port: d.port,
-                    api_name: d.api_name,
+                    api_name: d.api_name.clone(),
+                    display_name: d.display_name.clone(),
                     gpu_layers: d.gpu_layers,
                     quants: d.quants.clone(),
                 }));
@@ -365,6 +366,7 @@ pub fn ModelEditor() -> impl IntoView {
                 context_length: initial_form.context_length,
                 port: initial_form.port,
                 api_name: initial_form.api_name.clone(),
+                display_name: initial_form.display_name.clone(),
                 gpu_layers: initial_form.gpu_layers,
                 quants: initial_form.quants.clone(),
             };

@@ -381,6 +381,7 @@ fn model_entry_json(
         "context_length": m.context_length,
         "port": m.port,
         "api_name": m.api_name,
+        "display_name": m.display_name,
         "gpu_layers": m.gpu_layers,
         "quants": quants_json,
     });
@@ -483,9 +484,10 @@ pub struct ModelBody {
     pub context_length: Option<u32>,
     #[serde(default)]
     pub port: Option<u16>,
-    // NEW:
-    #[serde(default, alias = "display_name")]
+    #[serde(default)]
     pub api_name: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
     #[serde(default)]
     pub gpu_layers: Option<u32>,
     #[serde(default)]
@@ -533,7 +535,7 @@ fn apply_model_body(
         api_name: body.api_name,
         gpu_layers: body.gpu_layers,
         modalities: base.modalities,
-        display_name: base.display_name,
+        display_name: body.display_name,
         // Preserve server-side `size_bytes` on update: the UI exposes the field
         // read-only and callers must not be able to rewrite it via the API. The
         // authoritative value comes from the download pipeline
@@ -1154,6 +1156,7 @@ mod tests {
             context_length: None,
             port: None,
             api_name: None,
+            display_name: None,
             gpu_layers: None,
             quants: Some(quants),
         }

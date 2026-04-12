@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "koji"
-version = "1.28.1"
+version = "1.28.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "koji-core"
-version = "1.28.1"
+version = "1.28.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "koji-mock"
-version = "1.28.1"
+version = "1.28.2"
 dependencies = [
  "tokio",
  "tracing",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "koji-web"
-version = "1.28.1"
+version = "1.28.2"
 dependencies = [
  "anyhow",
  "async-stream",

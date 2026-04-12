@@ -10,17 +10,18 @@ pub fn ModelEditorGeneralForm(
 ) -> impl IntoView {
     view! {
         <div class="form-grid">
-            <label class="form-label" for="field-id">"ID"</label>
+            <label class="form-label" for="field-display-name">"Display Name"</label>
             <input
-                id="field-id"
+                id="field-display-name"
                 class="form-input"
                 type="text"
-                placeholder="e.g. my-model"
-                prop:value=move || form.get().as_ref().map(|f| f.id.clone()).unwrap_or_default()
+                placeholder="Auto-generated from HF repo name"
+                prop:value=move || form.get().as_ref().and_then(|f| f.display_name.clone()).unwrap_or_default()
                 on:input=move |ev| {
+                    let val = target_value(&ev);
                     form.update(|f| {
                         if let Some(form) = f {
-                            form.id = target_value(&ev);
+                            form.display_name = if val.is_empty() { None } else { Some(val) };
                         }
                     });
                 }
@@ -50,20 +51,9 @@ pub fn ModelEditorGeneralForm(
                 id="field-api-name"
                 class="form-input"
                 type="text"
-                placeholder="e.g. My Awesome Model"
+                disabled=true
+                title="API Name is auto-derived from the HF repo name"
                 prop:value=move || form.get().as_ref().and_then(|f| f.api_name.clone()).unwrap_or_default()
-                on:input=move |ev| {
-                    let val = target_value(&ev);
-                    form.update(|f| {
-                        if let Some(form) = f {
-                            form.api_name = if val.is_empty() {
-                                None
-                            } else {
-                                Some(val)
-                            };
-                        }
-                    });
-                }
             />
 
             <label class="form-label" for="field-model">"Model (HF repo)"</label>

@@ -48,6 +48,7 @@ pub struct ModelDetail {
     pub context_length: Option<u32>,
     pub port: Option<u16>,
     pub api_name: Option<String>,
+    pub display_name: Option<String>,
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
@@ -83,6 +84,7 @@ pub struct ModelForm {
     pub context_length: Option<u32>,
     pub port: Option<u16>,
     pub api_name: Option<String>,
+    pub display_name: Option<String>,
     pub gpu_layers: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
 }

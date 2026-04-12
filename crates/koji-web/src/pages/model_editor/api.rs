@@ -20,6 +20,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             context_length: None,
             port: None,
             api_name: None,
+            display_name: None,
             gpu_layers: None,
             quants: std::collections::BTreeMap::new(),
             backends: list.backends,
@@ -114,6 +115,7 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
         "context_length": form.context_length,
         "port": form.port,
         "api_name": form.api_name,
+        "display_name": form.display_name,
         "gpu_layers": form.gpu_layers,
         "quants": form.quants,
     });
