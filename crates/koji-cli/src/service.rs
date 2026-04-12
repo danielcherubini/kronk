@@ -274,6 +274,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         proxy_config,
                         Some(jobs),
                         Some(capabilities),
+                        env!("CARGO_PKG_VERSION").to_string(),
                     )
                     .await
                     {

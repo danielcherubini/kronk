@@ -14,6 +14,8 @@ mod tests {
                 logs_dir: None,
                 config_path: None,
                 proxy_config: None,
+                binary_version: "0.0.0-test".to_string(),
+                update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             });
             axum::serve(listener, koji_web::server::build_router(state))
                 .await
@@ -125,6 +127,8 @@ mod tests {
                     logs_dir: None,
                     config_path: Some(config_path_server),
                     proxy_config: Some(proxy_config_server),
+                    binary_version: "0.0.0-test".to_string(),
+                    update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 });
                 axum::serve(listener, koji_web::server::build_router(state))
                     .await

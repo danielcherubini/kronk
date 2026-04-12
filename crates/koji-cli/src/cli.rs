@@ -123,6 +123,15 @@ pub enum Commands {
         #[arg(long, default_value = "300")]
         idle_timeout: u64,
     },
+    /// Update koji to the latest version from GitHub
+    SelfUpdate {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+        /// Skip version comparison, always download latest
+        #[arg(long)]
+        force: bool,
+    },
     /// View server logs
     Logs {
         /// Server name (defaults to "koji" proxy logs)

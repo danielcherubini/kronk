@@ -20,6 +20,7 @@ pub mod platform;
 pub mod process;
 pub mod profiles;
 pub mod proxy;
+pub mod self_update;
 
 #[cfg(test)]
 mod tests {
