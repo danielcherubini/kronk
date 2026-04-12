@@ -492,6 +492,8 @@ pub struct ModelBody {
     pub gpu_layers: Option<u32>,
     #[serde(default)]
     pub quants: Option<std::collections::BTreeMap<String, koji_core::config::QuantEntry>>,
+    #[serde(default)]
+    pub modalities: Option<koji_core::config::ModelModalities>,
 }
 
 fn apply_model_body(
@@ -534,7 +536,7 @@ fn apply_model_body(
         profile: None,
         api_name: body.api_name,
         gpu_layers: body.gpu_layers,
-        modalities: base.modalities,
+        modalities: body.modalities,
         display_name: body.display_name,
         // Preserve server-side `size_bytes` on update: the UI exposes the field
         // read-only and callers must not be able to rewrite it via the API. The
@@ -1159,6 +1161,7 @@ mod tests {
             display_name: None,
             gpu_layers: None,
             quants: Some(quants),
+            modalities: None,
         }
     }
 
