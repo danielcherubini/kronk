@@ -10,12 +10,12 @@ use axum::{
 use super::types::ModelResponse;
 use crate::proxy::ProxyState;
 
-/// Capitalize the first character of a string, lowercase the rest.
+/// Capitalize the first character of a string, preserve the rest unchanged.
 fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         None => String::new(),
-        Some(first) => first.to_uppercase().chain(chars).map(|c| c.to_ascii_lowercase()).collect(),
+        Some(first) => first.to_uppercase().chain(chars).collect(),
     }
 }
 
