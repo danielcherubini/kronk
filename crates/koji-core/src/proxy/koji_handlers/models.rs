@@ -214,9 +214,46 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
         // Most models use far less output than their full context.
         let output_limit = context_length.map(|ctx| ctx / 16);
 
+        // Use HF repo name as the API id (lowercased), falling back to config key.
+        // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "unsloth/qwen3.5-35b-a3b-gguf"
+        let api_id = cfg
+            .model
+            .as_ref()
+            .map(|m| m.to_lowercase())
+            .unwrap_or_else(|| id.to_lowercase());
+
+        // Generate a pretty display name from the HF repo name.
+        // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "Unsloth Qwen3.5 35B A3B GGUF"
+        // Falls back to api_name or config key if no HF model name.
+        let pretty_name = if let Some(ref hf_name) = cfg.model {
+            hf_name
+                .split('/')
+                .last()
+                .unwrap_or(hf_name)
+                .replace('-', " ")
+                .replace('_', " ")
+                .split_whitespace()
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => {
+                            first.to_uppercase().chain(chars).collect()
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            cfg.api_name
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| id.clone())
+        };
+
         let mut model_json = serde_json::json!({
-            "id": id,
-            "name": cfg.api_name.as_ref().unwrap_or(id).clone(),
+            "id": api_id,
+            "name": pretty_name,
             "model": cfg.model,
             "backend": cfg.backend,
             "context_length": context_length,
