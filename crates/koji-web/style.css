@@ -251,6 +251,114 @@ code {
   display: none;
 }
 
+/* Sidebar Version Badge */
+.sidebar-version {
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.sidebar--collapsed .sidebar-version {
+  padding: 0.5rem;
+  justify-content: center;
+}
+
+.sidebar-version__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar--collapsed .sidebar-version__text {
+  display: none;
+}
+
+.sidebar-update-btn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-update-btn:hover {
+  filter: brightness(1.15);
+}
+
+.sidebar-update-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar--collapsed .sidebar-update-btn {
+  padding: 0.2rem;
+  font-size: 0.6rem;
+}
+
+/* Update confirmation & progress dialogs */
+.update-confirm-overlay,
+.update-progress-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.update-confirm-dialog,
+.update-progress-dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  max-width: 400px;
+  width: 90%;
+  text-align: center;
+}
+
+.update-confirm-note {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.update-confirm-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.update-progress-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Mobile toggle — hidden on desktop */
 .sidebar-mobile-toggle {
   display: none;
