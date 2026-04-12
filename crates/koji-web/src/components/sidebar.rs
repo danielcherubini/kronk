@@ -187,7 +187,7 @@ pub fn Sidebar() -> impl IntoView {
                         <button
                             class="sidebar-update-btn"
                             disabled=move || update_in_progress.get()
-                            on:click=confirm_update
+                            on:click=move |_| show_update_confirm.set(true)
                         >
                             {move || if update_in_progress.get() { "Updating..." } else { "Update" }}
                         </button>
@@ -205,7 +205,7 @@ pub fn Sidebar() -> impl IntoView {
         {move || show_update_confirm.get().then(|| view! {
             <div class="update-confirm-overlay">
                 <div class="update-confirm-dialog">
-                    <p>{format!("Update Koji to v{}?", latest_version.get_untracked())}</p>
+                    <p>{format!("Update Koji to v{}?", latest_version.get())}</p>
                     <p class="update-confirm-note">"Koji will restart after updating."</p>
                     <div class="update-confirm-actions">
                         <button class="btn btn-secondary" on:click=move |_| show_update_confirm.set(false)>"Cancel"</button>
