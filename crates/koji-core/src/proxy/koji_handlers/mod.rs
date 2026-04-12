@@ -8,7 +8,7 @@ mod tests;
 
 pub use models::{
     handle_koji_get_model, handle_koji_list_models, handle_koji_load_model,
-    handle_koji_unload_model,
+    handle_koji_unload_model, handle_opencode_list_models,
 };
 pub use pull::{handle_koji_get_pull_job, handle_koji_pull_model, handle_pull_job_stream};
 pub use system::{

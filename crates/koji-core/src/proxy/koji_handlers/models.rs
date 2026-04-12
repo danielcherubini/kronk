@@ -181,3 +181,56 @@ pub async fn handle_koji_unload_model(
             .into_response(),
     }
 }
+
+/// Handle listing all enabled models for OpenCode plugin discovery.
+/// Returns rich metadata including context limits, modalities, and capabilities.
+pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
+    let config = state.config.read().await;
+
+    let mut models: Vec<serde_json::Value> = Vec::new();
+
+    for (id, cfg) in config.models.iter().filter(|(_, cfg)| cfg.enabled) {
+        let context_length = if let Some(ctx) = cfg.context_length {
+            Some(ctx)
+        } else {
+            let card = state.get_model_card(id).await;
+            card.and_then(|c| {
+                let quant_key = cfg.quant.as_deref().unwrap_or_default();
+                c.quants.get(quant_key)
+                    .and_then(|q| q.context_length)
+                    .or(c.model.default_context_length)
+            })
+        };
+
+        let modalities = cfg.modalities.as_ref().map(|m| {
+            serde_json::json!({
+                "input": m.input,
+                "output": m.output
+            })
+        }).unwrap_or_else(|| {
+            serde_json::json!({
+                "input": ["text", "image"],
+                "output": ["text"]
+            })
+        });
+
+        models.push(serde_json::json!({
+            "id": id,
+            "name": cfg.api_name.as_ref().unwrap_or(id).clone(),
+            "model": cfg.model,
+            "backend": cfg.backend,
+            "context_length": context_length,
+            "limit": {
+                "context": context_length,
+                "output": context_length,
+            },
+            "modalities": modalities,
+            "quant": cfg.quant,
+            "gpu_layers": cfg.gpu_layers,
+        }));
+    }
+
+    Json(serde_json::json!({
+        "models": models
+    }))
+}

@@ -206,6 +206,18 @@ pub struct ModelConfig {
     /// Available quantizations
     #[serde(default, skip_serializing_if = "is_btreemap_empty")]
     pub quants: BTreeMap<String, QuantEntry>,
+    /// Modalities supported by this model (e.g. ["text", "image"] for input, ["text"] for output)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ModelModalities>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelModalities {
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

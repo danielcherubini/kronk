@@ -246,6 +246,7 @@ mod tests {
                 api_name: Some("Hot Reload Test".to_string()),
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
+                modalities: None,
             },
         );
         let new_toml = toml::to_string_pretty(&new_config).unwrap();

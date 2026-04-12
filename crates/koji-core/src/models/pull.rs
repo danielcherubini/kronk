@@ -141,6 +141,83 @@ pub async fn fetch_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobIn
     Ok(parse_blob_siblings(&response))
 }
 
+/// Fetch the pipeline_tag from HuggingFace model metadata API.
+///
+/// Returns the `pipeline_tag` field from the model metadata, which indicates
+/// the model's task type (e.g., "text-generation", "image-text-to-text").
+pub async fn fetch_model_pipeline_tag(repo_id: &str) -> Result<Option<String>> {
+    let api = hf_api().await?;
+    let endpoint =
+        std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+    let url = format!("{}/api/models/{}", endpoint, repo_id);
+
+    let response = api
+        .client()
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch model metadata for '{}'", repo_id))?
+        .error_for_status()
+        .with_context(|| {
+            format!(
+                "HuggingFace returned an error for model metadata request for '{}'",
+                repo_id
+            )
+        })?
+        .json::<serde_json::Value>()
+        .await
+        .with_context(|| format!("Failed to parse model metadata response for '{}'", repo_id))?;
+
+    Ok(response
+        .get("pipeline_tag")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// Try to infer modalities from a HuggingFace pipeline tag.
+pub fn infer_modalities_from_pipeline(pipeline_tag: Option<&str>) -> Option<crate::config::ModelModalities> {
+    let tag = pipeline_tag?.to_lowercase();
+    
+    if tag.contains("vision") || tag.contains("image-text") {
+        Some(crate::config::ModelModalities {
+            input: vec!["text".to_string(), "image".to_string()],
+            output: vec!["text".to_string()],
+        })
+    } else if tag.contains("text-generation") || tag.contains("conversational") || tag.contains("chat") {
+        Some(crate::config::ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["text".to_string()],
+        })
+    } else if tag.contains("image-classification") || tag.contains("object-detection") {
+        Some(crate::config::ModelModalities {
+            input: vec!["image".to_string()],
+            output: vec!["text".to_string()],
+        })
+    } else if tag.contains("speech") || tag.contains("audio") {
+        Some(crate::config::ModelModalities {
+            input: vec!["audio".to_string()],
+            output: vec!["text".to_string()],
+        })
+    } else if tag.contains("text-to-speech") || tag.contains("tts") {
+        Some(crate::config::ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["audio".to_string()],
+        })
+    } else if tag.contains("embedding") || tag.contains("feature-extraction") {
+        Some(crate::config::ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["embedding".to_string()],
+        })
+    } else if tag.contains("image-generation") || tag.contains("text-to-image") {
+        Some(crate::config::ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["image".to_string()],
+        })
+    } else {
+        None
+    }
+}
+
 /// Parse the `siblings` array from a HuggingFace blobs API response.
 ///
 /// This is a pure function for testability — extract from `fetch_blob_metadata`

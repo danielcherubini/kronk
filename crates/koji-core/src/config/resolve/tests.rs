@@ -211,6 +211,7 @@ fn test_build_full_args_unified() {
         api_name: None,
         gpu_layers: Some(99),
         quants,
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -287,6 +288,7 @@ fn test_build_full_args_ctx_override() {
         api_name: None,
         gpu_layers: Some(99),
         quants,
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -346,6 +348,7 @@ fn test_build_full_args_no_sampling() {
         api_name: None,
         gpu_layers: Some(99),
         quants,
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -389,6 +392,7 @@ fn test_build_full_args_no_quants() {
         api_name: None,
         gpu_layers: Some(99),
         quants: BTreeMap::new(), // Empty quants map
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -440,6 +444,7 @@ fn test_build_args_dedupes_backend_vs_model_flags() {
         api_name: None,
         gpu_layers: None,
         quants: std::collections::BTreeMap::new(),
+        modalities: None,
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
@@ -498,6 +503,7 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
         api_name: None,
         gpu_layers: None,
         quants: std::collections::BTreeMap::new(),
+        modalities: None,
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
@@ -555,6 +561,7 @@ fn test_build_full_args_dedupes_backend_vs_model_flags() {
         api_name: None,
         gpu_layers: Some(99),
         quants,
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -636,6 +643,7 @@ fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
         api_name: None,
         gpu_layers: None,
         quants,
+        modalities: None,
     };
 
     let backend = BackendConfig {
@@ -703,6 +711,7 @@ fn test_resolve_by_api_name() {
             api_name: Some("bartowski/Qwen3-8B-GGUF".to_string()),
             gpu_layers: None,
             quants,
+            modalities: None,
         },
     );
 
@@ -753,6 +762,7 @@ fn test_api_name_takes_priority() {
             api_name: Some("friendly-name".to_string()),
             gpu_layers: None,
             quants,
+            modalities: None,
         },
     );
 
@@ -804,6 +814,7 @@ fn test_backward_compat_no_api_name() {
             api_name: None,
             gpu_layers: None,
             quants,
+            modalities: None,
         },
     );
 
@@ -858,6 +869,7 @@ fn test_resolve_server_by_api_name() {
             api_name: Some("bartowski/Qwen3-8B-GGUF".to_string()),
             gpu_layers: None,
             quants,
+            modalities: None,
         },
     );
 
