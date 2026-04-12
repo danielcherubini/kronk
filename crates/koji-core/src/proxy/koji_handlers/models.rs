@@ -196,7 +196,8 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
             let card = state.get_model_card(id).await;
             card.and_then(|c| {
                 let quant_key = cfg.quant.as_deref().unwrap_or_default();
-                c.quants.get(quant_key)
+                c.quants
+                    .get(quant_key)
                     .and_then(|q| q.context_length)
                     .or(c.model.default_context_length)
             })
