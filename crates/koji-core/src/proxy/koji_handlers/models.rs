@@ -221,8 +221,8 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
     let mut models: Vec<serde_json::Value> = Vec::new();
 
     for (id, cfg) in config.models.iter().filter(|(_, cfg)| cfg.enabled) {
-        // Skip models without an HF repo name — they don't have a stable API id.
-        let Some(hf_repo) = cfg.model.clone() else {
+        // Use model field first, fall back to api_name — either is sufficient for HF repo identification.
+        let Some(hf_repo) = cfg.model.clone().or(cfg.api_name.clone()) else {
             continue;
         };
 
