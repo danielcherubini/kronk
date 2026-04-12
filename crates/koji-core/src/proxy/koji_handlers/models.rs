@@ -10,6 +10,15 @@ use axum::{
 use super::types::ModelResponse;
 use crate::proxy::ProxyState;
 
+/// Capitalize the first character of a string, preserve the rest unchanged.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+    }
+}
+
 /// Handle listing all configured models (Koji management API).
 pub async fn handle_koji_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let models = state.build_status_response().await;
@@ -190,6 +199,11 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
     let mut models: Vec<serde_json::Value> = Vec::new();
 
     for (id, cfg) in config.models.iter().filter(|(_, cfg)| cfg.enabled) {
+        // Skip models without an HF repo name — they don't have a stable API id.
+        let Some(hf_repo) = cfg.model.clone() else {
+            continue;
+        };
+
         let context_length = if let Some(ctx) = cfg.context_length {
             Some(ctx)
         } else {
@@ -214,9 +228,35 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
         // Most models use far less output than their full context.
         let output_limit = context_length.map(|ctx| ctx / 16);
 
+        // API id is the lowercased HF repo name (includes org prefix).
+        // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "unsloth/qwen3.5-35b-a3b-gguf"
+        let api_id = hf_repo.to_lowercase();
+
+        // Generate a pretty display name with org prefix.
+        // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "Unsloth: Qwen3.5 35B A3B"
+        // e.g., "mudler/Qwen3.5-35B-A3B-APEX-GGUF" -> "Mudler: Qwen3.5 35B A3B APEX"
+        // Strips common file suffixes like "GGUF" since they add no meaning.
+        let parts: Vec<&str> = hf_repo.split('/').collect();
+        let (org, model_name) = if parts.len() >= 2 {
+            (parts[0], parts[1])
+        } else {
+            (hf_repo.as_str(), hf_repo.as_str())
+        };
+
+        let model_name_processed = model_name
+            .replace('-', " ")
+            .replace('_', " ")
+            .split_whitespace()
+            .filter(|word| !word.eq_ignore_ascii_case("GGUF"))
+            .map(capitalize_first)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let pretty_name = format!("{}: {}", capitalize_first(org), model_name_processed);
+
         let mut model_json = serde_json::json!({
-            "id": id,
-            "name": cfg.api_name.as_ref().unwrap_or(id).clone(),
+            "id": api_id,
+            "name": pretty_name,
             "model": cfg.model,
             "backend": cfg.backend,
             "context_length": context_length,
