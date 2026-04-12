@@ -496,9 +496,9 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     if !is_mmproj {
         // Fetch pipeline_tag from HF to infer modalities (best-effort).
         let modalities = match crate::models::pull::fetch_model_pipeline_tag(repo_id).await {
-            Ok(pipeline_tag) => crate::models::pull::infer_modalities_from_pipeline(
-                pipeline_tag.as_deref(),
-            ),
+            Ok(pipeline_tag) => {
+                crate::models::pull::infer_modalities_from_pipeline(pipeline_tag.as_deref())
+            }
             Err(e) => {
                 tracing::debug!(repo = %repo_id, error = %e, "Failed to fetch pipeline_tag for modalities inference");
                 None

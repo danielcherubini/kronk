@@ -178,7 +178,9 @@ pub async fn fetch_model_pipeline_tag(repo_id: &str) -> Result<Option<String>> {
 ///
 /// Order matters: more specific checks (e.g., "text-to-speech") must come
 /// before broader ones (e.g., "speech") to avoid misclassification.
-pub fn infer_modalities_from_pipeline(pipeline_tag: Option<&str>) -> Option<crate::config::ModelModalities> {
+pub fn infer_modalities_from_pipeline(
+    pipeline_tag: Option<&str>,
+) -> Option<crate::config::ModelModalities> {
     let tag = pipeline_tag?.to_lowercase();
 
     if tag.contains("vision") || tag.contains("image-text") {
@@ -186,7 +188,10 @@ pub fn infer_modalities_from_pipeline(pipeline_tag: Option<&str>) -> Option<crat
             input: vec!["text".to_string(), "image".to_string()],
             output: vec!["text".to_string()],
         })
-    } else if tag.contains("text-generation") || tag.contains("conversational") || tag.contains("chat") {
+    } else if tag.contains("text-generation")
+        || tag.contains("conversational")
+        || tag.contains("chat")
+    {
         Some(crate::config::ModelModalities {
             input: vec!["text".to_string()],
             output: vec!["text".to_string()],
