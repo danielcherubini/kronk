@@ -67,6 +67,7 @@ top_k = 40
                 api_name: None,
                 gpu_layers: None,
                 quants: BTreeMap::new(),
+                modalities: None,
             };
             m.insert("test-model".to_string(), model);
             m
@@ -178,6 +179,7 @@ top_k = 40
                 api_name: None,
                 gpu_layers: None,
                 quants: BTreeMap::new(),
+                modalities: None,
             };
             m.insert("test-model".to_string(), model);
             m
@@ -293,6 +295,7 @@ size_bytes = 8000000000
                     );
                     quants
                 },
+                modalities: None,
             };
             m.insert("test-model".to_string(), model);
             m
@@ -363,6 +366,7 @@ fn build_test_model_config_with_mmproj(
         api_name: None,
         gpu_layers: None,
         quants,
+        modalities: None,
     }
 }
 
@@ -515,6 +519,7 @@ quant = "Q4_K_M"
                 api_name: None, // This is what should be derived during migration
                 gpu_layers: None,
                 quants: BTreeMap::new(),
+                modalities: None,
             };
             m.insert("test-model".to_string(), model);
             m

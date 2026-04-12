@@ -335,6 +335,7 @@ mod tests {
                 api_name: None,
                 gpu_layers: None,
                 quants: BTreeMap::new(),
+                modalities: None,
             },
         );
 

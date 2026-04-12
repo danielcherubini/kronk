@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use crate::api::StructuredConfigBody;
 use koji_core::config::{
     BackendConfig as CoreBackendConfig, Config as CoreConfig, General as CoreGeneral,
-    ModelConfig as CoreModelConfig, ProxyConfig as CoreProxyConfig, Supervisor as CoreSupervisor,
+    ModelConfig as CoreModelConfig, ModelModalities as CoreModelModalities,
+    ProxyConfig as CoreProxyConfig, Supervisor as CoreSupervisor,
 };
 use koji_core::config::{
     HealthCheck as CoreHealthCheck, QuantEntry as CoreQuantEntry, QuantKind as CoreQuantKind,
@@ -146,9 +147,42 @@ pub struct ModelConfig {
     /// Available quantizations
     #[serde(default, skip_serializing_if = "is_btreemap_empty")]
     pub quants: BTreeMap<String, QuantEntry>,
+    /// Model modalities (input/output types)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ModelModalities>,
     /// Forward-compatibility: preserve unknown fields
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Model modality configuration (input/output types like "text", "image").
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelModalities {
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
+/// Convert from CoreModelModalities to mirror type.
+impl From<CoreModelModalities> for ModelModalities {
+    fn from(m: CoreModelModalities) -> Self {
+        Self {
+            input: m.input,
+            output: m.output,
+        }
+    }
+}
+
+/// Convert from mirror ModelModalities to core type.
+impl From<ModelModalities> for CoreModelModalities {
+    fn from(m: ModelModalities) -> Self {
+        Self {
+            input: m.input,
+            output: m.output,
+        }
+    }
 }
 
 /// Supervisor configuration.
@@ -432,6 +466,7 @@ impl From<CoreModelConfig> for ModelConfig {
             api_name: m.api_name,
             gpu_layers: m.gpu_layers,
             quants: m.quants.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            modalities: m.modalities.map(Into::into),
             extra: None, // Forward-compat field - preserve unknown fields on POST
         }
     }
@@ -455,6 +490,7 @@ impl From<ModelConfig> for CoreModelConfig {
             api_name: m.api_name,
             gpu_layers: m.gpu_layers,
             quants: m.quants.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            modalities: m.modalities.map(Into::into),
         }
     }
 }
