@@ -100,6 +100,9 @@ pub async fn main() -> Result<()> {
             warmup,
             ctx,
         } => handlers::bench::cmd_bench(&config, name, all, pp, tg, runs, warmup, ctx).await,
+        Commands::SelfUpdate { check, force } => {
+            handlers::self_update::cmd_self_update(check, force).await
+        }
         Commands::Serve {
             host,
             port,
