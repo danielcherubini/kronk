@@ -15,6 +15,8 @@ struct ModelEntry {
     loaded: bool,
     #[serde(default)]
     api_name: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,10 +36,14 @@ fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Si
     read.into()
 }
 
-/// Returns the preferred display name for a model, preferring `api_name` if
-/// available, falling back to the model `id` otherwise.
+/// Returns the preferred display name for a model, preferring `display_name`,
+/// then `api_name`, falling back to the model `id` otherwise.
 fn model_display_name(m: &ModelEntry) -> String {
-    m.api_name.as_deref().unwrap_or(m.id.as_str()).to_string()
+    m.display_name
+        .as_deref()
+        .or(m.api_name.as_deref())
+        .unwrap_or(m.id.as_str())
+        .to_string()
 }
 
 #[component]
@@ -419,6 +425,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
@@ -428,6 +435,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -446,6 +454,7 @@ mod tests {
                 enabled: true,
                 loaded: false,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
@@ -455,6 +464,7 @@ mod tests {
                 enabled: true,
                 loaded: false,
                 api_name: None,
+                display_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -473,6 +483,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-2".to_string(),
@@ -482,6 +493,7 @@ mod tests {
                 enabled: true,
                 loaded: false,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-3".to_string(),
@@ -491,6 +503,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
@@ -517,6 +530,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-1".to_string(),
@@ -526,6 +540,7 @@ mod tests {
                 enabled: true,
                 loaded: true,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-4".to_string(),
@@ -535,6 +550,7 @@ mod tests {
                 enabled: true,
                 loaded: false,
                 api_name: None,
+                display_name: None,
             },
             ModelEntry {
                 id: "model-3".to_string(),
@@ -544,6 +560,7 @@ mod tests {
                 enabled: true,
                 loaded: false,
                 api_name: None,
+                display_name: None,
             },
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);

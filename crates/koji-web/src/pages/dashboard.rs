@@ -75,6 +75,8 @@ struct ModelStatus {
     id: String,
     #[serde(default)]
     api_name: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
     backend: String,
     loaded: bool,
 }
@@ -143,10 +145,14 @@ fn model_action_button_label(loaded: bool) -> &'static str {
     }
 }
 
-/// Returns the preferred display name for a model, preferring `api_name` if
-/// available, falling back to the model `id` otherwise.
+/// Returns the preferred display name for a model, preferring `display_name`,
+/// then `api_name`, falling back to the model `id` otherwise.
 fn model_display_name(m: &ModelStatus) -> String {
-    m.api_name.as_deref().unwrap_or(m.id.as_str()).to_string()
+    m.display_name
+        .as_deref()
+        .or(m.api_name.as_deref())
+        .unwrap_or(m.id.as_str())
+        .to_string()
 }
 
 /// Partition model statuses into loaded and unloaded vectors, sorted by ID.
@@ -696,24 +702,28 @@ mod tests {
             ModelStatus {
                 id: "a".into(),
                 api_name: None,
+                display_name: None,
                 backend: "llama_cpp".into(),
                 loaded: true,
             },
             ModelStatus {
                 id: "b".into(),
                 api_name: None,
+                display_name: None,
                 backend: "llama_cpp".into(),
                 loaded: false,
             },
             ModelStatus {
                 id: "c".into(),
                 api_name: None,
+                display_name: None,
                 backend: "ik_llama".into(),
                 loaded: true,
             },
             ModelStatus {
                 id: "d".into(),
                 api_name: None,
+                display_name: None,
                 backend: "ik_llama".into(),
                 loaded: false,
             },
