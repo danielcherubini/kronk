@@ -384,6 +384,7 @@ fn model_entry_json(
         "display_name": m.display_name,
         "gpu_layers": m.gpu_layers,
         "quants": quants_json,
+        "modalities": m.modalities,
     });
 
     if let Some(meta) = db_meta {
