@@ -58,11 +58,18 @@ impl Config {
                 None => continue,
             };
 
-            // Match on api_name (highest priority), then config key, then model field
-            if server.api_name.as_deref() == Some(model_name)
-                || config_name == model_name
-                || server.model.as_deref() == Some(model_name)
-            {
+            // Match on api_name (highest priority), then config key, then model field.
+            // Comparisons are case-insensitive for api_name and model (OpenAI API
+            // model IDs are case-insensitive), but config_name is case-sensitive.
+            let api_name_match = server
+                .api_name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(model_name));
+            let model_match = server
+                .model
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(model_name));
+            if api_name_match || config_name == model_name || model_match {
                 results.push((config_name.clone(), server, backend));
             }
         }
