@@ -97,6 +97,10 @@ pub fn ModelEditor() -> impl IntoView {
     // Active navigation section
     let active_section = RwSignal::new(Section::General);
 
+    // Tracks whether the form has been populated from the loaded model detail.
+    // Used to gate the layout render without depending on form.get() (which changes on every keystroke).
+    let form_ready = RwSignal::new(false);
+
     // Populate signals when resource loads
     Effect::new(move |_| {
         if let Some(guard) = detail.get() {
@@ -216,6 +220,7 @@ pub fn ModelEditor() -> impl IntoView {
 
                 repo_commit_sha.set(d.repo_commit_sha.clone());
                 repo_pulled_at.set(d.repo_pulled_at.clone());
+                form_ready.set(true);
             }
         }
     });
@@ -609,8 +614,10 @@ pub fn ModelEditor() -> impl IntoView {
             </div>
         }>
             {move || {
-                let _ = detail.get();
-                form.get().map(|_| {
+                // Use form_ready as the stability gate, NOT form.get().
+                // form.get() changes on every keystroke, which would cause
+                // the entire layout to unmount/remount and lose input focus.
+                form_ready.get().then(|| {
                     view! {
                         <div class="model-editor-layout">
                             // Side navigation
