@@ -82,6 +82,7 @@ pub struct MetricSample {
 pub struct ModelStatus {
     pub id: String,
     pub api_name: Option<String>,
+    pub display_name: Option<String>,
     pub backend: String,
     pub loaded: bool,
 }
