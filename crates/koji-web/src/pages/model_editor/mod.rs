@@ -188,6 +188,14 @@ pub fn ModelEditor() -> impl IntoView {
                     }
                 }
 
+                // Initialize modalities if absent so checkboxes have stable structure
+                let mut modalities = d.modalities.clone();
+                if modalities.is_none() {
+                    modalities = Some(ModelModalities {
+                        input: Vec::new(),
+                        output: Vec::new(),
+                    });
+                }
                 form.set(Some(ModelForm {
                     id: d.id.clone(),
                     backend: d.backend.clone(),
@@ -203,6 +211,7 @@ pub fn ModelEditor() -> impl IntoView {
                     display_name: d.display_name.clone(),
                     gpu_layers: d.gpu_layers,
                     quants: d.quants.clone(),
+                    modalities,
                 }));
 
                 repo_commit_sha.set(d.repo_commit_sha.clone());
@@ -369,6 +378,7 @@ pub fn ModelEditor() -> impl IntoView {
                 display_name: initial_form.display_name.clone(),
                 gpu_layers: initial_form.gpu_layers,
                 quants: initial_form.quants.clone(),
+                modalities: initial_form.modalities.clone(),
             };
 
             let new_id = form_data.id.clone();
