@@ -18,8 +18,8 @@ impl ProxyServer {
     ///
     /// Starts a background task that periodically checks for idle models
     /// and unloads them.
-    pub fn new(state: Arc<ProxyState>) -> Self {
-        Self::cleanup_stale_processes(&state);
+    pub async fn new(state: Arc<ProxyState>) -> Self {
+        Self::cleanup_stale_processes(&state).await;
         let handle = Self::start_idle_timeout_checker(state.clone());
 
         // Spawn background task to refresh system metrics every 2s.
@@ -108,39 +108,74 @@ impl ProxyServer {
         }
     }
 
-    fn cleanup_stale_processes(state: &ProxyState) {
-        if let Some(conn) = state.open_db() {
-            if let Ok(active) = crate::db::queries::get_active_models(&conn) {
-                for entry in &active {
-                    let pid = entry.pid as u32;
-                    if !super::process::is_process_alive(pid) {
-                        tracing::info!(
-                            "Cleaning up stale process entry: {} (pid {})",
-                            entry.server_name,
-                            pid
-                        );
-                        let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
-                    } else {
-                        tracing::warn!(
-                            "Orphaned backend process detected: {} (pid {}). Killing.",
-                            entry.server_name,
-                            pid
-                        );
-                        #[cfg(unix)]
-                        let _ = std::process::Command::new("kill")
-                            .arg(pid.to_string())
-                            .status();
-                        #[cfg(windows)]
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/PID", &pid.to_string(), "/F"])
-                            .status();
-                        let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
-                    }
-                }
+    async fn cleanup_stale_processes(state: &ProxyState) {
+        let conn = match state.open_db() {
+            Some(c) => c,
+            None => return,
+        };
+        let active = match crate::db::queries::get_active_models(&conn) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+
+        for entry in &active {
+            let pid = entry.pid as u32;
+            if !super::process::is_process_alive(pid) {
+                tracing::info!(
+                    "Cleaning up stale process entry: {} (pid {})",
+                    entry.server_name,
+                    pid
+                );
+                let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
+                continue;
             }
-            // Belt-and-suspenders: clear any entries that survived the loop
-            // (e.g. if get_active_models failed mid-way and the loop was skipped).
-            let _ = crate::db::queries::clear_active_models(&conn);
+
+            // Process is alive — try to reconnect by health-checking it
+            let health_url = format!("http://127.0.0.1:{}/health", entry.port);
+            let healthy = match super::process::check_health(&health_url, Some(5)).await {
+                Ok(resp) => resp.status().is_success(),
+                Err(_) => false,
+            };
+
+            if healthy {
+                tracing::info!(
+                    "Reconnecting to existing backend: {} (pid {}, port {})",
+                    entry.server_name,
+                    pid,
+                    entry.port
+                );
+                let mut models = state.models.write().await;
+                models.insert(
+                    entry.server_name.clone(),
+                    super::types::ModelState::Ready {
+                        model_name: entry.model_name.clone(),
+                        backend: entry.backend.clone(),
+                        backend_pid: pid,
+                        backend_url: entry.backend_url.clone(),
+                        load_time: std::time::SystemTime::now(),
+                        last_accessed: std::time::Instant::now(),
+                        consecutive_failures: std::sync::Arc::new(
+                            std::sync::atomic::AtomicU32::new(0),
+                        ),
+                        failure_timestamp: None,
+                    },
+                );
+            } else {
+                tracing::warn!(
+                    "Orphaned backend process detected: {} (pid {}). Killing.",
+                    entry.server_name,
+                    pid
+                );
+                #[cfg(unix)]
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
+                #[cfg(windows)]
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .status();
+                let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
+            }
         }
     }
 
@@ -184,7 +219,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
 
-        let server = ProxyServer::new(state.clone());
+        let server = ProxyServer::new(state.clone()).await;
         let app = server.into_router();
         let _handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -227,7 +262,7 @@ mod tests {
             Some(tmp.path().to_path_buf()),
         ));
 
-        let _server = ProxyServer::new(state.clone());
+        let _server = ProxyServer::new(state.clone()).await;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
@@ -255,7 +290,7 @@ mod tests {
 
         let mut rx = state.metrics_tx.subscribe();
 
-        let _server = ProxyServer::new(state.clone());
+        let _server = ProxyServer::new(state.clone()).await;
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv()).await;
         assert!(
@@ -314,7 +349,7 @@ mod tests {
         // Subscribe BEFORE starting the server so we don't miss the first tick.
         let mut rx = state.metrics_tx.subscribe();
 
-        let _server = ProxyServer::new(state.clone());
+        let _server = ProxyServer::new(state.clone()).await;
 
         let sample = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv())
             .await
@@ -357,7 +392,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
 
-        let server = ProxyServer::new(state.clone());
+        let server = ProxyServer::new(state.clone()).await;
         let app = server.into_router();
         let _handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -473,7 +508,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
 
-        let server = ProxyServer::new(state.clone());
+        let server = ProxyServer::new(state.clone()).await;
         let app = server.into_router();
         let _handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();

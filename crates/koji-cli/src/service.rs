@@ -247,7 +247,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             // Clone the config Arc before state is moved into ProxyServer.
             #[cfg(feature = "web-ui")]
             let proxy_config = Some(Arc::clone(&state.config));
-            let server = ProxyServer::new(state);
+            let server = ProxyServer::new(state).await;
 
             // Spawn the web control plane alongside the proxy.
             #[cfg(feature = "web-ui")]

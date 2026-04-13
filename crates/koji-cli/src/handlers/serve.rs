@@ -109,7 +109,7 @@ async fn start_proxy_server(
     }
 
     // Create and run proxy server
-    let server = ProxyServer::new(state.clone());
+    let server = ProxyServer::new(state.clone()).await;
     server.run(addr).await?;
 
     Ok(())
