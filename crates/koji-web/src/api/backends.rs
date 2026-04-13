@@ -396,11 +396,13 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 kind: match j.kind {
                     crate::jobs::JobKind::Install => "install".to_string(),
                     crate::jobs::JobKind::Update => "update".to_string(),
+                    crate::jobs::JobKind::Restore => "restore".to_string(),
                 },
-                backend_type: match j.backend_type {
-                    koji_core::backends::BackendType::LlamaCpp => "llama_cpp".to_string(),
-                    koji_core::backends::BackendType::IkLlama => "ik_llama".to_string(),
-                    koji_core::backends::BackendType::Custom => "custom".to_string(),
+                backend_type: match j.backend_type.as_ref() {
+                    Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
+                    Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
+                    Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
+                    None => String::new(),
                 },
             })
     } else {
@@ -1095,7 +1097,8 @@ pub async fn remove_backend(
 
     // Check if a job is running for this backend
     if let Some(active_job) = jobs.active().await {
-        if active_job.backend_type.to_string() == backend_info.backend_type.to_string() {
+        let active_type = active_job.backend_type.as_ref().map(|b| b.to_string()).unwrap_or_default();
+        if active_type == backend_info.backend_type.to_string() {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
@@ -1167,11 +1170,13 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             kind: match j.kind {
                 crate::jobs::JobKind::Install => "install".to_string(),
                 crate::jobs::JobKind::Update => "update".to_string(),
+                    crate::jobs::JobKind::Restore => "restore".to_string(),
             },
-            backend_type: match j.backend_type {
-                koji_core::backends::BackendType::LlamaCpp => "llama_cpp".to_string(),
-                koji_core::backends::BackendType::IkLlama => "ik_llama".to_string(),
-                koji_core::backends::BackendType::Custom => "custom".to_string(),
+            backend_type: match j.backend_type.as_ref() {
+                Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
+                Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
+                Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
+                None => String::new(),
             },
         });
 
@@ -1376,9 +1381,10 @@ pub async fn get_job(
         kind: match job.kind {
             crate::jobs::JobKind::Install => "install".to_string(),
             crate::jobs::JobKind::Update => "update".to_string(),
+                    crate::jobs::JobKind::Restore => "restore".to_string(),
         },
         status: state.status,
-        backend_type: format!("{}", job.backend_type),
+        backend_type: job.backend_type.as_ref().map(|b| b.to_string()).unwrap_or_default(),
         started_at: state.started_at,
         finished_at: state.finished_at,
         error: state.error.clone(),

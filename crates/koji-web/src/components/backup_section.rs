@@ -8,13 +8,13 @@ pub fn BackupSection() -> impl IntoView {
     let (uploading, set_uploading) = create_signal(false);
     let (restore_preview, set_restore_preview) = create_signal<Option<RestorePreviewData>>(None);
     let (selected_models, set_selected_models) = create_signal(Vec::<String>::new());
-    let (restore_status, set_restore_status) = create_signal(String::new());
+    let (restore_status, set_restore_status) = create_signal(None::<String>);
     let (restoring, set_restoring) = create_signal(false);
     let (error, set_error) = create_signal<Option<String>>(None);
 
     // Backup handler - downloads backup as file
     let backup_handler = move |_| {
-        let set_error = error;
+        let set_error = set_error.clone();
         let _ = spawn_local(async move {
             match Request::get("/api/backup")
                 .send()
@@ -23,24 +23,30 @@ pub fn BackupSection() -> impl IntoView {
                 Ok(resp) => {
                     match resp.blob().await {
                         Ok(blob) => {
-                            // Create download link
-                            let url = web_sys::window()
-                                .unwrap()
-                                .create_object_url(&blob)
-                                .unwrap();
-                            let a = web_sys::window()
-                                .unwrap()
-                                .document()
-                                .unwrap()
-                                .create_element("a")
-                                .unwrap();
-                            a.set_attribute("href", &url).ok();
-                            a.set_attribute("download", "koji-backup.tar.gz").ok();
-                            a.click();
-                            web_sys::window()
-                                .unwrap()
-                                .revoke_object_url(&url)
-                                .ok();
+                            // Create download link with safe error handling
+                            if let Some(window) = web_sys::window() {
+                                match window.create_object_url(&blob) {
+                                    Ok(url) => {
+                                        if let Some(doc) = window.document() {
+                                            if let Ok(a) = doc.create_element("a") {
+                                                let _ = a.set_attribute("href", &url);
+                                                let _ = a.set_attribute("download", "koji-backup.tar.gz");
+                                                a.click();
+                                                let _ = window.revoke_object_url(&url);
+                                            } else {
+                                                set_error.set(Some("Failed to create download link".to_string()));
+                                            }
+                                        } else {
+                                            set_error.set(Some("Failed to access document".to_string()));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        set_error.set(Some(format!("Failed to create object URL: {:?}", e)));
+                                    }
+                                }
+                            } else {
+                                set_error.set(Some("Failed to access window".to_string()));
+                            }
                         }
                         Err(e) => {
                             set_error.set(Some(format!("Failed to get backup: {:?}", e)));
@@ -73,15 +79,11 @@ pub fn BackupSection() -> impl IntoView {
         set_uploading.set(true);
         set_error.set(None);
 
-        let _ = spawn_local(async move {
-            let mut form_data = web_sys::FormData::new().unwrap();
-            form_data.append_with_str(&file, "file").ok();
-
-            // Convert FormData to bytes for gloo_net
-            // We need to use a different approach - use fetch directly
-            set_uploading.set(false);
-            set_error.set(Some("Upload not yet implemented".to_string()));
-        });
+        // Note: File upload via FormData requires the fetch API with FormData.
+        // gloo_net doesn't support multipart uploads directly.
+        // For now, show a message that upload is not yet implemented.
+        set_uploading.set(false);
+        set_error.set(Some("File upload not yet implemented in web UI. Use CLI instead.".to_string()));
     };
 
     // Restore handler
@@ -120,7 +122,7 @@ pub fn BackupSection() -> impl IntoView {
                     match resp.json::<serde_json::Value>().await {
                         Ok(json) => {
                             let job_id = json.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
-                            set_restore_status.set(format!("Restore started (job: {})", job_id));
+                            set_restore_status.set(Some(format!("Restore started (job: {})", job_id)));
                         }
                         Err(e) => {
                             set_error.set(Some(format!("Failed to parse restore response: {:?}", e)));
@@ -256,7 +258,7 @@ pub fn BackupSection() -> impl IntoView {
                                         on:click=move |_| {
                                             set_restore_preview.set(None);
                                             set_selected_models.set(Vec::new());
-                                            set_restore_status.set(String::new());
+                                            set_restore_status.set(None);
                                         }
                                         class="btn btn-secondary"
                                     >

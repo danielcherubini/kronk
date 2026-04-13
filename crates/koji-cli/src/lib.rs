@@ -40,7 +40,7 @@ pub async fn main() -> Result<()> {
     }
 
     let args = Args::parse();
-    let config = Config::load()?;
+    let mut config = Config::load()?;
 
     // For serve/service-run --proxy, use file logging. Otherwise use stdout.
     let use_file_logging = matches!(
@@ -134,7 +134,7 @@ pub async fn main() -> Result<()> {
                 skip_backends,
                 skip_models,
             };
-            commands::backup::cmd_restore(&config, args).await
+            commands::backup::cmd_restore(&mut config, args).await
         }
         #[cfg(feature = "web-ui")]
         Commands::Web {

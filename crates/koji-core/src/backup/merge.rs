@@ -72,6 +72,10 @@ pub fn merge_model_cards(
         return Ok(copied);
     }
 
+    // Ensure local directory exists
+    std::fs::create_dir_all(local_configs_dir)
+        .with_context(|| format!("Failed to create local configs directory: {}", local_configs_dir.display()))?;
+
     for entry in std::fs::read_dir(backup_configs_dir)? {
         let entry = entry?;
         let path = entry.path();

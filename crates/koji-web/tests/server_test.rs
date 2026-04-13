@@ -16,6 +16,7 @@ mod tests {
                 proxy_config: None,
                 binary_version: "0.0.0-test".to_string(),
                 update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             });
             axum::serve(listener, koji_web::server::build_router(state))
                 .await
@@ -129,6 +130,7 @@ mod tests {
                     proxy_config: Some(proxy_config_server),
                     binary_version: "0.0.0-test".to_string(),
                     update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                    upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                 });
                 axum::serve(listener, koji_web::server::build_router(state))
                     .await

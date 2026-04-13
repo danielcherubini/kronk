@@ -145,14 +145,45 @@ pub async fn restore_preview(
 ) -> impl IntoResponse {
     // Save upload to temp file
     let temp_dir = state.temp_uploads_dir();
-    std::fs::create_dir_all(&temp_dir).ok();
+    if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to create temp directory: {}", e)})),
+        )
+            .into_response();
+    }
 
     let upload_id = Uuid::new_v4().simple().to_string();
     let upload_path = temp_dir.join(format!("{}.tar.gz", upload_id));
 
-    while let Some(field) = multipart.next_field().await.ok().flatten() {
-        let bytes = field.bytes().await.unwrap_or_default();
-        std::fs::write(&upload_path, &bytes).ok();
+    let mut uploaded = false;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let bytes = match field.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("Failed to read upload: {}", e)})),
+                )
+                    .into_response();
+            }
+        };
+        if let Err(e) = std::fs::write(&upload_path, &bytes) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to write upload: {}", e)})),
+            )
+                .into_response();
+        }
+        uploaded = true;
+    }
+
+    if !uploaded {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "No file uploaded"})),
+        )
+            .into_response();
     }
 
     // Extract manifest
@@ -220,7 +251,7 @@ pub async fn start_restore(
 ) -> impl IntoResponse {
     // Look up upload
     let uploads = state.upload_lock.read().await;
-    let upload_path = match uploads.get(&body.upload_id) {
+    let _upload_path = match uploads.get(&body.upload_id) {
         Some(entry) => entry.path.clone(),
         None => {
             return (
@@ -233,10 +264,15 @@ pub async fn start_restore(
     drop(uploads);
 
     // Create restore job
-    let job = state
-        .jobs
-        .as_ref()
-        .expect("Jobs not configured")
+    let Some(jobs) = state.jobs.as_ref() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Jobs not configured"})),
+        )
+            .into_response();
+    };
+
+    let job = jobs
         .submit(
             crate::jobs::JobKind::Restore,
             None, // No backend type for restore
@@ -245,18 +281,43 @@ pub async fn start_restore(
 
     match job {
         Ok(job) => {
-            // Spawn background task for restore
-            let config_dir = state.config_path.as_ref().unwrap().parent().unwrap().to_path_buf();
+            // Spawn background task for restore with safe error handling
+            let config_dir = match state.config_path.as_ref() {
+                Some(path) => match path.parent() {
+                    Some(parent) => parent.to_path_buf(),
+                    None => {
+                        tracing::error!("Config path has no parent directory");
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({"error": "Invalid config path"})),
+                        )
+                            .into_response();
+                    }
+                },
+                None => {
+                    tracing::error!("Config path not configured");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "Config path not configured"})),
+                    )
+                        .into_response();
+                }
+            };
             let temp_dir = state.temp_uploads_dir();
             let job_id = job.id.clone();
 
             tokio::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || {
+                let result = tokio::task::spawn_blocking(move || {
                     // TODO: Implement actual restore logic
                     // This would call koji_core::backup functions
                     let _ = (config_dir, temp_dir, job);
+                    Ok::<(), anyhow::Error>(())
                 })
                 .await;
+
+                if let Err(e) = result {
+                    tracing::error!("Restore task panicked: {:?}", e);
+                }
             });
 
             Json(RestoreResponse { job_id }).into_response()

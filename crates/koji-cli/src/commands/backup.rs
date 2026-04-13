@@ -95,10 +95,11 @@ pub fn cmd_backup(
 }
 
 /// Restore from a backup archive.
-pub async fn cmd_restore(config: &koji_core::config::Config, args: RestoreArgs) -> Result<()> {
+pub async fn cmd_restore(config: &mut koji_core::config::Config, args: RestoreArgs) -> Result<()> {
     let config_dir = config
         .loaded_from
         .as_ref()
+        .map(|p| p.to_path_buf())
         .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))?;
 
     if args.dry_run {
@@ -133,13 +134,19 @@ pub async fn cmd_restore(config: &koji_core::config::Config, args: RestoreArgs) 
     )?)
     .context("Failed to parse backup config")?;
 
-    let merge_stats = koji_core::backup::merge_config(&mut config.clone(), &backup_config);
+    let merge_stats = koji_core::backup::merge_config(&mut *config, &backup_config);
 
     println!(
         "Config merged: {} new backends, {} new models",
         merge_stats.new_backends.len(),
         merge_stats.new_models.len()
     );
+
+    // Persist merged config
+    let config_content = toml::to_string_pretty(&config)
+        .context("Failed to serialize merged config")?;
+    std::fs::write(&extract_result.config_path, config_content)
+        .context("Failed to write merged config")?;
 
     // Merge model cards
     let card_paths = koji_core::backup::merge_model_cards(
@@ -151,7 +158,7 @@ pub async fn cmd_restore(config: &koji_core::config::Config, args: RestoreArgs) 
     println!("Model cards: {} copied", card_paths.len());
 
     // Merge database
-    let local_conn = koji_core::db::open(config_dir)
+    let local_conn = koji_core::db::open(&config_dir)
         .context("Failed to open local database")?
         .conn;
 
