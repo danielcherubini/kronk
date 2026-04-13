@@ -90,29 +90,23 @@ pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoRespo
             .map(|m| m.len())
             .unwrap_or(0);
 
-        Ok::<_, anyhow::Error>((output_path, manifest, size))
+
+        // Read file inside blocking task to avoid blocking async runtime
+        let file_bytes = std::fs::read(&output_path)
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        let filename = output_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        Ok::<_, anyhow::Error>((file_bytes, filename, manifest, size))
     })
     .await;
 
     match result {
-        Ok(Ok((output_path, _manifest, _size))) => {
-            // Read the file and return as attachment
-            let file_bytes = match std::fs::read(&output_path) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": e.to_string()})),
-                    )
-                        .into_response();
-                }
-            };
-
-            let filename = output_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+        Ok(Ok((file_bytes, filename, _manifest, _size))) => {
             let disposition = format!("attachment; filename=\"{}\"", filename);
 
             (
