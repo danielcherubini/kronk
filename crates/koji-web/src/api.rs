@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::server::AppState;
 
 pub mod backends;
+pub mod backup;
 pub mod middleware;
 pub mod self_update;
 

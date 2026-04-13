@@ -137,6 +137,7 @@ enum Section {
     Proxy,
     Supervisor,
     Sampling,
+    // Backup, // TODO: Fix compilation
 }
 
 impl Section {
@@ -146,6 +147,7 @@ impl Section {
             Section::Proxy => "Proxy",
             Section::Supervisor => "Supervisor",
             Section::Sampling => "Sampling Templates",
+            // Section::Backup => "Backup & Restore", // TODO: Fix compilation
         }
     }
     fn icon(self) -> &'static str {
@@ -154,6 +156,7 @@ impl Section {
             Section::Proxy => "🌐",
             Section::Supervisor => "👀",
             Section::Sampling => "🎲",
+            // Section::Backup => "💾", // TODO: Fix compilation
         }
     }
 }
@@ -251,6 +254,7 @@ pub fn ConfigEditor() -> impl IntoView {
                                             Section::Proxy => "cfg-proxy",
                                             Section::Supervisor => "cfg-supervisor",
                                             Section::Sampling => "cfg-sampling",
+                                            // Section::Backup => "cfg-backup", // TODO: Fix compilation
                                         };
                                         let active = move || current.get() == s;
                                         view! {

@@ -273,7 +273,7 @@ pub async fn start_restore(
 
 /// Temporary upload entry.
 #[derive(Clone)]
-struct UploadEntry {
-    path: std::path::PathBuf,
-    created_at: chrono::DateTime<chrono::Utc>,
+pub struct UploadEntry {
+    pub path: std::path::PathBuf,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }

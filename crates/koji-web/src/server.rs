@@ -17,6 +17,7 @@ use crate::api::backends::{
     check_backend_updates, get_job, install_backend, job_events_sse, list_backends, remove_backend,
     system_capabilities, update_backend, update_backend_default_args, CapabilitiesCache,
 };
+use crate::api::backup::{create_backup, restore_preview, start_restore};
 use crate::jobs::JobManager;
 
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/dist");
@@ -35,6 +36,18 @@ pub struct AppState {
     /// Broadcast sender for self-update progress messages.
     /// `None` when no update is in progress.
     pub update_tx: Arc<tokio::sync::Mutex<Option<broadcast::Sender<String>>>>,
+    /// Temporary upload storage for restore archives.
+    pub upload_lock: Arc<tokio::sync::RwLock<std::collections::HashMap<String, api::backup::UploadEntry>>>,
+}
+
+impl AppState {
+    /// Get the temp uploads directory path.
+    pub fn temp_uploads_dir(&self) -> std::path::PathBuf {
+        self.config_path
+            .as_ref()
+            .map(|p| p.parent().unwrap_or(p.as_path()).join("uploads"))
+            .unwrap_or_else(|| std::env::temp_dir().join("koji_uploads"))
+    }
 }
 
 /// Serve a static file from the embedded `dist/` directory.
@@ -144,6 +157,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/backends/check-updates", post(check_backend_updates))
         .route("/api/backends/jobs/:id", get(get_job))
         .route("/api/backends/jobs/:id/events", get(job_events_sse))
+        // Restore routes (CSRF-protected)
+        .route("/api/restore/preview", post(restore_preview))
+        .route("/api/restore", post(start_restore))
         // Self-update POST is inside backend_routes for CSRF protection
         .route(
             "/api/self-update/update",
@@ -163,6 +179,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/logs", get(api::get_logs))
+        .route("/api/backup", get(create_backup))
         .route("/api/config", get(api::get_config).post(api::save_config))
         .route(
             "/api/config/structured",
