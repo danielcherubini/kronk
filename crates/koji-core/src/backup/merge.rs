@@ -14,7 +14,10 @@ struct DetachGuard<'a> {
 
 impl<'a> DetachGuard<'a> {
     fn new(conn: &'a rusqlite::Connection) -> Self {
-        Self { conn, attached: false }
+        Self {
+            conn,
+            attached: false,
+        }
     }
     fn attach(&mut self, path: &str) -> Result<()> {
         self.conn
@@ -101,8 +104,12 @@ pub fn merge_model_cards(
     }
 
     // Ensure local directory exists
-    std::fs::create_dir_all(local_configs_dir)
-        .with_context(|| format!("Failed to create local configs directory: {}", local_configs_dir.display()))?;
+    std::fs::create_dir_all(local_configs_dir).with_context(|| {
+        format!(
+            "Failed to create local configs directory: {}",
+            local_configs_dir.display()
+        )
+    })?;
 
     for entry in std::fs::read_dir(backup_configs_dir)? {
         let entry = entry?;

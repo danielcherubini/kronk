@@ -37,7 +37,8 @@ pub struct AppState {
     /// `None` when no update is in progress.
     pub update_tx: Arc<tokio::sync::Mutex<Option<broadcast::Sender<String>>>>,
     /// Temporary upload storage for restore archives.
-    pub upload_lock: Arc<tokio::sync::RwLock<std::collections::HashMap<String, api::backup::UploadEntry>>>,
+    pub upload_lock:
+        Arc<tokio::sync::RwLock<std::collections::HashMap<String, api::backup::UploadEntry>>>,
 }
 
 impl AppState {

@@ -248,7 +248,10 @@ mod tests {
 
         // Submit a job
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 
@@ -276,13 +279,19 @@ mod tests {
 
         // Submit first job
         let _job1 = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("first submit should succeed");
 
         // Second submit should fail
         let result = manager
-            .submit(JobKind::Update, Some(koji_core::backends::BackendType::IkLlama))
+            .submit(
+                JobKind::Update,
+                Some(koji_core::backends::BackendType::IkLlama),
+            )
             .await;
 
         assert!(matches!(result, Err(JobError::AlreadyRunning(_))));
@@ -296,7 +305,10 @@ mod tests {
         let mut job_ids = Vec::new();
         for _i in 0..9 {
             let job = manager
-                .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+                .submit(
+                    JobKind::Install,
+                    Some(koji_core::backends::BackendType::LlamaCpp),
+                )
                 .await
                 .expect("submit should succeed");
 
@@ -319,7 +331,10 @@ mod tests {
     async fn test_log_head_invariant_first_100_lines_pinned() {
         let manager = JobManager::new();
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 
@@ -347,7 +362,10 @@ mod tests {
     async fn test_log_tail_eviction_after_overflow() {
         let manager = JobManager::new();
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 
@@ -376,7 +394,10 @@ mod tests {
     async fn test_broadcast_channel_delivers_live_lines() {
         let manager = JobManager::new();
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 
@@ -403,7 +424,10 @@ mod tests {
     async fn test_register_child_appends_pid() {
         let manager = JobManager::new();
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 
@@ -419,7 +443,10 @@ mod tests {
     async fn test_kill_children() {
         let manager = JobManager::new();
         let job = manager
-            .submit(JobKind::Install, Some(koji_core::backends::BackendType::LlamaCpp))
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
             .await
             .expect("submit should succeed");
 

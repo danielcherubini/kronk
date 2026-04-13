@@ -143,11 +143,10 @@ pub async fn cmd_restore(config: &mut koji_core::config::Config, args: RestoreAr
     );
 
     // Persist merged config to real config location (not temp)
-    let config_content = toml::to_string_pretty(&config)
-        .context("Failed to serialize merged config")?;
+    let config_content =
+        toml::to_string_pretty(&config).context("Failed to serialize merged config")?;
     let real_config_path = config_dir.join("config.toml");
-    std::fs::write(&real_config_path, config_content)
-        .context("Failed to write merged config")?;
+    std::fs::write(&real_config_path, config_content).context("Failed to write merged config")?;
 
     // Merge model cards
     let card_paths = koji_core::backup::merge_model_cards(

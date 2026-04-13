@@ -89,7 +89,9 @@ fn build_test_app_state(config_content: &str) -> (Arc<AppState>, TempDir) {
         proxy_base_url: "http://127.0.0.1:11434".to_string(),
         binary_version: "0.0.0-test".to_string(),
         update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        upload_lock: std::sync::Arc::new(
+            tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        ),
     };
 
     (Arc::new(state), temp_dir)
@@ -203,7 +205,9 @@ async fn test_404_when_config_path_not_configured() {
         proxy_base_url: "http://127.0.0.1:11434".to_string(),
         binary_version: "0.0.0-test".to_string(),
         update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        upload_lock: std::sync::Arc::new(
+            tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        ),
     });
     let router = build_router(state);
 

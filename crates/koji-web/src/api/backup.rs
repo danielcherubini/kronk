@@ -83,17 +83,15 @@ pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoRespo
         let temp_dir = tempfile::tempdir().map_err(|e| anyhow::anyhow!(e))?;
         let output_path = temp_dir.path().join("backup.tar.gz");
 
-        let manifest =
-            koji_core::backup::create_backup(&config_dir, &output_path).map_err(|e| anyhow::anyhow!(e))?;
+        let manifest = koji_core::backup::create_backup(&config_dir, &output_path)
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         let size = std::fs::metadata(&output_path)
             .map(|m| m.len())
             .unwrap_or(0);
 
-
         // Read file inside blocking task to avoid blocking async runtime
-        let file_bytes = std::fs::read(&output_path)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let file_bytes = std::fs::read(&output_path).map_err(|e| anyhow::anyhow!(e))?;
 
         let filename = output_path
             .file_name()
@@ -223,7 +221,7 @@ pub async fn restore_preview(
                     })
                     .collect(),
             })
-                .into_response()
+            .into_response()
         }
         Ok(Err(e)) => (
             StatusCode::BAD_REQUEST,
