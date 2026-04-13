@@ -295,6 +295,7 @@ struct BackendEntry {
     pub source: String,
 }
 
+#[derive(serde::Deserialize, Clone)]
 struct RestorePreviewData {
     pub upload_id: String,
     pub created_at: String,

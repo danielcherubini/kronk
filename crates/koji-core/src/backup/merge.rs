@@ -6,6 +6,34 @@ use anyhow::{Context, Result};
 
 use crate::config::Config;
 
+/// RAII guard to ensure database is always detached.
+struct DetachGuard<'a> {
+    conn: &'a rusqlite::Connection,
+    attached: bool,
+}
+
+impl<'a> DetachGuard<'a> {
+    fn new(conn: &'a rusqlite::Connection) -> Self {
+        Self { conn, attached: false }
+    }
+    fn attach(&mut self, path: &str) -> Result<()> {
+        self.conn
+            .execute("ATTACH DATABASE ? AS backup_db", [path])
+            .context("Failed to attach backup database")?;
+        self.attached = true;
+        Ok(())
+    }
+}
+
+impl Drop for DetachGuard<'_> {
+    fn drop(&mut self) {
+        if self.attached {
+            // Best effort detach - ignore errors since we're in Drop
+            let _ = self.conn.execute("DETACH DATABASE backup_db", []);
+        }
+    }
+}
+
 /// Statistics from merging config.
 #[derive(Debug, Default)]
 pub struct MergeStats {
@@ -115,11 +143,10 @@ pub fn merge_database(
 ) -> Result<DbMergeStats> {
     let mut stats = DbMergeStats::default();
 
-    // Attach backup database
+    // Attach backup database with RAII guard to ensure cleanup
+    let mut guard = DetachGuard::new(local_db);
     let backup_db_path_str = backup_db_path.to_string_lossy().to_string();
-    local_db
-        .execute("ATTACH DATABASE ? AS backup_db", [&backup_db_path_str])
-        .context("Failed to attach backup database")?;
+    guard.attach(&backup_db_path_str)?;
 
     // Merge model_pulls (explicit column list, no id)
     let before = count_model_pulls(local_db)?;
@@ -160,11 +187,7 @@ pub fn merge_database(
     let after = count_backend_installations(local_db)?;
     stats.new_backend_installations = after.saturating_sub(before);
 
-    // Detach backup database
-    local_db
-        .execute("DETACH DATABASE backup_db", [])
-        .context("Failed to detach backup database")?;
-
+    // Guard will detach on drop
     Ok(stats)
 }
 
