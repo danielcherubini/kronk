@@ -284,8 +284,22 @@ impl ProxyState {
         let mut to_unload = Vec::new();
         let mut failed_to_remove = Vec::new();
 
+        let idle_timeout_secs = self.config.read().await.proxy.idle_timeout_secs;
+
+        // A timeout of 0 means auto-unload is disabled
+        if idle_timeout_secs == 0 {
+            return Vec::new();
+        }
+
+        let timeout = Duration::from_secs(idle_timeout_secs);
         let models = self.models.read().await;
         for (server_name, state) in models.iter() {
+            // Skip servers that are still starting — they haven't had a
+            // chance to become ready yet so there is nothing to unload.
+            if matches!(state, ModelState::Starting { .. }) {
+                continue;
+            }
+
             // Failed models have no last_accessed; always mark them for cleanup
             let last = match state.last_accessed() {
                 Some(t) => t,
@@ -299,8 +313,6 @@ impl ProxyState {
                 }
             };
             let idle_duration = now.saturating_duration_since(last);
-            let idle_timeout_secs = self.config.read().await.proxy.idle_timeout_secs;
-            let timeout = Duration::from_secs(idle_timeout_secs);
 
             if idle_duration > timeout {
                 warn!(
