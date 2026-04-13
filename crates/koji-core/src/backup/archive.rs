@@ -406,7 +406,6 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backup::BACKUP_FORMAT_VERSION;
     use rusqlite::Connection;
     use std::fs;
 
