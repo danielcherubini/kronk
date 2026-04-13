@@ -13,7 +13,6 @@ pub async fn download_single(
     client: &Client,
     url: &str,
     dest: &Path,
-    auth_header: Option<&str>,
     pb: &ProgressBar,
 ) -> anyhow::Result<()> {
     let mut attempt = 0u32;
@@ -23,9 +22,6 @@ pub async fn download_single(
         attempt += 1;
 
         let mut request = client.get(url);
-        if let Some(header) = auth_header {
-            request = request.header("Authorization", header);
-        }
         if downloaded > 0 {
             request = request.header("Range", format!("bytes={}-", downloaded));
         }

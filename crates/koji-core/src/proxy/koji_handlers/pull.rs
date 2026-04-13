@@ -152,9 +152,22 @@ fn spawn_download_job(
             }
         });
 
+        // Get authenticated client from hf-hub to use HF_TOKEN
+        let client = match crate::models::pull::hf_api().await {
+            Ok(api) => api.client(),
+            Err(e) => {
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(format!("Failed to get hf-hub API client: {}", e));
+                }
+                return;
+            }
+        };
+
         // Run the actual download
         let download_result =
-            crate::models::download::download_chunked(&url, &dest_path, 8, None).await;
+            crate::models::download::download_chunked(client, &url, &dest_path, 8).await;
 
         // Stop the polling task
         poll_handle.abort();

@@ -2,7 +2,6 @@ mod parallel;
 mod single;
 
 use std::path::Path;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -21,44 +20,15 @@ pub fn parse_content_length(headers: &HeaderMap) -> Option<u64> {
         .and_then(|s| s.parse::<u64>().ok())
 }
 
-/// Build an HTTP client with sensible timeouts for large file downloads.
-fn build_client() -> Result<Client> {
-    Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .read_timeout(Duration::from_secs(30))
-        .build()
-        .context("Failed to create HTTP client")
-}
-
 /// Download a file using parallel HTTP Range requests.
 /// Falls back to single-stream if Range is not supported.
 /// Skips download if the destination already exists with matching size.
 pub async fn download_chunked(
+    client: &Client,
     url: &str,
     dest: &Path,
     connections: usize,
-    auth_header: Option<&str>,
 ) -> Result<u64> {
-    let client = build_client()?;
-
-    // Apply auth header if provided, otherwise use hf-hub's default token
-    let client = if let Some(header) = auth_header {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(header)
-                .context("Invalid authorization header value")?,
-        );
-        Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .read_timeout(Duration::from_secs(30))
-            .default_headers(headers)
-            .build()
-            .context("Failed to create HTTP client with auth header")?
-    } else {
-        client
-    };
-
     // HEAD request to get Content-Length and check Range support
     let head = client
         .head(url)
@@ -111,13 +81,10 @@ pub async fn download_chunked(
             .progress_chars("=>-"),
     );
 
-    // Note: auth_header is already set as a default header on the client,
-    // so we pass None to avoid duplicate Authorization headers.
     let result = if num_connections == 1 {
-        single::download_single(&client, url, dest, None, &pb).await
+        single::download_single(client, url, dest, &pb).await
     } else {
-        parallel::download_parallel(&client, url, dest, total_size, num_connections, None, &pb)
-            .await
+        parallel::download_parallel(client, url, dest, total_size, num_connections, &pb).await
     };
 
     pb.finish_and_clear();
@@ -164,7 +131,8 @@ mod tests {
 
         // Use a small known file from HuggingFace (a config.json)
         let url = "https://huggingface.co/gpt2/resolve/main/config.json";
-        let size = download_chunked(url, &dest, 1, None).await.unwrap();
+        let client = Client::new();
+        let size = download_chunked(&client, url, &dest, 1).await.unwrap();
 
         assert!(dest.exists());
         assert!(size > 0);
@@ -179,7 +147,8 @@ mod tests {
 
         // Use a larger file to test parallel downloads
         let url = "https://huggingface.co/gpt2/resolve/main/merges.txt";
-        let size = download_chunked(url, &dest, 4, None).await.unwrap();
+        let client = Client::new();
+        let size = download_chunked(&client, url, &dest, 4).await.unwrap();
 
         assert!(dest.exists());
         assert!(size > 0);
@@ -193,11 +162,12 @@ mod tests {
         let dest = tmp.path().join("test.txt");
 
         let url = "https://huggingface.co/gpt2/resolve/main/config.json";
+        let client = Client::new();
 
         // Download once
-        let size1 = download_chunked(url, &dest, 1, None).await.unwrap();
+        let size1 = download_chunked(&client, url, &dest, 1).await.unwrap();
         // Download again — should skip
-        let size2 = download_chunked(url, &dest, 1, None).await.unwrap();
+        let size2 = download_chunked(&client, url, &dest, 1).await.unwrap();
 
         assert_eq!(size1, size2);
     }
