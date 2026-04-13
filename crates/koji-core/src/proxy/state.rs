@@ -13,7 +13,12 @@ impl ProxyState {
             models: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(
-                    config_clone.proxy.idle_timeout_secs + 30,
+                    if config_clone.proxy.idle_timeout_secs == 0 {
+                        // idle_timeout disabled — use a generous request timeout
+                        600
+                    } else {
+                        config_clone.proxy.idle_timeout_secs + 30
+                    },
                 ))
                 .build()
                 // reqwest Client::build() only fails if TLS backend init fails,
