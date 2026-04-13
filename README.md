@@ -2,26 +2,36 @@
 
 # Koji
 
-> A local AI server with automatic backend management.
+> A local AI server with automatic backend management and a web-based control plane
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/danielcherubini/koji/ci.yml?label=CI&style=flat-square)](https://github.com/danielcherubini/koji/actions)
 
+[Overview](#overview) • [Quick Start](#quick-start) • [Web UI](#web-ui) • [CLI Reference](#cli-reference) • [Configuration](#configuration) • [Architecture](#architecture)
+
 </div>
 
-A local AI server written in Rust. Koji provides an OpenAI-compatible API on a single port, automatically managing backend lifecycles — starting models on demand, routing requests, and unloading idle models to save resources.
+---
 
-Think of it as your own local Ollama or LM Studio server, but for llama.cpp and ik_llama backends.
+## Overview
 
-> [!TIP]
-> Get up and running: `koji model pull bartowski/OmniCoder-8B-GGUF && koji serve`
+Koji is a local AI server written in Rust that provides an OpenAI-compatible API on a single port. It automatically manages backend lifecycles — starting models on demand, routing requests, and unloading idle models to save resources.
+
+**Key features:**
+
+- **OpenAI-compatible API** — Works with any client that supports the OpenAI API format
+- **Automatic backend management** — Starts, routes, and unloads llama.cpp/ik_llama backends on demand
+- **Web-based control plane** — Browser UI for managing models, viewing logs, and editing configuration
+- **GPU acceleration** — Supports CUDA, Vulkan, Metal, and ROCm
+- **Cross-platform** — Windows, Linux, and macOS support with native service integration
+- **Model optimization** — Automatically detects VRAM and suggests optimal quantizations and context sizes
 
 ---
 
 ## Quick Start
 
-### Install
+### Installation
 
 **Windows:** Download the installer from [Releases](https://github.com/danielcherubini/koji/releases), or:
 
@@ -41,129 +51,125 @@ sudo dpkg -i koji_*.deb
 sudo rpm -i koji-*.rpm
 ```
 
-### Pull a model from HuggingFace
+### Run Koji
 
 ```bash
-koji model pull bartowski/OmniCoder-8B-GGUF
-```
-
-Koji downloads all available quants, detects your GPU VRAM, and suggests optimal context sizes.
-
-### Start the server
-
-```bash
-koji serve
-```
-
-That's it. Koji starts an OpenAI-compatible server on `http://localhost:11434`. When a request comes in for a model, Koji automatically starts the right backend, waits for it to be ready, and forwards the request.
-
-```bash
-curl http://localhost:11434/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "bartowski/OmniCoder-8B-GGUF",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-Models are unloaded after 5 minutes of inactivity (configurable with `--idle-timeout`).
-
-### Install as a system service
-
-```bash
-# Install and start (run as admin / sudo)
 koji service install
 koji service start
-
-# After that, no admin needed
-koji service stop
-koji service start
-koji status
 ```
 
-> [!NOTE]
-> For debugging individual backends, you can still use `koji run <server-name>` to run a single server in the foreground.
+> [!TIP]
+> On Windows, Koji registers as a native Windows Service with firewall configuration. On Linux, it creates a systemd user unit.
 
 ---
 
-## Web Control Plane
+## Web UI
 
-Koji includes a web-based control plane UI for managing models, viewing logs, and editing config from a browser.
+Koji includes a web-based control plane for managing models, viewing logs, and editing configuration from your browser.
 
-```bash
-# 1. Build the frontend (requires trunk: cargo install trunk)
-cd crates/koji-web && trunk build --release && cd ../..
-
-# 2. Start the web server (port 11435 by default)
-cargo run --package koji-web --features ssr
-
-# Or via the CLI (with web-ui feature):
-cargo run --package koji --features web-ui -- web --port 11435
-
-# 3. Open http://localhost:11435
-```
-
-The web UI proxies all `/koji/v1/` requests to the running Koji proxy (default `http://127.0.0.1:11434`).
+### Running the web UI
 
 The web server starts automatically alongside the proxy when using `koji service start`.
 
----
-
-## CLI
-
-```text
-koji serve [--host H] [--port P] [--idle-timeout S]  Start the server
-koji status                                       Show status of all servers
-koji service install                              Install as a system service
-koji service start                                Start the service
-koji service stop                                 Stop the service
-koji service remove                               Remove the service
-koji model pull <repo>                            Pull a model from HuggingFace
-koji model ls                                     List installed models
-koji model ps                                     Show running model processes
-koji model create <name>                          Create a server from an installed model
-koji model rm <model>                             Remove an installed model
-koji model scan                                   Scan for untracked GGUF files
-koji model search <query>                         Search HuggingFace for GGUF models
-koji config show                                  Print the current configuration
-koji config edit                                  Open config file in editor
-koji config path                                  Show the config file path
-koji logs [name]                                  View logs (defaults to proxy logs)
-koji run <name> [--ctx N]                         Run a single backend (for debugging)
-```
-
-### Backend Management
-
-Koji manages LLM backend installations (llama.cpp, ik_llama) with automatic version tracking and updates:
+For development or manual startup:
 
 ```bash
-koji backend install llama_cpp    # Install latest llama.cpp
-koji backend install ik_llama     # Install latest ik_llama (builds from source)
-koji backend install llama_cpp --version b8407  # Install specific version
-koji backend install llama_cpp --build    # Force build from source
-koji backend update <name>        # Update to latest version
-koji backend list                 # List installed backends
-koji backend remove <name>        # Remove a backend
-koji backend check-updates        # Check for updates
+cargo run --package koji --features web-ui -- web --port 11435
 ```
 
-### Installation Details
+Open [http://localhost:11435](http://localhost:11435) to access the dashboard.
 
-- **llama.cpp**: Downloads pre-built binaries for your platform, or builds from source with GPU support
-- **ik_llama**: Always builds from source (no pre-built binaries available)
-- **Linux/macOS:** Backends in `~/.config/koji/backends/`
-- **Windows:** Backends in `%APPDATA%\koji\backends\`
-- Version tracking in `~/.config/koji/backend_registry.toml` (Linux/macOS) or `%APPDATA%\koji\backend_registry.toml` (Windows)
+> [!NOTE]
+> The web UI proxies all `/koji/v1/` requests to the running Koji proxy (default `http://127.0.0.1:11434`).
 
-### GPU Support
+### Dashboard features
 
-The installer detects your GPU and prompts you to select acceleration:
+- **Models page** — View installed models, pull new ones from HuggingFace, edit model configurations
+- **Backends page** — Manage llama.cpp and ik_llama installations, update versions
+- **Logs viewer** — Real-time log streaming with filtering
+- **Config editor** — Edit configuration directly from the browser
+- **Model status tiles** — See which models are running, their active backends, and job logs
 
-- **CUDA** (NVIDIA) — CUDA cores for faster inference
-- **Vulkan** (AMD/Intel/NVIDIA) — Cross-platform GPU acceleration
-- **Metal** (Apple Silicon) — macOS GPU acceleration
-- **ROCm** (AMD) — AMD GPU support on Linux
-- **CPU** — Fallback when no GPU is available
+---
+
+## CLI Reference
+
+### Server management
+
+| Command | Description |
+|---------|-------------|
+| `koji serve` | Start the OpenAI-compatible API server (port 11434) |
+| `koji status` | Show status of all servers and running models |
+| `koji service install` | Install as a system service |
+| `koji service start` | Start the service |
+| `koji service stop` | Stop the service |
+| `koji service restart` | Restart the service |
+| `koji service remove` | Remove the service |
+
+### Model management
+
+| Command | Description |
+|---------|-------------|
+| `koji model pull <repo>` | Pull a model from HuggingFace |
+| `koji model ls` | List installed models |
+| `koji model create` | Create a model config from an installed model |
+| `koji model enable <name>` | Enable a model for on-demand loading |
+| `koji model disable <name>` | Disable a model |
+| `koji model rm <model>` | Remove an installed model |
+| `koji model scan` | Scan for untracked GGUF files |
+| `koji model search <query>` | Search HuggingFace for GGUF models |
+| `koji model update [model]` | Check for and download model updates |
+| `koji model verify [model]` | Verify GGUF files against HuggingFace hashes |
+| `koji model prune` | Remove orphaned GGUF files |
+
+### Backend management
+
+Koji manages LLM backend installations with automatic version tracking:
+
+```bash
+koji backend install llama_cpp     # Download pre-built llama.cpp binaries
+koji backend install ik_llama      # Build from source
+koji backend install llama_cpp --version b8407  # Specific version
+koji backend install llama_cpp --build    # Force build from source
+koji backend update <name>         # Update to latest version
+koji backend list                  # List installed backends
+koji backend remove <name>        # Remove a backend
+koji backend check-updates         # Check for updates
+```
+
+### Server management
+
+```bash
+koji server ls                    # List all servers with status
+koji server add <name> <cmd>      # Add a new server
+koji server edit <name> <cmd>     # Edit an existing server
+koji server rm <name>             # Remove a server
+```
+
+### Sampling profiles
+
+```bash
+koji profile list                  # List all available profiles
+koji profile set <server> <name>  # Set a server's sampling profile
+koji profile clear <server>        # Clear a server's sampling profile
+```
+
+### Configuration
+
+| Command | Description |
+|---------|-------------|
+| `koji config show` | Print the current configuration |
+| `koji config edit` | Open config file in editor |
+| `koji config path` | Show the config file path |
+
+### Utilities
+
+| Command | Description |
+|---------|-------------|
+| `koji logs [name]` | View logs (defaults to proxy logs) |
+| `koji run <name>` | Run a single backend for debugging |
+| `koji bench [name]` | Benchmark model inference |
+| `koji self-update` | Update Koji to the latest version |
 
 ---
 
@@ -171,12 +177,12 @@ The installer detects your GPU and prompts you to select acceleration:
 
 Koji auto-generates a config on first run:
 
-- **Windows:** `%APPDATA%\koji\config\config.toml`
-- **Linux:** `~/.config/koji/config.toml`
+- **Windows:** `%APPDATA%\koji\config.toml`
+- **Linux/macOS:** `~/.config/koji/config.toml`
 
 ```toml
 [backends.llama_cpp]
-path = "C:\\path\\to\\llama-server.exe"
+path = "/path/to/llama-server"
 health_check_url = "http://localhost:8080/health"
 
 [models.my-model]
@@ -199,50 +205,33 @@ restart_delay_ms = 3000
 health_check_interval_ms = 5000
 ```
 
-The `[models.*]` key (e.g. `my-model`) is the alias used by clients in `"model": "my-model"`. You can define multiple models. When `koji serve` is running, request any enabled model and its backend will start automatically. Backend ports are auto-assigned — you don't need to configure them.
+### Directory layout
 
-Model cards are stored in `~/.config/koji/configs/<company>--<model>.toml` and contain quant info, context settings, and sampling presets.
-
-### Directory Layout
-
-```text
+```
 ~/.config/koji/
 ├── config.toml              Main configuration
-├── profiles/              Sampling presets (editable)
-│   ├── coding.toml
-│   ├── chat.toml
-│   ├── analysis.toml
-│   └── creative.toml
-├── configs/               Model cards
+├── koji.db                   SQLite database
+├── profiles/                Sampling presets (coding, chat, analysis, creative)
+├── configs/                 Model cards with quant info and context settings
 │   └── bartowski--OmniCoder-8B.toml
 ├── models/                  GGUF model files
 │   └── bartowski/OmniCoder-8B/*.gguf
+├── backends/                llama.cpp and ik_llama binaries
 └── logs/                    Service logs
 ```
 
 > [!NOTE]
-> On first run after upgrading from kronk, Koji automatically renames
-> `~/.config/kronk` (or `%APPDATA%\kronk`) to `~/.config/koji` (or
-> `%APPDATA%\koji`) and renames the `kronk.db` database to `koji.db`.
+> On first run after upgrading from kronk, Koji automatically migrates `~/.config/kronk` to `~/.config/koji`.
 
----
+### GPU acceleration
 
-## How It Works
+The installer detects your GPU and offers these acceleration options:
 
-1. `koji serve` starts an OpenAI-compatible API server on a single port (default 11434)
-2. When a request arrives with `"model": "my-model"`, koji looks up the config key in `[models.*]`
-3. If the backend isn't running, koji auto-assigns a free port, starts the backend with the right GGUF file, and waits for it to become healthy
-4. The request is forwarded to the backend and the response is streamed back
-5. After `idle_timeout_secs` of inactivity, the backend is shut down to free resources
-
-### Service Integration
-
-- **Windows:** Native Service Control Manager via the `windows-service` crate. `koji service install` registers koji as a Windows Service that auto-starts on boot. No NSSM or wrappers needed.
-- **Linux:** Generates and manages systemd user units. `koji service install` creates the unit file, enables it, and starts the service.
-
-### Firewall (Windows)
-
-`koji service install` automatically adds an inbound firewall rule for port 11434. `koji service remove` cleans it up.
+- **CUDA** (NVIDIA) — Fast inference on NVIDIA GPUs
+- **Vulkan** (AMD/Intel/NVIDIA) — Cross-platform GPU acceleration
+- **Metal** (Apple Silicon) — Native macOS GPU acceleration
+- **ROCm** (AMD) — AMD GPU support on Linux
+- **CPU** — Fallback when no GPU is available
 
 ---
 
@@ -251,19 +240,34 @@ Model cards are stored in `~/.config/koji/configs/<company>--<model>.toml` and c
 ```
 koji/
 ├── crates/
-│   ├── koji-core/       # Config, process supervisor, platform abstraction
-│   ├── koji-cli/        # CLI binary (clap)
+│   ├── koji-core/       # Config, process supervisor, proxy, platform abstraction
+│   ├── koji-cli/        # CLI binary with clap
 │   ├── koji-mock/       # Mock LLM backend for testing
-│   └── koji-web/        # Leptos web control plane
-├── installer/           # Inno Setup script (Windows installer)
-├── modelcards/          # Community model cards
-├── .github/workflows/   # CI/CD release pipeline
-└── README.md
+│   └── koji-web/        # Leptos web control plane (WASM + SSR)
+├── config/              # Configuration templates
+├── docs/                # Documentation
+├── installer/           # Windows Inno Setup script
+└── modelcards/         # Community model cards
 ```
+
+### Core components
+
+- **koji-core** — Config management, process supervision, backend registry, proxy server, database
+- **koji-cli** — Command-line interface with clap, interactive prompts with inquire
+- **koji-web** — Leptos WASM frontend with real-time updates, SSR server for hosting
+- **koji-mock** — Mock backend for testing and development
+
+### How it works
+
+1. `koji serve` (or `koji service start`) starts an OpenAI-compatible API server on port 11434
+2. When a request arrives with `"model": "my-model"`, koji looks up the config
+3. If the backend isn't running, koji auto-assigns a free port and starts it
+4. The request is forwarded to the backend and the response is streamed back
+5. After `idle_timeout_secs` of inactivity, the backend is shut down
 
 ---
 
-## Building from Source
+## Building from source
 
 ```bash
 git clone https://github.com/danielcherubini/koji.git
@@ -273,34 +277,20 @@ cargo build --release
 
 The binary is at `target/release/koji.exe` (Windows) or `target/release/koji` (Linux).
 
+For development with the web UI:
+
+```bash
+# Install trunk for frontend builds
+cargo install trunk
+
+# Build and run with web features
+cargo run --package koji --features web-ui -- web
+```
+
 ---
 
 ## Roadmap
 
-- **TUI Dashboard** — `koji-tui` crate with ratatui
-- **System tray** — Windows tray icon for quick service toggle
+- **TUI Dashboard** — Terminal UI with ratatui for resource monitoring
+- **System tray** — Quick service toggle from the system tray
 - **Tauri GUI** — Lightweight desktop frontend for non-CLI users
-
----
-
-## Development
-
-Koji is built with modern Rust and follows these core crates:
-
-- **koji-core** — Core logic, process supervision, config management, platform abstractions
-- **koji-cli** — Command-line interface with clap, user prompts with inquire
-- **koji-mock** — Mock backend for testing and development
-- **koji-web** — Leptos WASM frontend and SSR server for the web control plane
-
-### Dependencies
-
-Key dependencies include:
-
-- `tokio` — Async runtime with process management
-- `clap` — CLI parsing
-- `serde` / `toml` — Configuration serialization
-- `tracing` — Structured logging
-- `reqwest` / `hf-hub` — HTTP client and HuggingFace integration
-- `sysinfo` — System resource monitoring
-- `indicatif` — Progress bars for downloads
-- `directories` — Platform-specific config paths
