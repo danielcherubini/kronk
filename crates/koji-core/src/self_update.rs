@@ -255,8 +255,28 @@ fn perform_update_sync(
     on_progress("Replacing binary...".to_string());
 
     // 6. Replace the running binary
-    self_update::self_replace::self_replace(&extracted_path)
-        .context("Failed to replace running binary")?;
+    //
+    // self_replace resolves the running exe via /proc/self/exe which can
+    // break when the binary was installed with `cargo install` (the old
+    // file may have been deleted). Fall back to a direct copy if it fails.
+    let current_exe = std::env::current_exe().context("Failed to get current exe path")?;
+    // Resolve symlinks so we replace the actual file, not the symlink
+    let target_exe = current_exe.canonicalize().unwrap_or(current_exe.clone());
+    tracing::info!(
+        current_exe = %current_exe.display(),
+        target_exe = %target_exe.display(),
+        new_binary = %extracted_path.display(),
+        "Replacing running binary"
+    );
+    if let Err(e) = self_update::self_replace::self_replace(&extracted_path) {
+        tracing::warn!(
+            "self_replace failed ({}), falling back to direct copy to '{}'",
+            e,
+            target_exe.display()
+        );
+        std::fs::copy(&extracted_path, &target_exe)
+            .with_context(|| format!("Failed to copy new binary to '{}'", target_exe.display()))?;
+    }
 
     on_progress("Update complete!".to_string());
 
