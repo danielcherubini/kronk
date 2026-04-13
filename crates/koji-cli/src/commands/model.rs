@@ -7,6 +7,7 @@ use koji_core::db::OpenResult;
 use koji_core::models::pull;
 use koji_core::models::search::{self, SortBy};
 use koji_core::models::{ModelCard, ModelMeta, ModelRegistry, QuantInfo};
+use reqwest::Client;
 
 use crate::cli::ModelCommands;
 
@@ -239,7 +240,8 @@ async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
         println!();
         println!("  Downloading {}...", gguf.filename);
 
-        let result = pull::download_gguf(repo_id, &gguf.filename, &model_dir).await?;
+        let client = Client::new();
+        let result = pull::download_gguf(&client, repo_id, &gguf.filename, &model_dir).await?;
 
         let base_quant = gguf.quant.clone().unwrap_or_else(|| gguf.filename.clone());
         let quant_key = unique_quant_key(&card.quants, &base_quant, &gguf.filename);
@@ -868,9 +870,14 @@ async fn cmd_update(
             }
 
             println!("  Downloading {}...", file_info.filename);
-            let dl =
-                koji_core::models::pull::download_gguf(repo_id, &file_info.filename, &model.dir)
-                    .await?;
+            let client = Client::new();
+            let dl = koji_core::models::pull::download_gguf(
+                &client,
+                repo_id,
+                &file_info.filename,
+                &model.dir,
+            )
+            .await?;
 
             // Update DB with blob metadata (fetched once above)
             let lfs_sha = blobs

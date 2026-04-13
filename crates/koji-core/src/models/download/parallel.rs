@@ -16,7 +16,6 @@ pub async fn download_parallel(
     dest: &Path,
     total_size: u64,
     num_connections: usize,
-    auth_header: Option<&str>,
     pb: &ProgressBar,
 ) -> anyhow::Result<()> {
     if num_connections == 0 {
@@ -56,20 +55,9 @@ pub async fn download_parallel(
         let url = url.to_string();
         let tmp_path = tmp_path.clone();
         let pb = pb.clone();
-        let auth_header = auth_header.map(|h| h.to_string());
 
         let handle = tokio::spawn(async move {
-            download_chunk_with_retry(
-                &client,
-                &url,
-                &tmp_path,
-                start,
-                end,
-                i,
-                &pb,
-                auth_header.as_deref(),
-            )
-            .await?;
+            download_chunk_with_retry(&client, &url, &tmp_path, start, end, i, &pb).await?;
             Ok::<PathBuf, anyhow::Error>(tmp_path)
         });
 
@@ -124,7 +112,6 @@ async fn download_chunk_with_retry(
     end: u64,
     chunk_index: usize,
     pb: &ProgressBar,
-    auth_header: Option<&str>,
 ) -> anyhow::Result<()> {
     let expected_size = end - start + 1;
     let mut attempt = 0u32;
@@ -133,10 +120,7 @@ async fn download_chunk_with_retry(
         attempt += 1;
 
         let range = format!("bytes={}-{}", start, end);
-        let mut request = client.get(url).header("Range", &range);
-        if let Some(header) = auth_header {
-            request = request.header("Authorization", header);
-        }
+        let request = client.get(url).header("Range", &range);
         let resp = match request.send().await {
             Ok(r) => r,
             Err(e) if attempt <= MAX_RETRIES => {

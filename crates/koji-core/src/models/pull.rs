@@ -10,7 +10,7 @@ use crate::models::card::ModelCard;
 static HF_API: OnceCell<Api> = OnceCell::const_new();
 
 /// Get or create the shared HuggingFace API client.
-async fn hf_api() -> Result<&'static Api> {
+pub(crate) async fn hf_api() -> Result<&'static Api> {
     HF_API
         .get_or_try_init(|| async {
             Api::new().context("Failed to initialise HuggingFace API client")
@@ -288,6 +288,7 @@ pub struct DownloadResult {
 /// Returns the local path and file size.
 /// Downloads directly via reqwest with parallel chunked downloads (bypasses hf-hub's downloader).
 pub async fn download_gguf(
+    client: &reqwest::Client,
     repo_id: &str,
     filename: &str,
     dest_dir: &std::path::Path,
@@ -305,8 +306,7 @@ pub async fn download_gguf(
 
     // Use chunked parallel download (includes skip-if-exists check)
     let size_bytes = crate::models::download::download_chunked(
-        &url, &dest_path, 8,    // connections
-        None, // auth header - will be added by download_chunked using hf-hub's default token
+        client, &url, &dest_path, 8, // connections
     )
     .await
     .with_context(|| format!("Failed to download '{}' from '{}'", filename, repo_id))?;
