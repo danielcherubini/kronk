@@ -14,8 +14,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 51
-- **Completed**: 49 ✅
+- **Total Plans**: 52
+- **Completed**: 50 ✅
 - **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -64,6 +64,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
 | [Unified Model Config](2026-04-05-unified-model-config.md) | Merge model cards into ModelConfig with unified fields | `95c8e01`, `13bc2d3`, `0be825a` |
+| [Integrate hf-hub for Authenticated Parallel Downloads](2026-04-14-integrate-hf-hub-for-downloads.md) | Use hf-hub's authenticated client for gated/private repos, fix slow start | `eac40cb` |
 | [Interactive Model Pull Wizard](2026-04-04-interactive-model-pull-wizard.md) | Multi-step HF pull wizard with SSE progress | `04d609d`, `abe6aff`, `1114a13` |
 | [Pull Quant from Model Editor](2026-04-07-pull-quant-from-model-editor-spec.md) | Pull new quants via modal on model edit page | #39 `d39e3e4`, `4b2803b`, `113da31` |
 | [mmproj Support](2026-04-07-mmproj-support-spec.md) | Vision projector file support in pull wizard and model config | #40 `0489cc0`, `d58aa67`, `492dd1a` |
