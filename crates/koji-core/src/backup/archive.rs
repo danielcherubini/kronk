@@ -65,15 +65,17 @@ pub fn create_backup(config_dir: &Path, output_path: &Path) -> Result<BackupMani
     }
     add_file_to_hasher(&config_path, "config.toml")?;
 
-    // Add all model card TOML files
+    // Add all model card TOML files (sorted for consistent hashing)
     let configs_dir = config_dir.join("configs");
     if configs_dir.exists() {
-        for entry in fs::read_dir(&configs_dir)? {
-            let entry = entry?;
+        let mut entries: Vec<_> = fs::read_dir(&configs_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        entries.sort_by_key(|e| e.path());
+        for entry in entries {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "toml") {
-                add_file_to_hasher(&path, &format!("config card: {}", path.display()))?;
-            }
+            add_file_to_hasher(&path, &format!("config card: {}", path.display()))?;
         }
     }
 
@@ -314,10 +316,33 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
 
             let dest_path = target_dir.join(entry_name_owned.trim_start_matches("/"));
 
+            // Validate path to prevent traversal attacks
+            let canonical_target = target_dir.canonicalize()
+                .with_context(|| format!("Failed to canonicalize target directory: {}", target_dir.display()))?;
+            
+            // Check for path traversal before creating directories
+            if dest_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                anyhow::bail!("Path traversal detected in archive entry: {}", entry_name_owned);
+            }
+
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent).with_context(|| {
                     format!("Failed to create parent directory: {}", parent.display())
                 })?;
+            }
+
+            // Double-check the resolved path is within target_dir
+            if let Ok(canonical_dest) = dest_path.canonicalize() {
+                if !canonical_dest.starts_with(&canonical_target) {
+                    anyhow::bail!("Extracted path escapes target directory: {}", dest_path.display());
+                }
+            } else {
+                // Path doesn't exist yet, check relative path
+                let relative = dest_path.strip_prefix(&canonical_target)
+                    .map_err(|_| anyhow::anyhow!("Path escapes target directory: {}", dest_path.display()))?;
+                if relative.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                    anyhow::bail!("Extracted path escapes target directory: {}", dest_path.display());
+                }
             }
 
             let mut file = File::create(&dest_path)
