@@ -155,6 +155,13 @@ fn perform_update_sync(
         .asset_for(target, None)
         .ok_or_else(|| anyhow!("No release asset found for target '{target}'"))?;
 
+    tracing::info!(
+        target = target,
+        asset_name = %asset.name,
+        download_url = %asset.download_url,
+        "Found release asset for self-update"
+    );
+
     // 4. Download to a temporary file
     let tmp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
     let tmp_archive = tmp_dir.path().join(&asset.name);
@@ -167,6 +174,15 @@ fn perform_update_sync(
     tmp_file.flush().context("Failed to flush temp file")?;
     drop(tmp_file);
 
+    let archive_size = std::fs::metadata(&tmp_archive)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    tracing::info!(
+        archive_path = %tmp_archive.display(),
+        archive_size_bytes = archive_size,
+        "Downloaded release archive"
+    );
+
     on_progress("Extracting binary...".to_string());
 
     // 5. Extract the binary from the archive
@@ -177,11 +193,39 @@ fn perform_update_sync(
     };
 
     let archive_kind = detect_archive_kind(&asset.name);
+    tracing::info!(
+        bin_name = bin_name,
+        archive_kind = ?archive_kind,
+        "Extracting binary from archive"
+    );
 
-    self_update::Extract::from_source(&tmp_archive)
+    if let Err(extract_err) = self_update::Extract::from_source(&tmp_archive)
         .archive(archive_kind)
         .extract_file(tmp_dir.path(), bin_name)
-        .context("Failed to extract binary from archive")?;
+    {
+        // Log detailed diagnostic information for extraction failures
+        tracing::error!(
+            error = %extract_err,
+            target = target,
+            asset_name = %asset.name,
+            archive_kind = ?archive_kind,
+            archive_size_bytes = archive_size,
+            bin_name = bin_name,
+            tmp_dir = %tmp_dir.path().display(),
+            "Failed to extract binary from archive"
+        );
+
+        // Try to list archive contents for diagnostics
+        let contents = list_archive_contents(&tmp_archive, archive_kind);
+        tracing::error!(archive_contents = %contents, "Archive contents at time of failure");
+
+        bail!(
+            "Failed to extract '{bin_name}' from archive '{}' \
+             (target={target}, kind={archive_kind:?}, size={archive_size} bytes, \
+             archive_contents=[{contents}]): {extract_err}",
+            asset.name,
+        );
+    }
 
     let extracted_path = tmp_dir.path().join(bin_name);
     if !extracted_path.exists() {
@@ -203,6 +247,64 @@ fn perform_update_sync(
         old_version: current_version.to_string(),
         new_version,
     })
+}
+
+/// List the contents of an archive for diagnostic purposes.
+///
+/// Returns a human-readable string of entry names. On any error, returns an
+/// error description instead of panicking.
+fn list_archive_contents(
+    archive_path: &std::path::Path,
+    archive_kind: self_update::ArchiveKind,
+) -> String {
+    match archive_kind {
+        self_update::ArchiveKind::Zip => list_zip_contents(archive_path),
+        self_update::ArchiveKind::Tar(_) => list_tar_gz_contents(archive_path),
+        self_update::ArchiveKind::Plain(_) => "(plain binary, no archive entries)".to_string(),
+    }
+}
+
+/// List entry names inside a zip archive.
+fn list_zip_contents(archive_path: &std::path::Path) -> String {
+    let file = match std::fs::File::open(archive_path) {
+        Ok(f) => f,
+        Err(e) => return format!("<failed to open archive: {e}>"),
+    };
+    let archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(e) => return format!("<failed to read zip: {e}>"),
+    };
+    let names: Vec<&str> = (0..archive.len())
+        .filter_map(|i| archive.name_for_index(i))
+        .collect();
+    if names.is_empty() {
+        "<empty archive>".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// List entry names inside a tar.gz archive.
+fn list_tar_gz_contents(archive_path: &std::path::Path) -> String {
+    let file = match std::fs::File::open(archive_path) {
+        Ok(f) => f,
+        Err(e) => return format!("<failed to open archive: {e}>"),
+    };
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let entries = match archive.entries() {
+        Ok(e) => e,
+        Err(e) => return format!("<failed to read tar entries: {e}>"),
+    };
+    let names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.path().ok().map(|p| p.display().to_string()))
+        .collect();
+    if names.is_empty() {
+        "<empty archive>".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 /// Detect the archive kind from the filename extension.
