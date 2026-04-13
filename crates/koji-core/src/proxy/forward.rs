@@ -47,6 +47,36 @@ pub async fn forward_request(
 
     let model_state = state.get_model_state(server_name).await;
     if let Some(ms) = &model_state {
+        // If the backend process has died, clean up immediately and let the
+        // caller's auto-load logic restart it. Skip the circuit breaker
+        // entirely — it is meant for live backends returning errors, not
+        // crashed processes.
+        let process_dead = ms
+            .backend_pid()
+            .map(|pid| !super::process::is_process_alive(pid))
+            .unwrap_or(false);
+        if process_dead {
+            info!(
+                "Backend process for server '{}' is dead (detected at request entry), cleaning up",
+                server_name
+            );
+            let mut models = state.models.write().await;
+            models.remove(server_name);
+            if let Some(conn) = state.open_db() {
+                let _ = crate::db::queries::remove_active_model(&conn, server_name);
+            }
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Backend process for server '{}' has crashed, reloading", server_name),
+                        "type": "BackendCrashedError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+
         let failures = ms
             .consecutive_failures()
             .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
@@ -326,11 +356,38 @@ pub async fn forward_request(
                 .metrics
                 .failed_requests
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if let Some(ms) = &model_state {
-                if let Some(f) = ms.consecutive_failures() {
-                    f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Check if the backend process is still alive. If it crashed,
+            // clean up immediately instead of letting the circuit breaker
+            // accumulate failures and impose a cooldown. The next request
+            // will trigger a fresh auto-load.
+            let process_dead = model_state
+                .as_ref()
+                .and_then(|ms| ms.backend_pid())
+                .map(|pid| !super::process::is_process_alive(pid))
+                .unwrap_or(false);
+
+            if process_dead {
+                info!(
+                    "Backend process for server '{}' is dead, cleaning up model state",
+                    server_name
+                );
+                let mut models = state.models.write().await;
+                models.remove(server_name);
+                // Best-effort DB cleanup
+                if let Some(conn) = state.open_db() {
+                    let _ = crate::db::queries::remove_active_model(&conn, server_name);
+                }
+            } else {
+                // Process is alive — this is a transient error (timeout, busy, etc.)
+                // Increment the circuit breaker counter.
+                if let Some(ms) = &model_state {
+                    if let Some(f) = ms.consecutive_failures() {
+                        f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
+
             info!("Failed to forward request: {}", e);
             (
                 StatusCode::BAD_GATEWAY,
