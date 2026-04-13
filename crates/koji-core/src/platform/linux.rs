@@ -178,17 +178,25 @@ pub fn auto_restart_service(service_name: &str) -> Result<()> {
 
 /// Detect whether a service is installed as system or user.
 ///
-/// Returns `true` for system, `false` for user. Checks user first (more
-/// common for desktop installs), falling back to system.
+/// Returns `true` for system, `false` for user. Checks whether the unit
+/// file exists on disk rather than relying on `is-active`, which reports
+/// "inactive" for unknown units.
 pub fn detect_service_mode(service_name: &str) -> Result<bool> {
-    let user_state = query_service(service_name, false)?;
-    if user_state != "NOT_INSTALLED" {
-        return Ok(false); // user service
+    let unit_file = format!("{}.service", service_name);
+
+    // Check user service dir
+    if let Ok(user_dir) = service_dir(false) {
+        if user_dir.join(&unit_file).exists() {
+            return Ok(false); // user service
+        }
     }
-    let system_state = query_service(service_name, true)?;
-    if system_state != "NOT_INSTALLED" {
+
+    // Check system service dir
+    let system_dir = service_dir(true)?;
+    if system_dir.join(&unit_file).exists() {
         return Ok(true); // system service
     }
+
     anyhow::bail!(
         "Service '{}' is not installed as either a user or system service",
         service_name
