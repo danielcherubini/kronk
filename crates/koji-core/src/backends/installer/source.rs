@@ -329,7 +329,7 @@ fn build_cmake_args(
                 cmake_args.push("-DGGML_METAL=ON".to_string());
             }
             GpuType::RocM { .. } => {
-                cmake_args.push("-DGGML_HIPBLAS=ON".to_string());
+                cmake_args.push("-DGGML_HIP=ON".to_string());
             }
             GpuType::CpuOnly => {}
             GpuType::Custom => {}
