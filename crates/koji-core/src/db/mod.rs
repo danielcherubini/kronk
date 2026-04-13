@@ -64,8 +64,7 @@ pub fn backup_db(config_dir: &Path, dest: &Path) -> anyhow::Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("."));
-    std::fs::create_dir_all(parent)
-        .context("Failed to create parent directory for backup")?;
+    std::fs::create_dir_all(parent).context("Failed to create parent directory for backup")?;
 
     let db_path = config_dir.join("koji.db");
     let conn = Connection::open(&db_path)?;

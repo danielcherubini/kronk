@@ -317,12 +317,22 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
             let dest_path = target_dir.join(entry_name_owned.trim_start_matches("/"));
 
             // Validate path to prevent traversal attacks
-            let canonical_target = target_dir.canonicalize()
-                .with_context(|| format!("Failed to canonicalize target directory: {}", target_dir.display()))?;
-            
+            let canonical_target = target_dir.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize target directory: {}",
+                    target_dir.display()
+                )
+            })?;
+
             // Check for path traversal before creating directories
-            if dest_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-                anyhow::bail!("Path traversal detected in archive entry: {}", entry_name_owned);
+            if dest_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                anyhow::bail!(
+                    "Path traversal detected in archive entry: {}",
+                    entry_name_owned
+                );
             }
 
             if let Some(parent) = dest_path.parent() {
@@ -334,14 +344,24 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
             // Double-check the resolved path is within target_dir
             if let Ok(canonical_dest) = dest_path.canonicalize() {
                 if !canonical_dest.starts_with(&canonical_target) {
-                    anyhow::bail!("Extracted path escapes target directory: {}", dest_path.display());
+                    anyhow::bail!(
+                        "Extracted path escapes target directory: {}",
+                        dest_path.display()
+                    );
                 }
             } else {
                 // Path doesn't exist yet, check relative path
-                let relative = dest_path.strip_prefix(&canonical_target)
-                    .map_err(|_| anyhow::anyhow!("Path escapes target directory: {}", dest_path.display()))?;
-                if relative.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-                    anyhow::bail!("Extracted path escapes target directory: {}", dest_path.display());
+                let relative = dest_path.strip_prefix(&canonical_target).map_err(|_| {
+                    anyhow::anyhow!("Path escapes target directory: {}", dest_path.display())
+                })?;
+                if relative
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
+                    anyhow::bail!(
+                        "Extracted path escapes target directory: {}",
+                        dest_path.display()
+                    );
                 }
             }
 
