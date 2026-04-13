@@ -8,6 +8,7 @@ pub mod queries;
 
 use std::path::Path;
 
+use anyhow::Context;
 use rusqlite::Connection;
 
 /// Result of opening a database connection
@@ -43,6 +44,34 @@ pub fn open(config_dir: &Path) -> anyhow::Result<OpenResult> {
         conn,
         needs_backfill,
     })
+}
+
+/// Backup the SQLite database at `config_dir/koji.db` to a destination path.
+///
+/// Uses SQLite's `VACUUM INTO` command to create a clean, consistent copy of
+/// the database. This avoids copying WAL/SHM files and guarantees a consistent
+/// snapshot even if the database is in use.
+///
+/// # Arguments
+/// * `config_dir` - The koji config directory containing `koji.db`
+/// * `dest` - Where to write the backup database file
+///
+/// # Returns
+/// Result<()> indicating success or failure
+pub fn backup_db(config_dir: &Path, dest: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dest.parent().unwrap_or(dest))
+        .context("Failed to create parent directory for backup")?;
+
+    let db_path = config_dir.join("koji.db");
+    let conn = Connection::open(&db_path)?;
+
+    // VACUUM INTO creates a clean copy without WAL/SHM files
+    // Convert Path to string for rusqlite parameter binding
+    let dest_str = dest.to_string_lossy().to_string();
+    conn.execute("VACUUM INTO ?", [&dest_str])
+        .context("Failed to vacuum database into destination")?;
+
+    Ok(())
 }
 
 /// Open an in-memory SQLite database for testing.

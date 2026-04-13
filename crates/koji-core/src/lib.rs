@@ -10,6 +10,7 @@
 //! and are automatically discovered when models are installed.
 
 pub mod backends;
+pub mod backup;
 pub mod bench;
 pub mod config;
 pub mod db;

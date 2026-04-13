@@ -14,9 +14,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 50
+- **Total Plans**: 51
 - **Completed**: 49 ✅
-- **Remaining**: 1 ❌ (VLLM Backend)
+- **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -129,6 +129,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | Plan | Description | Status |
 |------|-------------|--------|
 | [VLLM Backend](2026-03-30-vllm-backend.md) | Add vLLM as a first-class backend type with PyPI version checking | ❌ NOT STARTED |
+| [Backup & Restore](2026-04-13-backup-restore.md) | Backup config + DB archive, restore with model re-download and backend re-install | 🚧 IN PROGRESS |
 
 ## Roadmap
 
