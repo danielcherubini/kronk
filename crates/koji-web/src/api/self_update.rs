@@ -134,12 +134,12 @@ pub async fn trigger_update(
                 }
             }
             Err(e) => {
-                tracing::error!("Self-update failed: {e}");
+                tracing::error!("Self-update failed: {e:#}");
                 let _ = tx.send(
                     json!({
                         "type": "status",
                         "status": "failed",
-                        "error": format!("{e}")
+                        "error": format!("{e:#}")
                     })
                     .to_string(),
                 );
