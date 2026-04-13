@@ -12,7 +12,7 @@
 
 </div>
 
----
+![Koji Web UI](docs/screenshot.png)
 
 ## Overview
 
