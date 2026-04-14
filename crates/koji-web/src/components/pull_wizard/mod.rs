@@ -108,6 +108,19 @@ pub fn is_selection_empty(quants: &HashSet<String>, mmprojs: &HashSet<String>) -
 
 /// Try to infer the quantisation type from a GGUF filename.
 /// Common patterns: "Model-Q4_K_M.gguf", "model.Q8_0.gguf", "model-q4_k_m.gguf"
+///
+/// This is a wrapper around `koji_core::models::infer_quant_from_filename` for
+/// the SSR feature. For CSR (client-side), we use a local implementation.
+#[cfg(feature = "ssr")]
+pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
+    koji_core::models::infer_quant_from_filename(filename)
+}
+
+/// Try to infer the quantisation type from a GGUF filename.
+/// Common patterns: "Model-Q4_K_M.gguf", "model.Q8_0.gguf", "model-q4_k_m.gguf"
+///
+/// Client-side (CSR) implementation - mirrors the core logic for WASM builds.
+#[cfg(not(feature = "ssr"))]
 pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
     let stem = filename.strip_suffix(".gguf")?;
 

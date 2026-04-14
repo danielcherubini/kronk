@@ -365,13 +365,14 @@ pub async fn cleanup_hf_cache(
     source_path: &std::path::Path,
     dest_path: &std::path::Path,
 ) -> Result<()> {
-    // Safety check 1: Verify destination exists
-    if !dest_path.exists() {
-        anyhow::bail!(
+    // Safety check 1: Verify destination exists and get its metadata FIRST
+    // This fails fast if dest is gone, preventing TOCTOU race condition
+    let dest_meta = tokio::fs::metadata(dest_path).await.with_context(|| {
+        format!(
             "Destination file does not exist at '{}', skipping cache cleanup",
             dest_path.display()
-        );
-    }
+        )
+    })?;
 
     // If source doesn't exist, there's nothing to clean up (already deleted)
     if !source_path.exists() {
@@ -382,21 +383,15 @@ pub async fn cleanup_hf_cache(
         return Ok(());
     }
 
-    // Safety check 2: Verify destination size matches source
-    let source_meta = std::fs::metadata(source_path).with_context(|| {
+    // Get source metadata after confirming dest exists
+    let source_meta = tokio::fs::metadata(source_path).await.with_context(|| {
         format!(
             "Failed to get metadata for source path: {}",
             source_path.display()
         )
     })?;
 
-    let dest_meta = std::fs::metadata(dest_path).with_context(|| {
-        format!(
-            "Failed to get metadata for dest path: {}",
-            dest_path.display()
-        )
-    })?;
-
+    // Safety check 2: Verify destination size matches source
     if source_meta.len() != dest_meta.len() {
         anyhow::bail!(
             "Size mismatch: source={}, dest={}, skipping cache cleanup",
@@ -406,7 +401,8 @@ pub async fn cleanup_hf_cache(
     }
 
     // Safe to delete - remove the source file from HF cache
-    std::fs::remove_file(source_path)
+    tokio::fs::remove_file(source_path)
+        .await
         .with_context(|| format!("Failed to remove cache file: {}", source_path.display()))?;
 
     Ok(())
@@ -683,7 +679,9 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 
     let stem_upper = stem.to_uppercase();
     for pattern in &quant_patterns {
-        if stem_upper.ends_with(pattern)
+        // Check for pattern preceded by a separator (-, ., _) or at start of string
+        // This prevents false matches like "XQ4_K_M" matching "Q4_K_M"
+        if stem_upper == *pattern
             || stem_upper.contains(&format!("-{}", pattern))
             || stem_upper.contains(&format!(".{}", pattern))
             || stem_upper.contains(&format!("_{}", pattern))
