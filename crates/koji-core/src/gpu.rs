@@ -324,6 +324,80 @@ fn detect_cuda_version_nvidia_smi() -> Option<String> {
     None
 }
 
+/// Detect AMD GPU architectures suitable for `-DAMDGPU_TARGETS=...`.
+///
+/// Honors `KOJI_AMDGPU_TARGETS` as an override (accepts `;` or `,` as
+/// separators; whitespace trimmed; empty entries dropped). Otherwise runs
+/// `rocminfo` and parses `Name:\s+gfx[0-9a-f]+` lines. Returns the
+/// deduplicated list in first-seen order. Returns an empty `Vec` if
+/// detection fails, `rocminfo` is unavailable, or no gfx entries are found.
+///
+/// This function is Linux-oriented but compiles on all platforms — on
+/// non-Linux hosts it returns `Vec::new()` unless the env override is set.
+pub fn detect_amdgpu_targets() -> Vec<String> {
+    if let Ok(raw) = std::env::var("KOJI_AMDGPU_TARGETS") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return trimmed
+                .split([',', ';'])
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+
+    let output = match std::process::Command::new("rocminfo").output() {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_rocminfo_gfx_names(&stdout)
+}
+
+/// Parse `rocminfo` stdout and extract unique `gfxNNNN` architecture names.
+///
+/// Returns the deduplicated list in first-seen order. Ignores CPU `Name:`
+/// lines and any other `Name:` entries that don't match `gfx<hex+>`.
+pub fn parse_rocminfo_gfx_names(stdout: &str) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut result: Vec<String> = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        let rest = match trimmed.strip_prefix("Name:") {
+            Some(r) => r,
+            None => continue,
+        };
+        let token = match rest.split_whitespace().next() {
+            Some(t) => t,
+            None => continue,
+        };
+        let digits = match token.strip_prefix("gfx") {
+            Some(d) => d,
+            None => continue,
+        };
+        if digits.is_empty()
+            || !digits
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        {
+            continue;
+        }
+        if seen.insert(token.to_string()) {
+            result.push(token.to_string());
+        }
+    }
+
+    result
+}
+
 /// Query GPU VRAM via nvidia-smi. Returns None if no NVIDIA GPU or nvidia-smi unavailable.
 pub fn query_vram() -> Option<VramInfo> {
     // Try NVIDIA first
@@ -464,6 +538,78 @@ pub fn suggest_context_sizes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_single_gpu() {
+        let sample = "\
+*******                  Agent 1                  *******
+  Name:                    AMD Ryzen 9 7950X 16-Core Processor
+  Uuid:                    CPU-XX
+*******                  Agent 2                  *******
+  Name:                    gfx1201
+  Uuid:                    GPU-XX
+";
+        assert_eq!(parse_rocminfo_gfx_names(sample), vec!["gfx1201"]);
+    }
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_multi_gpu_dedup() {
+        let sample = "\
+  Name:                    gfx1100
+  Name:                    gfx1201
+  Name:                    AMD Ryzen 9
+  Name:                    gfx1100
+";
+        assert_eq!(parse_rocminfo_gfx_names(sample), vec!["gfx1100", "gfx1201"]);
+    }
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_no_match() {
+        let sample = "\
+  Name:                    AMD Ryzen 9 7950X 16-Core Processor
+  Name:                    Intel Core i9
+";
+        assert!(parse_rocminfo_gfx_names(sample).is_empty());
+    }
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_tolerates_trailing_whitespace() {
+        let sample = "  Name:   gfx942   \n";
+        assert_eq!(parse_rocminfo_gfx_names(sample), vec!["gfx942"]);
+    }
+
+    #[test]
+    fn test_detect_amdgpu_targets_env_override_semicolons() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        std::env::set_var("KOJI_AMDGPU_TARGETS", "gfx1100;gfx1201");
+        let result = detect_amdgpu_targets();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        assert_eq!(result, vec!["gfx1100", "gfx1201"]);
+    }
+
+    #[test]
+    fn test_detect_amdgpu_targets_env_override_commas_and_whitespace() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        std::env::set_var("KOJI_AMDGPU_TARGETS", "  gfx942 , gfx90a ");
+        let result = detect_amdgpu_targets();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        assert_eq!(result, vec!["gfx942", "gfx90a"]);
+    }
+
+    #[test]
+    fn test_detect_amdgpu_targets_env_override_empty_is_ignored() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        std::env::set_var("KOJI_AMDGPU_TARGETS", "");
+        let result = detect_amdgpu_targets();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        assert!(result.is_empty() || result.iter().all(|s| s.starts_with("gfx")));
+    }
 
     #[test]
     fn test_vram_info_available() {
