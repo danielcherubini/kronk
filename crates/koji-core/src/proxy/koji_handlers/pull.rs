@@ -293,6 +293,7 @@ fn spawn_download_job(
             repo_id_clone.clone(),
             filename_clone.clone(),
             spec_clone.quant.clone(),
+            cached_path.clone(),
             dest_path.clone(),
             bytes,
         )
@@ -315,6 +316,7 @@ fn spawn_download_job(
 ///    persists the verification outcome to the DB.
 /// 4. Transitions the job to `Completed` (match or no upstream hash) or
 ///    `Failed` (mismatch or hash error).
+/// 5. After successful verification, cleans up the HF cache file to prevent duplicates.
 #[allow(clippy::too_many_arguments)]
 async fn run_verification(
     pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
@@ -323,6 +325,7 @@ async fn run_verification(
     repo_id: String,
     filename: String,
     quant_hint: Option<String>,
+    cached_path: std::path::PathBuf,
     dest_path: std::path::PathBuf,
     bytes: u64,
 ) {
@@ -484,6 +487,30 @@ async fn run_verification(
                     verified_ok = ?ok,
                     "Job transitioned to Completed after verification"
                 );
+
+                // Clean up the HF cache file after successful verification.
+                // Wrap in a non-blocking task so cleanup failures don't affect the job status.
+                let cleanup_cached_path = cached_path.clone();
+                let cleanup_dest_path = dest_path.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::models::pull::cleanup_hf_cache(
+                        &cleanup_cached_path,
+                        &cleanup_dest_path,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "HF cache cleanup failed (non-fatal)"
+                        );
+                    } else {
+                        tracing::debug!(
+                            job_id = %job_id,
+                            "HF cache cleanup completed successfully"
+                        );
+                    }
+                });
             }
         }
     }

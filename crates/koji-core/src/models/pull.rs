@@ -11,6 +11,12 @@ static HF_API: OnceCell<Api> = OnceCell::const_new();
 
 /// Get or create the shared HuggingFace API client.
 /// Configured with max_files=8 for parallel file downloads.
+///
+/// **Note:** This uses `ApiBuilder::new()` which respects the `HF_HOME` environment
+/// variable for cache location. No explicit cache path is set, so `hf-hub` will use
+/// its default behavior:
+/// - If `HF_HOME` is set: `$HF_HOME/hub`
+/// - Otherwise: `~/.cache/huggingface/hub`
 pub(crate) async fn hf_api() -> Result<&'static Api> {
     HF_API
         .get_or_try_init(|| async {
@@ -336,6 +342,75 @@ impl hf_hub::api::tokio::Progress for ProgressAdapter {
     }
 }
 
+/// Clean up the HF cache file after a successful download and verification.
+///
+/// This function removes the source file from the HF cache directory only after
+/// verifying that:
+/// 1. The destination file exists
+/// 2. The destination file size matches the source file size
+///
+/// This is a safety measure to prevent accidental data loss. If the destination
+/// is missing or has a different size, the source file is preserved.
+///
+/// # Arguments
+///
+/// * `source_path` - Path to the file in the HF cache directory
+/// * `dest_path` - Path to the final destination in the Koji models directory
+///
+/// # Returns
+///
+/// * `Ok(())` if cleanup was successful or not needed (source already gone)
+/// * `Err(anyhow::Error)` if safety checks fail or deletion fails
+pub async fn cleanup_hf_cache(
+    source_path: &std::path::Path,
+    dest_path: &std::path::Path,
+) -> Result<()> {
+    // Safety check 1: Verify destination exists and get its metadata FIRST
+    // This fails fast if dest is gone, preventing TOCTOU race condition
+    let dest_meta = tokio::fs::metadata(dest_path).await.with_context(|| {
+        format!(
+            "Destination file does not exist at '{}', skipping cache cleanup",
+            dest_path.display()
+        )
+    })?;
+
+    // Get source metadata - if not found, there's nothing to clean up (already deleted)
+    let source_meta = match tokio::fs::metadata(source_path).await {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(
+                "Source cache file does not exist at '{}', nothing to clean up",
+                source_path.display()
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to get metadata for source path: {}",
+                    source_path.display()
+                )
+            });
+        }
+    };
+
+    // Safety check 2: Verify destination size matches source
+    if source_meta.len() != dest_meta.len() {
+        anyhow::bail!(
+            "Size mismatch: source={}, dest={}, skipping cache cleanup",
+            source_meta.len(),
+            dest_meta.len()
+        );
+    }
+
+    // Safe to delete - remove the source file from HF cache
+    tokio::fs::remove_file(source_path)
+        .await
+        .with_context(|| format!("Failed to remove cache file: {}", source_path.display()))?;
+
+    Ok(())
+}
+
 /// Download a specific GGUF file using hf-hub's downloader with progress reporting.
 /// Uses hf-hub's built-in parallel chunked downloads and caching.
 pub async fn download_gguf_with_progress(
@@ -479,9 +554,45 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
     let stem = filename.strip_suffix(".gguf")?;
 
     // Ordered longest-first so "Q4_K_M" matches before "Q4_K"
-    // Includes UD (Unsloth Dynamic) variants
+    // Includes UD (Unsloth Dynamic) and APEX variants
     let quant_patterns = [
-        // Unsloth Dynamic (UD) quants - must come before standard quants
+        // APEX semantic quants (must come before APEX standard patterns)
+        "APEX-I-BALANCED",
+        "APEX-I-QUALITY",
+        "APEX-I-COMPACT",
+        "APEX-I-MINI",
+        // APEX IQ quants
+        "APEX-IQ2_XXS",
+        "APEX-IQ3_XXS",
+        "APEX-IQ1_S",
+        "APEX-IQ1_M",
+        "APEX-IQ2_XS",
+        "APEX-IQ2_S",
+        "APEX-IQ2_M",
+        "APEX-IQ3_XS",
+        "APEX-IQ3_S",
+        "APEX-IQ3_M",
+        "APEX-IQ4_XS",
+        "APEX-IQ4_NL",
+        // APEX standard quants
+        "APEX-Q2_K_S",
+        "APEX-Q3_K_S",
+        "APEX-Q3_K_M",
+        "APEX-Q3_K_L",
+        "APEX-Q4_K_S",
+        "APEX-Q4_K_M",
+        "APEX-Q4_K_L",
+        "APEX-Q5_K_S",
+        "APEX-Q5_K_M",
+        "APEX-Q5_K_L",
+        "APEX-Q6_K",
+        "APEX-Q8_0",
+        // UD semantic quants (must come before UD standard patterns)
+        "UD-I-BALANCED",
+        "UD-I-QUALITY",
+        "UD-I-COMPACT",
+        "UD-I-MINI",
+        // Unsloth Dynamic (UD) IQ quants
         "UD-IQ2_XXS",
         "UD-IQ3_XXS",
         "UD-IQ1_S",
@@ -494,6 +605,7 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
         "UD-IQ3_M",
         "UD-IQ4_XS",
         "UD-IQ4_NL",
+        // Unsloth Dynamic (UD) standard quants
         "UD-Q2_K_S",
         "UD-Q3_K_S",
         "UD-Q3_K_M",
@@ -570,7 +682,9 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 
     let stem_upper = stem.to_uppercase();
     for pattern in &quant_patterns {
-        if stem_upper.ends_with(pattern)
+        // Check for pattern preceded by a separator (-, ., _) or at start of string
+        // This prevents false matches like "XQ4_K_M" matching "Q4_K_M"
+        if stem_upper == *pattern
             || stem_upper.contains(&format!("-{}", pattern))
             || stem_upper.contains(&format!(".{}", pattern))
             || stem_upper.contains(&format!("_{}", pattern))
@@ -690,11 +804,11 @@ mod tests {
 
     #[test]
     fn test_infer_quant_non_standard_name() {
-        // For non-standard quant names, return the last component after splitting by `-` or `_`
-        // "Qwen3.5-35B-A3B-APEX-I-Balanced" -> "Balanced"
+        // APEX semantic quants are now recognized
+        // "Qwen3.5-35B-A3B-APEX-I-Balanced" -> "APEX-I-BALANCED"
         assert_eq!(
             infer_quant_from_filename("Qwen3.5-35B-A3B-APEX-I-Balanced.gguf"),
-            Some("Balanced".to_string())
+            Some("APEX-I-BALANCED".to_string())
         );
     }
 
@@ -777,6 +891,207 @@ mod tests {
         assert_eq!(
             infer_quant_from_filename("Llama-3.2-UD-Q4_K_M.gguf"),
             Some("UD-Q4_K_M".to_string())
+        );
+    }
+
+    // ── APEX and UD semantic quant tests ──────────────────────────────────────
+
+    #[test]
+    fn test_infer_quant_apex_patterns() {
+        // APEX IQ quants
+        assert_eq!(
+            infer_quant_from_filename("model-APEX-IQ2_XXS.gguf"),
+            Some("APEX-IQ2_XXS".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("Llama-3.2-APEX-IQ3_XXS.gguf"),
+            Some("APEX-IQ3_XXS".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-APEX-IQ4_NL.gguf"),
+            Some("APEX-IQ4_NL".to_string())
+        );
+        // APEX standard quants
+        assert_eq!(
+            infer_quant_from_filename("model-APEX-Q4_K_M.gguf"),
+            Some("APEX-Q4_K_M".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("Llama-3.2-APEX-Q8_0.gguf"),
+            Some("APEX-Q8_0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_quant_apex_semantic() {
+        // APEX semantic quants (I-Balanced, I-Quality, etc.)
+        // Note: function returns uppercase patterns
+        assert_eq!(
+            infer_quant_from_filename("gemma-4-26B-A4B-APEX-I-Balanced.gguf"),
+            Some("APEX-I-BALANCED".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("Qwen3.5-35B-A3B-APEX-I-Quality.gguf"),
+            Some("APEX-I-QUALITY".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-APEX-I-Compact.gguf"),
+            Some("APEX-I-COMPACT".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-APEX-I-Mini.gguf"),
+            Some("APEX-I-MINI".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_quant_ud_semantic() {
+        // UD semantic quants
+        // Note: function returns uppercase patterns
+        assert_eq!(
+            infer_quant_from_filename("gemma-4-26B-A4B-UD-I-Balanced.gguf"),
+            Some("UD-I-BALANCED".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("Qwen3.5-35B-A3B-UD-I-Quality.gguf"),
+            Some("UD-I-QUALITY".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-UD-I-Compact.gguf"),
+            Some("UD-I-COMPACT".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-UD-I-Mini.gguf"),
+            Some("UD-I-MINI".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_quant_semantic_without_prefix() {
+        // Semantic quants without APEX/UD prefix should fall back gracefully
+        // Returns last component from original stem (preserves case)
+        assert_eq!(
+            infer_quant_from_filename("model-I-Balanced.gguf"),
+            Some("Balanced".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("model-Quality.gguf"),
+            Some("Quality".to_string())
+        );
+    }
+
+    // ── HF Cache Cleanup tests ───────────────────────────────────────────────
+
+    /// Verifies that `cleanup_hf_cache` deletes the source file when:
+    /// - The destination exists
+    /// - The destination size matches the source size
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_success() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file (simulating HF cache)
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Create dest file with same size (simulating successful move)
+        std::fs::write(&dest_path, b"test data").unwrap();
+
+        // Verify source exists before cleanup
+        assert!(source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup succeeded
+        assert!(result.is_ok(), "Cleanup should succeed: {:?}", result.err());
+
+        // Verify source was deleted but dest remains
+        assert!(
+            !source_path.exists(),
+            "Source should be deleted after successful cleanup"
+        );
+        assert!(dest_path.exists(), "Dest should still exist after cleanup");
+    }
+
+    /// Verifies that `cleanup_hf_cache` does NOT delete the source file when:
+    /// - The destination does not exist (safety check)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_dest_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file only
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Verify source exists, dest does not
+        assert!(source_path.exists());
+        assert!(!dest_path.exists());
+
+        // Run cleanup - should fail safety check
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup was skipped (source still exists)
+        assert!(result.is_err(), "Cleanup should fail when dest is missing");
+        assert!(
+            source_path.exists(),
+            "Source should NOT be deleted when dest is missing"
+        );
+    }
+
+    /// Verifies that `cleanup_hf_cache` does NOT delete the source file when:
+    /// - The destination size does not match the source size (safety check)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_size_mismatch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file with specific size
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Create dest file with different size
+        std::fs::write(&dest_path, b"test data with different size").unwrap();
+
+        // Verify both exist with different sizes
+        assert!(source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup - should fail size check
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup was skipped (source still exists)
+        assert!(result.is_err(), "Cleanup should fail when sizes mismatch");
+        assert!(
+            source_path.exists(),
+            "Source should NOT be deleted when sizes mismatch"
+        );
+    }
+
+    /// Verifies that `cleanup_hf_cache` handles missing source gracefully
+    /// (e.g., if it was already deleted by another process)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_source_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create dest file only (source already gone)
+        std::fs::write(&dest_path, b"test data").unwrap();
+
+        // Verify source is missing
+        assert!(!source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup - should handle gracefully (not panic)
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Cleanup should succeed (nothing to clean up)
+        assert!(
+            result.is_ok(),
+            "Cleanup should succeed when source is already gone"
         );
     }
 }
