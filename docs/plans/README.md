@@ -14,8 +14,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 52
+- **Total Plans**: 53
 - **Completed**: 50 ✅
+- **In Progress**: 1 🚧 (ROCm Build Flags)
 - **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -58,6 +59,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Backend Naming and Version Pinning](2026-04-04-backend-naming-and-config-version-pinning.md) | Canonical backend names, version pin field | `bce6928`, `90898b4`, `211546d` |
 | [Backends Install/Update UI](2026-04-08-backends-install-update-ui-spec.md) | Install, update, and check-updates for backends from web UI | #43 `f500c27`, `89f71ed`, `32ae3f6`, `9a70c1e` |
 | [Fix Backend Default Args](2026-04-10-fix-backend-default-args-spec.md) | Fix default_args display bug and add page-level save button | #49 `aefe2fe`, `29b26fc`, `6bee43d` |
+| [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | 🚧 IN PROGRESS |
 
 ### Model Management
 
