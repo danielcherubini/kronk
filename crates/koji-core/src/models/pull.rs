@@ -291,16 +291,14 @@ pub struct DownloadResult {
 /// Progress adapter that bridges hf-hub's Progress trait to our callback.
 #[derive(Clone)]
 pub struct ProgressAdapter {
-    total_size: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    downloaded: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    total_size: u64,
     callback: Option<crate::models::download::ProgressCallback>,
 }
 
 impl ProgressAdapter {
     pub fn new(callback: Option<crate::models::download::ProgressCallback>) -> Self {
         Self {
-            total_size: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            downloaded: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            total_size: 0,
             callback,
         }
     }
@@ -308,32 +306,22 @@ impl ProgressAdapter {
 
 impl hf_hub::api::tokio::Progress for ProgressAdapter {
     async fn init(&mut self, size: usize, _filename: &str) {
-        self.total_size
-            .store(size as u64, std::sync::atomic::Ordering::Relaxed);
-        self.downloaded
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.total_size = size as u64;
         if let Some(cb) = &self.callback {
-            cb(0, size as u64);
+            cb(0, self.total_size);
         }
     }
 
     async fn update(&mut self, size: usize) {
-        // size is the chunk just downloaded, accumulate it
-        let new_downloaded = self
-            .downloaded
-            .fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed)
-            + size as u64;
+        // size is cumulative bytes downloaded so far
         if let Some(cb) = &self.callback {
-            cb(new_downloaded, self.total_size.load(std::sync::atomic::Ordering::Relaxed));
+            cb(size as u64, self.total_size);
         }
     }
 
     async fn finish(&mut self) {
-        let total = self.total_size.load(std::sync::atomic::Ordering::Relaxed);
-        self.downloaded
-            .store(total, std::sync::atomic::Ordering::Relaxed);
         if let Some(cb) = &self.callback {
-            cb(total, total);
+            cb(self.total_size, self.total_size);
         }
     }
 }
