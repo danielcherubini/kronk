@@ -14,10 +14,10 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 53
+- **Total Plans**: 55
 - **Completed**: 50 ✅
-- **In Progress**: 1 🚧 (ROCm Build Flags)
-- **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
+- **In Progress**: 2 🚧 (ROCm Build Flags, Pull Wizard Improvements)
+- **Remaining**: 3 ❌ (VLLM Backend, Backup & Restore, Wizard & Cache Improvements)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -133,6 +133,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 |------|-------------|--------|
 | [VLLM Backend](2026-03-30-vllm-backend.md) | Add vLLM as a first-class backend type with PyPI version checking | ❌ NOT STARTED |
 | [Backup & Restore](2026-04-13-backup-restore.md) | Backup config + DB archive, restore with model re-download and backend re-install | 🚧 IN PROGRESS |
+| [Pull Wizard Improvements](2026-04-14-pull-wizard-improvements.md) | Consolidate quant/vision selection and smart context length dropdown | 🚧 IN PROGRESS |
+| [Wizard & Cache Improvements](2026-04-14-wizard-cache-improvements.md) | Fix KV dropdown, add APEX/UD quant support, implement HF cache cleanup | ❌ NOT STARTED |
 
 ## Roadmap
 

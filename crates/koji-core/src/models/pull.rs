@@ -374,22 +374,25 @@ pub async fn cleanup_hf_cache(
         )
     })?;
 
-    // If source doesn't exist, there's nothing to clean up (already deleted)
-    if !source_path.exists() {
-        tracing::debug!(
-            "Source cache file does not exist at '{}', nothing to clean up",
-            source_path.display()
-        );
-        return Ok(());
-    }
-
-    // Get source metadata after confirming dest exists
-    let source_meta = tokio::fs::metadata(source_path).await.with_context(|| {
-        format!(
-            "Failed to get metadata for source path: {}",
-            source_path.display()
-        )
-    })?;
+    // Get source metadata - if not found, there's nothing to clean up (already deleted)
+    let source_meta = match tokio::fs::metadata(source_path).await {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(
+                "Source cache file does not exist at '{}', nothing to clean up",
+                source_path.display()
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to get metadata for source path: {}",
+                    source_path.display()
+                )
+            });
+        }
+    };
 
     // Safety check 2: Verify destination size matches source
     if source_meta.len() != dest_meta.len() {
