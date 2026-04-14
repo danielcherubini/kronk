@@ -307,6 +307,7 @@ fn build_cmake_args(
     options: &InstallOptions,
     source_dir: &Path,
     build_output: &Path,
+    amdgpu_targets: &[String],
 ) -> Vec<String> {
     let mut cmake_args = vec![
         "-B".to_string(),
@@ -330,6 +331,12 @@ fn build_cmake_args(
             }
             GpuType::RocM { .. } => {
                 cmake_args.push("-DGGML_HIP=ON".to_string());
+                cmake_args.push("-DGGML_HIP_ROCWMMA_FATTN=ON".to_string());
+                cmake_args.push("-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string());
+                cmake_args.push("-DLLAMA_CURL=ON".to_string());
+                if !amdgpu_targets.is_empty() {
+                    cmake_args.push(format!("-DAMDGPU_TARGETS={}", amdgpu_targets.join(";")));
+                }
             }
             GpuType::CpuOnly => {}
             GpuType::Custom => {}
@@ -512,7 +519,22 @@ async fn configure_cmake(
     build_output: &Path,
     _progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<()> {
-    let cmake_args = build_cmake_args(options, source_dir, build_output);
+    let amdgpu_targets = if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
+        let targets = crate::gpu::detect_amdgpu_targets();
+        if targets.is_empty() {
+            tracing::warn!(
+                "No AMDGPU_TARGETS detected (rocminfo missing or returned no gfx entries). \
+                 Falling back to llama.cpp's default target list — this may exclude newer archs. \
+                 Set KOJI_AMDGPU_TARGETS=gfxNNNN to override."
+            );
+        } else {
+            tracing::info!("Detected AMDGPU_TARGETS: {}", targets.join(";"));
+        }
+        targets
+    } else {
+        Vec::new()
+    };
+    let cmake_args = build_cmake_args(options, source_dir, build_output, &amdgpu_targets);
 
     #[cfg(target_os = "windows")]
     {
@@ -563,7 +585,7 @@ mod tests {
     #[test]
     fn test_ik_llama_includes_iqk_fa_all_quants() {
         let opts = make_options(BackendType::IkLlama, None);
-        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
         assert!(
             args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()),
             "ik_llama build must include -DGGML_IQK_FA_ALL_QUANTS=ON, got: {:?}",
@@ -575,7 +597,7 @@ mod tests {
     #[test]
     fn test_llama_cpp_excludes_iqk_fa_all_quants() {
         let opts = make_options(BackendType::LlamaCpp, None);
-        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
         assert!(
             !args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()),
             "llama.cpp build must not include -DGGML_IQK_FA_ALL_QUANTS=ON"
@@ -591,9 +613,140 @@ mod tests {
                 version: "12".to_string(),
             }),
         );
-        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
         assert!(args.contains(&"-DGGML_CUDA=ON".to_string()));
         assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
+    }
+
+    /// ROCm source builds must emit the full ROCm flag set.
+    #[test]
+    fn test_rocm_emits_full_flag_set() {
+        let opts = make_options(
+            BackendType::LlamaCpp,
+            Some(GpuType::RocM {
+                version: "7.2".to_string(),
+            }),
+        );
+        let args = build_cmake_args(
+            &opts,
+            Path::new("/src"),
+            Path::new("/build"),
+            &["gfx1201".to_string()],
+        );
+        assert!(
+            args.contains(&"-DGGML_HIP=ON".to_string()),
+            "ROCm build must include -DGGML_HIP=ON, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()),
+            "ROCm build must include -DGGML_HIP_ROCWMMA_FATTN=ON, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string()),
+            "ROCm build must include -DGGML_CUDA_FA_ALL_QUANTS=ON, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DLLAMA_CURL=ON".to_string()),
+            "ROCm build must include -DLLAMA_CURL=ON, got: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"-DAMDGPU_TARGETS=gfx1201".to_string()),
+            "ROCm build must include -DAMDGPU_TARGETS=gfx1201, got: {:?}",
+            args
+        );
+    }
+
+    /// Multiple AMDGPU targets are joined with semicolons (CMake list separator).
+    #[test]
+    fn test_rocm_multi_target_joined_with_semicolons() {
+        let opts = make_options(
+            BackendType::LlamaCpp,
+            Some(GpuType::RocM {
+                version: "7.2".to_string(),
+            }),
+        );
+        let args = build_cmake_args(
+            &opts,
+            Path::new("/src"),
+            Path::new("/build"),
+            &["gfx1100".to_string(), "gfx1201".to_string()],
+        );
+        assert!(
+            args.contains(&"-DAMDGPU_TARGETS=gfx1100;gfx1201".to_string()),
+            "ROCm build must join targets with ';', got: {:?}",
+            args
+        );
+    }
+
+    /// When no AMDGPU targets are detected, the AMDGPU_TARGETS flag is omitted
+    /// (fall back to llama.cpp's default list), but other ROCm flags remain.
+    #[test]
+    fn test_rocm_no_targets_omits_amdgpu_targets_flag() {
+        let opts = make_options(
+            BackendType::LlamaCpp,
+            Some(GpuType::RocM {
+                version: "7.2".to_string(),
+            }),
+        );
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
+        assert!(
+            !args.iter().any(|a| a.starts_with("-DAMDGPU_TARGETS=")),
+            "Empty targets must omit -DAMDGPU_TARGETS=, got: {:?}",
+            args
+        );
+        assert!(args.contains(&"-DGGML_HIP=ON".to_string()));
+        assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
+        assert!(args.contains(&"-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string()));
+        assert!(args.contains(&"-DLLAMA_CURL=ON".to_string()));
+    }
+
+    /// Non-ROCm GPU types must never emit ROCm flags, even if amdgpu_targets
+    /// is accidentally populated by the caller.
+    #[test]
+    fn test_non_rocm_never_emits_rocm_flags() {
+        let opts = make_options(
+            BackendType::LlamaCpp,
+            Some(GpuType::Cuda {
+                version: "12".to_string(),
+            }),
+        );
+        let args = build_cmake_args(
+            &opts,
+            Path::new("/src"),
+            Path::new("/build"),
+            &["gfx1201".to_string()],
+        );
+        assert!(!args.contains(&"-DGGML_HIP=ON".to_string()));
+        assert!(!args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
+        assert!(
+            !args.iter().any(|a| a.starts_with("-DAMDGPU_TARGETS=")),
+            "non-ROCm build must not emit -DAMDGPU_TARGETS=, got: {:?}",
+            args
+        );
+    }
+
+    /// ik_llama + ROCm must include both the ik_llama-specific IQK flag and
+    /// the ROCm-specific rocWMMA FlashAttention flag.
+    #[test]
+    fn test_ik_llama_rocm_includes_both_iqk_and_rocwmma() {
+        let opts = make_options(
+            BackendType::IkLlama,
+            Some(GpuType::RocM {
+                version: "7.2".to_string(),
+            }),
+        );
+        let args = build_cmake_args(
+            &opts,
+            Path::new("/src"),
+            Path::new("/build"),
+            &["gfx942".to_string()],
+        );
+        assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
+        assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
     }
 
     /// On Windows, ik_llama builds must use the Ninja + clang-cl approach so
@@ -605,7 +758,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     fn test_ik_llama_windows_uses_ninja_clang_cl_avx2() {
         let opts = make_options(BackendType::IkLlama, None);
-        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"));
+        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
         assert!(
             args.contains(&"-GNinja".to_string()),
             "Windows ik_llama build must use -GNinja, got: {:?}",
