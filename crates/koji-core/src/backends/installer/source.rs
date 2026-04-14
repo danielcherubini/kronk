@@ -333,7 +333,10 @@ fn build_cmake_args(
                 cmake_args.push("-DGGML_HIP=ON".to_string());
                 cmake_args.push("-DGGML_HIP_ROCWMMA_FATTN=ON".to_string());
                 cmake_args.push("-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string());
-                cmake_args.push("-DLLAMA_CURL=ON".to_string());
+                // Note: `-DLLAMA_CURL=ON` was deprecated upstream and is now
+                // silently ignored (emits a cmake warning). curl support is
+                // handled implicitly by current llama.cpp builds, so we do
+                // not pass the flag.
                 if !amdgpu_targets.is_empty() {
                     cmake_args.push(format!("-DAMDGPU_TARGETS={}", amdgpu_targets.join(";")));
                 }
@@ -698,8 +701,8 @@ mod tests {
             args
         );
         assert!(
-            args.contains(&"-DLLAMA_CURL=ON".to_string()),
-            "ROCm build must include -DLLAMA_CURL=ON, got: {:?}",
+            !args.iter().any(|a| a.starts_with("-DLLAMA_CURL=")),
+            "ROCm build must NOT include -DLLAMA_CURL= (deprecated upstream), got: {:?}",
             args
         );
         assert!(
@@ -750,7 +753,11 @@ mod tests {
         assert!(args.contains(&"-DGGML_HIP=ON".to_string()));
         assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
         assert!(args.contains(&"-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string()));
-        assert!(args.contains(&"-DLLAMA_CURL=ON".to_string()));
+        assert!(
+            !args.iter().any(|a| a.starts_with("-DLLAMA_CURL=")),
+            "ROCm build must NOT include -DLLAMA_CURL= (deprecated upstream), got: {:?}",
+            args
+        );
     }
 
     /// Non-ROCm GPU types must never emit ROCm flags, even if amdgpu_targets
