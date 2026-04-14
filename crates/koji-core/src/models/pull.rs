@@ -292,6 +292,7 @@ pub struct DownloadResult {
 #[derive(Clone)]
 pub struct ProgressAdapter {
     total_size: u64,
+    downloaded: std::sync::Arc<std::sync::atomic::AtomicU64>,
     callback: Option<crate::models::download::ProgressCallback>,
 }
 
@@ -299,6 +300,7 @@ impl ProgressAdapter {
     pub fn new(callback: Option<crate::models::download::ProgressCallback>) -> Self {
         Self {
             total_size: 0,
+            downloaded: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             callback,
         }
     }
@@ -307,19 +309,27 @@ impl ProgressAdapter {
 impl hf_hub::api::tokio::Progress for ProgressAdapter {
     async fn init(&mut self, size: usize, _filename: &str) {
         self.total_size = size as u64;
+        self.downloaded
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         if let Some(cb) = &self.callback {
             cb(0, self.total_size);
         }
     }
 
     async fn update(&mut self, size: usize) {
-        // size is cumulative bytes downloaded so far
+        // size is the chunk just downloaded, accumulate it
+        let new_total = self
+            .downloaded
+            .fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed)
+            + size as u64;
         if let Some(cb) = &self.callback {
-            cb(size as u64, self.total_size);
+            cb(new_total, self.total_size);
         }
     }
 
     async fn finish(&mut self) {
+        self.downloaded
+            .store(self.total_size, std::sync::atomic::Ordering::Relaxed);
         if let Some(cb) = &self.callback {
             cb(self.total_size, self.total_size);
         }
