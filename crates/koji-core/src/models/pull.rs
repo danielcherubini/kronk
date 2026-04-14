@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use hf_hub::api::tokio::Api;
+use hf_hub::api::tokio::{Api, ApiBuilder};
 use tokio::sync::OnceCell;
 
 use crate::models::card::ModelCard;
@@ -10,10 +10,14 @@ use crate::models::card::ModelCard;
 static HF_API: OnceCell<Api> = OnceCell::const_new();
 
 /// Get or create the shared HuggingFace API client.
+/// Configured with max_files=8 for parallel file downloads.
 pub(crate) async fn hf_api() -> Result<&'static Api> {
     HF_API
         .get_or_try_init(|| async {
-            Api::new().context("Failed to initialise HuggingFace API client")
+            ApiBuilder::new()
+                .with_max_files(8) // Allow 8 concurrent file downloads
+                .build()
+                .context("Failed to initialise HuggingFace API client")
         })
         .await
 }
@@ -284,9 +288,106 @@ pub struct DownloadResult {
     pub size_bytes: u64,
 }
 
+/// Progress adapter that bridges hf-hub's Progress trait to our callback.
+#[derive(Clone)]
+pub struct ProgressAdapter {
+    total_size: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    callback: Option<crate::models::download::ProgressCallback>,
+}
+
+impl ProgressAdapter {
+    pub fn new(callback: Option<crate::models::download::ProgressCallback>) -> Self {
+        Self {
+            total_size: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            callback,
+        }
+    }
+}
+
+impl hf_hub::api::tokio::Progress for ProgressAdapter {
+    async fn init(&mut self, size: usize, _filename: &str) {
+        self.total_size
+            .store(size as u64, std::sync::atomic::Ordering::Relaxed);
+        if let Some(cb) = &self.callback {
+            cb(0, size as u64);
+        }
+    }
+
+    async fn update(&mut self, size: usize) {
+        if let Some(cb) = &self.callback {
+            cb(size as u64, self.total_size.load(std::sync::atomic::Ordering::Relaxed));
+        }
+    }
+
+    async fn finish(&mut self) {
+        let total = self.total_size.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(cb) = &self.callback {
+            cb(total, total);
+        }
+    }
+}
+
+/// Download a specific GGUF file using hf-hub's downloader with progress reporting.
+/// Uses hf-hub's built-in parallel chunked downloads and caching.
+pub async fn download_gguf_with_progress(
+    repo_id: &str,
+    filename: &str,
+    dest_dir: &std::path::Path,
+    progress_callback: Option<crate::models::download::ProgressCallback>,
+) -> Result<DownloadResult> {
+    let api = hf_api().await?;
+    let repo = api.model(repo_id.to_string());
+
+    // Check if file already exists with correct size (hf-hub handles caching)
+    let dest_path = dest_dir.join(filename);
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+
+    // Use hf-hub's downloader with our progress adapter
+    let progress_adapter = ProgressAdapter::new(progress_callback);
+
+    let cached_path = repo
+        .download_with_progress(filename, progress_adapter)
+        .await
+        .with_context(|| format!("Failed to download '{}' from '{}'", filename, repo_id))?;
+
+    // Get file size
+    let size_bytes = tokio::fs::metadata(&cached_path)
+        .await
+        .context("Failed to get file size")?
+        .len();
+
+    // Copy/symlink from cache to destination if different
+    if cached_path != dest_path {
+        // Remove existing file if present
+        if dest_path.exists() {
+            tokio::fs::remove_file(&dest_path).await.ok();
+        }
+        // Create symlink from cache to destination
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&cached_path, &dest_path)
+                .context("Failed to create symlink")?;
+        }
+        #[cfg(windows)]
+        {
+            std::fs::hard_link(&cached_path, &dest_path)
+                .context("Failed to create hard link")?;
+        }
+    }
+
+    Ok(DownloadResult {
+        path: dest_path,
+        size_bytes,
+    })
+}
+
 /// Download a specific GGUF file from a HuggingFace repo to the given model directory.
 /// Returns the local path and file size.
 /// Downloads directly via reqwest with parallel chunked downloads (bypasses hf-hub's downloader).
+#[allow(dead_code)]
 pub async fn download_gguf(
     client: &reqwest::Client,
     repo_id: &str,

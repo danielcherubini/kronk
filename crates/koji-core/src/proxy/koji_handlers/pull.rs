@@ -36,6 +36,13 @@ fn spawn_download_job(
     let spec_clone = spec.clone();
 
     tokio::spawn(async move {
+        tracing::info!(
+            job_id = %job_id_clone,
+            repo = %repo_id_clone,
+            file = %filename_clone,
+            "Starting download job"
+        );
+
         // Validate filename and repo_id to prevent path traversal.
         if !is_safe_path_component(&filename_clone) {
             let mut jobs = pull_jobs_arc.write().await;
@@ -152,9 +159,9 @@ fn spawn_download_job(
             }
         });
 
-        // Get authenticated client from hf-hub to use HF_TOKEN
-        let client = match crate::models::pull::hf_api().await {
-            Ok(api) => api.client(),
+        // Get hf-hub API (configured with max_files=8 for parallel downloads)
+        let api = match crate::models::pull::hf_api().await {
+            Ok(api) => api,
             Err(e) => {
                 let mut jobs = pull_jobs_arc.write().await;
                 if let Some(job) = jobs.get_mut(&job_id_clone) {
@@ -165,65 +172,132 @@ fn spawn_download_job(
             }
         };
 
-        // Run the actual download
-        let download_result =
-            crate::models::download::download_chunked(client, &url, &dest_path, 8).await;
-
-        // Stop the polling task
-        poll_handle.abort();
-
-        match download_result {
-            Ok(bytes) => {
-                // Record final downloaded byte count. Status stays Running until we
-                // enter the Verifying phase below.
-                {
-                    let mut jobs = pull_jobs_arc.write().await;
-                    if let Some(job) = jobs.get_mut(&job_id_clone) {
-                        job.bytes_downloaded = bytes;
-                        job.total_bytes = Some(bytes);
-                        tracing::info!(job_id = %job_id_clone, bytes, "Download finished, entering verify phase");
+        // Create progress callback that updates job status directly
+        let progress_jobs = Arc::clone(&pull_jobs_arc);
+        let progress_job_id = job_id_clone.clone();
+        let progress_callback: crate::models::download::ProgressCallback =
+            Arc::new(move |downloaded: u64, total: u64| {
+                let job_id = progress_job_id.clone();
+                // Use try_write to avoid blocking the download task
+                if let Ok(mut jobs) = progress_jobs.try_write() {
+                    if let Some(job) = jobs.get_mut(&job_id) {
+                        job.bytes_downloaded = downloaded;
+                        if total > 0 && job.total_bytes.is_none() {
+                            job.total_bytes = Some(total);
+                        }
                     }
                 }
-                // Post-download: auto-create model card and config entries (best-effort)
-                // Also updates the live ProxyState.config so the model appears immediately.
-                setup_model_after_pull(
-                    Arc::clone(&state_clone),
-                    &repo_id_clone,
-                    &spec_clone,
-                    &dest_dir,
-                )
-                .await;
+            });
 
-                // Automatic verification phase: re-hash the downloaded file and
-                // compare against HF's `lfs.sha256`. This catches silent corruption,
-                // truncated downloads, and tampering. See docs in models::verify.
-                run_verification(
-                    Arc::clone(&pull_jobs_arc),
-                    state_clone.db_dir.clone(),
-                    job_id_clone.clone(),
-                    repo_id_clone.clone(),
-                    filename_clone.clone(),
-                    spec_clone.quant.clone(),
-                    dest_path.clone(),
-                    bytes,
-                )
-                .await;
+        tracing::info!(
+            job_id = %job_id_clone,
+            repo = %repo_id_clone,
+            file = %filename_clone,
+            "Beginning file download via hf-hub"
+        );
 
-                // Release the in-flight lock after setup and verification complete
-                // to prevent concurrent retries from starting mid-processing.
-                in_flight_clone.lock().await.remove(&dest_path);
-            }
+        // Use hf-hub's downloader with progress adapter
+        let download_start = std::time::Instant::now();
+        let repo = api.model(repo_id_clone.clone());
+        let progress_adapter = crate::models::pull::ProgressAdapter::new(Some(progress_callback));
+
+        let cached_path = match repo.download_with_progress(&filename_clone, progress_adapter).await {
+            Ok(path) => path,
             Err(e) => {
-                in_flight_clone.lock().await.remove(&dest_path);
                 let mut jobs = pull_jobs_arc.write().await;
                 if let Some(job) = jobs.get_mut(&job_id_clone) {
                     job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                    job.error = Some(e.to_string());
-                    job.completed_at = Some(Instant::now());
-                    tracing::error!(job_id = %job_id_clone, error = %e, "Job failed");
+                    job.error = Some(format!("Download failed: {}", e));
+                }
+                poll_handle.abort();
+                return;
+            }
+        };
+
+        // Get file size from cached file
+        let bytes = match tokio::fs::metadata(&cached_path).await {
+            Ok(meta) => meta.len(),
+            Err(e) => {
+                let mut jobs = pull_jobs_arc.write().await;
+                if let Some(job) = jobs.get_mut(&job_id_clone) {
+                    job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                    job.error = Some(format!("Failed to get file size: {}", e));
+                }
+                poll_handle.abort();
+                return;
+            }
+        };
+
+        // Create symlink/copy from cache to destination if needed
+        if cached_path != dest_path {
+            if dest_path.exists() {
+                tokio::fs::remove_file(&dest_path).await.ok();
+            }
+            #[cfg(unix)]
+            if let Err(e) = std::os::unix::fs::symlink(&cached_path, &dest_path) {
+                // Fallback to hard link if symlink fails (e.g., different filesystem)
+                if let Err(e2) = std::fs::hard_link(&cached_path, &dest_path) {
+                    tracing::warn!("Failed to create link, copying instead: {} / {}", e, e2);
+                    tokio::fs::copy(&cached_path, &dest_path).await.ok();
                 }
             }
+            #[cfg(windows)]
+            if let Err(e) = std::fs::hard_link(&cached_path, &dest_path) {
+                tracing::warn!("Failed to create hard link, copying instead: {}", e);
+                tokio::fs::copy(&cached_path, &dest_path).await.ok();
+            }
         }
+
+        let download_duration = download_start.elapsed();
+        tracing::info!(
+            job_id = %job_id_clone,
+            bytes = bytes,
+            duration = ?download_duration,
+            "Download phase complete"
+        );
+
+        // Stop the file size polling task (no longer needed with direct progress callback)
+        poll_handle.abort();
+
+        // Record final downloaded byte count. Status stays Running until we
+        // enter the Verifying phase below.
+        {
+            let mut jobs = pull_jobs_arc.write().await;
+            if let Some(job) = jobs.get_mut(&job_id_clone) {
+                job.bytes_downloaded = bytes;
+                job.total_bytes = Some(bytes);
+                tracing::info!(job_id = %job_id_clone, bytes, "Download finished, entering verify phase");
+            }
+        }
+
+        // Post-download: auto-create model card and config entries (best-effort)
+        // Also updates the live ProxyState.config so the model appears immediately.
+        setup_model_after_pull(
+            Arc::clone(&state_clone),
+            &repo_id_clone,
+            &spec_clone,
+            &dest_dir,
+        )
+        .await;
+
+        // Automatic verification phase: re-hash the downloaded file and
+        // compare against HF's `lfs.sha256`. This catches silent corruption,
+        // truncated downloads, and tampering. See docs in models::verify.
+        run_verification(
+            Arc::clone(&pull_jobs_arc),
+            state_clone.db_dir.clone(),
+            job_id_clone.clone(),
+            repo_id_clone.clone(),
+            filename_clone.clone(),
+            spec_clone.quant.clone(),
+            dest_path.clone(),
+            bytes,
+        )
+        .await;
+
+        // Release the in-flight lock after setup and verification complete
+        // to prevent concurrent retries from starting mid-processing.
+        in_flight_clone.lock().await.remove(&dest_path);
     });
 }
 
