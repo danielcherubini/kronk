@@ -479,12 +479,93 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
     let stem = filename.strip_suffix(".gguf")?;
 
     // Ordered longest-first so "Q4_K_M" matches before "Q4_K"
+    // Includes UD (Unsloth Dynamic) variants
     let quant_patterns = [
-        "IQ2_XXS", "IQ3_XXS", "IQ1_S", "IQ1_M", "IQ2_XS", "IQ2_S", "IQ2_M", "IQ3_XS", "IQ3_S",
-        "IQ3_M", "IQ4_XS", "IQ4_NL", "Q2_K_S", "Q3_K_S", "Q3_K_M", "Q3_K_L", "Q4_K_S", "Q4_K_M",
-        "Q4_K_L", "Q5_K_S", "Q5_K_M", "Q5_K_L", "Q2_K_XL", "Q3_K_XL", "Q4_K_XL", "Q5_K_XL",
-        "Q6_K_XL", "Q8_K_XL", "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K", "Q4_0", "Q4_1", "Q5_0",
-        "Q5_1", "Q6_0", "Q8_0", "Q8_1", "F16", "F32", "BF16",
+        // Unsloth Dynamic (UD) quants - must come before standard quants
+        "UD-IQ2_XXS",
+        "UD-IQ3_XXS",
+        "UD-IQ1_S",
+        "UD-IQ1_M",
+        "UD-IQ2_XS",
+        "UD-IQ2_S",
+        "UD-IQ2_M",
+        "UD-IQ3_XS",
+        "UD-IQ3_S",
+        "UD-IQ3_M",
+        "UD-IQ4_XS",
+        "UD-IQ4_NL",
+        "UD-Q2_K_S",
+        "UD-Q3_K_S",
+        "UD-Q3_K_M",
+        "UD-Q3_K_L",
+        "UD-Q4_K_S",
+        "UD-Q4_K_M",
+        "UD-Q4_K_L",
+        "UD-Q5_K_S",
+        "UD-Q5_K_M",
+        "UD-Q5_K_L",
+        "UD-Q2_K_XL",
+        "UD-Q3_K_XL",
+        "UD-Q4_K_XL",
+        "UD-Q5_K_XL",
+        "UD-Q6_K_XL",
+        "UD-Q8_K_XL",
+        "UD-Q2_K",
+        "UD-Q3_K",
+        "UD-Q4_K",
+        "UD-Q5_K",
+        "UD-Q6_K",
+        "UD-Q4_0",
+        "UD-Q4_1",
+        "UD-Q5_0",
+        "UD-Q5_1",
+        "UD-Q6_0",
+        "UD-Q8_0",
+        "UD-Q8_1",
+        // Standard quants
+        "IQ2_XXS",
+        "IQ3_XXS",
+        "IQ1_S",
+        "IQ1_M",
+        "IQ2_XS",
+        "IQ2_S",
+        "IQ2_M",
+        "IQ3_XS",
+        "IQ3_S",
+        "IQ3_M",
+        "IQ4_XS",
+        "IQ4_NL",
+        "Q2_K_S",
+        "Q3_K_S",
+        "Q3_K_M",
+        "Q3_K_L",
+        "Q4_K_S",
+        "Q4_K_M",
+        "Q4_K_L",
+        "Q5_K_S",
+        "Q5_K_M",
+        "Q5_K_L",
+        "Q2_K_XL",
+        "Q3_K_XL",
+        "Q4_K_XL",
+        "Q5_K_XL",
+        "Q6_K_XL",
+        "Q8_K_XL",
+        "Q2_K",
+        "Q3_K",
+        "Q4_K",
+        "Q5_K",
+        "Q6_K",
+        "Q4_0",
+        "Q4_1",
+        "Q5_0",
+        "Q5_1",
+        "Q6_0",
+        "Q8_0",
+        "Q8_1",
+        "F16",
+        "F32",
+        "BF16",
     ];
 
     let stem_upper = stem.to_uppercase();
@@ -684,6 +765,18 @@ mod tests {
         assert_eq!(
             infer_quant_from_filename("model-q5_k_xl.gguf"),
             Some("Q5_K_XL".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_quant_ud() {
+        assert_eq!(
+            infer_quant_from_filename("model-UD-Q4_K_XL.gguf"),
+            Some("UD-Q4_K_XL".to_string())
+        );
+        assert_eq!(
+            infer_quant_from_filename("Llama-3.2-UD-Q4_K_M.gguf"),
+            Some("UD-Q4_K_M".to_string())
         );
     }
 }
