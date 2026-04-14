@@ -342,6 +342,76 @@ impl hf_hub::api::tokio::Progress for ProgressAdapter {
     }
 }
 
+/// Clean up the HF cache file after a successful download and verification.
+///
+/// This function removes the source file from the HF cache directory only after
+/// verifying that:
+/// 1. The destination file exists
+/// 2. The destination file size matches the source file size
+///
+/// This is a safety measure to prevent accidental data loss. If the destination
+/// is missing or has a different size, the source file is preserved.
+///
+/// # Arguments
+///
+/// * `source_path` - Path to the file in the HF cache directory
+/// * `dest_path` - Path to the final destination in the Koji models directory
+///
+/// # Returns
+///
+/// * `Ok(())` if cleanup was successful or not needed (source already gone)
+/// * `Err(anyhow::Error)` if safety checks fail or deletion fails
+pub async fn cleanup_hf_cache(
+    source_path: &std::path::Path,
+    dest_path: &std::path::Path,
+) -> Result<()> {
+    // Safety check 1: Verify destination exists
+    if !dest_path.exists() {
+        anyhow::bail!(
+            "Destination file does not exist at '{}', skipping cache cleanup",
+            dest_path.display()
+        );
+    }
+
+    // If source doesn't exist, there's nothing to clean up (already deleted)
+    if !source_path.exists() {
+        tracing::debug!(
+            "Source cache file does not exist at '{}', nothing to clean up",
+            source_path.display()
+        );
+        return Ok(());
+    }
+
+    // Safety check 2: Verify destination size matches source
+    let source_meta = std::fs::metadata(source_path).with_context(|| {
+        format!(
+            "Failed to get metadata for source path: {}",
+            source_path.display()
+        )
+    })?;
+
+    let dest_meta = std::fs::metadata(dest_path).with_context(|| {
+        format!(
+            "Failed to get metadata for dest path: {}",
+            dest_path.display()
+        )
+    })?;
+
+    if source_meta.len() != dest_meta.len() {
+        anyhow::bail!(
+            "Size mismatch: source={}, dest={}, skipping cache cleanup",
+            source_meta.len(),
+            dest_meta.len()
+        );
+    }
+
+    // Safe to delete - remove the source file from HF cache
+    std::fs::remove_file(source_path)
+        .with_context(|| format!("Failed to remove cache file: {}", source_path.display()))?;
+
+    Ok(())
+}
+
 /// Download a specific GGUF file using hf-hub's downloader with progress reporting.
 /// Uses hf-hub's built-in parallel chunked downloads and caching.
 pub async fn download_gguf_with_progress(
@@ -906,6 +976,121 @@ mod tests {
         assert_eq!(
             infer_quant_from_filename("model-Quality.gguf"),
             Some("Quality".to_string())
+        );
+    }
+
+    // ── HF Cache Cleanup tests ───────────────────────────────────────────────
+
+    /// Verifies that `cleanup_hf_cache` deletes the source file when:
+    /// - The destination exists
+    /// - The destination size matches the source size
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_success() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file (simulating HF cache)
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Create dest file with same size (simulating successful move)
+        std::fs::write(&dest_path, b"test data").unwrap();
+
+        // Verify source exists before cleanup
+        assert!(source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup succeeded
+        assert!(result.is_ok(), "Cleanup should succeed: {:?}", result.err());
+
+        // Verify source was deleted but dest remains
+        assert!(
+            !source_path.exists(),
+            "Source should be deleted after successful cleanup"
+        );
+        assert!(dest_path.exists(), "Dest should still exist after cleanup");
+    }
+
+    /// Verifies that `cleanup_hf_cache` does NOT delete the source file when:
+    /// - The destination does not exist (safety check)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_dest_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file only
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Verify source exists, dest does not
+        assert!(source_path.exists());
+        assert!(!dest_path.exists());
+
+        // Run cleanup - should fail safety check
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup was skipped (source still exists)
+        assert!(result.is_err(), "Cleanup should fail when dest is missing");
+        assert!(
+            source_path.exists(),
+            "Source should NOT be deleted when dest is missing"
+        );
+    }
+
+    /// Verifies that `cleanup_hf_cache` does NOT delete the source file when:
+    /// - The destination size does not match the source size (safety check)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_size_mismatch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create source file with specific size
+        std::fs::write(&source_path, b"test data").unwrap();
+
+        // Create dest file with different size
+        std::fs::write(&dest_path, b"test data with different size").unwrap();
+
+        // Verify both exist with different sizes
+        assert!(source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup - should fail size check
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Verify cleanup was skipped (source still exists)
+        assert!(result.is_err(), "Cleanup should fail when sizes mismatch");
+        assert!(
+            source_path.exists(),
+            "Source should NOT be deleted when sizes mismatch"
+        );
+    }
+
+    /// Verifies that `cleanup_hf_cache` handles missing source gracefully
+    /// (e.g., if it was already deleted by another process)
+    #[tokio::test]
+    async fn test_cleanup_hf_cache_source_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.gguf");
+        let dest_path = temp_dir.path().join("dest.gguf");
+
+        // Create dest file only (source already gone)
+        std::fs::write(&dest_path, b"test data").unwrap();
+
+        // Verify source is missing
+        assert!(!source_path.exists());
+        assert!(dest_path.exists());
+
+        // Run cleanup - should handle gracefully (not panic)
+        let result = super::cleanup_hf_cache(&source_path, &dest_path).await;
+
+        // Cleanup should succeed (nothing to clean up)
+        assert!(
+            result.is_ok(),
+            "Cleanup should succeed when source is already gone"
         );
     }
 }
