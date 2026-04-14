@@ -12,7 +12,7 @@ use reqwest::StatusCode;
 use crate::models::repo_path;
 
 use super::types::{
-    is_safe_path_component, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK, MAX_CONCURRENT_PULLS,
+    is_safe_path_component, max_concurrent_pulls, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK,
 };
 use crate::proxy::pull_jobs::{PullJob, PullJobStatus};
 use crate::proxy::ProxyState;
@@ -580,11 +580,12 @@ pub async fn handle_koji_pull_model(
 
     // Multi-quant path: when `quants` is non-empty, spawn one job per entry.
     if !request.quants.is_empty() {
-        if request.quants.len() > MAX_CONCURRENT_PULLS {
+        let max_pulls = max_concurrent_pulls();
+        if request.quants.len() > max_pulls {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
-                    "error": format!("Too many quants requested. Maximum is {}.", MAX_CONCURRENT_PULLS)
+                    "error": format!("Too many quants requested. Maximum is {}.", max_pulls)
                 })),
             )
                 .into_response();

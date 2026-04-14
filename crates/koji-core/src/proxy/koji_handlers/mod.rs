@@ -16,5 +16,5 @@ pub use system::{
     handle_system_metrics_history, handle_system_metrics_stream,
 };
 pub use types::{
-    ModelResponse, PullRequest, PullResponse, QuantDownloadSpec, QuantEntry, MAX_CONCURRENT_PULLS,
+    max_concurrent_pulls, ModelResponse, PullRequest, PullResponse, QuantDownloadSpec, QuantEntry,
 };

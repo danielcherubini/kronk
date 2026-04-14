@@ -238,6 +238,14 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
 
             tracing::info!("Starting Koji proxy service on {}", addr);
 
+            // Set up HF_TOKEN from config before any hf_hub usage
+            if let Some(token) = &config.general.hf_token {
+                if !token.is_empty() {
+                    std::env::set_var("HF_TOKEN", token);
+                    tracing::info!("HF_TOKEN configured from config file");
+                }
+            }
+
             // Use the explicit config_dir from the service install, falling back to default.
             // This ensures the DB path matches what the CLI expects.
             let db_dir = config_dir

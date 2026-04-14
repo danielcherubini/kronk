@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -7,7 +9,7 @@ use indicatif::ProgressBar;
 use reqwest::Client;
 use tokio::io::AsyncWriteExt;
 
-use super::MAX_RETRIES;
+use super::{ProgressCallback, MAX_RETRIES};
 
 /// Download a file using parallel HTTP Range requests.
 pub async fn download_parallel(
@@ -17,6 +19,7 @@ pub async fn download_parallel(
     total_size: u64,
     num_connections: usize,
     pb: &ProgressBar,
+    progress_callback: Option<&ProgressCallback>,
 ) -> anyhow::Result<()> {
     if num_connections == 0 {
         anyhow::bail!("num_connections must be > 0");
@@ -40,6 +43,26 @@ pub async fn download_parallel(
         .map(|i| tmp_dir.join(format!(".{}.part{}", dest_filename, i)))
         .collect();
 
+    // Shared atomic counter for tracking total progress across all chunks
+    let total_downloaded = Arc::new(AtomicU64::new(0));
+
+    // Spawn a task to poll progress and call the callback
+    let progress_handle = if let Some(callback) = progress_callback {
+        let callback = callback.clone();
+        let total_downloaded = total_downloaded.clone();
+        let pb_clone = pb.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let downloaded = total_downloaded.load(Ordering::Relaxed);
+                pb_clone.set_position(downloaded);
+                callback(downloaded, total_size);
+            }
+        }))
+    } else {
+        None
+    };
+
     // Download each chunk to a temp file
     let mut handles = Vec::new();
 
@@ -55,9 +78,20 @@ pub async fn download_parallel(
         let url = url.to_string();
         let tmp_path = tmp_path.clone();
         let pb = pb.clone();
+        let total_downloaded = total_downloaded.clone();
 
         let handle = tokio::spawn(async move {
-            download_chunk_with_retry(&client, &url, &tmp_path, start, end, i, &pb).await?;
+            download_chunk_with_retry(
+                &client,
+                &url,
+                &tmp_path,
+                start,
+                end,
+                i,
+                &pb,
+                Some(&total_downloaded),
+            )
+            .await?;
             Ok::<PathBuf, anyhow::Error>(tmp_path)
         });
 
@@ -81,6 +115,11 @@ pub async fn download_parallel(
                 }
             }
         }
+    }
+
+    // Stop the progress polling task
+    if let Some(handle) = progress_handle {
+        handle.abort();
     }
 
     // If any chunk failed, clean up all temp files and bail
@@ -112,6 +151,7 @@ async fn download_chunk_with_retry(
     end: u64,
     chunk_index: usize,
     pb: &ProgressBar,
+    total_downloaded: Option<&AtomicU64>,
 ) -> anyhow::Result<()> {
     let expected_size = end - start + 1;
     let mut attempt = 0u32;
@@ -168,8 +208,12 @@ async fn download_chunk_with_retry(
             match stream.try_next().await {
                 Ok(Some(chunk)) => {
                     file.write_all(&chunk).await?;
-                    chunk_downloaded += chunk.len() as u64;
-                    pb.inc(chunk.len() as u64);
+                    let len = chunk.len() as u64;
+                    chunk_downloaded += len;
+                    pb.inc(len);
+                    if let Some(counter) = total_downloaded {
+                        counter.fetch_add(len, Ordering::Relaxed);
+                    }
                 }
                 Ok(None) => break,
                 Err(_e) => {

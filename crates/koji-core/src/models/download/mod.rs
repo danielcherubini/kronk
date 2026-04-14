@@ -2,6 +2,7 @@ mod parallel;
 mod single;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -10,6 +11,10 @@ use reqwest::Client;
 
 const MIN_CHUNK_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
 const MAX_RETRIES: u32 = 3;
+
+/// Callback type for reporting download progress.
+/// Called with (bytes_downloaded, total_bytes).
+pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 /// Parse the Content-Length header from raw headers, bypassing reqwest's
 /// Response::content_length() which returns Some(0) for HEAD requests (known bug).
@@ -28,6 +33,22 @@ pub async fn download_chunked(
     url: &str,
     dest: &Path,
     connections: usize,
+) -> Result<u64> {
+    download_chunked_with_progress(client, url, dest, connections, None).await
+}
+
+/// Download a file using parallel HTTP Range requests with progress callback.
+/// Falls back to single-stream if Range is not supported.
+/// Skips download if the destination already exists with matching size.
+///
+/// The progress callback is called periodically with (bytes_downloaded, total_bytes).
+/// This is useful for reporting progress to external consumers (e.g., SSE streams).
+pub async fn download_chunked_with_progress(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    connections: usize,
+    progress_callback: Option<ProgressCallback>,
 ) -> Result<u64> {
     // HEAD request to get Content-Length and check Range support
     let head = client
@@ -81,10 +102,30 @@ pub async fn download_chunked(
             .progress_chars("=>-"),
     );
 
-    let result = if num_connections == 1 {
-        single::download_single(client, url, dest, &pb).await
+    // Wrap the callback to also update the progress bar
+    let callback_for_bar = if let Some(cb) = progress_callback.clone() {
+        let pb_clone = pb.clone();
+        Some(Arc::new(move |downloaded: u64, total: u64| {
+            pb_clone.set_position(downloaded);
+            cb(downloaded, total);
+        }) as ProgressCallback)
     } else {
-        parallel::download_parallel(client, url, dest, total_size, num_connections, &pb).await
+        None
+    };
+
+    let result = if num_connections == 1 {
+        single::download_single(client, url, dest, total_size, &pb, callback_for_bar.as_ref()).await
+    } else {
+        parallel::download_parallel(
+            client,
+            url,
+            dest,
+            total_size,
+            num_connections,
+            &pb,
+            callback_for_bar.as_ref(),
+        )
+        .await
     };
 
     pb.finish_and_clear();

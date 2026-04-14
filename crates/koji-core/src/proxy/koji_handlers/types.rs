@@ -1,7 +1,17 @@
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of quants that can be downloaded in a single pull request.
-pub const MAX_CONCURRENT_PULLS: usize = 4;
+///
+/// Configurable via `KOJI_MAX_CONCURRENT_PULLS` environment variable.
+/// Default is 8 (increased from original 4 for better parallelism).
+/// For network I/O bound downloads, higher values improve throughput
+/// without significant CPU/memory overhead.
+pub fn max_concurrent_pulls() -> usize {
+    std::env::var("KOJI_MAX_CONCURRENT_PULLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8)
+}
 
 /// Global mutex serialising post-pull config writes to prevent concurrent-completion races.
 pub(super) static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -69,4 +79,55 @@ pub struct RestartResponse {
 /// Returns `false` if the path component contains traversal sequences or invalid characters.
 pub(super) fn is_safe_path_component(s: &str) -> bool {
     !s.is_empty() && !s.contains("..") && !s.contains('/') && !s.contains('\\') && !s.contains('\0')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_max_concurrent_pulls_default() {
+        // Default should be 8
+        assert_eq!(max_concurrent_pulls(), 8);
+    }
+
+    #[test]
+    fn test_max_concurrent_pulls_from_env() {
+        unsafe {
+            std::env::set_var("KOJI_MAX_CONCURRENT_PULLS", "16");
+        }
+        assert_eq!(max_concurrent_pulls(), 16);
+        unsafe {
+            std::env::remove_var("KOJI_MAX_CONCURRENT_PULLS");
+        }
+    }
+
+    #[test]
+    fn test_max_concurrent_pulls_invalid_env() {
+        unsafe {
+            std::env::set_var("KOJI_MAX_CONCURRENT_PULLS", "not_a_number");
+        }
+        // Should fall back to default
+        assert_eq!(max_concurrent_pulls(), 8);
+        unsafe {
+            std::env::remove_var("KOJI_MAX_CONCURRENT_PULLS");
+        }
+    }
+
+    #[test]
+    fn test_is_safe_path_component_valid() {
+        assert!(is_safe_path_component("model.gguf"));
+        assert!(is_safe_path_component("Q4_K_M"));
+        assert!(is_safe_path_component("unsloth"));
+    }
+
+    #[test]
+    fn test_is_safe_path_component_invalid() {
+        assert!(!is_safe_path_component(""));
+        assert!(!is_safe_path_component(".."));
+        assert!(!is_safe_path_component("../etc"));
+        assert!(!is_safe_path_component("path/to/file"));
+        assert!(!is_safe_path_component("path\\to\\file"));
+        assert!(!is_safe_path_component("path\0null"));
+    }
 }

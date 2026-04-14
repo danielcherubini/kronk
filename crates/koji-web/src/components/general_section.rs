@@ -72,10 +72,12 @@ mod tests {
             log_level: "info".to_string(),
             models_dir: Some("/models".to_string()),
             logs_dir: None,
+            hf_token: Some("hf_test123".to_string()),
         };
         assert_eq!(general.log_level, "info");
         assert_eq!(general.models_dir, Some("/models".to_string()));
         assert_eq!(general.logs_dir, None);
+        assert_eq!(general.hf_token, Some("hf_test123".to_string()));
     }
 
     #[test]
@@ -84,5 +86,6 @@ mod tests {
         assert_eq!(general.log_level, "");
         assert_eq!(general.models_dir, None);
         assert_eq!(general.logs_dir, None);
+        assert_eq!(general.hf_token, None);
     }
 }

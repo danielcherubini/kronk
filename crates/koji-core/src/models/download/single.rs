@@ -6,14 +6,16 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-use super::MAX_RETRIES;
+use super::{ProgressCallback, MAX_RETRIES};
 
 /// Download a file using a single HTTP stream with retry support.
 pub async fn download_single(
     client: &Client,
     url: &str,
     dest: &Path,
+    total_size: u64,
     pb: &ProgressBar,
+    progress_callback: Option<&ProgressCallback>,
 ) -> anyhow::Result<()> {
     let mut attempt = 0u32;
     let mut downloaded: u64 = 0;
@@ -101,6 +103,9 @@ pub async fn download_single(
                         .with_context(|| format!("Failed to write to {}", dest.display()))?;
                     downloaded += chunk.len() as u64;
                     pb.set_position(downloaded);
+                    if let Some(cb) = progress_callback {
+                        cb(downloaded, total_size);
+                    }
                 }
                 Ok(None) => break,
                 Err(_e) => {

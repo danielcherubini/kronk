@@ -30,6 +30,8 @@ pub struct General {
     pub models_dir: Option<String>,
     #[serde(default)]
     pub logs_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -357,6 +359,25 @@ fn GeneralForm(config: RwSignal<Option<Config>>) -> impl IntoView {
                             });
                         }
                     />
+                </div>
+
+                <div>
+                    <label>"HuggingFace Token"</label>
+                    <input
+                        type="password"
+                        placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        prop:value=move || get_general().hf_token.unwrap_or_default()
+                        on:input=move |ev| {
+                            let v = target_value(&ev);
+                            config.update(|c| if let Some(c) = c {
+                                c.general.hf_token = if v.is_empty() { None } else { Some(v) };
+                            });
+                        }
+                    />
+                    <p class="text-muted" style="font-size:0.85em;margin-top:0.25rem;">
+                        "API token for downloading gated models from HuggingFace. "
+                        "Get your token at " <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">"huggingface.co/settings/tokens"</a>
+                    </p>
                 </div>
             </div>
         </div>

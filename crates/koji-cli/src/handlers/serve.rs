@@ -10,6 +10,17 @@ pub async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u
     start_proxy_server(config, host, port, idle_timeout).await
 }
 
+/// Set up HF_TOKEN environment variable from config if present.
+/// This must be called before any hf_hub API usage.
+fn setup_hf_token(config: &Config) {
+    if let Some(token) = &config.general.hf_token {
+        if !token.is_empty() {
+            std::env::set_var("HF_TOKEN", token);
+            tracing::info!("HF_TOKEN configured from config file");
+        }
+    }
+}
+
 /// Start the koji server (proxy) with the given host, port, and idle timeout.
 async fn start_proxy_server(
     config: &Config,
@@ -27,6 +38,9 @@ async fn start_proxy_server(
     updated_config.proxy.host = host.clone();
     updated_config.proxy.port = port;
     updated_config.proxy.idle_timeout_secs = idle_timeout;
+
+    // Set up HF_TOKEN from config before any hf_hub usage
+    setup_hf_token(&updated_config);
 
     // Parse host and port
     let (host_addr, warning) = match host.parse::<std::net::IpAddr>() {

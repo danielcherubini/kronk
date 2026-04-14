@@ -128,6 +128,10 @@ pub struct General {
     pub models_dir: Option<String>,
     #[serde(default)]
     pub logs_dir: Option<String>,
+    /// HuggingFace API token for downloading gated models.
+    /// When set, this is exported as HF_TOKEN environment variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

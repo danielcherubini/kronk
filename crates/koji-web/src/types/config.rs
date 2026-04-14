@@ -87,6 +87,9 @@ pub struct General {
     pub models_dir: Option<String>,
     #[serde(default)]
     pub logs_dir: Option<String>,
+    /// HuggingFace API token for downloading gated models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_token: Option<String>,
 }
 
 /// Backend configuration.
@@ -408,6 +411,7 @@ impl From<CoreGeneral> for General {
             log_level: g.log_level,
             models_dir: g.models_dir,
             logs_dir: g.logs_dir,
+            hf_token: g.hf_token,
         }
     }
 }
@@ -419,6 +423,7 @@ impl From<General> for CoreGeneral {
             log_level: g.log_level,
             models_dir: g.models_dir,
             logs_dir: g.logs_dir,
+            hf_token: g.hf_token,
         }
     }
 }
