@@ -1,88 +1,28 @@
 use crate::components::pull_wizard::*;
+use crate::components::context_length_selector::ContextLengthSelector;
 use std::collections::{HashMap, HashSet};
 
 /// Dropdown + conditional custom input for selecting context length for a single file.
-///
-/// Always renders a <select> dropdown. When the user picks "Custom...", the
-/// `is_custom` signal flips to true and a number input appears below it.
-/// We use CSS visibility instead of conditional view rendering to avoid
-/// Leptos closure-ownership issues with String props.
 #[component]
 fn ContextFileDropdown(
     filename: String,
     context_lengths: RwSignal<HashMap<String, u32>>,
-    is_custom: RwSignal<bool>,
 ) -> impl IntoView {
-    let filename_dropdown = filename.clone();
-    let filename_onchange = filename.clone();
-    let filename_input = filename.clone();
-    let filename_oninput = filename.clone();
-    let filename_options = filename.clone();
+    let filename_val = filename.clone();
+    let filename_change = filename.clone();
 
     view! {
-        <div>
-            // Always-visible dropdown
-            <select
-                class="form-select input-narrow"
-                prop:value=move || {
-                    if is_custom.get() {
-                        "custom".to_string()
-                    } else {
-                        context_lengths.get()
-                            .get(&filename_dropdown)
-                            .copied()
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "32768".to_string())
-                    }
-                }
-                on:change=move |e| {
-                    let v = event_target_value(&e);
-                    if v == "custom" {
-                        is_custom.set(true);
-                    } else if let Ok(parsed) = v.parse::<u32>() {
-                        context_lengths.update(|m| {
-                            m.insert(filename_onchange.clone(), parsed);
-                        });
-                        is_custom.set(false);
-                    }
-                }
-            >
-                {move || {
-                    let current = context_lengths.get().get(&filename_options).copied().unwrap_or(32768);
-                    let is_c = is_custom.get();
-                    CONTEXT_VALUES.iter().map(|v| {
-                        let val = *v;
-                        let selected = !is_c && val == current;
-                        view! {
-                            <option value=val.to_string() selected=selected>{*v}</option>
-                        }
-                    }).collect::<Vec<_>>()
-                }}
-                <option value="custom">"Custom..."</option>
-            </select>
-
-            // Conditional custom input - rendered always, hidden via CSS
-            <input
-                class="form-input input-narrow"
-                type="number"
-                min="512"
-                step="512"
-                style=move || if is_custom.get() { "display:block;margin-top:0.5rem" } else { "display:none" }
-                prop:value=move || {
-                    context_lengths.get()
-                        .get(&filename_input)
-                        .copied()
-                        .unwrap_or(32768)
-                }
-                on:input=move |e| {
-                    if let Ok(v) = event_target_value(&e).parse::<u32>() {
-                        context_lengths.update(|m| {
-                            m.insert(filename_oninput.clone(), v);
-                        });
-                    }
-                }
-            />
-        </div>
+        <ContextLengthSelector
+            class="input-narrow".to_string()
+            value=Signal::derive(move || context_lengths.get().get(&filename_val).copied())
+            on_change=Callback::new(move |v: Option<u32>| {
+                let val = v.unwrap_or(32768);
+                context_lengths.update(|m| {
+                    m.insert(filename_change.clone(), val);
+                });
+            })
+            reset_key=Signal::derive(move || "wizard-static".to_string())
+        />
     }
 }
 
@@ -118,7 +58,6 @@ pub fn ContextStep(
                         .map(|q| {
                             let fname = q.filename.clone();
                             let label = q.quant.clone().unwrap_or_else(|| fname.clone());
-                            let is_custom = RwSignal::new(false);
 
                             view! {
                                 <tr>
@@ -128,7 +67,6 @@ pub fn ContextStep(
                                         <ContextFileDropdown
                                             filename=fname
                                             context_lengths
-                                            is_custom
                                         />
                                     </td>
                                 </tr>

@@ -14,10 +14,10 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 55
-- **Completed**: 50 ✅
-- **In Progress**: 2 🚧 (ROCm Build Flags, Pull Wizard Improvements)
-- **Remaining**: 3 ❌ (VLLM Backend, Backup & Restore, Wizard & Cache Improvements)
+- **Total Plans**: 56
+- **Completed**: 53 ✅
+- **In Progress**: 1 🚧 (ROCm Build Flags)
+- **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -88,6 +88,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Collapsible Sidebar Navigation](2026-04-11-sidebar-navigation.md) | Replace topbar with collapsible left sidebar | #55 `9fa3e67`, `f5046a4`, `592a40c`, `d9af7ad` |
 | [Dashboard Metrics Redesign](2026-04-11-dashboard-redesign.md) | Interactive sparkline cards with hover, history API | #54 `858bf61`, `34ce619`, `502e2f6` |
 | [Pull Model Modal Refactor](2026-04-08-pull-model-modal-refactor.md) | Replace /pull page with modal on Models tab | #44 `0907a4e`, `ec3abc3`, `8dc2a8f` |
+| [Pull Wizard Improvements](2026-04-14-pull-wizard-improvements.md) | Consolidate quant/vision selection, smart KV cache dropdown, APEX/UD support, HF cache cleanup | #58 `10a9d7f`, `603c403`, `3be54a8`, `db955e0`, `6af6423`, `ae1c8f1` |
+| [Wizard & Cache Improvements](2026-04-14-wizard-cache-improvements.md) | Fix KV dropdown, add APEX/UD quant support, implement HF cache cleanup | #58 `3be54a8`, `db955e0`, `6af6423`, `ae1c8f1` |
+| [Context Length Selector](2026-04-14-context-length-selector.md) | Shared component for context length input with dropdown and custom value fallback | #59 |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
 | [Koji Web Control Plane](2026-04-03-koji-web-control-plane.md) | Core UI — initial implementation | ✅ PARTIALLY COMPLETED |
 
@@ -133,8 +136,6 @@ This directory contains implementation plans for the Koji project. Each plan doc
 |------|-------------|--------|
 | [VLLM Backend](2026-03-30-vllm-backend.md) | Add vLLM as a first-class backend type with PyPI version checking | ❌ NOT STARTED |
 | [Backup & Restore](2026-04-13-backup-restore.md) | Backup config + DB archive, restore with model re-download and backend re-install | 🚧 IN PROGRESS |
-| [Pull Wizard Improvements](2026-04-14-pull-wizard-improvements.md) | Consolidate quant/vision selection and smart context length dropdown | 🚧 IN PROGRESS |
-| [Wizard & Cache Improvements](2026-04-14-wizard-cache-improvements.md) | Fix KV dropdown, add APEX/UD quant support, implement HF cache cleanup | ❌ NOT STARTED |
 
 ## Roadmap
 

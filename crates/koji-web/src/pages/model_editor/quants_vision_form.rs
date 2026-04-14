@@ -3,7 +3,7 @@ use std::sync::Arc;
 use leptos::prelude::*;
 
 use super::types::{ModelForm, QuantInfo, QuantKind};
-use crate::utils::target_value;
+use crate::components::context_length_selector::ContextLengthSelector;
 
 fn format_bytes_opt(bytes: Option<u64>) -> String {
     let Some(b) = bytes else {
@@ -120,7 +120,6 @@ pub fn ModelEditorQuantsVisionForm(
                         let name_for_change = Arc::clone(&name_arc);
                         let q_arc = Arc::new(q);
                         let q_arc_size = Arc::clone(&q_arc);
-                        let q_arc_ctx = Arc::clone(&q_arc);
                         let q_arc_sha = Arc::clone(&q_arc);
                         let q_arc_verified = Arc::clone(&q_arc);
                         let q_arc_del = Arc::clone(&q_arc);
@@ -168,25 +167,31 @@ pub fn ModelEditorQuantsVisionForm(
                                     </span>
                                 </td>
                                 <td>
-                                    <input
-                                         class="form-input"
-                                         type="number"
-                                         placeholder="optional"
-                                         prop:value=move || q_arc_ctx.context_length.map(|v| v.to_string()).unwrap_or_default()
-                                         on:input={
-                                             let name_ref = Arc::clone(&name_arc);
-                                             move |e| {
-                                                 let ctx = target_value(&e).parse::<u32>().ok();
-                                                 form.update(|f| {
-                                                     if let Some(form) = f {
-                                                         if let Some(existing) = form.quants.get_mut(&*name_ref) {
-                                                             existing.context_length = ctx;
-                                                         }
-                                                     }
-                                                 });
-                                             }
-                                         }
-                                     />
+                                    <ContextLengthSelector
+                                        class="input-narrow".to_string()
+                                        value=Signal::derive({
+                                            let name_ref = Arc::clone(&name_arc);
+                                            move || {
+                                                form.get().and_then(|f| f.quants.get(&*name_ref).and_then(|q| q.context_length))
+                                            }
+                                        })
+                                        on_change=Callback::new({
+                                            let name_ref = Arc::clone(&name_arc);
+                                            move |ctx: Option<u32>| {
+                                                form.update(|f| {
+                                                    if let Some(form) = f {
+                                                        if let Some(existing) = form.quants.get_mut(&*name_ref) {
+                                                            existing.context_length = ctx;
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        })
+                                        reset_key=Signal::derive({
+                                            let _name_ref = Arc::clone(&name_arc);
+                                            move || original_id.get()
+                                        })
+                                    />
                                 </td>
                                 <td>
                                     {

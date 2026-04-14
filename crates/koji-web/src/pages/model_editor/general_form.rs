@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use super::types::ModelForm;
+use crate::components::context_length_selector::ContextLengthSelector;
 use crate::utils::target_value;
 
 const MODALITY_OPTIONS: &[(&str, &str)] = &[
@@ -135,18 +136,16 @@ pub fn ModelEditorGeneralForm(
             />
 
             <label class="form-label" for="field-ctx">"Context length"</label>
-            <input
-                id="field-ctx"
-                class="form-input"
-                type="number"
-                placeholder="leave blank for default"
-                on:input=move |ev| {
+            <ContextLengthSelector
+                value=Signal::derive(move || form.get().and_then(|f| f.context_length))
+                on_change=Callback::new(move |v| {
                     form.update(|f| {
                         if let Some(form) = f {
-                            form.context_length = target_value(&ev).parse::<u32>().ok();
+                            form.context_length = v;
                         }
                     });
-                }
+                })
+                reset_key=Signal::derive(move || form.get().map(|f| f.id.clone()).unwrap_or_default())
             />
 
             <label class="form-label" for="field-port">"Port override"</label>
