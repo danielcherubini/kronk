@@ -77,7 +77,35 @@ fn format_bytes(bytes: i64) -> String {
     }
 }
 
-// ── Request body type ────────────────────────────────────────────────────────
+fn is_selection_empty(quants: &HashSet<String>, mmprojs: &HashSet<String>) -> bool {
+    quants.is_empty() && mmprojs.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_selection_empty() {
+        let quants = HashSet::new();
+        let mmprojs = HashSet::new();
+        assert!(is_selection_empty(&quants, &mmprojs));
+
+        let mut quants = HashSet::new();
+        quants.insert("q1".to_string());
+        assert!(!is_selection_empty(&quants, &mmprojs));
+
+        let mut mmprojs = HashSet::new();
+        mmprojs.insert("m1".to_string());
+        assert!(!is_selection_empty(&quants, &mmprojs));
+
+        let mut quants = HashSet::new();
+        quants.insert("q1".to_string());
+        let mut mmprojs = HashSet::new();
+        mmprojs.insert("m1".to_string());
+        assert!(!is_selection_empty(&quants, &mmprojs));
+    }
+}
 
 #[derive(Serialize)]
 struct PullRequest {
@@ -537,11 +565,57 @@ pub fn PullQuantWizard(
                                         <td class="text-muted">{size_str}</td>
                                     </tr>
                                 }
-                            }).collect::<Vec<_>>()}
-                        </tbody>
-                    </table>
+                                }).collect::<Vec<_>>()}
+                            </tbody>
+                        </table>
 
-                    <div class="form-actions mt-3">
+                        <div class="mt-4 mb-2">
+                            <h3 class="form-label">"Vision Projectors"</h3>
+                            <p class="text-muted text-sm mb-2">"Select vision projectors (mmproj) for this model."</p>
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th class="icon-sm"></th>
+                                        <th>"Filename"</th>
+                                        <th>"Size"</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {move || available_mmprojs.get().into_iter().map(|q| {
+                                        let fname = q.filename.clone();
+                                        let fname_check = fname.clone();
+                                        let size_str = q.size_bytes
+                                            .map(format_bytes)
+                                            .unwrap_or_else(|| "?".to_string());
+                                        let is_checked = move || selected_mmproj_filenames.get().contains(&fname_check);
+                                        view! {
+                                            <tr>
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=is_checked
+                                                        on:change=move |_| {
+                                                            selected_mmproj_filenames.update(|set| {
+                                                                if set.contains(&fname) {
+                                                                    set.remove(&fname);
+                                                                } else {
+                                                                    set.insert(fname.clone());
+                                                                }
+                                                            });
+                                                        }
+                                                    />
+                                                </td>
+                                                <td><code>{q.filename.clone()}</code></td>
+                                                <td class="text-muted">{size_str}</td>
+                                            </tr>
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="form-actions mt-3">
+
                         <Show when=move || initial_repo.get().trim().is_empty()>
                             <button class="btn btn-secondary" on:click=move |_| {
                                 wizard_step.set(WizardStep::RepoInput);
@@ -551,7 +625,7 @@ pub fn PullQuantWizard(
                         </Show>
                         <button
                             class="btn btn-primary"
-                            prop:disabled=move || selected_filenames.get().is_empty()
+                            prop:disabled=move || is_selection_empty(&selected_filenames.get(), &selected_mmproj_filenames.get())
                             on:click=move |_| {
                                 // Pre-fill context_lengths with 32768 for each selected filename
                                 let sel = selected_filenames.get();
