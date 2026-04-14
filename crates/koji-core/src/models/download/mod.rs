@@ -114,7 +114,15 @@ pub async fn download_chunked_with_progress(
     };
 
     let result = if num_connections == 1 {
-        single::download_single(client, url, dest, total_size, &pb, callback_for_bar.as_ref()).await
+        single::download_single(
+            client,
+            url,
+            dest,
+            total_size,
+            &pb,
+            callback_for_bar.as_ref(),
+        )
+        .await
     } else {
         parallel::download_parallel(
             client,
