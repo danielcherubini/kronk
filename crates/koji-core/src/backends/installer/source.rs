@@ -513,6 +513,43 @@ async fn configure_cmake_windows(
 }
 
 /// Run CMake configuration step.
+#[cfg(not(target_os = "windows"))]
+fn hip_env_from_hipconfig_output(
+    clang_dir_stdout: &str,
+    hip_root_stdout: &str,
+) -> Option<(String, String)> {
+    let clang_dir = clang_dir_stdout.trim();
+    let hip_root = hip_root_stdout.trim();
+    if clang_dir.is_empty() || hip_root.is_empty() {
+        return None;
+    }
+    Some((format!("{}/clang", clang_dir), hip_root.to_string()))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_hip_env() -> Option<(String, String)> {
+    // Runs `hipconfig -l` and `hipconfig -R`. Returns None if hipconfig is
+    // unavailable, either call fails, or either stdout is empty.
+    let clang_dir = std::process::Command::new("hipconfig")
+        .arg("-l")
+        .output()
+        .ok()?;
+    if !clang_dir.status.success() {
+        return None;
+    }
+    let hip_root = std::process::Command::new("hipconfig")
+        .arg("-R")
+        .output()
+        .ok()?;
+    if !hip_root.status.success() {
+        return None;
+    }
+    hip_env_from_hipconfig_output(
+        &String::from_utf8_lossy(&clang_dir.stdout),
+        &String::from_utf8_lossy(&hip_root.stdout),
+    )
+}
+
 async fn configure_cmake(
     options: &InstallOptions,
     source_dir: &Path,
@@ -543,10 +580,22 @@ async fn configure_cmake(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let status = tokio::process::Command::new("cmake")
-            .args(&cmake_args)
-            .status()
-            .await?;
+        let mut cmd = tokio::process::Command::new("cmake");
+        cmd.args(&cmake_args);
+        if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
+            if let Some((hipcxx, hip_path)) = detect_hip_env() {
+                tracing::info!("Using HIPCXX={}, HIP_PATH={}", hipcxx, hip_path);
+                cmd.env("HIPCXX", hipcxx);
+                cmd.env("HIP_PATH", hip_path);
+            } else {
+                tracing::warn!(
+                    "hipconfig not found or returned empty output. \
+                     Falling back to PATH-based HIP discovery. \
+                     Ensure /opt/rocm/bin is on PATH if the build fails."
+                );
+            }
+        }
+        let status = cmd.status().await?;
 
         if !status.success() {
             return Err(anyhow!(
@@ -785,6 +834,42 @@ mod tests {
             args.contains(&"-DGGML_FMA=ON".to_string()),
             "Windows ik_llama build must set GGML_FMA=ON, got: {:?}",
             args
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_hip_env_from_hipconfig_output_happy_path() {
+        let result = hip_env_from_hipconfig_output("/opt/rocm/llvm/bin\n", "/opt/rocm\n");
+        assert_eq!(
+            result,
+            Some((
+                "/opt/rocm/llvm/bin/clang".to_string(),
+                "/opt/rocm".to_string()
+            ))
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_hip_env_from_hipconfig_output_empty_stdout_returns_none() {
+        assert_eq!(hip_env_from_hipconfig_output("", "/opt/rocm"), None);
+        assert_eq!(
+            hip_env_from_hipconfig_output("/opt/rocm/llvm/bin", "   "),
+            None
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_hip_env_from_hipconfig_output_trims_whitespace() {
+        let result = hip_env_from_hipconfig_output("  /opt/rocm/llvm/bin  \n", "\t/opt/rocm\t\n");
+        assert_eq!(
+            result,
+            Some((
+                "/opt/rocm/llvm/bin/clang".to_string(),
+                "/opt/rocm".to_string()
+            ))
         );
     }
 }
