@@ -11,6 +11,12 @@ static HF_API: OnceCell<Api> = OnceCell::const_new();
 
 /// Get or create the shared HuggingFace API client.
 /// Configured with max_files=8 for parallel file downloads.
+///
+/// **Note:** This uses `ApiBuilder::new()` which respects the `HF_HOME` environment
+/// variable for cache location. No explicit cache path is set, so `hf-hub` will use
+/// its default behavior:
+/// - If `HF_HOME` is set: `$HF_HOME/hub`
+/// - Otherwise: `~/.cache/huggingface/hub`
 pub(crate) async fn hf_api() -> Result<&'static Api> {
     HF_API
         .get_or_try_init(|| async {
