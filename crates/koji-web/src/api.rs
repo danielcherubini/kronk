@@ -8,6 +8,7 @@ pub mod backends;
 pub mod backup;
 pub mod middleware;
 pub mod self_update;
+pub mod updates;
 
 /// Query parameters for GET /api/logs
 #[derive(serde::Deserialize)]

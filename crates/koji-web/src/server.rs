@@ -166,6 +166,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/self-update/update",
             post(api::self_update::trigger_update),
         )
+        .route("/api/updates/check", post(api::updates::trigger_check))
+        .route(
+            "/api/updates/check/:item_type/:item_id",
+            post(api::updates::check_single),
+        )
+        .route(
+            "/api/updates/apply/backend/:name",
+            post(api::updates::apply_backend_update),
+        )
+        .route(
+            "/api/updates/apply/model/:id",
+            post(api::updates::apply_model_update),
+        )
         .layer(middleware::from_fn(api::middleware::enforce_same_origin))
         .layer(
             CorsLayer::new()
@@ -200,6 +213,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
+        .route("/api/updates", get(api::updates::get_updates))
         // Self-update GET routes (safe methods, no CSRF protection needed)
         .route(
             "/api/self-update/check",
