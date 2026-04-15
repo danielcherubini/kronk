@@ -7,7 +7,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::jobs::JobKind;
 use crate::server::AppState;
 use koji_core::backends::{
     check_latest_version, BackendRegistry, BackendSource, BackendType, InstallOptions,
@@ -51,7 +50,7 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
         }
     };
 
-    let checker = koji_core::updates::UpdateChecker::new();
+    let checker = &state.update_checker;
     match checker.get_results(&config_dir).await {
         Ok(records) => {
             let mut backends = Vec::new();
@@ -97,7 +96,7 @@ pub async fn trigger_check(State(state): State<Arc<AppState>>) -> impl IntoRespo
         }
     };
 
-    let checker = koji_core::updates::UpdateChecker::new();
+    let checker = state.update_checker.clone();
     // Run in background, return immediately
     tokio::spawn(async move {
         if let Err(e) = checker.run_check(&config_dir).await {
@@ -128,7 +127,7 @@ pub async fn check_single(
         }
     };
 
-    let checker = koji_core::updates::UpdateChecker::new();
+    let checker = &state.update_checker;
     let result = match item_type.as_str() {
         "backend" => {
             let config_dir_clone = config_dir.clone();
@@ -298,10 +297,39 @@ pub async fn apply_backend_update(
     let job_clone = job.clone();
     let name_clone = name.clone();
     tokio::spawn(async move {
-        let config_dir = koji_core::config::Config::base_dir().unwrap();
-        let mut registry = BackendRegistry::open(&config_dir).unwrap();
-        let backend_info = registry.get(&name_clone).unwrap().unwrap();
-
+        let config_dir = match koji_core::config::Config::base_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to get config base dir: {}", e);
+                return;
+            }
+        };
+        let registry_res = BackendRegistry::open(&config_dir);
+        let mut registry = match registry_res {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to open backend registry: {}", e);
+                return;
+            }
+        };
+        let backend_info = match registry.get(&name_clone) {
+            Ok(Some(info)) => info,
+            Ok(None) => {
+                tracing::error!("Backend '{}' not found during update", name_clone);
+                return;
+            }
+            Err(e) => {
+                tracing::error!("Failed to get backend '{}': {}", name_clone, e);
+                return;
+            }
+        };
+        let target_dir = match backend_info.path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                tracing::error!("Backend '{}' has no parent directory for installation path", name_clone);
+                return;
+            }
+        };
         let options = InstallOptions {
             backend_type: backend_type.clone(),
             source: backend_info
@@ -312,7 +340,7 @@ pub async fn apply_backend_update(
                     git_url: "https://github.com/ggml-org/llama.cpp.git".to_string(),
                     commit: None,
                 }),
-            target_dir: backend_info.path.parent().unwrap().to_path_buf(),
+            target_dir,
             gpu_type: backend_info.gpu_type,
             allow_overwrite: true,
         };
@@ -381,7 +409,7 @@ pub async fn apply_model_update(
     })
     .await;
 
-    let (repo_id, _models_dir) = match res_result {
+    let (repo_id, models_dir) = match res_result {
         Ok(Ok(val)) => val,
         Ok(Err(e)) => {
             return (
@@ -401,24 +429,60 @@ pub async fn apply_model_update(
 
     match koji_core::models::pull::list_gguf_files(&repo_id).await {
         Ok(listing) => {
-            let res_result = tokio::task::spawn_blocking({
-                let config_dir = config_dir.clone();
-                let repo_id = repo_id.clone();
-                let commit_sha = listing.commit_sha.clone();
-                move || -> anyhow::Result<()> {
-                    let open = koji_core::db::open(&config_dir)?;
-                    koji_core::db::queries::upsert_model_pull(&open.conn, &repo_id, &commit_sha)?;
-                    Ok(())
-                }
-            })
-            .await;
+            if let Some(gguf) = listing.files.first() {
+                let filename = gguf.filename.clone();
 
-            match res_result {
-                Ok(Ok(_)) => {
-                    Json(serde_json::json!({ "ok": true, "repo_id": repo_id, "commit_sha": listing.commit_sha })).into_response()
+                let download_result = koji_core::models::pull::download_gguf_with_progress(
+                    &repo_id,
+                    &filename,
+                    &models_dir,
+                    None,
+                )
+                .await;
+
+                match download_result {
+                    Ok(result) => {
+                        let db_res = tokio::task::spawn_blocking({
+                            let config_dir = config_dir.clone();
+                            let repo_id = repo_id.clone();
+                            let commit_sha = listing.commit_sha.clone();
+                            move || -> anyhow::Result<()> {
+                                let open = koji_core::db::open(&config_dir)?;
+                                koji_core::db::queries::upsert_model_pull(&open.conn, &repo_id, &commit_sha)?;
+                                Ok(())
+                            }
+                        })
+                        .await;
+
+                        match db_res {
+                            Ok(Ok(_)) => Json(serde_json::json!({
+                                "ok": true,
+                                "repo_id": repo_id,
+                                "commit_sha": listing.commit_sha,
+                                "path": result.path.to_string_lossy()
+                            })).into_response(),
+                            Ok(Err(e)) => (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({ "error": format!("DB update failed: {}", e) })),
+                            ).into_response(),
+                            Err(e) => (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({ "error": format!("Join error: {}", e) })),
+                            ).into_response(),
+                        }
+                    }
+                    Err(e) => (
+                        StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({ "error": format!("Failed to download: {}", e) })),
+                    )
+                        .into_response(),
                 }
-                Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+            } else {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": "No GGUF files found in repository" })),
+                )
+                    .into_response()
             }
         }
         Err(e) => (

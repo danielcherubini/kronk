@@ -31,6 +31,8 @@ pub struct AppState {
     pub proxy_config: Option<Arc<tokio::sync::RwLock<koji_core::config::Config>>>,
     pub jobs: Option<Arc<JobManager>>,
     pub capabilities: Option<Arc<CapabilitiesCache>>,
+    /// Shared update checker to prevent concurrent runs across requests.
+    pub update_checker: Arc<koji_core::updates::UpdateChecker>,
     /// The version of the running koji binary (passed from the CLI at startup).
     pub binary_version: String,
     /// Broadcast sender for self-update progress messages.
@@ -253,6 +255,7 @@ pub async fn run_with_opts(
         proxy_config,
         jobs,
         capabilities,
+        update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
         binary_version,
         update_tx: Arc::new(tokio::sync::Mutex::new(None)),
         upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),

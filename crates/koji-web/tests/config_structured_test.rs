@@ -92,6 +92,7 @@ fn build_test_app_state(config_content: &str) -> (Arc<AppState>, TempDir) {
         upload_lock: std::sync::Arc::new(
             tokio::sync::RwLock::new(std::collections::HashMap::new()),
         ),
+        update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
     };
 
     (Arc::new(state), temp_dir)
@@ -208,6 +209,7 @@ async fn test_404_when_config_path_not_configured() {
         upload_lock: std::sync::Arc::new(
             tokio::sync::RwLock::new(std::collections::HashMap::new()),
         ),
+        update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
     });
     let router = build_router(state);
 

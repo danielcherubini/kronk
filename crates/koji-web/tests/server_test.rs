@@ -19,6 +19,7 @@ mod tests {
                 upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
                     std::collections::HashMap::new(),
                 )),
+                update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
             });
             axum::serve(listener, koji_web::server::build_router(state))
                 .await
@@ -135,6 +136,7 @@ mod tests {
                     upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
                         std::collections::HashMap::new(),
                     )),
+                    update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
                 });
                 axum::serve(listener, koji_web::server::build_router(state))
                     .await

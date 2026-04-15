@@ -89,7 +89,7 @@ impl UpdateChecker {
     }
 
     /// Check a single backend for updates.
-    async fn check_backend(
+    pub async fn check_backend(
         &self,
         config_dir: &std::path::Path,
         backend_name: &str,
@@ -161,7 +161,7 @@ impl UpdateChecker {
 
     /// Check a single model for updates.
     /// Uses 3-phase approach: sync DB read, async HF network, sync DB write.
-    async fn check_model(
+    pub async fn check_model(
         &self,
         config_dir: &std::path::Path,
         model_id: &str,
@@ -313,14 +313,17 @@ impl UpdateChecker {
 
     /// Check if enough time has passed since last check (based on interval).
     pub async fn should_check(&self, config_dir: &std::path::Path) -> anyhow::Result<bool> {
-        let config = Config::load_from(config_dir)?;
+        let config_dir_for_config = config_dir.to_path_buf();
+        let config = tokio::task::spawn_blocking(move || Config::load_from(&config_dir_for_config))
+            .await??;
+
         let interval_hours = config.general.update_check_interval as i64;
         let interval_secs = interval_hours * 3600;
 
         let oldest = tokio::task::spawn_blocking({
-            let config_dir = config_dir.to_path_buf();
+            let config_dir_for_db = config_dir.to_path_buf();
             move || -> anyhow::Result<Option<i64>> {
-                let open = db::open(&config_dir)?;
+                let open = db::open(&config_dir_for_db)?;
                 get_oldest_check_time(&open.conn)
             }
         })

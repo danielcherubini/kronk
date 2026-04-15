@@ -167,4 +167,43 @@
 /// 6. Verify:
 ///    - Changes persist after save
 
+/// # Smoke Test #45: Updates Center functionality
+///
+/// **Prerequisites:**
+/// - koji-web server is running on http://127.0.0.1:8080
+/// - A backend is installed (e.g., llama.cpp)
+///
+/// **Steps:**
+/// 1. Open http://127.0.0.1:8080/updates
+/// 2. Observe:
+///    - Page loads without errors
+///    - Backends list shows llama.cpp (if installed)
+///    - Models list shows any installed models
+/// 3. Click "Check Now" button
+/// 4. Observe:
+///    - "Checking..." state on button
+///    - After a few seconds, "Last checked" time updates
+///    - If updates available, "Update" button appears for backend
+/// 5. Click "Update" for a backend
+/// 6. Observe:
+///    - Job log panel opens
+///    - Logs show update process
+///    - Job completes
+/// 7. Verify:
+///    - Update check record is in DB
+///    - Version number updated (if successful)
+
+/// # Smoke Test #46: Model Re-pull
+///
+/// **Prerequisites:**
+/// - A model is installed
+///
+/// **Steps:**
+/// 1. Open http://127.0.0.1:8080/updates
+/// 2. Click "Re-pull" for an installed model
+/// 3. Observe:
+///    - Success message/response
+/// 4. Verify:
+///    - Model version/commit updated in DB
+
 fn _smoke_tests_module_marker() {}

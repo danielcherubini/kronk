@@ -1058,9 +1058,10 @@ pub async fn remove_backend(
     };
 
     // Open registry and get backend
+    let config_dir_clone = config_dir.clone();
     let registry_result: Result<koji_core::backends::BackendRegistry, _> =
         tokio::task::spawn_blocking(move || {
-            koji_core::backends::BackendRegistry::open(&config_dir)
+            koji_core::backends::BackendRegistry::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
