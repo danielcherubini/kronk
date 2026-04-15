@@ -231,23 +231,27 @@ fn spawn_download_job(
             }
         };
 
-        // Create symlink/copy from cache to destination if needed
+        // Move or copy from cache to destination
         if cached_path != dest_path {
             if dest_path.exists() {
                 tokio::fs::remove_file(&dest_path).await.ok();
             }
-            #[cfg(unix)]
-            if let Err(e) = std::os::unix::fs::symlink(&cached_path, &dest_path) {
-                // Fallback to hard link if symlink fails (e.g., different filesystem)
-                if let Err(e2) = std::fs::hard_link(&cached_path, &dest_path) {
-                    tracing::warn!("Failed to create link, copying instead: {} / {}", e, e2);
-                    tokio::fs::copy(&cached_path, &dest_path).await.ok();
+            // Try rename (move) first — instant on same filesystem, no extra disk usage.
+            // Falls back to copy for cross-filesystem destinations (e.g. HF cache on root,
+            // models on a separate mount). After a copy, cleanup_hf_cache removes the cache
+            // file once verification passes.
+            if let Err(e) = tokio::fs::rename(&cached_path, &dest_path).await {
+                tracing::debug!("rename failed ({}), falling back to copy", e);
+                if let Err(e2) = tokio::fs::copy(&cached_path, &dest_path).await {
+                    let mut jobs = pull_jobs_arc.write().await;
+                    if let Some(job) = jobs.get_mut(&job_id_clone) {
+                        job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                        job.error = Some(format!("Failed to copy file to destination: {}", e2));
+                    }
+                    poll_handle.abort();
+                    in_flight_clone.lock().await.remove(&dest_path);
+                    return;
                 }
-            }
-            #[cfg(windows)]
-            if let Err(e) = std::fs::hard_link(&cached_path, &dest_path) {
-                tracing::warn!("Failed to create hard link, copying instead: {}", e);
-                tokio::fs::copy(&cached_path, &dest_path).await.ok();
             }
         }
 

@@ -344,13 +344,12 @@ impl hf_hub::api::tokio::Progress for ProgressAdapter {
 
 /// Clean up the HF cache file after a successful download and verification.
 ///
-/// This function removes the source file from the HF cache directory only after
-/// verifying that:
+/// Called after the file has been moved or copied from the HF cache to the
+/// destination. On a same-filesystem rename the cache file is already gone
+/// (source not found → returns Ok immediately). On a cross-filesystem copy the
+/// source still exists and is removed here, only after verifying:
 /// 1. The destination file exists
 /// 2. The destination file size matches the source file size
-///
-/// This is a safety measure to prevent accidental data loss. If the destination
-/// is missing or has a different size, the source file is preserved.
 ///
 /// # Arguments
 ///
@@ -443,21 +442,18 @@ pub async fn download_gguf_with_progress(
         .context("Failed to get file size")?
         .len();
 
-    // Copy/symlink from cache to destination if different
+    // Move or copy from cache to destination if different
     if cached_path != dest_path {
         // Remove existing file if present
         if dest_path.exists() {
             tokio::fs::remove_file(&dest_path).await.ok();
         }
-        // Create symlink from cache to destination
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&cached_path, &dest_path)
-                .context("Failed to create symlink")?;
-        }
-        #[cfg(windows)]
-        {
-            std::fs::hard_link(&cached_path, &dest_path).context("Failed to create hard link")?;
+        // Try rename (move) first — instant if same filesystem, no extra disk usage
+        if tokio::fs::rename(&cached_path, &dest_path).await.is_err() {
+            // Cross-filesystem: fall back to copy, then clean up cache later
+            tokio::fs::copy(&cached_path, &dest_path)
+                .await
+                .context("Failed to copy file from cache to destination")?;
         }
     }
 
