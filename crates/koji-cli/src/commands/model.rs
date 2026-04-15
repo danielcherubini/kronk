@@ -935,8 +935,22 @@ async fn cmd_update(
 fn cmd_scan(config: &Config) -> Result<()> {
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
+
+    println!("models dir : {}", models_dir.display());
+    println!("configs dir: {}", configs_dir.display());
+
     let registry = ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
     let models = registry.scan()?;
+
+    println!("found {} model card(s)", models.len());
+    for model in &models {
+        println!("  {} ({} quant(s))", model.id, model.card.quants.len());
+        for (key, q) in &model.card.quants {
+            let path = model.dir.join(&q.file);
+            let status = if path.exists() { "ok" } else { "MISSING" };
+            println!("    [{status}] {key} -> {}", path.display());
+        }
+    }
 
     let mut found_any = false;
     let mut config = config.clone();
