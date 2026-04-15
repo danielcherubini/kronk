@@ -233,7 +233,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
         )
         .with_state(state)
-        .layer(CorsLayer::permissive())
 }
 
 #[allow(clippy::too_many_arguments)]

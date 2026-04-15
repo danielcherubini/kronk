@@ -178,6 +178,23 @@ pub struct ActiveJobDto {
     pub backend_type: String,
 }
 
+fn job_to_active_dto(j: &crate::jobs::Job) -> ActiveJobDto {
+    ActiveJobDto {
+        id: j.id.clone(),
+        kind: match j.kind {
+            crate::jobs::JobKind::Install => "install".to_string(),
+            crate::jobs::JobKind::Update => "update".to_string(),
+            crate::jobs::JobKind::Restore => "restore".to_string(),
+        },
+        backend_type: match j.backend_type.as_ref() {
+            Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
+            Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
+            Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
+            None => String::new(),
+        },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CapabilitiesDto {
@@ -288,14 +305,14 @@ impl CapabilitiesCache {
         &self,
         detect_prereqs: fn() -> koji_core::gpu::BuildPrerequisites,
         detect_cuda: fn() -> Option<String>,
-    ) -> CapabilitiesDto {
+    ) -> anyhow::Result<CapabilitiesDto> {
         let now = std::time::Instant::now();
         let mut guard = self.inner.lock().await;
 
         // Check cache hit (5-second TTL)
         if let Some((cached_at, cached)) = &*guard {
             if now.duration_since(*cached_at) < Duration::from_secs(5) {
-                return cached.clone();
+                return Ok(cached.clone());
             }
         }
 
@@ -321,26 +338,13 @@ impl CapabilitiesCache {
 
         let caps = match result {
             Ok(c) => c,
-            Err(_) => {
-                // On spawn error, return degraded response
-                CapabilitiesDto {
-                    os: std::env::consts::OS.to_string(),
-                    arch: std::env::consts::ARCH.to_string(),
-                    git_available: false,
-                    cmake_available: false,
-                    compiler_available: false,
-                    detected_cuda_version: None,
-                    supported_cuda_versions: vec![
-                        "11.1".to_string(),
-                        "12.4".to_string(),
-                        "13.1".to_string(),
-                    ],
-                }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to detect capabilities: {}", e));
             }
         };
 
         *guard = Some((now, caps.clone()));
-        caps
+        Ok(caps)
     }
 }
 
@@ -367,14 +371,20 @@ pub async fn system_capabilities(State(state): State<Arc<AppState>>) -> impl Int
         }
     };
 
-    let caps = cache
+    match cache
         .get_or_compute(
             koji_core::gpu::detect_build_prerequisites,
             koji_core::gpu::detect_cuda_version,
         )
-        .await;
-
-    Json(caps).into_response()
+        .await
+    {
+        Ok(caps) => Json(caps).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /api/backends
@@ -391,20 +401,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     false
                 }
             })
-            .map(|j| ActiveJobDto {
-                id: j.id.to_string(),
-                kind: match j.kind {
-                    crate::jobs::JobKind::Install => "install".to_string(),
-                    crate::jobs::JobKind::Update => "update".to_string(),
-                    crate::jobs::JobKind::Restore => "restore".to_string(),
-                },
-                backend_type: match j.backend_type.as_ref() {
-                    Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
-                    Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
-                    Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
-                    None => String::new(),
-                },
-            })
+            .map(|j| job_to_active_dto(&j))
     } else {
         None
     };
@@ -629,12 +626,22 @@ pub async fn install_backend(
             }
         };
 
-        let caps = cache
+        let caps = match cache
             .get_or_compute(
                 koji_core::gpu::detect_build_prerequisites,
                 koji_core::gpu::detect_cuda_version,
             )
-            .await;
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Capability detection failed: {}", e) })),
+                )
+                    .into_response();
+            }
+        };
 
         if !caps.git_available {
             return (
@@ -1058,6 +1065,16 @@ pub async fn remove_backend(
     };
 
     // Open registry and get backend
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Invalid backend name: path separators or traversal sequences not allowed"
+            })),
+        )
+            .into_response();
+    }
+
     let config_dir_clone = config_dir.clone();
     let registry_result: Result<koji_core::backends::BackendRegistry, _> =
         tokio::task::spawn_blocking(move || {
@@ -1175,20 +1192,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                 false
             }
         })
-        .map(|j| ActiveJobDto {
-            id: j.id.to_string(),
-            kind: match j.kind {
-                crate::jobs::JobKind::Install => "install".to_string(),
-                crate::jobs::JobKind::Update => "update".to_string(),
-                crate::jobs::JobKind::Restore => "restore".to_string(),
-            },
-            backend_type: match j.backend_type.as_ref() {
-                Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
-                Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
-                Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
-                None => String::new(),
-            },
-        });
+        .map(|j| job_to_active_dto(&j));
 
     let config_path = match &state.config_path {
         Some(p) => p.clone(),
@@ -1422,9 +1426,8 @@ pub async fn job_events_sse(
 
     // Snapshot + subscribe: take both under the same lock to avoid race
     let (head, tail, dropped, status, _finished_at, error) = {
-        let state = job.state.read().await;
-        let log_head = job.log_head.read().await;
-        let log_tail = job.log_tail.read().await;
+        let (state, log_head, log_tail) =
+            tokio::join!(job.state.read(), job.log_head.read(), job.log_tail.read());
         (
             log_head.iter().cloned().collect::<Vec<_>>(),
             log_tail.iter().cloned().collect::<Vec<_>>(),

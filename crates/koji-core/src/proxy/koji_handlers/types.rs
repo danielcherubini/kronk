@@ -84,15 +84,24 @@ pub(super) fn is_safe_path_component(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_max_concurrent_pulls_default() {
-        // Default should be 8
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = std::env::var("KOJI_MAX_CONCURRENT_PULLS").ok();
+
+        std::env::remove_var("KOJI_MAX_CONCURRENT_PULLS");
         assert_eq!(max_concurrent_pulls(), 8);
+
+        if let Some(val) = original {
+            std::env::set_var("KOJI_MAX_CONCURRENT_PULLS", val);
+        }
     }
 
     #[test]
     fn test_max_concurrent_pulls_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("KOJI_MAX_CONCURRENT_PULLS", "16");
         }
@@ -104,6 +113,7 @@ mod tests {
 
     #[test]
     fn test_max_concurrent_pulls_invalid_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("KOJI_MAX_CONCURRENT_PULLS", "not_a_number");
         }
