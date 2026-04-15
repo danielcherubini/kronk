@@ -33,6 +33,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/backends") view=pages::backends::Backends />
                     <Route path=path!("/logs") view=pages::logs::Logs />
                     <Route path=path!("/config") view=pages::config_editor::ConfigEditor />
+                    <Route path=path!("/updates") view=pages::updates::Updates />
                 </Routes>
             </main>
         </Router>

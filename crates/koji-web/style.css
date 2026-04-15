@@ -764,6 +764,119 @@ label {
   margin-left: 0.35rem;
 }
 
+/* 25. Updates Center page */
+.updates-page {
+  max-width: 1000px;
+}
+
+.updates-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.last-checked {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.error-banner {
+  background-color: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+}
+
+.updates-section {
+  margin-bottom: 2rem;
+}
+
+.section__title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.5rem;
+}
+
+.updates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.update-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.update-item.update-available {
+  border-color: var(--accent-yellow);
+}
+
+.update-item__info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.update-item__name {
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+
+.update-item__version {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.update-badge {
+  background-color: rgba(210, 153, 34, 0.15);
+  color: var(--accent-yellow);
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.up-to-date-badge {
+  background-color: rgba(63, 185, 80, 0.15);
+  color: var(--accent-green);
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.update-item__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sidebar-badge {
+  background-color: var(--accent-red);
+  color: white;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+  margin-left: 0.25rem;
+}
+
 /* 12. Utility classes */
 .text-mono {
   font-family: var(--font-mono);
