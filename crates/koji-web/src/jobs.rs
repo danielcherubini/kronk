@@ -157,7 +157,9 @@ impl JobManager {
             head.push_back(line.clone());
             drop(head);
             // Broadcast the log event
-            let _ = job.log_tx.send(JobEvent::Log(line));
+            if let Err(e) = job.log_tx.send(JobEvent::Log(line)) {
+                tracing::warn!("Failed to broadcast log for job {}: {}", job.id, e);
+            }
             return;
         }
 
@@ -175,7 +177,9 @@ impl JobManager {
         drop(tail);
 
         // Broadcast the log event
-        let _ = job.log_tx.send(JobEvent::Log(line));
+        if let Err(e) = job.log_tx.send(JobEvent::Log(line)) {
+            tracing::warn!("Failed to broadcast log for job {}: {}", job.id, e);
+        }
     }
 
     /// Register a child process PID for this job.
@@ -214,7 +218,9 @@ impl JobManager {
         }
 
         // Broadcast status event
-        let _ = job.log_tx.send(JobEvent::Status(status));
+        if let Err(e) = job.log_tx.send(JobEvent::Status(status)) {
+            tracing::warn!("Failed to broadcast status for job {}: {}", job.id, e);
+        }
 
         // Release active slot
         *self.active.lock().await = None;

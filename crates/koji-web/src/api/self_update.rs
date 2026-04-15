@@ -99,23 +99,30 @@ pub async fn trigger_update(
     // Spawn the update task
     tokio::spawn(async move {
         let tx_clone = tx.clone();
+        let state_clone = state.clone();
         let progress_callback = move |msg: String| {
-            let _ = tx_clone.send(msg);
+            if let Err(e) = tx_clone.send(msg) {
+                tracing::warn!("Failed to send update progress: {}", e);
+            }
         };
 
         match koji_core::self_update::perform_update(&binary_version, progress_callback).await {
             Ok(result) => {
-                let _ = tx.send(
-                    json!({
-                        "type": "status",
-                        "status": "succeeded",
-                        "old_version": result.old_version,
-                        "new_version": result.new_version,
-                    })
-                    .to_string(),
-                );
+                let status_msg = json!({
+                    "type": "status",
+                    "status": "succeeded",
+                    "old_version": result.old_version,
+                    "new_version": result.new_version,
+                })
+                .to_string();
+                if let Err(e) = tx.send(status_msg) {
+                    tracing::warn!("Failed to send update success status: {}", e);
+                }
 
-                let _ = tx.send(json!({"type": "restarting"}).to_string());
+                let restart_msg = json!({"type": "restarting"}).to_string();
+                if let Err(e) = tx.send(restart_msg) {
+                    tracing::warn!("Failed to send restart status: {}", e);
+                }
 
                 // Brief delay before restarting to allow clients to receive the events
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -123,26 +130,36 @@ pub async fn trigger_update(
                 // Restart the process — this call does not return on success
                 if let Err(e) = koji_core::self_update::restart_process() {
                     tracing::error!("Failed to restart after update: {e}");
-                    let _ = tx.send(
-                        json!({
-                            "type": "status",
-                            "status": "failed",
-                            "error": format!("Update succeeded but restart failed: {e}")
-                        })
-                        .to_string(),
-                    );
+                    let error_msg = json!({
+                        "type": "status",
+                        "status": "failed",
+                        "error": format!("Update succeeded but restart failed: {e}")
+                    })
+                    .to_string();
+                    if let Err(err) = tx.send(error_msg) {
+                        tracing::warn!("Failed to send restart failure status: {}", err);
+                    }
+
+                    // Cleanup: set update_tx back to None so future requests can start a new update
+                    let mut guard = state_clone.update_tx.lock().await;
+                    *guard = None;
                 }
             }
             Err(e) => {
                 tracing::error!("Self-update failed: {e:#}");
-                let _ = tx.send(
-                    json!({
-                        "type": "status",
-                        "status": "failed",
-                        "error": format!("{e:#}")
-                    })
-                    .to_string(),
-                );
+                let error_msg = json!({
+                    "type": "status",
+                    "status": "failed",
+                    "error": format!("{e:#}")
+                })
+                .to_string();
+                if let Err(err) = tx.send(error_msg) {
+                    tracing::warn!("Failed to send update failure status: {}", err);
+                }
+
+                // Cleanup: set update_tx back to None so future requests can start a new update
+                let mut guard = state_clone.update_tx.lock().await;
+                *guard = None;
             }
         }
     });

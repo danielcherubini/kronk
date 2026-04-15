@@ -9,10 +9,12 @@ use crate::db::queries::{
 };
 use crate::models::pull::list_gguf_files;
 
-/// Shared state for the update checker. Uses Arc<Mutex<()>> to prevent concurrent check runs.
+/// Shared state for the update checker. Uses Arc<Mutex<()>> as a binary semaphore
+/// to ensure that only one update check run occurs at any given time across the system.
+/// Locking this guard serializes checks without needing to protect specific shared data.
 #[derive(Clone)]
 pub struct UpdateChecker {
-    /// Mutex to prevent concurrent check runs. Locking the guard serializes checks.
+    /// Mutex used as a synchronization primitive to prevent concurrent check runs.
     lock: Arc<Mutex<()>>,
 }
 
