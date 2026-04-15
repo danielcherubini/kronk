@@ -716,6 +716,11 @@ pub async fn rename_model(
             )
         })?;
 
+        // Clean up update_check record for old ID
+        if let Ok(open) = koji_core::db::open(&config_dir) {
+            let _ = koji_core::db::queries::delete_update_check(&open.conn, "model", &id);
+        }
+
         Ok((cfg, serde_json::json!({ "ok": true, "id": new_id })))
     })
     .await
@@ -893,6 +898,7 @@ pub async fn delete_model(
             // config_dir is the directory containing config.toml (and koji.db)
             if let Ok(open) = koji_core::db::open(&config_dir) {
                 let _ = koji_core::db::queries::delete_model_records(&open.conn, repo_id);
+                let _ = koji_core::db::queries::delete_update_check(&open.conn, "model", &id);
             }
         }
 

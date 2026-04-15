@@ -1141,6 +1141,11 @@ pub async fn remove_backend(
             .into_response();
     }
 
+    // Clean up update_check record
+    if let Ok(open) = koji_core::db::open(&config_dir) {
+        let _ = koji_core::db::queries::delete_update_check(&open.conn, "backend", &name);
+    }
+
     Json(DeleteResponse { removed: true }).into_response()
 }
 
