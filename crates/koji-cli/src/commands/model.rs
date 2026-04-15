@@ -939,6 +939,75 @@ fn cmd_scan(config: &Config) -> Result<()> {
     let models = registry.scan()?;
 
     let mut found_any = false;
+    let mut config = config.clone();
+
+    // ── Stale file detection ─────────────────────────────────────────────────
+    // Check every tracked quant and remove any whose file is missing or is a
+    // dead symlink. `Path::exists()` follows symlinks and returns false for
+    // both cases, so this catches the "symlink left behind after cache cleanup"
+    // scenario as well as plain missing files.
+    for model in &models {
+        let stale: Vec<String> = model
+            .card
+            .quants
+            .iter()
+            .filter(|(_, q)| !model.dir.join(&q.file).exists())
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        if !stale.is_empty() {
+            println!(
+                "  {} -- removing {} missing/broken file(s):",
+                model.id,
+                stale.len()
+            );
+            let mut card = model.card.clone();
+            for key in &stale {
+                let file = card.quants[key].file.clone();
+                println!("    - {} ({})", file, key);
+                card.quants.remove(key);
+            }
+            card.save(&model.card_path)?;
+
+            // If the card is now empty, remove the config.toml model entry so
+            // the web UI stops listing it.
+            if card.quants.is_empty() {
+                let repo_id = &model.card.model.source;
+                let removed: Vec<String> = config
+                    .models
+                    .iter()
+                    .filter(|(_, m)| m.model.as_deref() == Some(repo_id.as_str()))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in removed {
+                    println!("    x removing config entry '{}'", key);
+                    config.models.remove(&key);
+                }
+                config.save()?;
+            } else {
+                // Remove config entries whose selected quant no longer exists.
+                let repo_id = &model.card.model.source;
+                let mut dirty = false;
+                for mc in config.models.values_mut() {
+                    if mc.model.as_deref() != Some(repo_id.as_str()) {
+                        continue;
+                    }
+                    if let Some(q) = &mc.quant {
+                        if stale.contains(q) {
+                            // Point to the first surviving quant, if any.
+                            mc.quant = card.quants.keys().next().cloned();
+                            dirty = true;
+                        }
+                    }
+                }
+                if dirty {
+                    config.save()?;
+                }
+            }
+
+            found_any = true;
+        }
+    }
 
     // Check existing models for untracked GGUFs
     for model in &models {
