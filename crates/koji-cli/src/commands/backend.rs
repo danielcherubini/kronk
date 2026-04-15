@@ -427,11 +427,10 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
         }
     }
 
-    let target_dir = backend_info
-        .path
-        .parent()
-        .ok_or_else(|| anyhow!("Invalid backend path: {}", backend_info.path.display()))?
-        .to_path_buf();
+    // Use the base backends directory for the backend name,
+    // rather than the parent of the current binary, to prevent
+    // recursive directory nesting during updates.
+    let target_dir = backends_dir()?.join(&name);
 
     // Preserve the original installation method, but update the version.
     // On update we always go to latest, so we clear any pinned commit.
