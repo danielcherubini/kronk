@@ -1,6 +1,6 @@
+use crate::constants::CONTEXT_VALUES;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use crate::constants::CONTEXT_VALUES;
 
 #[component]
 pub fn ContextLengthSelector(

@@ -90,6 +90,13 @@ pub struct General {
     /// HuggingFace API token for downloading gated models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hf_token: Option<String>,
+    /// How often to check for updates (in hours). Default 12.
+    #[serde(default = "default_update_check_interval")]
+    pub update_check_interval: u32,
+}
+
+fn default_update_check_interval() -> u32 {
+    12
 }
 
 /// Backend configuration.
@@ -412,6 +419,7 @@ impl From<CoreGeneral> for General {
             models_dir: g.models_dir,
             logs_dir: g.logs_dir,
             hf_token: g.hf_token,
+            update_check_interval: g.update_check_interval,
         }
     }
 }
@@ -424,6 +432,7 @@ impl From<General> for CoreGeneral {
             models_dir: g.models_dir,
             logs_dir: g.logs_dir,
             hf_token: g.hf_token,
+            update_check_interval: g.update_check_interval,
         }
     }
 }

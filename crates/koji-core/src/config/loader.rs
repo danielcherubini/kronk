@@ -255,12 +255,7 @@ impl Default for Config {
         }
 
         Config {
-            general: General {
-                log_level: "info".to_string(),
-                models_dir: None,
-                logs_dir: None,
-                hf_token: None,
-            },
+            general: General::default(),
             backends,
             models,
             supervisor: Supervisor::default(),

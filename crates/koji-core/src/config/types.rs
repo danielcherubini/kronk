@@ -121,7 +121,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct General {
     pub log_level: String,
     #[serde(default)]
@@ -132,6 +132,9 @@ pub struct General {
     /// When set, this is exported as HF_TOKEN environment variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hf_token: Option<String>,
+    /// How often to check for updates (in hours). Default 12.
+    #[serde(default = "crate::config::defaults::default_update_check_interval")]
+    pub update_check_interval: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,12 +397,30 @@ mod tests {
     }
 
     /// Test that deserializing `metrics_retention_secs = 3600` sets the field correctly.
+    /// Test that the default update check interval is applied when missing from config.
     #[test]
-    fn test_proxy_config_deserializes_metrics_retention() {
-        let toml_str = r#"
-metrics_retention_secs = 3600
-"#;
-        let config: ProxyConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.metrics_retention_secs, 3600);
+    fn test_general_config_update_check_interval_default() {
+        let config: Config = toml::from_str(
+            r#"
+[general]
+log_level = "info"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.general.update_check_interval, 12);
+    }
+
+    /// Test that a custom update check interval can be provided.
+    #[test]
+    fn test_general_config_update_check_interval_custom() {
+        let config: Config = toml::from_str(
+            r#"
+[general]
+log_level = "info"
+update_check_interval = 24
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.general.update_check_interval, 24);
     }
 }

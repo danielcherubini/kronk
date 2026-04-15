@@ -1,5 +1,5 @@
-use crate::components::pull_wizard::*;
 use crate::components::context_length_selector::ContextLengthSelector;
+use crate::components::pull_wizard::*;
 use std::collections::{HashMap, HashSet};
 
 /// Dropdown + conditional custom input for selecting context length for a single file.

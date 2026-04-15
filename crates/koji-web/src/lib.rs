@@ -16,8 +16,8 @@ use leptos_router::{
     path,
 };
 mod components;
-mod pages;
 pub mod constants;
+mod pages;
 pub mod utils;
 
 #[component]
