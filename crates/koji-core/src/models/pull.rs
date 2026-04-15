@@ -442,18 +442,26 @@ pub async fn download_gguf_with_progress(
         .context("Failed to get file size")?
         .len();
 
-    // Move or copy from cache to destination if different
+    // Move or copy from cache to destination if different.
+    // Canonicalise first — hf-hub snapshot paths are symlinks to the real blob;
+    // renaming the symlink entry would leave a broken link at dest_path.
     if cached_path != dest_path {
-        // Remove existing file if present
         if dest_path.exists() {
             tokio::fs::remove_file(&dest_path).await.ok();
         }
-        // Try rename (move) first — instant if same filesystem, no extra disk usage
-        if tokio::fs::rename(&cached_path, &dest_path).await.is_err() {
-            // Cross-filesystem: fall back to copy, then clean up cache later
-            tokio::fs::copy(&cached_path, &dest_path)
+        let blob = tokio::fs::canonicalize(&cached_path)
+            .await
+            .unwrap_or_else(|_| cached_path.clone());
+        if tokio::fs::rename(&blob, &dest_path).await.is_err() {
+            // Cross-filesystem: copy then delete the blob from cache.
+            tokio::fs::copy(&blob, &dest_path)
                 .await
                 .context("Failed to copy file from cache to destination")?;
+            tokio::fs::remove_file(&blob).await.ok();
+        }
+        // Remove the snapshot symlink if it is distinct from the blob.
+        if cached_path != blob {
+            tokio::fs::remove_file(&cached_path).await.ok();
         }
     }
 

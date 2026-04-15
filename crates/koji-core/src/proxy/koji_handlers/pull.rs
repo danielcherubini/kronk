@@ -231,66 +231,30 @@ fn spawn_download_job(
             }
         };
 
-        // Move or copy from cache to destination
-        if cached_path != dest_path {
-            if dest_path.exists() {
-                tokio::fs::remove_file(&dest_path).await.ok();
-            }
-            // Try rename (move) first — instant on same filesystem, no extra disk usage.
-            // Falls back to copy for cross-filesystem destinations (e.g. HF cache on root,
-            // models on a separate mount). After a copy, cleanup_hf_cache removes the cache
-            // file once verification passes.
-            if let Err(e) = tokio::fs::rename(&cached_path, &dest_path).await {
-                tracing::debug!("rename failed ({}), falling back to copy", e);
-                if let Err(e2) = tokio::fs::copy(&cached_path, &dest_path).await {
-                    let mut jobs = pull_jobs_arc.write().await;
-                    if let Some(job) = jobs.get_mut(&job_id_clone) {
-                        job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                        job.error = Some(format!("Failed to copy file to destination: {}", e2));
-                    }
-                    poll_handle.abort();
-                    in_flight_clone.lock().await.remove(&dest_path);
-                    return;
-                }
-            }
-        }
-
         let download_duration = download_start.elapsed();
         tracing::info!(
             job_id = %job_id_clone,
             bytes = bytes,
             duration = ?download_duration,
-            "Download phase complete"
+            "Download phase complete, entering verify phase"
         );
 
-        // Stop the file size polling task (no longer needed with direct progress callback)
+        // Stop the file size polling task.
         poll_handle.abort();
 
-        // Record final downloaded byte count. Status stays Running until we
-        // enter the Verifying phase below.
+        // Record final downloaded byte count.
         {
             let mut jobs = pull_jobs_arc.write().await;
             if let Some(job) = jobs.get_mut(&job_id_clone) {
                 job.bytes_downloaded = bytes;
                 job.total_bytes = Some(bytes);
-                tracing::info!(job_id = %job_id_clone, bytes, "Download finished, entering verify phase");
             }
         }
 
-        // Post-download: auto-create model card and config entries (best-effort)
-        // Also updates the live ProxyState.config so the model appears immediately.
-        setup_model_after_pull(
-            Arc::clone(&state_clone),
-            &repo_id_clone,
-            &spec_clone,
-            &dest_dir,
-        )
-        .await;
-
-        // Automatic verification phase: re-hash the downloaded file and
-        // compare against HF's `lfs.sha256`. This catches silent corruption,
-        // truncated downloads, and tampering. See docs in models::verify.
-        run_verification(
+        // Verify the file while it is still in the HF cache, then move/copy it
+        // to the destination only if verification passes. On failure the cache
+        // file is deleted so no corrupt data lingers.
+        let verified = run_verification(
             Arc::clone(&pull_jobs_arc),
             state_clone.db_dir.clone(),
             job_id_clone.clone(),
@@ -303,6 +267,18 @@ fn spawn_download_job(
         )
         .await;
 
+        // Only register the model in config/card once the file is at its
+        // destination and known-good.
+        if verified {
+            setup_model_after_pull(
+                Arc::clone(&state_clone),
+                &repo_id_clone,
+                &spec_clone,
+                &dest_dir,
+            )
+            .await;
+        }
+
         // Release the in-flight lock after setup and verification complete
         // to prevent concurrent retries from starting mid-processing.
         in_flight_clone.lock().await.remove(&dest_path);
@@ -311,16 +287,13 @@ fn spawn_download_job(
 
 /// Run the post-download verification phase for a pull job.
 ///
-/// 1. Fetches HF blob metadata to learn the expected LFS SHA-256.
-/// 2. Transitions the job to `Verifying` and starts a progress-poll task that
-///    reads a shared atomic counter and writes `verify_bytes_hashed` back into
-///    the `PullJob`.
-/// 3. Hashes the on-disk file in a blocking thread, writes the authoritative
-///    `model_files` row (with `size_bytes` from disk and `lfs_oid` from HF), and
-///    persists the verification outcome to the DB.
-/// 4. Transitions the job to `Completed` (match or no upstream hash) or
-///    `Failed` (mismatch or hash error).
-/// 5. After successful verification, cleans up the HF cache file to prevent duplicates.
+/// Hashes the file **in the HF cache** (before it is moved), then:
+/// - Pass: canonicalise the cache path to the real blob, rename/copy it to
+///   `dest_path`, and delete the cache copy.  Returns `true`.
+/// - Fail / hash error: delete the cache copy so no corrupt data lingers.
+///   Returns `false`.
+///
+/// `None` upstream hash is treated as a pass (HF had no LFS SHA to compare).
 #[allow(clippy::too_many_arguments)]
 async fn run_verification(
     pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
@@ -332,22 +305,22 @@ async fn run_verification(
     cached_path: std::path::PathBuf,
     dest_path: std::path::PathBuf,
     bytes: u64,
-) {
+) -> bool {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    // Step 1: fetch upstream LFS hash. Best-effort — if HF is unreachable, we
-    // still want to mark the download as Completed rather than Failed.
+    // Step 1: fetch upstream LFS hash (best-effort).
     let expected_sha: Option<String> = match crate::models::pull::fetch_blob_metadata(&repo_id)
         .await
     {
         Ok(blobs) => blobs.get(&filename).and_then(|b| b.lfs_sha256.clone()),
         Err(e) => {
-            tracing::warn!(job_id = %job_id, repo = %repo_id, error = %e, "Failed to fetch HF blob metadata for verification");
+            tracing::warn!(job_id = %job_id, repo = %repo_id, error = %e,
+                "Failed to fetch HF blob metadata for verification");
             None
         }
     };
 
-    // Step 2: transition to Verifying and init progress fields.
+    // Step 2: transition to Verifying.
     {
         let mut jobs = pull_jobs.write().await;
         if let Some(job) = jobs.get_mut(&job_id) {
@@ -358,8 +331,9 @@ async fn run_verification(
         }
     }
 
-    // Step 3: hash the file in a blocking thread, with a separate async task
-    // polling a shared atomic counter to surface progress over SSE.
+    // Step 3: hash the cached file in a blocking thread.
+    // cached_path is an hf-hub snapshot symlink → blob; the OS follows it
+    // automatically so we hash the real blob content without resolving manually.
     let progress = Arc::new(AtomicU64::new(0));
     let poll_progress = Arc::clone(&progress);
     let poll_jobs = Arc::clone(&pull_jobs);
@@ -369,18 +343,14 @@ async fn run_verification(
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             let hashed = poll_progress.load(Ordering::Relaxed);
             let mut jobs = poll_jobs.write().await;
-            let Some(job) = jobs.get_mut(&poll_job_id) else {
-                break;
-            };
-            if !matches!(job.status, PullJobStatus::Verifying) {
-                break;
-            }
+            let Some(job) = jobs.get_mut(&poll_job_id) else { break };
+            if !matches!(job.status, PullJobStatus::Verifying) { break; }
             job.verify_bytes_hashed = hashed;
         }
     });
 
     let hash_progress = Arc::clone(&progress);
-    let hash_dest = dest_path.clone();
+    let hash_src = cached_path.clone();   // hash the cache file, not dest
     let hash_expected = expected_sha.clone();
     let hash_repo = repo_id.clone();
     let hash_filename = filename.clone();
@@ -388,64 +358,38 @@ async fn run_verification(
     let hash_db_dir = db_dir.clone();
 
     let blocking_result = tokio::task::spawn_blocking(move || -> (Option<bool>, Option<String>) {
-        // Compute the SHA-256 of the downloaded file.
-        let actual = match crate::models::verify::sha256_file(&hash_dest, |n| {
+        let actual = match crate::models::verify::sha256_file(&hash_src, |n| {
             hash_progress.store(n, Ordering::Relaxed);
         }) {
             Ok(h) => Some(h),
             Err(e) => {
-                tracing::warn!(error = %e, path = %hash_dest.display(), "Hashing failed");
+                tracing::warn!(error = %e, path = %hash_src.display(), "Hashing failed");
                 None
             }
         };
 
         let (ok, err): (Option<bool>, Option<String>) =
             match (hash_expected.as_deref(), actual.as_deref()) {
-                (None, _) => (None, Some("no upstream hash".to_string())),
-                (Some(_), None) => (
-                    Some(false),
-                    Some("hash error: failed to read file".to_string()),
-                ),
-                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
-                (Some(exp), Some(act)) => (
-                    Some(false),
-                    Some(format!(
-                        "hash mismatch: expected {} got {}",
-                        &exp.chars().take(10).collect::<String>(),
-                        &act.chars().take(10).collect::<String>()
-                    )),
-                ),
+                (None, _)                                                   => (None, None),
+                (Some(_), None)                                             => (Some(false), Some("hash error: failed to read file".to_string())),
+                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp)     => (Some(true),  None),
+                (Some(exp), Some(act))                                      => (Some(false),  Some(format!(
+                    "hash mismatch: expected {} got {}",
+                    &exp.chars().take(10).collect::<String>(),
+                    &act.chars().take(10).collect::<String>()
+                ))),
             };
 
-        // Persist to DB (best-effort). We upsert the model_files row with the
-        // authoritative size (actual downloaded bytes) and the HF lfs_oid, then
-        // write the verification outcome. Only attempt if a db_dir is configured.
         if let Some(dir) = hash_db_dir.as_ref() {
-            match crate::db::open(dir) {
-                Ok(open_res) => {
-                    let conn = open_res.conn;
-                    if let Err(e) = crate::db::queries::upsert_model_file(
-                        &conn,
-                        &hash_repo,
-                        &hash_filename,
-                        hash_quant.as_deref(),
-                        hash_expected.as_deref(),
-                        Some(bytes as i64),
-                    ) {
-                        tracing::warn!(error = %e, "Failed to upsert model_files row");
-                    } else if let Err(e) = crate::db::queries::update_verification(
-                        &conn,
-                        &hash_repo,
-                        &hash_filename,
-                        ok,
-                        err.as_deref(),
-                    ) {
-                        tracing::warn!(error = %e, "Failed to write verification result");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to open DB for verification write");
-                }
+            if let Ok(open_res) = crate::db::open(dir) {
+                let conn = open_res.conn;
+                let _ = crate::db::queries::upsert_model_file(
+                    &conn, &hash_repo, &hash_filename,
+                    hash_quant.as_deref(), hash_expected.as_deref(), Some(bytes as i64),
+                );
+                let _ = crate::db::queries::update_verification(
+                    &conn, &hash_repo, &hash_filename, ok, err.as_deref(),
+                );
             }
         }
 
@@ -453,70 +397,88 @@ async fn run_verification(
     })
     .await;
 
-    // Stop the progress poll.
     poll_handle.abort();
 
     let (ok, err) = blocking_result.unwrap_or_else(|e| {
         tracing::error!(error = %e, "Verification blocking task panicked");
-        (
-            Some(false),
-            Some(format!("verification task panicked: {}", e)),
-        )
+        (Some(false), Some(format!("verification task panicked: {}", e)))
     });
 
-    // Step 4: transition to final state.
-    {
+    let passed = ok != Some(false);
+
+    if passed {
+        // Verification passed — move the blob to its final destination.
+        // Canonicalise to resolve hf-hub's internal snapshot→blob symlink so
+        // we rename/copy the real file, not the symlink entry.
+        let blob = tokio::fs::canonicalize(&cached_path)
+            .await
+            .unwrap_or_else(|_| cached_path.clone());
+
+        if blob != dest_path {
+            if dest_path.exists() {
+                tokio::fs::remove_file(&dest_path).await.ok();
+            }
+            if let Err(e) = tokio::fs::rename(&blob, &dest_path).await {
+                tracing::debug!(job_id=%job_id, "rename failed ({}), falling back to copy", e);
+                match tokio::fs::copy(&blob, &dest_path).await {
+                    Ok(_) => { tokio::fs::remove_file(&blob).await.ok(); }
+                    Err(e2) => {
+                        tracing::error!(job_id=%job_id, "copy to dest failed: {}", e2);
+                        // Treat as failure — clean up cache and bail.
+                        tokio::fs::remove_file(&blob).await.ok();
+                        tokio::fs::remove_file(&cached_path).await.ok();
+                        let mut jobs = pull_jobs.write().await;
+                        if let Some(job) = jobs.get_mut(&job_id) {
+                            job.verify_bytes_hashed = bytes;
+                            job.verified_ok = Some(false);
+                            job.verify_error = Some(format!("failed to move file to destination: {}", e2));
+                            job.error       = job.verify_error.clone();
+                            job.completed_at = Some(Instant::now());
+                            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                        }
+                        return false;
+                    }
+                }
+            }
+            // Remove the snapshot symlink if it still exists (now dead after rename).
+            if cached_path != blob {
+                tokio::fs::remove_file(&cached_path).await.ok();
+            }
+        }
+
         let mut jobs = pull_jobs.write().await;
         if let Some(job) = jobs.get_mut(&job_id) {
-            // Stamp full progress on the hash bar.
+            job.verify_bytes_hashed = bytes;
+            job.verified_ok = ok;
+            job.verify_error = None;
+            job.completed_at = Some(Instant::now());
+            job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
+            tracing::info!(job_id = %job_id, verified_ok = ?ok, "Job completed");
+        }
+        true
+    } else {
+        // Verification failed — delete the corrupt/mismatched cache file so it
+        // cannot be mistaken for a good download on the next attempt.
+        let blob = tokio::fs::canonicalize(&cached_path)
+            .await
+            .unwrap_or_else(|_| cached_path.clone());
+        tokio::fs::remove_file(&blob).await.ok();
+        if cached_path != blob {
+            tokio::fs::remove_file(&cached_path).await.ok();
+        }
+        tracing::error!(job_id = %job_id, error = ?err, "Verification failed — cache deleted");
+
+        let mut jobs = pull_jobs.write().await;
+        if let Some(job) = jobs.get_mut(&job_id) {
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = err.clone();
+            job.error        = err;
             job.completed_at = Some(Instant::now());
-
-            // Mismatch or hash error is a hard failure. `None` (no upstream hash)
-            // is treated as success — the download itself finished and we just
-            // couldn't verify it.
-            if ok == Some(false) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                job.error = err;
-                tracing::error!(
-                    job_id = %job_id,
-                    "Job transitioned to Failed after verification mismatch"
-                );
-            } else {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
-                tracing::info!(
-                    job_id = %job_id,
-                    verified_ok = ?ok,
-                    "Job transitioned to Completed after verification"
-                );
-
-                // Clean up the HF cache file after successful verification.
-                // Wrap in a non-blocking task so cleanup failures don't affect the job status.
-                let cleanup_cached_path = cached_path.clone();
-                let cleanup_dest_path = dest_path.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = crate::models::pull::cleanup_hf_cache(
-                        &cleanup_cached_path,
-                        &cleanup_dest_path,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            job_id = %job_id,
-                            error = %e,
-                            "HF cache cleanup failed (non-fatal)"
-                        );
-                    } else {
-                        tracing::debug!(
-                            job_id = %job_id,
-                            "HF cache cleanup completed successfully"
-                        );
-                    }
-                });
-            }
+            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+            tracing::error!(job_id = %job_id, "Job failed after verification");
         }
+        false
     }
 }
 
