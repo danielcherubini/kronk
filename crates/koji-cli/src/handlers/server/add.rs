@@ -23,8 +23,11 @@ pub async fn cmd_server_add(
     // Extract koji flags from args
     let extracted = crate::flags::extract_koji_flags(args)?;
 
-    // Check for duplicate server
-    let db_dir = koji_core::config::Config::config_dir()?;
+    // Check for duplicate server — use the same config_dir the Config was loaded from
+    let db_dir = config
+        .loaded_from
+        .clone()
+        .unwrap_or_else(|| koji_core::config::Config::config_dir().unwrap());
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
     // Note: get_model_config now takes integer ID, so we skip this pre-check
     // The database will reject duplicate inserts

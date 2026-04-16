@@ -238,7 +238,8 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     let mut config = koji_core::config::Config::load_from(temp_dir.path())
         .expect("Failed to load/create default config");
     // Insert the dummy server into the DB (cmd_server_edit loads model configs from DB)
-    let db_dir = koji_core::config::Config::config_dir().expect("Failed to get config dir");
+    // Use the same temp_dir for both config and DB to ensure isolation
+    let db_dir = temp_dir.path();
     {
         let koji_core::db::OpenResult { conn, .. } =
             koji_core::db::open(&db_dir).expect("Failed to open DB");
