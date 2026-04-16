@@ -333,13 +333,12 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let target_dir = match backend_info.path.parent() {
-            Some(p) => p.to_path_buf(),
-            None => {
-                tracing::error!(
-                    "Backend '{}' has no parent directory for installation path",
-                    name_clone
-                );
+        // Anchor target_dir at backends_dir()/<name> to avoid nesting each
+        // update inside the previous install's directory.
+        let target_dir = match koji_core::backends::backends_dir() {
+            Ok(d) => d.join(&name_clone),
+            Err(e) => {
+                tracing::error!("Failed to resolve backends_dir for update: {}", e);
                 return;
             }
         };

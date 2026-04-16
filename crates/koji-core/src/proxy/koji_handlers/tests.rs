@@ -72,6 +72,134 @@ async fn test_setup_model_creates_card() {
     assert_eq!(models[&model_key].model.as_deref(), Some(repo_id));
 }
 
+/// Pulling an mmproj file AFTER the parent quant exists should auto-enable
+/// vision on the parent: `mmproj` set to the filename and "image" added to
+/// input modalities. Locks in the auto-enable behavior (commit 461459f).
+#[tokio::test]
+async fn test_mmproj_pull_auto_enables_vision_on_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_dir = tmp.path().to_path_buf();
+    std::fs::create_dir_all(config_dir.join("configs")).unwrap();
+    let repo_id = "bartowski/TestVision-GGUF";
+    let dest_dir = config_dir.join("models").join(repo_id);
+    std::fs::create_dir_all(&dest_dir).unwrap();
+
+    let mut config = crate::config::Config {
+        loaded_from: Some(config_dir.clone()),
+        ..Default::default()
+    };
+    config.save_to(&config_dir).unwrap();
+
+    // Pull 1: parent quant.
+    let parent_spec = super::types::QuantDownloadSpec {
+        filename: "TestVision-Q4_K_M.gguf".to_string(),
+        quant: Some("Q4_K_M".to_string()),
+        context_length: None,
+    };
+    std::fs::write(dest_dir.join(&parent_spec.filename), b"x").unwrap();
+    let mut models = std::collections::HashMap::new();
+    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &parent_spec, &dest_dir)
+        .await;
+
+    let key = repo_id.replace('/', "--").to_lowercase();
+    assert!(models[&key].mmproj.is_none(), "mmproj should start unset");
+
+    // Pull 2: mmproj sibling.
+    let mmproj_spec = super::types::QuantDownloadSpec {
+        filename: "mmproj-TestVision-f16.gguf".to_string(),
+        quant: None,
+        context_length: None,
+    };
+    std::fs::write(dest_dir.join(&mmproj_spec.filename), b"x").unwrap();
+    let returned_key =
+        _setup_model_after_pull_with_config(&config, &mut models, repo_id, &mmproj_spec, &dest_dir)
+            .await;
+
+    assert_eq!(
+        returned_key.as_deref(),
+        Some(key.as_str()),
+        "mmproj path must return the parent's key so setup_model_after_pull saves it"
+    );
+    let mc = &models[&key];
+    assert_eq!(mc.mmproj.as_deref(), Some("mmproj-TestVision-f16.gguf"));
+    let modalities = mc.modalities.as_ref().expect("modalities set");
+    assert!(
+        modalities
+            .input
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("image")),
+        "input modalities should include 'image', got {:?}",
+        modalities.input
+    );
+}
+
+/// Pulling an mmproj file BEFORE any parent quant should create a disabled stub
+/// entry. A subsequent main-quant pull must promote that stub: set `quant`,
+/// flip `enabled` to true, and retain the mmproj wiring from the first pull.
+#[tokio::test]
+async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_dir = tmp.path().to_path_buf();
+    std::fs::create_dir_all(config_dir.join("configs")).unwrap();
+    let repo_id = "bartowski/TestVisionEarly-GGUF";
+    let dest_dir = config_dir.join("models").join(repo_id);
+    std::fs::create_dir_all(&dest_dir).unwrap();
+
+    let mut config = crate::config::Config {
+        loaded_from: Some(config_dir.clone()),
+        ..Default::default()
+    };
+    config.save_to(&config_dir).unwrap();
+
+    // Pull 1: mmproj first, no parent exists yet.
+    let mmproj_spec = super::types::QuantDownloadSpec {
+        filename: "mmproj-TestVisionEarly-f16.gguf".to_string(),
+        quant: None,
+        context_length: None,
+    };
+    std::fs::write(dest_dir.join(&mmproj_spec.filename), b"x").unwrap();
+    let mut models = std::collections::HashMap::new();
+    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &mmproj_spec, &dest_dir)
+        .await;
+
+    let key = repo_id.replace('/', "--").to_lowercase();
+    let stub = &models[&key];
+    assert_eq!(stub.quant, None, "stub should start without quant");
+    assert!(!stub.enabled, "stub should start disabled");
+    assert_eq!(
+        stub.mmproj.as_deref(),
+        Some("mmproj-TestVisionEarly-f16.gguf")
+    );
+
+    // Pull 2: main quant arrives later, must promote the stub.
+    let parent_spec = super::types::QuantDownloadSpec {
+        filename: "TestVisionEarly-Q4_K_M.gguf".to_string(),
+        quant: Some("Q4_K_M".to_string()),
+        context_length: Some(4096),
+    };
+    std::fs::write(dest_dir.join(&parent_spec.filename), b"x").unwrap();
+    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &parent_spec, &dest_dir)
+        .await;
+
+    let promoted = &models[&key];
+    assert_eq!(
+        promoted.quant.as_deref(),
+        Some("Q4_K_M"),
+        "main-quant pull must fill in quant"
+    );
+    assert!(promoted.enabled, "main-quant pull must flip enabled to true");
+    assert_eq!(
+        promoted.context_length,
+        Some(4096),
+        "main-quant pull must fill in context_length"
+    );
+    assert_eq!(
+        promoted.mmproj.as_deref(),
+        Some("mmproj-TestVisionEarly-f16.gguf"),
+        "mmproj wiring from the first pull must survive promotion"
+    );
+}
+
 /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.
 #[test]
 fn test_pull_job_serializes_for_sse() {

@@ -950,6 +950,19 @@ pub async fn update_backend(
         }
     };
 
+    // Anchor target_dir at backends_dir()/<name> so repeated updates overwrite
+    // the same directory instead of nesting into the previous install's subdir.
+    let target_dir = match koji_core::backends::backends_dir() {
+        Ok(d) => d.join(&name),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to get backends dir: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
     // Build update options
     let options = koji_core::backends::InstallOptions {
         backend_type: backend_type.clone(),
@@ -970,11 +983,7 @@ pub async fn update_backend(
                 commit: None,
             }
         }),
-        target_dir: backend_info
-            .path
-            .parent()
-            .unwrap_or(&backend_info.path)
-            .to_path_buf(),
+        target_dir,
         gpu_type: backend_info.gpu_type,
         allow_overwrite: true,
     };

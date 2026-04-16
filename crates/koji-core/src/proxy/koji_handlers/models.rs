@@ -42,15 +42,27 @@ pub fn generate_display_name(hf_repo: &str) -> String {
 }
 
 /// Resolve an incoming `:id` path param to the internal config_key.
-/// If `raw` parses as an integer, look up the matching `db_id` in
-/// `state.model_configs`. Otherwise return it unchanged (it's already
-/// a config_key, api_name, or model field).
+///
+/// Accepts three forms (in priority order):
+/// 1. Integer db_id — looked up against `config.db_id` in the in-memory map.
+/// 2. Repo id with a slash (e.g. `Unsloth/Foo-GGUF`) — normalized to the
+///    lowercased double-dash config_key (e.g. `unsloth--foo-gguf`).
+/// 3. Anything else — returned unchanged, on the assumption it is already a
+///    config_key, api_name, or model field that downstream lookups will handle.
+///
+/// Steps 1 and 2 both honour the case-insensitive repo_id contract established
+/// by the `COLLATE NOCASE` migration on `model_configs.repo_id`: the in-memory
+/// HashMap is keyed by the lowercased repo_id, so a repo id in any case
+/// resolves to the same bucket.
 async fn resolve_model_id(state: &ProxyState, raw: &str) -> String {
     if let Ok(id) = raw.parse::<i64>() {
         let configs = state.model_configs.read().await;
         if let Some((key, _)) = configs.iter().find(|(_, c)| c.db_id == Some(id)) {
             return key.clone();
         }
+    }
+    if raw.contains('/') {
+        return raw.to_lowercase().replace('/', "--");
     }
     raw.to_string()
 }
