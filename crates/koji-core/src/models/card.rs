@@ -154,7 +154,7 @@ context_length = 16384
         // After loading, sampling parameters are populated with defaults for missing profiles
         // Compare only the explicitly provided sampling parameters by checking the original keys
         let card_explicit_keys: std::collections::HashSet<String> =
-            card.sampling.keys().map(|k| k.clone()).collect();
+            card.sampling.keys().cloned().collect();
         let loaded_explicit_keys: std::collections::HashSet<String> = loaded
             .sampling
             .keys()
@@ -162,7 +162,7 @@ context_length = 16384
                 let k_str = k.to_string();
                 card_explicit_keys.contains(&k_str)
             })
-            .map(|k| k.clone())
+            .cloned()
             .collect();
 
         // Both should have the same explicitly provided sampling parameters

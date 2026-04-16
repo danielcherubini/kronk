@@ -107,8 +107,10 @@ mod tests {
         let config_path = config_dir.join("config.toml");
 
         // Start from the default config.
-        let mut initial_config = koji_core::config::Config::default();
-        initial_config.loaded_from = Some(config_dir.clone());
+        let initial_config = koji_core::config::Config {
+            loaded_from: Some(config_dir.clone()),
+            ..Default::default()
+        };
         let toml_str = toml::to_string_pretty(&initial_config).unwrap();
         std::fs::write(&config_path, &toml_str).unwrap();
 

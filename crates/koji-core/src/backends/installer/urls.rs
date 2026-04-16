@@ -217,10 +217,7 @@ mod tests {
                     version: cuda_ver.to_string(),
                 }),
             )
-            .expect(&format!(
-                "CUDA version {} should produce a valid URL",
-                cuda_ver
-            ));
+            .unwrap_or_else(|_| panic!("CUDA version {} should produce a valid URL", cuda_ver));
             assert!(
                 url.contains(&format!("cuda-{}", cuda_ver)),
                 "URL for CUDA version {} should contain 'cuda-{}', got: {}",

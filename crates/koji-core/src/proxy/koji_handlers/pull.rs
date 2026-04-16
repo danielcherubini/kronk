@@ -687,27 +687,28 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         // Reuse the existing model key if we found one, otherwise create a
         // new entry keyed by the bare repo slug (no per-quant suffix).
         let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
-        let entry = model_configs
-            .entry(model_key.clone())
-            .or_insert_with(|| crate::config::ModelConfig {
-                backend: "llama_cpp".to_string(),
-                model: Some(repo_id.to_string()),
-                quant: Some(quant_key.clone()),
-                mmproj: None,
-                context_length: spec.context_length,
-                enabled: true,
-                args: vec![],
-                sampling: None,
-                port: None,
-                health_check: None,
-                profile: None,
-                api_name: Some(repo_id.to_string()),
-                gpu_layers: None,
-                quants: std::collections::BTreeMap::new(),
-                modalities: modalities.clone(),
-                display_name: Some(display_name.clone()),
-                db_id: None, // will be set after reload_model_configs()
-            });
+        let entry =
+            model_configs
+                .entry(model_key.clone())
+                .or_insert_with(|| crate::config::ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    model: Some(repo_id.to_string()),
+                    quant: Some(quant_key.clone()),
+                    mmproj: None,
+                    context_length: spec.context_length,
+                    enabled: true,
+                    args: vec![],
+                    sampling: None,
+                    port: None,
+                    health_check: None,
+                    profile: None,
+                    api_name: Some(repo_id.to_string()),
+                    gpu_layers: None,
+                    quants: std::collections::BTreeMap::new(),
+                    modalities: modalities.clone(),
+                    display_name: Some(display_name.clone()),
+                    db_id: None, // will be set after reload_model_configs()
+                });
 
         // Promote a stub entry (created by a prior mmproj-first pull) into a
         // real, enabled model once the main quant arrives. Without this, the

@@ -17,7 +17,7 @@ async fn test_restart_handler_exits_process() {
         let workspace_root = cwd
             .parent()
             .and_then(|p| p.parent())
-            .unwrap_or_else(|| cwd.as_path());
+            .unwrap_or(cwd.as_path());
         let candidate = workspace_root.join("target/debug/koji");
         if candidate.exists() {
             candidate.to_string_lossy().to_string()
