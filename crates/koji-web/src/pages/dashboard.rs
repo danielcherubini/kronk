@@ -75,6 +75,8 @@ impl From<MetricsHistoryEntry> for MetricSample {
 struct ModelStatus {
     id: String,
     #[serde(default)]
+    db_id: Option<i64>,
+    #[serde(default)]
     api_name: Option<String>,
     #[serde(default)]
     display_name: Option<String>,
@@ -460,7 +462,9 @@ pub fn Dashboard() -> impl IntoView {
                                                      {loaded.into_iter().map(|m| {
                                                          let id_load = m.id.clone();
                                                          let id_unload = m.id.clone();
-                                                         let id_edit = m.id.clone();
+                                                         let id_edit = m.db_id
+                                                             .map(|n| n.to_string())
+                                                             .unwrap_or_else(|| m.id.clone());
                                                          let badge_class = model_status_badge_class(m.loaded);
                                                          let badge_label = model_status_badge_label(m.loaded);
                                                          let button_class = model_action_button_class(m.loaded);
@@ -499,7 +503,7 @@ pub fn Dashboard() -> impl IntoView {
                                                                              </button>
                                                                          }.into_any()
                                                                      }}
-                                                                     <A href=format!("/models/{}?id={}/edit", id_edit, id_edit)>
+                                                                     <A href=format!("/models/{}/edit", id_edit)>
                                                                          <button class="btn btn-secondary btn-sm">"Edit"</button>
                                                                      </A>
                                                                  </div>
@@ -522,7 +526,9 @@ pub fn Dashboard() -> impl IntoView {
                                                      {idle.into_iter().map(|m| {
                                                          let id_load = m.id.clone();
                                                          let id_unload = m.id.clone();
-                                                         let id_edit = m.id.clone();
+                                                         let id_edit = m.db_id
+                                                             .map(|n| n.to_string())
+                                                             .unwrap_or_else(|| m.id.clone());
                                                          let badge_class = model_status_badge_class(m.loaded);
                                                          let badge_label = model_status_badge_label(m.loaded);
                                                          let button_class = model_action_button_class(m.loaded);
@@ -561,7 +567,7 @@ pub fn Dashboard() -> impl IntoView {
                                                                              </button>
                                                                          }.into_any()
                                                                      }}
-                                                                     <A href=format!("/models/{}?id={}/edit", id_edit, id_edit)>
+                                                                     <A href=format!("/models/{}/edit", id_edit)>
                                                                          <button class="btn btn-secondary btn-sm">"Edit"</button>
                                                                      </A>
                                                                  </div>
@@ -714,6 +720,7 @@ mod tests {
         let models = vec![
             ModelStatus {
                 id: "a".into(),
+                db_id: None,
                 api_name: None,
                 display_name: None,
                 backend: "llama_cpp".into(),
@@ -721,6 +728,7 @@ mod tests {
             },
             ModelStatus {
                 id: "b".into(),
+                db_id: None,
                 api_name: None,
                 display_name: None,
                 backend: "llama_cpp".into(),
@@ -728,6 +736,7 @@ mod tests {
             },
             ModelStatus {
                 id: "c".into(),
+                db_id: None,
                 api_name: None,
                 display_name: None,
                 backend: "ik_llama".into(),
@@ -735,6 +744,7 @@ mod tests {
             },
             ModelStatus {
                 id: "d".into(),
+                db_id: None,
                 api_name: None,
                 display_name: None,
                 backend: "ik_llama".into(),

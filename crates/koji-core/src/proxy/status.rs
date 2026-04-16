@@ -30,6 +30,7 @@ impl ProxyState {
                 });
             out.push(crate::gpu::ModelStatus {
                 id: model_id.clone(),
+                db_id: model_cfg.db_id,
                 api_name: model_cfg.api_name.clone(),
                 display_name: model_cfg.display_name.clone(),
                 backend: model_cfg.backend.clone(),

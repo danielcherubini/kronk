@@ -81,6 +81,10 @@ pub struct MetricSample {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelStatus {
     pub id: String,
+    /// Integer database id of the model_configs row, if known. Emitted so the
+    /// dashboard can link to the editor by id rather than by config_key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_id: Option<i64>,
     pub api_name: Option<String>,
     pub display_name: Option<String>,
     pub backend: String,
