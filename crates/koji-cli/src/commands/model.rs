@@ -988,10 +988,13 @@ fn cmd_scan(config: &Config) -> Result<()> {
                 card.quants.remove(key);
                 // Remove the model_files DB row for this (repo, filename).
                 if let Some(conn) = &db_conn {
-                    if let Err(e) =
-                        koji_core::db::queries::delete_model_file(conn, repo_id, file)
-                    {
-                        tracing::warn!("Failed to delete DB record for {}/{}: {}", repo_id, file, e);
+                    if let Err(e) = koji_core::db::queries::delete_model_file(conn, repo_id, file) {
+                        tracing::warn!(
+                            "Failed to delete DB record for {}/{}: {}",
+                            repo_id,
+                            file,
+                            e
+                        );
                     }
                 }
             }
@@ -1013,9 +1016,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                 config.save()?;
                 // Remove the repo-level pull record from DB.
                 if let Some(conn) = &db_conn {
-                    if let Err(e) =
-                        koji_core::db::queries::delete_model_records(conn, repo_id)
-                    {
+                    if let Err(e) = koji_core::db::queries::delete_model_records(conn, repo_id) {
                         tracing::warn!("Failed to delete DB records for {}: {}", repo_id, e);
                     }
                 }
@@ -1056,18 +1057,21 @@ fn cmd_scan(config: &Config) -> Result<()> {
             .filter_map(|(key, mc)| {
                 let repo_id = mc.model.as_ref()?;
                 let model_dir = koji_core::models::repo_path(&models_dir, repo_id);
-                let has_gguf = model_dir.exists() && std::fs::read_dir(&model_dir)
-                    .ok()
-                    .map(|entries| {
-                        entries
-                            .filter_map(|e| e.ok())
-                            .any(|e| {
+                let has_gguf = model_dir.exists()
+                    && std::fs::read_dir(&model_dir)
+                        .ok()
+                        .map(|entries| {
+                            entries.filter_map(|e| e.ok()).any(|e| {
                                 e.file_name().to_string_lossy().ends_with(".gguf")
                                     && e.path().exists() // follows symlinks — false for dead ones
                             })
-                    })
-                    .unwrap_or(false);
-                if has_gguf { None } else { Some((key.clone(), repo_id.clone())) }
+                        })
+                        .unwrap_or(false);
+                if has_gguf {
+                    None
+                } else {
+                    Some((key.clone(), repo_id.clone()))
+                }
             })
             .collect();
 
@@ -1080,9 +1084,7 @@ fn cmd_scan(config: &Config) -> Result<()> {
                 println!("    x {} ({})", key, repo_id);
                 config.models.remove(key);
                 if let Some(conn) = &db_conn {
-                    if let Err(e) =
-                        koji_core::db::queries::delete_model_records(conn, repo_id)
-                    {
+                    if let Err(e) = koji_core::db::queries::delete_model_records(conn, repo_id) {
                         tracing::warn!("Failed to delete DB records for {}: {}", repo_id, e);
                     }
                 }

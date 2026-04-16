@@ -66,3 +66,25 @@ pub struct UpdateCheckRecord {
     pub details_json: Option<String>, // JSON blob for model file changes
     pub checked_at: i64,              // unix timestamp
 }
+
+/// Per-repo user configuration for a model.
+#[derive(Debug, Clone)]
+pub struct ModelConfigRecord {
+    pub repo_id: String,
+    pub display_name: Option<String>,
+    pub backend: String,
+    pub enabled: bool,
+    pub selected_quant: Option<String>,
+    pub selected_mmproj: Option<String>,
+    pub context_length: Option<u32>,
+    pub gpu_layers: Option<u32>,
+    pub port: Option<u16>,
+    pub args: Option<String>,       // raw JSON string
+    pub sampling: Option<String>,   // raw JSON string
+    pub modalities: Option<String>, // raw JSON string
+    pub profile: Option<String>,
+    pub api_name: Option<String>,
+    pub health_check: Option<String>, // raw JSON string
+    pub created_at: String,
+    pub updated_at: String,
+}
