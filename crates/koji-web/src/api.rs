@@ -4,6 +4,17 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 
+fn resolve_model_id(id_str: &str, conn: &rusqlite::Connection) -> anyhow::Result<Option<i64>> {
+    // Try parsing as integer id first
+    if let Ok(id) = id_str.parse::<i64>() {
+        return Ok(Some(id));
+    }
+    // Otherwise treat as config_key (double-dash format) → convert to repo_id and look up
+    let repo_id = koji_core::db::config_key_to_repo_id(id_str);
+    let record = koji_core::db::queries::get_model_config_by_repo_id(conn, &repo_id)?;
+    Ok(record.map(|r| r.id))
+}
+
 pub mod backends;
 pub mod backup;
 pub mod middleware;
@@ -485,22 +496,49 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
 }
 
 /// GET /api/models/:id — get a single model config.
+/// Accepts integer id or config_key (double-dash format) for compatibility.
 pub async fn get_model(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
 ) -> impl IntoResponse {
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
         Ok(Ok((cfg, config_dir))) => {
             let configs_dir = config_dir.join("configs");
             let backends: Vec<String> = cfg.backends.keys().cloned().collect();
 
-            // Load model from DB
-            let model_opt = match koji_core::db::open(&config_dir) {
-                Ok(open) => koji_core::db::queries::get_model_config(&open.conn, id)
-                    .ok()
-                    .flatten(),
-                Err(_) => None,
+            // Resolve id (integer or config_key) to model_id
+            let open = match koji_core::db::open(&config_dir) {
+                Ok(o) => o,
+                Err(_) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "Failed to open database"})),
+                    )
+                        .into_response();
+                }
             };
+            let model_id = match resolve_model_id(&id_str, &open.conn) {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": "Model not found"})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": e.to_string()})),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Load model from DB
+            let model_opt = koji_core::db::queries::get_model_config(&open.conn, model_id)
+                .ok()
+                .flatten();
 
             match model_opt {
                 Some(record) => {
@@ -655,7 +693,7 @@ fn apply_model_body(
 /// PUT /api/models/:id — update an existing model.
 pub async fn update_model(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
     Json(body): Json<ModelBody>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
@@ -669,7 +707,20 @@ pub async fn update_model(
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let existing_record = koji_core::db::queries::get_model_config(&open.conn, id)
+        let model_id = resolve_model_id(&id_str, &open.conn)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let existing_record = koji_core::db::queries::get_model_config(&open.conn, model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -687,19 +738,17 @@ pub async fn update_model(
         let updated_config = apply_model_body(body, Some(existing));
 
         // Save to DB (save_model_config converts config_key to repo_id internally)
-        let config_key = koji_core::db::config_key_to_repo_id(&existing_record.repo_id)
-            .to_lowercase()
-            .replace('/', "--");
-        koji_core::db::save_model_config(&open.conn, &config_key, &updated_config).map_err(
-            |e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    serde_json::json!({"error": e.to_string()}),
-                )
-            },
-        )?;
-
-        Ok(serde_json::json!({ "ok": true, "id": id }))
+        let config_key = existing_record.repo_id.to_lowercase().replace('/', "--");
+        let new_model_id =
+            koji_core::db::save_model_config(&open.conn, &config_key, &updated_config).map_err(
+                |e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        serde_json::json!({"error": e.to_string()}),
+                    )
+                },
+            )?;
+        Ok(serde_json::json!({ "ok": true, "id": new_model_id }))
     })
     .await
     {
@@ -802,7 +851,7 @@ pub struct RenameBody {
 /// POST /api/models/:id/rename — rename a model config entry.
 pub async fn rename_model(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
     Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
@@ -817,7 +866,20 @@ pub async fn rename_model(
         })?;
 
         // Check source ID exists
-        let existing_record = koji_core::db::queries::get_model_config(&open.conn, id)
+        let model_id = resolve_model_id(&id_str, &open.conn)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let existing_record = koji_core::db::queries::get_model_config(&open.conn, model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -858,12 +920,14 @@ pub async fn rename_model(
 
         // Save with new repo_id (keeps same integer id)
         let config_key = new_repo_id.to_lowercase().replace('/', "--");
-        koji_core::db::save_model_config(&open.conn, &config_key, &model_config).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": e.to_string()}),
-            )
-        })?;
+        let _ = koji_core::db::save_model_config(&open.conn, &config_key, &model_config).map_err(
+            |e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            },
+        )?;
 
         // Clean up update_check record for old repo_id
         let _ = koji_core::db::queries::delete_update_check(
@@ -872,7 +936,7 @@ pub async fn rename_model(
             &existing_record.repo_id,
         );
 
-        Ok(serde_json::json!({ "ok": true, "id": id }))
+        Ok(serde_json::json!({ "ok": true, "id": model_id }))
     })
     .await
     {
@@ -1009,7 +1073,7 @@ pub async fn delete_quant(
 /// DELETE /api/models/:id — delete a model.
 pub async fn delete_model(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
@@ -1022,7 +1086,20 @@ pub async fn delete_model(
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let model_record = koji_core::db::queries::get_model_config(&open.conn, id)
+        let model_id = resolve_model_id(&id_str, &open.conn)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let model_record = koji_core::db::queries::get_model_config(&open.conn, model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -1072,7 +1149,7 @@ pub async fn delete_model(
                 }
             }
             // 3. Delete DB records (best-effort)
-            koji_core::db::queries::delete_model_records(&open.conn, id).map_err(|e| {
+            koji_core::db::queries::delete_model_records(&open.conn, model_id).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     serde_json::json!({"error": e.to_string()}),
@@ -1081,7 +1158,7 @@ pub async fn delete_model(
         }
 
         // Delete the model config record and update check record
-        koji_core::db::queries::delete_model_config(&open.conn, id).map_err(|e| {
+        koji_core::db::queries::delete_model_config(&open.conn, model_id).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
@@ -1108,56 +1185,6 @@ pub async fn delete_model(
     }
 }
 
-// ── Refresh / Verify ──────────────────────────────────────────────────────────
-
-/// Resolve the model identified by `id` to its HF repo_id, the config
-/// directory, and the models directory. Returns an error response if the
-/// config can't be loaded, the id doesn't exist, or the entry has no source.
-fn resolve_model_repo_id(
-    state: &AppState,
-    id: i64,
-) -> Result<(i64, String, std::path::PathBuf, std::path::PathBuf), (StatusCode, serde_json::Value)>
-{
-    let (cfg, config_dir) = load_config_from_state(state)?;
-
-    let open = koji_core::db::open(&config_dir).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({"error": format!("DB open failed: {}", e)}),
-        )
-    })?;
-
-    let model_record = koji_core::db::queries::get_model_config(&open.conn, id)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": format!("DB query failed: {}", e)}),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "Model not found"}),
-            )
-        })?;
-
-    let model_config = koji_core::config::ModelConfig::from_db_record(&model_record);
-
-    let repo_id = model_config.model.clone().ok_or_else(|| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            serde_json::json!({"error": "Model has no `model` source set"}),
-        )
-    })?;
-    let models_dir = cfg.models_dir().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({"error": format!("models_dir resolution failed: {}", e)}),
-        )
-    })?;
-    Ok((id, repo_id, config_dir, models_dir))
-}
-
 /// Serialize a `ModelFileRecord` into the same shape used by the enriched
 /// quants response so refresh/verify callers get data identical to a GET.
 fn file_record_json(rec: &koji_core::db::queries::ModelFileRecord) -> serde_json::Value {
@@ -1173,6 +1200,8 @@ fn file_record_json(rec: &koji_core::db::queries::ModelFileRecord) -> serde_json
     })
 }
 
+// ── Refresh / Verify ──────────────────────────────────────────────────────────
+
 /// POST /api/models/:id/refresh — re-query HuggingFace for the current commit
 /// SHA and per-file LFS hashes / sizes, and write them into the local DB.
 ///
@@ -1182,11 +1211,53 @@ fn file_record_json(rec: &koji_core::db::queries::ModelFileRecord) -> serde_json
 ///   3. `spawn_blocking` — open DB, upsert pull + files, read back
 pub async fn refresh_model_metadata(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
 ) -> impl IntoResponse {
-    // Step 1: resolve repo_id (config load on blocking pool).
+    // Step 1: resolve model_id (from id_str) and repo_id (config load on blocking pool).
     let state1 = state.clone();
-    let resolved = tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, id)).await;
+    let resolved = tokio::task::spawn_blocking(move || {
+        let (cfg, config_dir) = load_config_from_state(&state1)?;
+        let open = koji_core::db::open(&config_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+        let model_id = resolve_model_id(&id_str, &open.conn)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let record = koji_core::db::queries::get_model_config(&open.conn, model_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let models_dir = cfg.models_dir().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+        Ok::<_, (StatusCode, serde_json::Value)>((model_id, record.repo_id, config_dir, models_dir))
+    })
+    .await;
     let (model_id, repo_id, config_dir, _models_dir) = match resolved {
         Ok(Ok(x)) => x,
         Ok(Err((s, b))) => return (s, Json(b)).into_response(),
@@ -1252,7 +1323,7 @@ pub async fn refresh_model_metadata(
             let files_json: Vec<_> = files.iter().map(file_record_json).collect();
             Json(serde_json::json!({
                 "ok": true,
-                "id": id,
+                "id": model_id,
                 "repo_id": repo_id,
                 "repo_commit_sha": pull.as_ref().map(|p| p.commit_sha.clone()),
                 "repo_pulled_at": pull.as_ref().map(|p| p.pulled_at.clone()),
@@ -1281,10 +1352,52 @@ pub async fn refresh_model_metadata(
 /// the wizard already streams them during pulls.
 pub async fn verify_model_files(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id_str): Path<String>,
 ) -> impl IntoResponse {
     let state1 = state.clone();
-    let resolved = tokio::task::spawn_blocking(move || resolve_model_repo_id(&state1, id)).await;
+    let resolved = tokio::task::spawn_blocking(move || {
+        let (_cfg, config_dir) = load_config_from_state(&state1)?;
+        let open = koji_core::db::open(&config_dir).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+        let model_id = resolve_model_id(&id_str, &open.conn)
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let record = koji_core::db::queries::get_model_config(&open.conn, model_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({"error": "Model not found"}),
+                )
+            })?;
+        let models_dir = _cfg.models_dir().map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({"error": e.to_string()}),
+            )
+        })?;
+        Ok::<_, (StatusCode, serde_json::Value)>((model_id, record.repo_id, config_dir, models_dir))
+    })
+    .await;
     let (model_id, repo_id, config_dir, models_dir) = match resolved {
         Ok(Ok(x)) => x,
         Ok(Err((s, b))) => return (s, Json(b)).into_response(),
@@ -1332,7 +1445,7 @@ pub async fn verify_model_files(
             Json(serde_json::json!({
                 "ok": all_ok,
                 "any_unknown": any_unknown,
-                "id": id,
+                "id": model_id,
                 "repo_id": repo_id,
                 "results": summary,
                 "files": files_json,

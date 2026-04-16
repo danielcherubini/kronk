@@ -1,6 +1,6 @@
 [package]
 name = "koji-web"
-version = "1.34.0"
+version = "1.35.1"
 edition.workspace = true
 
 [lib]
@@ -34,6 +34,7 @@ koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+rusqlite = { workspace = true, optional = true }
 urlencoding = "2.1"
 chrono = "0.4.44"
 tempfile.workspace = true
@@ -44,6 +45,7 @@ ssr = [
   "dep:axum", "dep:tokio", "dep:async-stream", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
   "dep:koji-core", "dep:toml", "dep:tower-http", "dep:thiserror", "dep:uuid",
+  "dep:rusqlite",
 ]
 
 [[test]]
