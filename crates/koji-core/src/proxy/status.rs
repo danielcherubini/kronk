@@ -35,6 +35,8 @@ impl ProxyState {
                 display_name: model_cfg.display_name.clone(),
                 backend: model_cfg.backend.clone(),
                 loaded,
+                quant: model_cfg.quant.clone(),
+                context_length: model_cfg.context_length,
             });
         }
         // Stable order so dashboard rows don't shuffle between samples.
