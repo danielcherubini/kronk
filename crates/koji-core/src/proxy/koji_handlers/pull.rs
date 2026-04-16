@@ -309,16 +309,15 @@ async fn run_verification(
     use std::sync::atomic::{AtomicU64, Ordering};
 
     // Step 1: fetch upstream LFS hash (best-effort).
-    let expected_sha: Option<String> = match crate::models::pull::fetch_blob_metadata(&repo_id)
-        .await
-    {
-        Ok(blobs) => blobs.get(&filename).and_then(|b| b.lfs_sha256.clone()),
-        Err(e) => {
-            tracing::warn!(job_id = %job_id, repo = %repo_id, error = %e,
+    let expected_sha: Option<String> =
+        match crate::models::pull::fetch_blob_metadata(&repo_id).await {
+            Ok(blobs) => blobs.get(&filename).and_then(|b| b.lfs_sha256.clone()),
+            Err(e) => {
+                tracing::warn!(job_id = %job_id, repo = %repo_id, error = %e,
                 "Failed to fetch HF blob metadata for verification");
-            None
-        }
-    };
+                None
+            }
+        };
 
     // Step 2: transition to Verifying.
     {
@@ -343,14 +342,18 @@ async fn run_verification(
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             let hashed = poll_progress.load(Ordering::Relaxed);
             let mut jobs = poll_jobs.write().await;
-            let Some(job) = jobs.get_mut(&poll_job_id) else { break };
-            if !matches!(job.status, PullJobStatus::Verifying) { break; }
+            let Some(job) = jobs.get_mut(&poll_job_id) else {
+                break;
+            };
+            if !matches!(job.status, PullJobStatus::Verifying) {
+                break;
+            }
             job.verify_bytes_hashed = hashed;
         }
     });
 
     let hash_progress = Arc::clone(&progress);
-    let hash_src = cached_path.clone();   // hash the cache file, not dest
+    let hash_src = cached_path.clone(); // hash the cache file, not dest
     let hash_expected = expected_sha.clone();
     let hash_repo = repo_id.clone();
     let hash_filename = filename.clone();
@@ -370,25 +373,39 @@ async fn run_verification(
 
         let (ok, err): (Option<bool>, Option<String>) =
             match (hash_expected.as_deref(), actual.as_deref()) {
-                (None, _)                                                   => (None, None),
-                (Some(_), None)                                             => (Some(false), Some("hash error: failed to read file".to_string())),
-                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp)     => (Some(true),  None),
-                (Some(exp), Some(act))                                      => (Some(false),  Some(format!(
-                    "hash mismatch: expected {} got {}",
-                    &exp.chars().take(10).collect::<String>(),
-                    &act.chars().take(10).collect::<String>()
-                ))),
+                (None, _) => (None, None),
+                (Some(_), None) => (
+                    Some(false),
+                    Some("hash error: failed to read file".to_string()),
+                ),
+                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
+                (Some(exp), Some(act)) => (
+                    Some(false),
+                    Some(format!(
+                        "hash mismatch: expected {} got {}",
+                        &exp.chars().take(10).collect::<String>(),
+                        &act.chars().take(10).collect::<String>()
+                    )),
+                ),
             };
 
         if let Some(dir) = hash_db_dir.as_ref() {
             if let Ok(open_res) = crate::db::open(dir) {
                 let conn = open_res.conn;
                 let _ = crate::db::queries::upsert_model_file(
-                    &conn, &hash_repo, &hash_filename,
-                    hash_quant.as_deref(), hash_expected.as_deref(), Some(bytes as i64),
+                    &conn,
+                    &hash_repo,
+                    &hash_filename,
+                    hash_quant.as_deref(),
+                    hash_expected.as_deref(),
+                    Some(bytes as i64),
                 );
                 let _ = crate::db::queries::update_verification(
-                    &conn, &hash_repo, &hash_filename, ok, err.as_deref(),
+                    &conn,
+                    &hash_repo,
+                    &hash_filename,
+                    ok,
+                    err.as_deref(),
                 );
             }
         }
@@ -401,7 +418,10 @@ async fn run_verification(
 
     let (ok, err) = blocking_result.unwrap_or_else(|e| {
         tracing::error!(error = %e, "Verification blocking task panicked");
-        (Some(false), Some(format!("verification task panicked: {}", e)))
+        (
+            Some(false),
+            Some(format!("verification task panicked: {}", e)),
+        )
     });
 
     let passed = ok != Some(false);
@@ -421,7 +441,9 @@ async fn run_verification(
             if let Err(e) = tokio::fs::rename(&blob, &dest_path).await {
                 tracing::debug!(job_id=%job_id, "rename failed ({}), falling back to copy", e);
                 match tokio::fs::copy(&blob, &dest_path).await {
-                    Ok(_) => { tokio::fs::remove_file(&blob).await.ok(); }
+                    Ok(_) => {
+                        tokio::fs::remove_file(&blob).await.ok();
+                    }
                     Err(e2) => {
                         tracing::error!(job_id=%job_id, "copy to dest failed: {}", e2);
                         // Treat as failure — clean up cache and bail.
@@ -431,8 +453,9 @@ async fn run_verification(
                         if let Some(job) = jobs.get_mut(&job_id) {
                             job.verify_bytes_hashed = bytes;
                             job.verified_ok = Some(false);
-                            job.verify_error = Some(format!("failed to move file to destination: {}", e2));
-                            job.error       = job.verify_error.clone();
+                            job.verify_error =
+                                Some(format!("failed to move file to destination: {}", e2));
+                            job.error = job.verify_error.clone();
                             job.completed_at = Some(Instant::now());
                             job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
                         }
@@ -473,7 +496,7 @@ async fn run_verification(
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = err.clone();
-            job.error        = err;
+            job.error = err;
             job.completed_at = Some(Instant::now());
             job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
             tracing::error!(job_id = %job_id, "Job failed after verification");

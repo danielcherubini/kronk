@@ -177,4 +177,128 @@ mod tests {
 
         assert_eq!(get_oldest_check_time(&conn).unwrap(), Some(1000));
     }
+
+    #[test]
+    fn test_upsert_and_get_model_config() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let record = ModelConfigRecord {
+            repo_id: "test-repo".to_string(),
+            display_name: Some("Test Model".to_string()),
+            backend: "llama_cpp".to_string(),
+            enabled: true,
+            selected_quant: Some("Q4_K_M".to_string()),
+            selected_mmproj: Some("mmproj-f16.gguf".to_string()),
+            context_length: Some(4096),
+            gpu_layers: Some(32),
+            port: Some(8080),
+            args: Some(r#"["--flash-attn"]"#.to_string()),
+            sampling: Some(r#"{"temp": 0.7}"#.to_string()),
+            modalities: Some(r#"{ "input": ["text"], "output": ["text"] }"#.to_string()),
+            profile: Some("default".to_string()),
+            api_name: Some("test-api".to_string()),
+            health_check: Some(r#"{"path": "/health"}"#.to_string()),
+            created_at: "2024-04-15T12:00:00Z".to_string(),
+            updated_at: "2024-04-15T12:00:00Z".to_string(),
+        };
+
+        upsert_model_config(&conn, &record).unwrap();
+
+        let retrieved = get_model_config(&conn, "test-repo").unwrap().unwrap();
+        assert_eq!(retrieved.repo_id, record.repo_id);
+        assert_eq!(retrieved.display_name, record.display_name);
+        assert_eq!(retrieved.backend, record.backend);
+        assert_eq!(retrieved.enabled, record.enabled);
+        assert_eq!(retrieved.selected_quant, record.selected_quant);
+        assert_eq!(retrieved.selected_mmproj, record.selected_mmproj);
+        assert_eq!(retrieved.context_length, record.context_length);
+        assert_eq!(retrieved.gpu_layers, record.gpu_layers);
+        assert_eq!(retrieved.port, record.port);
+        assert_eq!(retrieved.args, record.args);
+        assert_eq!(retrieved.sampling, record.sampling);
+        assert_eq!(retrieved.modalities, record.modalities);
+        assert_eq!(retrieved.profile, record.profile);
+        assert_eq!(retrieved.api_name, record.api_name);
+        assert_eq!(retrieved.health_check, record.health_check);
+        assert_eq!(retrieved.created_at, record.created_at);
+        // updated_at will be different because upsert_model_config updates it via strftime
+    }
+
+    #[test]
+    fn test_get_all_model_configs() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let rec1 = ModelConfigRecord {
+            repo_id: "repo1".to_string(),
+            display_name: None,
+            backend: "llama_cpp".to_string(),
+            enabled: true,
+            selected_quant: None,
+            selected_mmproj: None,
+            context_length: None,
+            gpu_layers: None,
+            port: None,
+            args: None,
+            sampling: None,
+            modalities: None,
+            profile: None,
+            api_name: None,
+            health_check: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        let rec2 = ModelConfigRecord {
+            repo_id: "repo2".to_string(),
+            display_name: None,
+            backend: "llama_cpp".to_string(),
+            enabled: true,
+            selected_quant: None,
+            selected_mmproj: None,
+            context_length: None,
+            gpu_layers: None,
+            port: None,
+            args: None,
+            sampling: None,
+            modalities: None,
+            profile: None,
+            api_name: None,
+            health_check: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        upsert_model_config(&conn, &rec1).unwrap();
+        upsert_model_config(&conn, &rec2).unwrap();
+
+        let all = get_all_model_configs(&conn).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_delete_model_config() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let record = ModelConfigRecord {
+            repo_id: "test-repo".to_string(),
+            display_name: None,
+            backend: "llama_cpp".to_string(),
+            enabled: true,
+            selected_quant: None,
+            selected_mmproj: None,
+            context_length: None,
+            gpu_layers: None,
+            port: None,
+            args: None,
+            sampling: None,
+            modalities: None,
+            profile: None,
+            api_name: None,
+            health_check: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        upsert_model_config(&conn, &record).unwrap();
+        assert!(get_model_config(&conn, "test-repo").unwrap().is_some());
+
+        delete_model_config(&conn, "test-repo").unwrap();
+        assert!(get_model_config(&conn, "test-repo").unwrap().is_none());
+    }
 }

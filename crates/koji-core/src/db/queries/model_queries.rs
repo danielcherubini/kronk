@@ -174,9 +174,15 @@ pub fn log_download(conn: &Connection, entry: &DownloadLogEntry) -> Result<()> {
 /// Both deletes run in a single transaction — either both succeed or neither does.
 pub fn delete_model_records(conn: &Connection, repo_id: &str) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM model_pulls WHERE repo_id = ?1", [repo_id])?;
-    tx.execute("DELETE FROM model_files WHERE repo_id = ?1", [repo_id])?;
+    _delete_model_records(&tx, repo_id)?;
     tx.commit()?;
+    Ok(())
+}
+
+/// Internal helper to delete model records without starting a transaction.
+pub(crate) fn _delete_model_records(conn: &Connection, repo_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM model_pulls WHERE repo_id = ?1", [repo_id])?;
+    conn.execute("DELETE FROM model_files WHERE repo_id = ?1", [repo_id])?;
     Ok(())
 }
 
