@@ -591,7 +591,11 @@ pub fn ModelEditor() -> impl IntoView {
                     if is_new() {
                         "New Model".to_string()
                     } else {
-                        format!("Edit: {}", model_id())
+                        // Prefer display_name from form, fall back to model_id (which may be integer or config_key)
+                        form.get()
+                            .and_then(|f| f.display_name.clone())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| model_id())
                     }
                 }}
             </h1>
