@@ -26,7 +26,10 @@ struct ModelsResponse {
 
 fn partition_models_by_loaded(models: Vec<ModelEntry>) -> (Vec<ModelEntry>, Vec<ModelEntry>) {
     let (mut loaded, mut unloaded): (Vec<_>, Vec<_>) = models.into_iter().partition(|m| m.loaded);
+    // `id` is a String; sort_by_key would require cloning per comparison.
+    #[allow(clippy::unnecessary_sort_by)]
     loaded.sort_by(|a, b| a.id.cmp(&b.id));
+    #[allow(clippy::unnecessary_sort_by)]
     unloaded.sort_by(|a, b| a.id.cmp(&b.id));
     (loaded, unloaded)
 }
