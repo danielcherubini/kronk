@@ -41,6 +41,20 @@ pub fn generate_display_name(hf_repo: &str) -> String {
     format!("{}: {}", capitalize_first(org), model_name_processed)
 }
 
+/// Resolve an incoming `:id` path param to the internal config_key.
+/// If `raw` parses as an integer, look up the matching `db_id` in
+/// `state.model_configs`. Otherwise return it unchanged (it's already
+/// a config_key, api_name, or model field).
+async fn resolve_model_id(state: &ProxyState, raw: &str) -> String {
+    if let Ok(id) = raw.parse::<i64>() {
+        let configs = state.model_configs.read().await;
+        if let Some((key, _)) = configs.iter().find(|(_, c)| c.db_id == Some(id)) {
+            return key.clone();
+        }
+    }
+    raw.to_string()
+}
+
 /// Handle listing all configured models (Koji management API).
 pub async fn handle_koji_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let models = state.build_status_response().await;
@@ -67,6 +81,7 @@ pub async fn handle_koji_get_model(
     state: State<Arc<ProxyState>>,
     Path(model_id): Path<String>,
 ) -> Response {
+    let model_id = resolve_model_id(&state, &model_id).await;
     // Check if already loaded (by server name or model name)
     let model_state = state.get_model_state(&model_id).await;
 
@@ -123,6 +138,7 @@ pub async fn handle_koji_load_model(
     state: State<Arc<ProxyState>>,
     Path(model_id): Path<String>,
 ) -> Response {
+    let model_id = resolve_model_id(&state, &model_id).await;
     match state.load_model(&model_id, None).await {
         Ok(server_name) => {
             let model_state = state.get_model_state(&server_name).await;
@@ -151,6 +167,7 @@ pub async fn handle_koji_unload_model(
     state: State<Arc<ProxyState>>,
     Path(model_id): Path<String>,
 ) -> Response {
+    let model_id = resolve_model_id(&state, &model_id).await;
     // Get the server name for this model
     let server_name = state.get_available_server_for_model(&model_id).await;
 
