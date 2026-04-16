@@ -590,6 +590,7 @@ async fn cmd_create(
         quants: std::collections::BTreeMap::new(),
         modalities: None,
         display_name: None,
+        db_id: None,
     };
 
     koji_core::db::save_model_config(&conn, &server_name, &model_config)?;

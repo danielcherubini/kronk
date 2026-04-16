@@ -367,6 +367,7 @@ mod tests {
                     quants: BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }
@@ -529,6 +530,7 @@ mod tests {
                     quants: BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }

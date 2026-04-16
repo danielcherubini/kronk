@@ -49,13 +49,10 @@ pub async fn handle_koji_list_models(state: State<Arc<ProxyState>>) -> Json<serd
     let result: Vec<serde_json::Value> = models_obj
         .into_iter()
         .flat_map(|models_obj| {
-            models_obj.iter().filter_map(|(id, model)| {
-                model.as_object().and_then(|model| {
-                    serde_json::to_value(model).ok().map(|mut m| {
-                        m["id"] = serde_json::Value::String(id.clone());
-                        m
-                    })
-                })
+            models_obj.iter().filter_map(|(_key, model)| {
+                model
+                    .as_object()
+                    .and_then(|model| serde_json::to_value(model).ok())
             })
         })
         .collect();

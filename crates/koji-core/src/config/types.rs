@@ -214,6 +214,11 @@ pub struct ModelConfig {
     /// Derived from HF repo name when pulling, but can be overridden.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Integer database id — set at runtime when loading from DB, never
+    /// persisted via serde (TOML or JSON). Used by the status endpoint to
+    /// expose the canonical integer id for API consumers.
+    #[serde(default, skip)]
+    pub db_id: Option<i64>,
 }
 
 impl ModelConfig {
@@ -285,6 +290,7 @@ impl ModelConfig {
                 .and_then(|s| serde_json::from_str(s).ok()),
             profile: record.profile.clone(),
             quants: BTreeMap::new(), // Not stored in DB record
+            db_id: Some(record.id),
         }
     }
 }

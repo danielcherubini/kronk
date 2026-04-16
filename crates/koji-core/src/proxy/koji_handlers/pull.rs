@@ -649,6 +649,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                 quants: std::collections::BTreeMap::new(),
                 modalities,
                 display_name: Some(display_name),
+                db_id: None, // will be set after reload_model_configs()
             });
 
         // Save card (best-effort — download is already marked Completed)

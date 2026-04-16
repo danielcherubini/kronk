@@ -504,6 +504,7 @@ impl From<ModelConfig> for CoreModelConfig {
             quants: m.quants.into_iter().map(|(k, v)| (k, v.into())).collect(),
             modalities: m.modalities.map(Into::into),
             display_name: m.display_name,
+            db_id: None, // not carried through mirror types
         }
     }
 }

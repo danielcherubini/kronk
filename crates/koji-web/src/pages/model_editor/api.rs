@@ -1,14 +1,8 @@
 use super::types::*;
-use web_sys::console;
 
 use super::types::{ModelDetail, ModelListResponse, RefreshResponse, VerifyResponse};
 
-fn debug_log(msg: &str) {
-    console::log_1(&msg.into());
-}
-
 pub async fn fetch_model(id: String) -> Option<ModelDetail> {
-    debug_log(&format!("fetch_model called with id: {}", id));
     if id == "new" {
         let resp = gloo_net::http::Request::get("/api/models")
             .send()
@@ -37,30 +31,12 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
         });
     }
     let encoded_id = urlencoding::encode(&id);
-    web_sys::console::log_1(&format!("fetch_model: fetching /api/models/{}", encoded_id).into());
     let resp = gloo_net::http::Request::get(&format!("/api/models/{}", encoded_id))
-        .send().await;
+        .send()
+        .await;
     match resp {
-        Ok(r) => {
-            web_sys::console::log_1(&format!("fetch_model: status={}", r.status()).into());
-            if r.status() != 200 {
-                return None;
-            }
-            match r.json::<ModelDetail>().await {
-                Ok(d) => {
-                    web_sys::console::log_1(&format!("fetch_model: success, id={}", d.id).into());
-                    return Some(d);
-                }
-                Err(e) => {
-                    web_sys::console::log_1(&format!("fetch_model: parse error: {}", e).into());
-                    return None;
-                }
-            }
-        }
-        Err(e) => {
-            web_sys::console::log_1(&format!("fetch_model: request error: {}", e).into());
-            return None;
-        }
+        Ok(r) if r.status() == 200 => r.json::<ModelDetail>().await.ok(),
+        _ => None,
     }
 }
 

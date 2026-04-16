@@ -46,6 +46,7 @@ pub fn load_model_configs(conn: &Connection) -> anyhow::Result<HashMap<String, M
     for record in records {
         let config_key = record.repo_id.to_lowercase().replace('/', "--");
         let mut config = ModelConfig::from_db_record(&record);
+        config.db_id = Some(record.id);
 
         // Populate quants from model_files table to restore them after restart
         let files = queries::get_model_files(conn, record.id)?;
