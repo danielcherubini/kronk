@@ -11,6 +11,7 @@ pub use add::cmd_server_add;
 use anyhow::Result;
 pub use edit::cmd_server_edit;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 pub use ls::cmd_server_ls;
 pub use rm::cmd_server_rm;
 /// Manage servers — list, add, edit, remove
@@ -21,7 +22,11 @@ pub async fn cmd_server(config: &Config, command: crate::cli::ServerCommands) ->
             cmd_server_add(config, &name, command, false).await
         }
         crate::cli::ServerCommands::Edit { name, command } => {
-            if !config.models.contains_key(&name) {
+            let db_dir = koji_core::config::Config::config_dir()?;
+            let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+            let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+            if !model_configs.contains_key(&name) {
                 anyhow::bail!(
                     "Server '{}' not found. Use `koji server add` to create it.",
                     name

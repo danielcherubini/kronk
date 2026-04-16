@@ -18,14 +18,16 @@ impl ProxyState {
         let config = self.config.read().await.clone();
 
         // Resolve the server name for this model
-        let servers = config.resolve_servers_for_model(model_name);
+        let model_configs = self.model_configs.read().await;
+        let servers = config.resolve_servers_for_model(&model_configs, model_name);
         let server_name = servers
             .first()
             .map(|(name, _, _)| name.clone())
             .ok_or_else(|| anyhow::anyhow!("Failed to resolve server for model {}", model_name))?;
 
         // Get server and backend config from config
-        let (server_config, backend_config) = config.resolve_server(&server_name)?;
+        let (server_config, backend_config) =
+            config.resolve_server(&model_configs, &server_name)?;
 
         // Atomically check if already loaded and reserve if not (single write lock)
         {

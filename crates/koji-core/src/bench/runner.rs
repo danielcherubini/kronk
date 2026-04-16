@@ -14,6 +14,7 @@ use tracing::info;
 
 use crate::bench::{compute_summary, BenchConfig, BenchReport, BenchSummary, ModelInfo};
 use crate::config::Config;
+use crate::db::OpenResult;
 use crate::proxy::process::{check_health, force_kill_process, is_process_alive, kill_process};
 
 /// Information about a running backend
@@ -90,8 +91,12 @@ async fn _start_backend(
 ) -> Result<BenchBackend> {
     info!("Starting backend for server: {}", server_name);
 
+    let db_dir = crate::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = crate::db::open(&db_dir)?;
+    let model_configs = crate::db::load_model_configs(&conn)?;
+
     let (server_config, backend_config) = config
-        .resolve_server(server_name)
+        .resolve_server(&model_configs, server_name)
         .with_context(|| "Failed to resolve server config for bench")?;
 
     let spawn_start = Instant::now();
@@ -250,7 +255,11 @@ pub async fn run_benchmark(
     println!("Starting benchmark for '{}'...", server_name);
 
     // Build ModelInfo from config data
-    let (server_config, backend_config) = config.resolve_server(server_name)?;
+    let db_dir = crate::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = crate::db::open(&db_dir)?;
+    let model_configs = crate::db::load_model_configs(&conn)?;
+
+    let (server_config, backend_config) = config.resolve_server(&model_configs, server_name)?;
     let model_info = ModelInfo {
         name: server_name.to_string(),
         model_id: server_config.model.clone(),

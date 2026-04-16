@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 
 /// Manage system services (Windows and Linux)
 pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Result<()> {
@@ -11,7 +12,11 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
         crate::cli::ServiceCommands::Install { name, system } => {
             if let Some(server_name) = name {
                 // Legacy: install a single backend as a service
-                let (srv, backend) = config.resolve_server(&server_name)?;
+                let db_dir = koji_core::config::Config::config_dir()?;
+                let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+                let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+                let (srv, backend) = config.resolve_server(&model_configs, &server_name)?;
                 #[cfg(target_os = "windows")]
                 let _ = (&backend, system);
                 let service_name = Config::service_name(&server_name);

@@ -9,6 +9,7 @@ impl ProxyState {
         let (metrics_tx, _) = tokio::sync::broadcast::channel(64);
         Self {
             config: Arc::new(tokio::sync::RwLock::new(config)),
+            model_configs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             models: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             client: reqwest::Client::builder()
                 // Only set a connect timeout — not an overall timeout.
@@ -36,10 +37,11 @@ impl ProxyState {
     /// Get the backend URL for a server name.
     pub async fn get_backend_url(&self, server_name: &str) -> Result<String> {
         let config = self.config.read().await;
+        let model_configs = self.model_configs.read().await;
         let server = config
-            .models
-            .get(server_name)
-            .with_context(|| format!("Server '{}' not found", server_name))?;
+            .resolve_server(&model_configs, server_name)
+            .with_context(|| format!("Server '{}' not found", server_name))?
+            .0;
 
         let backend_url = config
             .resolve_backend_url(server)
@@ -96,9 +98,10 @@ impl ProxyState {
     pub async fn get_available_server_for_model(&self, model_name: &str) -> Option<String> {
         let (server_names, circuit_breaker_threshold) = {
             let config = self.config.read().await;
+            let model_configs = self.model_configs.read().await;
             // Collect just the server names (owned Strings) so we can drop the lock.
             let names: Vec<String> = config
-                .resolve_servers_for_model(model_name)
+                .resolve_servers_for_model(&model_configs, model_name)
                 .into_iter()
                 .map(|(name, _, _)| name)
                 .collect();

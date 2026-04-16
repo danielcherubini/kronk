@@ -237,8 +237,6 @@ pub struct Config {
     #[serde(default)]
     pub backends: BTreeMap<String, BackendConfig>,
     #[serde(default)]
-    pub models: BTreeMap<String, ModelConfig>,
-    #[serde(default)]
     pub supervisor: Supervisor,
     #[serde(default)]
     pub sampling_templates: BTreeMap<String, SamplingParams>,
@@ -574,7 +572,6 @@ impl From<CoreConfig> for Config {
         Self {
             general: c.general.into(),
             backends: c.backends.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            models: c.models.into_iter().map(|(k, v)| (k, v.into())).collect(),
             supervisor: c.supervisor.into(),
             sampling_templates: c
                 .sampling_templates
@@ -593,7 +590,6 @@ impl From<StructuredConfigBody> for CoreConfig {
         Self {
             general: b.general.into(),
             backends: b.backends.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            models: b.models.into_iter().map(|(k, v)| (k, v.into())).collect(),
             supervisor: b.supervisor.into(),
             sampling_templates: b
                 .sampling_templates
@@ -612,7 +608,6 @@ impl From<Config> for CoreConfig {
         Self {
             general: c.general.into(),
             backends: c.backends.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            models: c.models.into_iter().map(|(k, v)| (k, v.into())).collect(),
             supervisor: c.supervisor.into(),
             sampling_templates: c
                 .sampling_templates

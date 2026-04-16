@@ -701,8 +701,8 @@ fn test_resolve_by_api_name() {
         },
     );
 
-    // Model where api_name differs from model field
-    config.models.insert(
+    let mut models = std::collections::HashMap::new();
+    models.insert(
         "my-custom-name".to_string(),
         ModelConfig {
             backend: "llama_cpp".to_string(),
@@ -725,7 +725,7 @@ fn test_resolve_by_api_name() {
     );
 
     // Should find model by api_name (not by model field)
-    let results = config.resolve_servers_for_model("bartowski/Qwen3-8B-GGUF");
+    let results = config.resolve_servers_for_model(&models, "bartowski/Qwen3-8B-GGUF");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0, "my-custom-name");
 }
@@ -754,7 +754,8 @@ fn test_api_name_takes_priority() {
         },
     );
 
-    config.models.insert(
+    let mut models = std::collections::HashMap::new();
+    models.insert(
         "slug".to_string(),
         ModelConfig {
             backend: "llama_cpp".to_string(),
@@ -777,7 +778,7 @@ fn test_api_name_takes_priority() {
     );
 
     // Querying by "friendly-name" (api_name) should resolve correctly
-    let results = config.resolve_servers_for_model("friendly-name");
+    let results = config.resolve_servers_for_model(&models, "friendly-name");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0, "slug");
 }
@@ -806,8 +807,8 @@ fn test_backward_compat_no_api_name() {
         },
     );
 
-    // Model with api_name: None
-    config.models.insert(
+    let mut models = std::collections::HashMap::new();
+    models.insert(
         "config-key-name".to_string(),
         ModelConfig {
             backend: "llama_cpp".to_string(),
@@ -830,11 +831,11 @@ fn test_backward_compat_no_api_name() {
     );
 
     // Should still resolve by config key
-    let results = config.resolve_servers_for_model("config-key-name");
+    let results = config.resolve_servers_for_model(&models, "config-key-name");
     assert_eq!(results.len(), 1);
 
     // Should also resolve by model field
-    let results = config.resolve_servers_for_model("org/repo");
+    let results = config.resolve_servers_for_model(&models, "org/repo");
     assert_eq!(results.len(), 1);
 }
 
@@ -862,8 +863,8 @@ fn test_resolve_server_by_api_name() {
         },
     );
 
-    // Model where api_name differs from config key and model field
-    config.models.insert(
+    let mut models = std::collections::HashMap::new();
+    models.insert(
         "my-custom-name".to_string(),
         ModelConfig {
             backend: "llama_cpp".to_string(),
@@ -886,6 +887,6 @@ fn test_resolve_server_by_api_name() {
     );
 
     // Should find model by api_name via resolve_server
-    let result = config.resolve_server("bartowski/Qwen3-8B-GGUF");
+    let result = config.resolve_server(&models, "bartowski/Qwen3-8B-GGUF");
     assert!(result.is_ok());
 }

@@ -1,8 +1,13 @@
 use anyhow::Result;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 /// List all servers with status
 pub async fn cmd_server_ls(config: &Config) -> Result<()> {
-    if config.models.is_empty() {
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    if model_configs.is_empty() {
         println!("No models configured.");
         println!();
         println!("Pull one: koji model pull <repo>");
@@ -17,7 +22,7 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
     println!("Models:");
     println!("{}", "-".repeat(60));
 
-    for (name, srv) in &config.models {
+    for (name, srv) in &model_configs {
         // Backend lookup kept for potential future use
         let _unused_backend = config.backends.get(&srv.backend);
         let profile_name = if let Some(sampling) = &srv.sampling {

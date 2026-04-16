@@ -133,6 +133,8 @@ pub struct ProxyMetrics {
 #[derive(Clone)]
 pub struct ProxyState {
     pub config: Arc<tokio::sync::RwLock<crate::config::Config>>,
+    pub model_configs:
+        Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::config::ModelConfig>>>,
     pub models: Arc<tokio::sync::RwLock<std::collections::HashMap<String, ModelState>>>,
     pub client: reqwest::Client,
     pub metrics: Arc<ProxyMetrics>,

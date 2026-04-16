@@ -55,10 +55,11 @@ impl UpdateChecker {
                     .collect();
 
                 let config = Config::load_from(&config_dir)?;
-                let models: Vec<(String, Option<String>)> = config
-                    .models
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.model.clone()))
+                let open = db::open(&config_dir)?;
+                let db_models = db::load_model_configs(&open.conn)?;
+                let models: Vec<(String, Option<String>)> = db_models
+                    .into_iter()
+                    .map(|(key, mc)| (key, mc.model.clone()))
                     .collect();
 
                 Ok((backends, models))

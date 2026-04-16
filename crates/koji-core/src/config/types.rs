@@ -56,8 +56,6 @@ pub struct Config {
     pub general: General,
     #[serde(default)]
     pub backends: HashMap<String, BackendConfig>,
-    #[serde(default, skip_serializing_if = "is_hashmap_empty")]
-    pub models: HashMap<String, ModelConfig>,
     #[serde(default)]
     pub supervisor: Supervisor,
     #[serde(default)]

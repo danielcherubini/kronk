@@ -137,9 +137,9 @@ pub async fn cmd_restore(config: &mut koji_core::config::Config, args: RestoreAr
     let merge_stats = koji_core::backup::merge_config(&mut *config, &backup_config);
 
     println!(
-        "Config merged: {} new backends, {} new models",
+        "Config merged: {} new backends, {} new sampling templates",
         merge_stats.new_backends.len(),
-        merge_stats.new_models.len()
+        merge_stats.new_sampling_templates.len()
     );
 
     // Persist merged config to real config location (not temp)

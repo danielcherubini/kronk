@@ -179,6 +179,7 @@ pub async fn handle_get_model(
 ) -> Response {
     // Acquire both locks upfront
     let config = state.config.read().await;
+    let model_configs = state.model_configs.read().await;
     let loaded_models = state.models.read().await;
 
     // First check: runtime state found by config key
@@ -190,7 +191,7 @@ pub async fn handle_get_model(
             .unwrap_or(Duration::ZERO)
             .as_secs();
         // Look up config to get api_name
-        if let Some(server_cfg) = config.models.get(&model_id) {
+        if let Some(server_cfg) = model_configs.get(&model_id) {
             let model_id_val = server_cfg.api_name.as_deref().unwrap_or(&model_id);
             return Json(serde_json::json!({
                 "id": model_id_val,
@@ -204,7 +205,7 @@ pub async fn handle_get_model(
     }
 
     // Fallback: check if model_id matches config_name, api_name, or model field
-    for (config_name, server_cfg) in &config.models {
+    for (config_name, server_cfg) in model_configs.iter() {
         if !server_cfg.enabled {
             continue;
         }
@@ -272,11 +273,12 @@ pub async fn handle_metrics(state: State<Arc<ProxyState>>) -> Json<serde_json::V
 #[axum::debug_handler]
 pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let loaded_models = state.models.read().await;
+    let model_configs = state.model_configs.read().await;
     let config = state.config.read().await;
 
     // Build a list of all configured (enabled) models, enriched with runtime state
     let mut data: Vec<serde_json::Value> = Vec::new();
-    for (config_name, server_cfg) in &config.models {
+    for (config_name, server_cfg) in model_configs.iter() {
         if !server_cfg.enabled {
             continue;
         }
@@ -327,35 +329,41 @@ mod tests {
     use serde_json::Value as JsonValue;
 
     fn create_test_state() -> ProxyState {
-        let mut config = Config::default();
-        config.models.insert(
-            "config-key-1".to_string(),
-            ModelConfig {
-                backend: "llama.cpp".to_string(),
-                api_name: Some("api-name-1".to_string()),
-                model: Some("test/model-1".to_string()),
-                enabled: true,
-                ..Default::default()
-            },
-        );
-        config.models.insert(
-            "config-key-2".to_string(),
-            ModelConfig {
-                backend: "llama.cpp".to_string(),
-                api_name: None,
-                model: Some("test/model-2".to_string()),
-                enabled: true,
-                ..Default::default()
-            },
-        );
+        let config = Config::default();
         ProxyState::new(config, None)
     }
 
     #[tokio::test]
     async fn test_handle_list_models_returns_api_name() {
-        let state = create_test_state();
-        let state_arc = Arc::new(state);
-        let state = State(state_arc);
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Populate model_configs
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "config-key-1".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    api_name: Some("api-name-1".to_string()),
+                    model: Some("test/model-1".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+            mc.insert(
+                "config-key-2".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    api_name: None,
+                    model: Some("test/model-2".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let state = State(state_arc.clone());
 
         let response = handle_list_models(state).await;
         let (_parts, body) = response.into_response().into_parts();
@@ -386,8 +394,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_model_by_config_key_returns_api_name() {
-        let state = create_test_state();
-        let state_arc = Arc::new(state);
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Populate model_configs
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "config-key-1".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    api_name: Some("api-name-1".to_string()),
+                    model: Some("test/model-1".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
         let state = State(state_arc);
 
         let response = handle_get_model(state, Path("config-key-1".to_string())).await;
@@ -403,8 +427,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_model_by_api_name_returns_api_name() {
-        let state = create_test_state();
-        let state_arc = Arc::new(state);
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Populate model_configs
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "config-key-1".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    api_name: Some("api-name-1".to_string()),
+                    model: Some("test/model-1".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
         let state = State(state_arc);
 
         let response = handle_get_model(state, Path("api-name-1".to_string())).await;
@@ -420,8 +460,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_model_without_api_name_falls_back_to_config_key() {
-        let state = create_test_state();
-        let state_arc = Arc::new(state);
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Populate model_configs
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "config-key-2".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    api_name: None,
+                    model: Some("test/model-2".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
         let state = State(state_arc);
 
         let response = handle_get_model(state, Path("config-key-2".to_string())).await;

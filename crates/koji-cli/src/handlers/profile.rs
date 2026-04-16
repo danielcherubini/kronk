@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 use koji_core::profiles::Profile;
 
 /// Manage sampling profiles — presets for inference params
@@ -39,7 +40,11 @@ pub fn cmd_profile(config: &Config, command: crate::cli::ProfileCommands) -> Res
 
             // Show which models use which profile
             println!("Model assignments:");
-            for (name, srv) in &config.models {
+            let db_dir = koji_core::config::Config::config_dir()?;
+            let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+            let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+            for (name, srv) in &model_configs {
                 // Check if model uses sampling (unified config) or has legacy profile field
                 let profile_str = if let Some(sampling) = &srv.sampling {
                     sampling.preset_label().to_string()
@@ -54,10 +59,12 @@ pub fn cmd_profile(config: &Config, command: crate::cli::ProfileCommands) -> Res
             Ok(())
         }
         crate::cli::ProfileCommands::Set { server, profile } => {
-            let mut config = config.clone();
+            let db_dir = koji_core::config::Config::config_dir()?;
+            let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+            let mut model_configs = koji_core::db::load_model_configs(&conn)?;
 
             // Validate server exists
-            if !config.models.contains_key(&server) {
+            if !model_configs.contains_key(&server) {
                 anyhow::bail!("Model '{}' not found", server);
             }
 
@@ -78,11 +85,11 @@ pub fn cmd_profile(config: &Config, command: crate::cli::ProfileCommands) -> Res
                 .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile))?;
 
             // Set sampling from template
-            let srv = config.models.get_mut(&server).unwrap();
+            let srv = model_configs.get_mut(&server).unwrap();
             srv.sampling = Some(template.clone());
             srv.profile = None; // Clear legacy profile field
 
-            config.save()?;
+            koji_core::db::save_model_config(&conn, &server, srv)?;
 
             println!("Updated.");
             println!("  Model '{}' now uses '{}' preset.", server, profile);
@@ -90,15 +97,16 @@ pub fn cmd_profile(config: &Config, command: crate::cli::ProfileCommands) -> Res
             Ok(())
         }
         crate::cli::ProfileCommands::Clear { server } => {
-            let mut config = config.clone();
-            let srv = config
-                .models
+            let db_dir = koji_core::config::Config::config_dir()?;
+            let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+            let mut model_configs = koji_core::db::load_model_configs(&conn)?;
+            let srv = model_configs
                 .get_mut(&server)
                 .with_context(|| format!("Model '{}' not found", server))?;
 
             srv.sampling = None;
             srv.profile = None;
-            config.save()?;
+            koji_core::db::save_model_config(&conn, &server, srv)?;
 
             println!("Profile cleared for model '{}'.", server);
             Ok(())

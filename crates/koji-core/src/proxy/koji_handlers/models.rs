@@ -93,8 +93,9 @@ pub async fn handle_koji_get_model(
     }
 
     // Check if it's a configured (but not loaded) model
+    let model_configs = state.model_configs.read().await;
     let config = state.config.read().await;
-    let servers = config.resolve_servers_for_model(&model_id);
+    let servers = config.resolve_servers_for_model(&model_configs, &model_id);
     if let Some((config_name, server_cfg, _)) = servers.first() {
         if server_cfg.enabled {
             return Json(serde_json::json!({
@@ -197,11 +198,12 @@ pub async fn handle_koji_unload_model(
 /// Handle listing all enabled models for OpenCode plugin discovery.
 /// Returns rich metadata including context limits, modalities, and capabilities.
 pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
+    let model_configs = state.model_configs.read().await;
     let config = state.config.read().await;
 
     let mut models: Vec<serde_json::Value> = Vec::new();
 
-    for (id, cfg) in config.models.iter().filter(|(_, cfg)| cfg.enabled) {
+    for (id, cfg) in model_configs.iter().filter(|(_, cfg)| cfg.enabled) {
         // Use model field first, fall back to api_name — either is sufficient for HF repo identification.
         let Some(hf_repo) = cfg.model.clone().or(cfg.api_name.clone()) else {
             continue;

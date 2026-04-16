@@ -197,6 +197,31 @@ pub fn delete_model_file(conn: &Connection, repo_id: &str, filename: &str) -> Re
     Ok(())
 }
 
+/// Get all stored file records across all repos.
+pub fn get_all_model_files(conn: &Connection) -> Result<Vec<ModelFileRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT repo_id, filename, quant, lfs_oid, size_bytes, downloaded_at,
+                last_verified_at, verified_ok, verify_error
+         FROM model_files",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let verified_ok: Option<i64> = row.get(7)?;
+        Ok(ModelFileRecord {
+            repo_id: row.get(0)?,
+            filename: row.get(1)?,
+            quant: row.get(2)?,
+            lfs_oid: row.get(3)?,
+            size_bytes: row.get(4)?,
+            downloaded_at: row.get(5)?,
+            last_verified_at: row.get(6)?,
+            verified_ok: verified_ok.map(|v| v != 0),
+            verify_error: row.get(8)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

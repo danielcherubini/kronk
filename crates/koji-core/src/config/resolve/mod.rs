@@ -3,12 +3,15 @@ use crate::models::repo_path;
 use anyhow::Result;
 
 impl Config {
-    pub fn resolve_server(&self, name: &str) -> Result<(&ModelConfig, &BackendConfig)> {
+    pub fn resolve_server<'a>(
+        &'a self,
+        models: &'a std::collections::HashMap<String, ModelConfig>,
+        name: &str,
+    ) -> Result<(&'a ModelConfig, &'a BackendConfig)> {
         use anyhow::Context;
 
         // First, search by api_name to avoid config key precedence issues
-        let mut api_name_matches: Vec<_> = self
-            .models
+        let mut api_name_matches: Vec<_> = models
             .values()
             .filter(|s| s.api_name.as_deref() == Some(name))
             .collect();
@@ -22,12 +25,12 @@ impl Config {
                 "Ambiguous api_name '{}': multiple models share this api_name",
                 name
             );
-        } else if let Some(server) = self.models.get(name) {
+        } else if let Some(server) = models.get(name) {
             // No api_name match, try direct config key lookup
             server
         } else {
             // Fall back to searching model field
-            self.models
+            models
                 .values()
                 .find(|s| s.model.as_deref() == Some(name))
                 .with_context(|| format!("Model '{}' not found in config", name))?
@@ -43,13 +46,14 @@ impl Config {
         Ok((server, backend))
     }
 
-    pub fn resolve_servers_for_model(
-        &self,
+    pub fn resolve_servers_for_model<'a>(
+        &'a self,
+        models: &'a std::collections::HashMap<String, ModelConfig>,
         model_name: &str,
-    ) -> Vec<(String, &ModelConfig, &BackendConfig)> {
+    ) -> Vec<(String, &'a ModelConfig, &'a BackendConfig)> {
         let mut results = Vec::new();
 
-        for (config_name, server) in &self.models {
+        for (config_name, server) in models {
             if !server.enabled {
                 continue;
             }

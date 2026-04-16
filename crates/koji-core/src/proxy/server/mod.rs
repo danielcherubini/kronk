@@ -19,23 +19,12 @@ impl ProxyServer {
     /// Starts a background task that periodically checks for idle models
     /// and unloads them.
     pub async fn new(state: Arc<ProxyState>) -> Self {
-        // Auto-migrate koji.toml model entries to DB on first startup.
+        // Populate in-memory model registry from DB
         if let Some(conn) = state.open_db() {
-            let mut config = state.config.write().await;
-            match crate::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config) {
-                Ok(count) => {
-                    if count > 0 {
-                        tracing::info!("Auto-migrated {} models from koji.toml to database", count);
-                    }
-                }
-                Err(e) => tracing::error!("Automatic model migration failed: {}", e),
-            }
-
-            // Populate in-memory model registry from DB
             match crate::db::load_model_configs(&conn) {
                 Ok(db_models) if !db_models.is_empty() => {
                     tracing::info!("Loaded {} models from database", db_models.len());
-                    config.models = db_models;
+                    *state.model_configs.write().await = db_models;
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!("Failed to load model configs from database: {}", e),
@@ -339,35 +328,38 @@ mod tests {
         // Build a Config with exactly one known model so the assertions are
         // deterministic. We clear the default fixtures shipped by
         // `Config::default()` first.
-        let mut config = crate::config::Config::default();
-        config.models.clear();
-        config.models.insert(
-            "alpha".to_string(),
-            ModelConfig {
-                backend: "llama_cpp".to_string(),
-                args: vec![],
-                sampling: None,
-                model: None,
-                quant: None,
-
-                mmproj: None,
-                port: None,
-                health_check: None,
-                enabled: true,
-                context_length: None,
-                profile: None,
-                api_name: None,
-                gpu_layers: None,
-                quants: BTreeMap::new(),
-                modalities: None,
-                display_name: None,
-            },
-        );
-
+        let config = crate::config::Config::default();
         let state = Arc::new(crate::proxy::ProxyState::new(
             config,
             Some(tmp.path().to_path_buf()),
         ));
+
+        // Manually insert a model into model_configs since it's no longer in Config
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "alpha".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    args: vec![],
+                    sampling: None,
+                    model: None,
+                    quant: None,
+
+                    mmproj: None,
+                    port: None,
+                    health_check: None,
+                    enabled: true,
+                    context_length: None,
+                    profile: None,
+                    api_name: None,
+                    gpu_layers: None,
+                    quants: BTreeMap::new(),
+                    modalities: None,
+                    display_name: None,
+                },
+            );
+        }
 
         // Subscribe BEFORE starting the server so we don't miss the first tick.
         let mut rx = state.metrics_tx.subscribe();
@@ -498,35 +490,38 @@ mod tests {
 
         // Build a Config with exactly one known model so the deserialized
         // `sample.models` Vec has a deterministic shape we can assert on.
-        let mut config = crate::config::Config::default();
-        config.models.clear();
-        config.models.insert(
-            "alpha".to_string(),
-            ModelConfig {
-                backend: "llama_cpp".to_string(),
-                args: vec![],
-                sampling: None,
-                model: None,
-                quant: None,
-
-                mmproj: None,
-                port: None,
-                health_check: None,
-                enabled: true,
-                context_length: None,
-                profile: None,
-                api_name: None,
-                gpu_layers: None,
-                quants: BTreeMap::new(),
-                modalities: None,
-                display_name: None,
-            },
-        );
-
+        let config = crate::config::Config::default();
         let state = Arc::new(crate::proxy::ProxyState::new(
             config,
             Some(tmp.path().to_path_buf()),
         ));
+
+        // Manually insert a model into model_configs since it's no longer in Config
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "alpha".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    args: vec![],
+                    sampling: None,
+                    model: None,
+                    quant: None,
+
+                    mmproj: None,
+                    port: None,
+                    health_check: None,
+                    enabled: true,
+                    context_length: None,
+                    profile: None,
+                    api_name: None,
+                    gpu_layers: None,
+                    quants: BTreeMap::new(),
+                    modalities: None,
+                    display_name: None,
+                },
+            );
+        }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
@@ -659,12 +654,12 @@ mod tests {
         let _server = ProxyServer::new(state.clone()).await;
 
         // Verify that the model from DB is now in the proxy state
-        let config = state.config.read().await;
+        let model_configs = state.model_configs.read().await;
         assert!(
-            config.models.contains_key("db-model-key"),
+            model_configs.contains_key("db-model-key"),
             "Expected model 'db-model-key' to be loaded from DB"
         );
-        let model = config.models.get("db-model-key").unwrap();
+        let model = model_configs.get("db-model-key").unwrap();
         assert_eq!(model.display_name.as_deref(), Some("DB Model"));
     }
 }

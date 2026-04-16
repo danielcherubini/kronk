@@ -160,8 +160,10 @@ pub async fn check_single(
             let item_id_clone = item_id.clone();
             let rid_result =
                 tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
-                    let cfg = koji_core::config::Config::load_from(&config_dir_clone)?;
-                    Ok(cfg.models.get(&item_id_clone).and_then(|m| m.model.clone()))
+                    let open = koji_core::db::open(&config_dir_clone)?;
+                    let record =
+                        koji_core::db::queries::get_model_config(&open.conn, &item_id_clone)?;
+                    Ok(record.map(|r| r.repo_id.clone()))
                 })
                 .await;
 
@@ -397,16 +399,18 @@ pub async fn apply_model_update(
         let config_dir = config_dir.clone();
         let id = id.clone();
         move || -> anyhow::Result<(String, std::path::PathBuf)> {
-            let config = koji_core::config::Config::load_from(&config_dir)?;
-            let model = config
-                .models
-                .get(&id)
+            let open = koji_core::db::open(&config_dir)?;
+            let model_record = koji_core::db::queries::get_model_config(&open.conn, &id)?
                 .ok_or_else(|| anyhow::anyhow!("Model not found"))?;
-            let repo_id = model
+            let model_config = koji_core::config::ModelConfig::from_db_record(&model_record);
+
+            let repo_id = model_config
                 .model
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("Model has no source"))?;
-            let models_dir = config.models_dir()?;
+
+            let cfg = koji_core::config::Config::load_from(&config_dir)?;
+            let models_dir = cfg.models_dir()?;
             Ok((repo_id, models_dir))
         }
     })

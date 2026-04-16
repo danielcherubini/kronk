@@ -508,7 +508,8 @@ async fn run_verification(
 /// Inner implementation of post-download setup, accepting an explicit config.
 /// Separated for testability — `setup_model_after_pull` delegates to this.
 pub(crate) async fn _setup_model_after_pull_with_config(
-    config: &mut crate::config::Config,
+    config: &crate::config::Config,
+    model_configs: &mut std::collections::HashMap<String, crate::config::ModelConfig>,
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
@@ -586,8 +587,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     // pulling additional quants for a model that's already in the config.
     // Matching is by the `model` field rather than the key, so user-renamed
     // entries are preserved.
-    let existing_key: Option<String> = config
-        .models
+    let existing_key: Option<String> = model_configs
         .iter()
         .find(|(_, m)| m.model.as_deref() == Some(repo_id))
         .map(|(k, _)| k.clone());
@@ -617,8 +617,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         // Reuse the existing model key if we found one, otherwise create a
         // new entry keyed by the bare repo slug (no per-quant suffix).
         let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
-        config
-            .models
+        model_configs
             .entry(model_key.clone())
             .or_insert_with(|| crate::config::ModelConfig {
                 backend: "llama_cpp".to_string(),
@@ -664,12 +663,15 @@ pub(crate) async fn setup_model_after_pull(
     dest_dir: &std::path::Path,
 ) {
     let _guard = CONFIG_WRITE_LOCK.lock().await;
-    let mut config = state.config.write().await;
-    let model_key = _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+    let config = state.config.read().await;
+    let mut model_configs = state.model_configs.write().await;
+    let model_key =
+        _setup_model_after_pull_with_config(&config, &mut model_configs, repo_id, spec, dest_dir)
+            .await;
 
     if let Some(key) = model_key {
         if let Some(conn) = state.open_db() {
-            if let Some(mc) = config.models.get(&key) {
+            if let Some(mc) = model_configs.get(&key) {
                 if let Err(e) = crate::db::save_model_config(&conn, &key, mc) {
                     tracing::error!(key = %key, error = %e, "Failed to save model config to DB after pull");
                 }

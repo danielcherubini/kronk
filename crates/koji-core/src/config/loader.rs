@@ -1,6 +1,4 @@
-use super::migrate::{
-    cleanup_stale_mmproj_args, migrate_cards_to_unified_config, rename_legacy_directories,
-};
+use super::migrate::rename_legacy_directories;
 use super::types::{BackendConfig, Config, General, ProxyConfig, Supervisor};
 use crate::profiles::Profile;
 use anyhow::{Context, Result};
@@ -17,13 +15,6 @@ fn normalize_grouped_args(config: &mut Config) -> bool {
         let (migrated, did) = group_legacy_flat_args(&backend.default_args);
         if did {
             backend.default_args = migrated;
-            changed = true;
-        }
-    }
-    for model in config.models.values_mut() {
-        let (migrated, did) = group_legacy_flat_args(&model.args);
-        if did {
-            model.args = migrated;
             changed = true;
         }
     }
@@ -113,11 +104,11 @@ impl Config {
         }
 
         config.loaded_from = Some(config_dir.to_path_buf());
-        migrate_cards_to_unified_config(&mut config)?;
 
         // Strip stale `--mmproj <path>` entries from args (broken v1.15.0
-        // frontend wrote these). Returns true if any model was modified.
-        let mmproj_cleaned = cleanup_stale_mmproj_args(&mut config);
+        // frontend wrote these). This is now handled by DB migrations or
+        // during model load if necessary.
+        let mmproj_cleaned = false;
         if mmproj_cleaned {
             tracing::info!(
                 "Cleaned stale --mmproj entries from model args in {}",
@@ -208,8 +199,6 @@ impl Default for Config {
             },
         );
 
-        let models = HashMap::new();
-
         // Built-in sampling templates for all profiles
         let mut sampling_templates = HashMap::new();
         for (_, _, profile) in Profile::all() {
@@ -257,7 +246,6 @@ impl Default for Config {
         Config {
             general: General::default(),
             backends,
-            models,
             supervisor: Supervisor::default(),
             proxy: ProxyConfig::default(),
             sampling_templates,
@@ -306,47 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_migrates_flat_model_args() {
-        let mut config = Config::default();
-        config.models.insert(
-            "flat_model".to_string(),
-            ModelConfig {
-                backend: "llama_cpp".to_string(),
-                args: vec![
-                    "-ngl".to_string(),
-                    "999".to_string(),
-                    "-c".to_string(),
-                    "8192".to_string(),
-                ],
-                sampling: None,
-                model: None,
-                quant: None,
-
-                mmproj: None,
-                port: None,
-                health_check: None,
-                enabled: true,
-                context_length: None,
-                profile: None,
-                api_name: None,
-                gpu_layers: None,
-                quants: BTreeMap::new(),
-                modalities: None,
-                display_name: None,
-            },
-        );
-
-        let changed = normalize_grouped_args(&mut config);
-        assert!(changed);
-
-        let migrated = &config.models["flat_model"].args;
-        assert_eq!(
-            migrated,
-            &vec!["-ngl 999".to_string(), "-c 8192".to_string()]
-        );
-    }
-
-    #[test]
     fn normalize_default_config_is_noop() {
         // Config::default() must already be in grouped form, so calling
         // normalize_grouped_args on it should not change anything. We
@@ -363,11 +310,6 @@ mod tests {
             .iter()
             .map(|(k, b)| (k.clone(), b.default_args.clone()))
             .collect();
-        let before_model_args: std::collections::BTreeMap<String, Vec<String>> = config
-            .models
-            .iter()
-            .map(|(k, m)| (k.clone(), m.args.clone()))
-            .collect();
 
         let changed = normalize_grouped_args(&mut config);
         assert!(
@@ -380,19 +322,10 @@ mod tests {
             .iter()
             .map(|(k, b)| (k.clone(), b.default_args.clone()))
             .collect();
-        let after_model_args: std::collections::BTreeMap<String, Vec<String>> = config
-            .models
-            .iter()
-            .map(|(k, m)| (k.clone(), m.args.clone()))
-            .collect();
 
         assert_eq!(
             before_backend_args, after_backend_args,
             "default backend default_args drifted"
-        );
-        assert_eq!(
-            before_model_args, after_model_args,
-            "default model args drifted"
         );
     }
 
@@ -423,11 +356,6 @@ log_level = "info"
 
 [backends.llama_cpp]
 default_args = ["-fa", "1", "-b", "2048"]
-
-[models.test]
-backend = "llama_cpp"
-args = ["-ngl", "999"]
-enabled = true
 "#;
         std::fs::write(&config_path, legacy_toml).expect("write");
 
@@ -443,11 +371,6 @@ enabled = true
         assert!(
             after.contains("\"-b 2048\""),
             "expected grouped -b 2048 in {}",
-            after
-        );
-        assert!(
-            after.contains("\"-ngl 999\""),
-            "expected grouped -ngl 999 in {}",
             after
         );
         // The flat tokens must NOT remain.
@@ -468,11 +391,6 @@ log_level = "info"
 
 [backends.llama_cpp]
 default_args = ["-fa 1", "-b 2048"]
-
-[models.test]
-backend = "llama_cpp"
-args = ["-ngl 999"]
-enabled = true
 "#;
         std::fs::write(&config_path, grouped_toml).expect("write");
         let before = std::fs::read_to_string(&config_path).expect("read before");

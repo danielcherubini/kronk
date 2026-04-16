@@ -4,11 +4,16 @@
 
 use anyhow::Result;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 use koji_core::process::{ProcessEvent, ProcessSupervisor};
 
 /// Run a single server in the foreground (for debugging)
 pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u32>) -> Result<()> {
-    let (server, backend) = config.resolve_server(server_name)?;
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    let (server, backend) = config.resolve_server(&model_configs, server_name)?;
 
     let args = config.build_full_args(server, backend, ctx_override)?;
 

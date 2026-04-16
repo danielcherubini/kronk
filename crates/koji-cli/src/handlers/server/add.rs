@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 /// Add a new server from a command line, extracting koji flags.
 pub async fn cmd_server_add(
     config: &Config,
@@ -23,7 +24,9 @@ pub async fn cmd_server_add(
     let extracted = crate::flags::extract_koji_flags(args)?;
 
     // Check for duplicate server
-    if config.models.contains_key(name) && !overwrite {
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    if koji_core::db::queries::get_model_config(&conn, name)?.is_some() && !overwrite {
         anyhow::bail!(
             "Server '{}' already exists. Use `koji server edit` to modify it.",
             name
@@ -153,8 +156,8 @@ pub async fn cmd_server_add(
         display_name: None,
     };
 
-    config.models.insert(name.to_string(), model_config.clone());
-    config.save()?;
+    koji_core::db::save_model_config(&conn, name, &model_config)?;
+    // config.save()?; // No longer needed as model config is saved to DB
 
     // Output
     println!("Server added successfully.");

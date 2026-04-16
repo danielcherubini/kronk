@@ -5,6 +5,7 @@
 use anyhow::{bail, Context, Result};
 use koji_core::bench::{self, BenchConfig};
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 
 /// Parse comma-separated sizes into a Vec<u32>
 pub fn parse_comma_sizes(s: &str) -> Result<Vec<u32>> {
@@ -51,10 +52,13 @@ pub async fn cmd_bench(
     };
 
     // Determine which servers to benchmark
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
     let server_names: Vec<String> = if all {
-        // Collect all server names from config.models where enabled == true
-        let mut servers: Vec<String> = config
-            .models
+        // Collect all server names from DB where enabled == true
+        let mut servers: Vec<String> = model_configs
             .iter()
             .filter(|(_, server)| server.enabled)
             .map(|(name, _)| name.clone())
@@ -69,7 +73,7 @@ pub async fn cmd_bench(
         servers
     } else if let Some(n) = name {
         // Validate the name exists
-        config.resolve_server(&n)?;
+        config.resolve_server(&model_configs, &n)?;
         vec![n]
     } else {
         bail!("Specify a model config name or use --all to benchmark all enabled configs");

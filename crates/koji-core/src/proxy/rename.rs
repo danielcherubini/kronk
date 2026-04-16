@@ -28,30 +28,29 @@ impl ProxyState {
             anyhow::bail!("old name and new name must differ");
         }
 
-        // Lock config and perform rename
-        let mut config = self.config.write().await;
+        // Lock config and model configs and perform rename
+        let _config = self.config.write().await;
+        let mut model_configs = self.model_configs.write().await;
 
         // Check old name exists
-        if !config.models.contains_key(old_name) {
+        if !model_configs.contains_key(old_name) {
             anyhow::bail!("model '{}' does not exist", old_name);
         }
 
         // Check new name doesn't exist
-        if config.models.contains_key(new_name) {
+        if model_configs.contains_key(new_name) {
             anyhow::bail!("model name '{}' already taken", new_name);
         }
 
         // Remove old entry
-        let old_config = config.models.remove(old_name).unwrap();
+        let old_config = model_configs.remove(old_name).unwrap();
 
         // Insert new entry
-        config
-            .models
-            .insert(new_name.to_string(), old_config.clone());
+        model_configs.insert(new_name.to_string(), old_config.clone());
 
         // Attempt to save config to DB instead of TOML
         if let Some(conn) = self.open_db() {
-            if let Some(mc) = config.models.get(new_name) {
+            if let Some(mc) = model_configs.get(new_name) {
                 if let Err(e) = crate::db::save_model_config(&conn, new_name, mc) {
                     tracing::error!(name = %new_name, error = %e, "Failed to save renamed model config to DB");
                     // We don't rollback here because the in-memory state is updated,
@@ -60,9 +59,8 @@ impl ProxyState {
             }
         }
 
-        // We no longer call config.save() because models are persisted in DB.
-        // If other non-model config changes were made, they should be saved separately.
-        drop(config);
+        drop(_config);
+        drop(model_configs);
 
         // Update in-memory models map
         {

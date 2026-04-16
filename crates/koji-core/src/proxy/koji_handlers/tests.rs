@@ -36,7 +36,8 @@ async fn test_setup_model_creates_card() {
     };
 
     // Call the inner helper directly (avoids relying on system Config::load())
-    _setup_model_after_pull_with_config(&mut config, repo_id, &spec, &dest_dir).await;
+    let mut models = std::collections::HashMap::new();
+    _setup_model_after_pull_with_config(&mut config, &mut models, repo_id, &spec, &dest_dir).await;
 
     // Assert the card file exists
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
@@ -61,14 +62,14 @@ async fn test_setup_model_creates_card() {
     // repo share one model entry.
     let model_key = repo_slug.to_lowercase();
     assert!(
-        config.models.contains_key(&model_key),
-        "Expected model key '{}' in config, got: {:?}",
+        models.contains_key(&model_key),
+        "Expected model key '{}' in models map, got: {:?}",
         model_key,
-        config.models.keys().collect::<Vec<_>>()
+        models.keys().collect::<Vec<_>>()
     );
     // Verify the entry's `model` field points to the original repo (this
     // is what the dedupe-by-model logic uses).
-    assert_eq!(config.models[&model_key].model.as_deref(), Some(repo_id));
+    assert_eq!(models[&model_key].model.as_deref(), Some(repo_id));
 }
 
 /// Verifies that `PullJob` serializes to JSON with the fields expected for SSE data.

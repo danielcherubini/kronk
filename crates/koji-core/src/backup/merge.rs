@@ -41,10 +41,8 @@ impl Drop for DetachGuard<'_> {
 #[derive(Debug, Default)]
 pub struct MergeStats {
     pub new_backends: Vec<String>,
-    pub new_models: Vec<String>,
     pub new_sampling_templates: Vec<String>,
     pub skipped_backends: Vec<String>,
-    pub skipped_models: Vec<String>,
 }
 
 /// Merge a backup config into a local config.
@@ -64,16 +62,6 @@ pub fn merge_config(local: &mut Config, backup: &Config) -> MergeStats {
         } else {
             local.backends.insert(name.clone(), backend.clone());
             stats.new_backends.push(name.clone());
-        }
-    }
-
-    // Merge models
-    for (name, model) in &backup.models {
-        if local.models.contains_key(name) {
-            stats.skipped_models.push(name.clone());
-        } else {
-            local.models.insert(name.clone(), model.clone());
-            stats.new_models.push(name.clone());
         }
     }
 
@@ -249,8 +237,9 @@ mod tests {
         // Clear defaults to make test predictable
         local.backends.clear();
         backup.backends.clear();
-        local.models.clear();
-        backup.models.clear();
+        // Models are now stored in DB, so we don't clear them from Config
+        // local.models.clear();
+        // backup.models.clear();
 
         // Add a backend to local
         local.backends.insert(

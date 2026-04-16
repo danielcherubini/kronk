@@ -6,6 +6,8 @@
 
 use anyhow::Result;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
+use std::collections::HashMap;
 
 /// Show status of all servers
 pub async fn cmd_status(config: &Config) -> Result<()> {
@@ -28,7 +30,9 @@ pub async fn cmd_status(config: &Config) -> Result<()> {
         _ => {
             // Proxy unreachable — fall back to config + DB
             println!("  Proxy:    offline ({})", proxy_url);
-            print_offline_status(config);
+            if let Err(e) = print_offline_status(config) {
+                tracing::error!("Failed to print offline status: {}", e);
+            }
         }
     }
 
@@ -94,7 +98,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
             let ctx = model
                 .get("context_length")
                 .and_then(|v| v.as_u64())
-                .or_else(|| model_contexts.get(name.as_str()).copied());
+                .or_else(|| model_contexts.get(name).copied());
             if let Some(ctx) = ctx {
                 println!("  Context:  {}", ctx);
             }
@@ -171,7 +175,7 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
 }
 
 /// Resolve context lengths from model cards for display.
-fn resolve_model_contexts(config: &Config) -> std::collections::HashMap<&str, u64> {
+fn resolve_model_contexts(config: &Config) -> std::collections::HashMap<String, u64> {
     let mut contexts = std::collections::HashMap::new();
 
     let models_dir = config.models_dir().ok();
@@ -184,10 +188,20 @@ fn resolve_model_contexts(config: &Config) -> std::collections::HashMap<&str, u6
         let registry =
             koji_core::models::ModelRegistry::new(models_dir.clone(), configs_dir.clone());
 
-        for (name, srv) in &config.models {
+        let db_dir = koji_core::config::Config::config_dir().ok();
+        let model_configs = db_dir
+            .as_ref()
+            .and_then(|dir| {
+                koji_core::db::open(dir)
+                    .ok()
+                    .map(|r| koji_core::db::load_model_configs(&r.conn).unwrap_or_default())
+            })
+            .unwrap_or_default();
+
+        for (name, srv) in &model_configs {
             // If config already has a context_length, use that
             if let Some(ctx) = srv.context_length {
-                contexts.insert(name.as_str(), ctx as u64);
+                contexts.insert(name.clone(), ctx as u64);
                 continue;
             }
             // Otherwise resolve from model card
@@ -195,7 +209,7 @@ fn resolve_model_contexts(config: &Config) -> std::collections::HashMap<&str, u6
                 if let Ok(Some(installed)) = registry.find(model_id) {
                     let quant_name = srv.quant.as_deref().unwrap_or("");
                     if let Some(ctx) = installed.card.context_length_for(quant_name) {
-                        contexts.insert(name.as_str(), ctx as u64);
+                        contexts.insert(name.clone(), ctx as u64);
                     }
                 }
             }
@@ -205,20 +219,19 @@ fn resolve_model_contexts(config: &Config) -> std::collections::HashMap<&str, u6
 }
 
 /// Fallback: print status from config + DB when proxy is offline.
-fn print_offline_status(config: &Config) {
+fn print_offline_status(config: &Config) -> Result<()> {
     if let Some(vram) = koji_core::gpu::query_vram() {
         println!("  VRAM:     {} / {} MiB", vram.used_mib, vram.total_mib);
     }
 
-    let db_active = Config::config_dir()
-        .ok()
-        .and_then(|dir| koji_core::db::open(&dir).ok())
-        .and_then(|r| koji_core::db::queries::get_active_models(&r.conn).ok())
-        .unwrap_or_default();
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let db_active = koji_core::db::queries::get_active_models(&conn)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
 
     let model_contexts = resolve_model_contexts(config);
 
-    for (name, srv) in &config.models {
+    for (name, srv) in &model_configs {
         let db_entry = db_active.iter().find(|m| m.server_name == *name);
 
         let status_str = match db_entry {
@@ -250,7 +263,7 @@ fn print_offline_status(config: &Config) {
         if let Some(ctx) = srv
             .context_length
             .map(|c| c as u64)
-            .or_else(|| model_contexts.get(name.as_str()).copied())
+            .or_else(|| model_contexts.get(name).copied())
         {
             println!("  Context:  {}", ctx);
         }
@@ -271,4 +284,6 @@ fn print_offline_status(config: &Config) {
             println!("  Status:   {}", status_str);
         }
     }
+
+    Ok(())
 }

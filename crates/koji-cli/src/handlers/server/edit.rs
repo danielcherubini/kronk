@@ -1,13 +1,19 @@
 use anyhow::Result;
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 /// Edit an existing server's command line
 pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<String>) -> Result<()> {
     if command.is_empty() {
         anyhow::bail!("No command provided");
     }
 
+    // Load model configs from DB
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let mut model_configs = koji_core::db::load_model_configs(&conn)?;
+
     // Verify server exists before any mutations
-    if !config.models.contains_key(name) {
+    if !model_configs.contains_key(name) {
         anyhow::bail!("Server '{}' not found", name);
     }
 
@@ -19,9 +25,9 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
     // Extract koji flags from args
     let extracted = crate::flags::extract_koji_flags(args)?;
 
-    // Mutate via get_mut in a block so the borrow is dropped before save()
+    // Mutate existing ModelConfig
     {
-        let srv = config.models.get_mut(name).unwrap();
+        let srv = model_configs.get_mut(name).unwrap();
 
         // Selectively merge extracted flags into existing ModelConfig
         if let Some(ref model) = extracted.model {
@@ -49,10 +55,10 @@ pub async fn cmd_server_edit(config: &mut Config, name: &str, command: Vec<Strin
         srv.args = extracted.remaining_args.clone();
     }
 
-    config.save()?;
+    koji_core::db::save_model_config(&conn, name, model_configs.get(name).unwrap())?;
 
     // Read back for output
-    let srv = config.models.get(name).unwrap();
+    let srv = model_configs.get(name).unwrap();
 
     println!("Server updated successfully.");
     println!();

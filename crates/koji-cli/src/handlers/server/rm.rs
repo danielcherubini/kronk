@@ -1,8 +1,13 @@
 use anyhow::{Context, Result};
 use koji_core::config::Config;
+use koji_core::db::OpenResult;
 /// Remove a server
 pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
-    if !config.models.contains_key(name) {
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    if !model_configs.contains_key(name) {
         anyhow::bail!("Server '{}' not found.", name);
     }
 
@@ -46,9 +51,8 @@ pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
         }
     }
 
-    let mut config = config.clone();
-    config.models.remove(name);
-    config.save()?;
+    // Remove from DB
+    koji_core::db::queries::delete_model_config(&conn, name)?;
 
     println!("Model '{}' removed.", name);
     Ok(())

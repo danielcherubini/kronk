@@ -430,17 +430,19 @@ fn cmd_ls(
     _profile_arg: Option<String>,
 ) -> Result<()> {
     let models_dir = config.models_dir()?;
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
 
     match model_id_arg {
         None => {
-            // List all configured models
-            if config.models.is_empty() {
+            if model_configs.is_empty() {
                 println!("No models configured. Run `koji model pull <repo>` to add one.");
                 return Ok(());
             }
 
             let mut entries: Vec<(&String, &koji_core::config::ModelConfig)> =
-                config.models.iter().collect();
+                model_configs.iter().collect();
             entries.sort_by_key(|(k, _)| k.as_str());
 
             println!("Configured models:\n");
@@ -473,7 +475,7 @@ fn cmd_ls(
         }
         Some(model_id) => {
             // Show detail for a specific config entry
-            let mc = config.models.get(&model_id).with_context(|| {
+            let mc = model_configs.get(&model_id).with_context(|| {
                 format!(
                     "Model config '{}' not found. Run `koji model ls` to see configured models.",
                     model_id
@@ -518,11 +520,6 @@ async fn cmd_create(
     profile_name_arg: Option<String>,
     backend_arg: Option<String>,
 ) -> Result<()> {
-    let mut config = config.clone();
-
-    // No host args needed — proxy handles routing
-    let args = vec![];
-
     // Resolve server name — prompt if not provided
     let server_name = match server_name_arg {
         Some(n) => n,
@@ -531,8 +528,10 @@ async fn cmd_create(
             .context("Config name input cancelled")?,
     };
 
-    // Check if server name already exists
-    if config.models.contains_key(&server_name) {
+    // Resolve DB and check if server name already exists
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    if koji_core::db::queries::get_model_config(&conn, &server_name)?.is_some() {
         anyhow::bail!(
             "Server '{}' already exists. Use `koji server edit` or choose a different name.",
             server_name
@@ -541,7 +540,6 @@ async fn cmd_create(
 
     // Resolve backend
     let resolved_backend_key = match backend_arg {
-        // Use backend_arg
         Some(b) => {
             if !config.backends.contains_key(&b) {
                 let available: Vec<&str> = config.backends.keys().map(|s| s.as_str()).collect();
@@ -574,29 +572,26 @@ async fn cmd_create(
         None => None,
     };
 
-    config.models.insert(
-        server_name.clone(),
-        koji_core::config::ModelConfig {
-            backend: resolved_backend_key.clone(),
-            args,
-            profile: resolved_profile.map(|p| p.to_string()),
-            sampling: None,
-            model: Some(model_id_arg.to_string()),
-            quant: quant_name.clone(),
-            mmproj: None,
-            port: None,
-            health_check: None,
-            enabled: true,
-            context_length: None,
-            api_name: None,
-            gpu_layers: None,
-            quants: std::collections::BTreeMap::new(),
-            modalities: None,
-            display_name: None,
-        },
-    );
+    let model_config = koji_core::config::ModelConfig {
+        backend: resolved_backend_key.clone(),
+        args: vec![],
+        profile: resolved_profile.map(|p| p.to_string()),
+        sampling: None,
+        model: Some(model_id_arg.to_string()),
+        quant: quant_name.clone(),
+        mmproj: None,
+        port: None,
+        health_check: None,
+        enabled: true,
+        context_length: None,
+        api_name: None,
+        gpu_layers: None,
+        quants: std::collections::BTreeMap::new(),
+        modalities: None,
+        display_name: None,
+    };
 
-    config.save()?;
+    koji_core::db::save_model_config(&conn, &server_name, &model_config)?;
 
     println!("Created.");
     println!();
@@ -605,12 +600,10 @@ async fn cmd_create(
     if let Some(ref q) = quant_name {
         println!("  Quant:     {}", q);
     }
-    if let Some(mc) = config.models.get(&server_name) {
-        if let Some(sampling) = &mc.sampling {
-            println!("  Profile:   {}", sampling.preset_label());
-        } else if let Some(p) = &mc.profile {
-            println!("  Profile:   {}", p);
-        }
+    if let Some(sampling) = &model_config.sampling {
+        println!("  Profile:   {}", sampling.preset_label());
+    } else if let Some(p) = &model_config.profile {
+        println!("  Profile:   {}", p);
     }
     println!();
     println!("Enable it:   koji model enable {}", server_name);
@@ -628,8 +621,11 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         .find(model_id)?
         .with_context(|| format!("Model '{}' not found.", model_id))?;
 
-    let linked_servers: Vec<&str> = config
-        .models
+    // Check for referencing servers in DB
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+    let linked_servers: Vec<&str> = model_configs
         .iter()
         .filter(|(_, p)| p.model.as_deref() == Some(model_id))
         .map(|(name, _)| name.as_str())
@@ -672,23 +668,13 @@ fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         std::fs::remove_file(&model.card_path)?;
     }
 
-    // Clean up DB metadata (best-effort — model deletion succeeds even if DB is unavailable).
-    // Use model.card.model.source as the DB key (it's the HF repo_id stored during pull),
-    // falling back to model.id (file-derived) if source is empty.
-    if let Ok(db_dir) = koji_core::config::Config::config_dir() {
-        if let Ok(OpenResult {
-            conn,
-            needs_backfill: _,
-        }) = koji_core::db::open(&db_dir)
-        {
-            let repo_key = if model.card.model.source.is_empty() {
-                &model.id
-            } else {
-                &model.card.model.source
-            };
-            let _ = koji_core::db::queries::delete_model_records(&conn, repo_key);
-        }
-    }
+    // Clean up DB metadata (best-effort)
+    let repo_key = if model.card.model.source.is_empty() {
+        &model.id
+    } else {
+        &model.card.model.source
+    };
+    let _ = koji_core::db::queries::delete_model_records(&conn, repo_key);
 
     println!("Removed model '{}'.", model_id);
     Ok(())
@@ -933,282 +919,119 @@ async fn cmd_update(
     Ok(())
 }
 
-fn cmd_scan(config: &Config) -> Result<()> {
+pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
     let models_dir = config.models_dir()?;
-    let configs_dir = config.configs_dir()?;
 
-    println!("models dir : {}", models_dir.display());
-    println!("configs dir: {}", configs_dir.display());
+    // Use the directory the config was loaded from as the base for the DB.
+    // This ensures that in tests (and Windows services), we use the temporary/specified
+    // directory instead of the default system config path.
+    let db_dir = config
+        .loaded_from
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| koji_core::config::Config::config_dir().unwrap());
 
-    let registry = ModelRegistry::new(models_dir.to_path_buf(), configs_dir.to_path_buf());
-    let models = registry.scan()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
 
-    println!("found {} model card(s)", models.len());
-    for model in &models {
-        println!("  {} ({} quant(s))", model.id, model.card.quants.len());
-        for (key, q) in &model.card.quants {
-            let path = model.dir.join(&q.file);
-            let status = if path.exists() { "ok" } else { "MISSING" };
-            println!("    [{status}] {key} -> {}", path.display());
-        }
-    }
+    let mut added_files = 0;
+    let mut removed_files = 0;
+    let mut removed_configs = 0;
 
-    let mut found_any = false;
-    let mut config = config.clone();
+    // 1. Walk filesystem for .gguf files and reconcile with DB
+    fn walk_and_reconcile(
+        dir: &std::path::Path,
+        base_dir: &std::path::Path,
+        conn: &koji_core::db::Connection,
+        added: &mut usize,
+    ) -> anyhow::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
 
-    // Open the DB once for stale-entry cleanup (best-effort — skip if unavailable).
-    let db_conn = koji_core::config::Config::config_dir()
-        .ok()
-        .and_then(|dir| koji_core::db::open(&dir).ok())
-        .map(|r| r.conn);
+            if path.is_dir() {
+                walk_and_reconcile(&path, base_dir, conn, added)?;
+            } else if path.extension().map_or(false, |e| e == "gguf") {
+                let relative_path = path.strip_prefix(base_dir)?;
+                if let Some(repo_id_path) = relative_path.parent() {
+                    let repo_id = repo_id_path
+                        .to_string_lossy()
+                        .to_string()
+                        .replace(std::path::MAIN_SEPARATOR, "/");
+                    let filename = path.file_name().unwrap().to_string_lossy().to_string();
 
-    // ── Stale file detection ─────────────────────────────────────────────────
-    // Check every tracked quant and remove any whose file is missing or is a
-    // dead symlink. `Path::exists()` follows symlinks and returns false for
-    // both cases, so this catches the "symlink left behind after cache cleanup"
-    // scenario as well as plain missing files.
-    for model in &models {
-        let stale: Vec<(String, String)> = model // (quant_key, filename)
-            .card
-            .quants
-            .iter()
-            .filter(|(_, q)| !model.dir.join(&q.file).exists())
-            .map(|(k, q)| (k.clone(), q.file.clone()))
-            .collect();
+                    // Check if file is in DB
+                    let files = koji_core::db::queries::get_model_files(conn, &repo_id)?;
+                    if !files.iter().any(|f| f.filename == filename) {
+                        koji_core::db::queries::upsert_model_file(
+                            conn, &repo_id, &filename, None, None, None,
+                        )?;
 
-        if !stale.is_empty() {
-            println!(
-                "  {} -- removing {} missing/broken file(s):",
-                model.id,
-                stale.len()
-            );
-            let mut card = model.card.clone();
-            let repo_id = &model.card.model.source;
-            for (key, file) in &stale {
-                println!("    - {} ({})", file, key);
-                card.quants.remove(key);
-                // Remove the model_files DB row for this (repo, filename).
-                if let Some(conn) = &db_conn {
-                    if let Err(e) = koji_core::db::queries::delete_model_file(conn, repo_id, file) {
-                        tracing::warn!(
-                            "Failed to delete DB record for {}/{}: {}",
-                            repo_id,
-                            file,
-                            e
-                        );
-                    }
-                }
-            }
-            card.save(&model.card_path)?;
-
-            // If the card is now empty, remove the config.toml model entry and
-            // the model_pulls DB row so the web UI stops listing it.
-            if card.quants.is_empty() {
-                let removed: Vec<String> = config
-                    .models
-                    .iter()
-                    .filter(|(_, m)| m.model.as_deref() == Some(repo_id.as_str()))
-                    .map(|(k, _)| k.clone())
-                    .collect();
-                for key in removed {
-                    println!("    x removing config entry '{}'", key);
-                    config.models.remove(&key);
-                }
-                config.save()?;
-                // Remove the repo-level pull record from DB.
-                if let Some(conn) = &db_conn {
-                    if let Err(e) = koji_core::db::queries::delete_model_records(conn, repo_id) {
-                        tracing::warn!("Failed to delete DB records for {}: {}", repo_id, e);
-                    }
-                }
-            } else {
-                // Remove config entries whose selected quant no longer exists.
-                let stale_keys: Vec<&str> = stale.iter().map(|(k, _)| k.as_str()).collect();
-                let mut dirty = false;
-                for mc in config.models.values_mut() {
-                    if mc.model.as_deref() != Some(repo_id.as_str()) {
-                        continue;
-                    }
-                    if let Some(q) = &mc.quant {
-                        if stale_keys.contains(&q.as_str()) {
-                            mc.quant = card.quants.keys().next().cloned();
-                            dirty = true;
-                        }
-                    }
-                }
-                if dirty {
-                    config.save()?;
-                }
-            }
-
-            found_any = true;
-        }
-    }
-
-    // ── Config-based stale detection ────────────────────────────────────────
-    // Catch models that were registered in koji.toml / the DB but whose files
-    // are completely gone from disk (no model card was ever written, or the
-    // card was already cleaned up above). For each config entry whose model
-    // directory either doesn't exist or contains no real GGUF files, remove
-    // it from config and the DB.
-    {
-        let stale_keys: Vec<(String, String)> = config // (config_key, repo_id)
-            .models
-            .iter()
-            .filter_map(|(key, mc)| {
-                let repo_id = mc.model.as_ref()?;
-                let model_dir = koji_core::models::repo_path(&models_dir, repo_id);
-                let has_gguf = model_dir.exists()
-                    && std::fs::read_dir(&model_dir)
-                        .ok()
-                        .map(|entries| {
-                            entries.filter_map(|e| e.ok()).any(|e| {
-                                e.file_name().to_string_lossy().ends_with(".gguf")
-                                    && e.path().exists() // follows symlinks — false for dead ones
-                            })
-                        })
-                        .unwrap_or(false);
-                if has_gguf {
-                    None
-                } else {
-                    Some((key.clone(), repo_id.clone()))
-                }
-            })
-            .collect();
-
-        if !stale_keys.is_empty() {
-            println!(
-                "  found {} ghost config entr(ies) with no files on disk:",
-                stale_keys.len()
-            );
-            for (key, repo_id) in &stale_keys {
-                println!("    x {} ({})", key, repo_id);
-                config.models.remove(key);
-                if let Some(conn) = &db_conn {
-                    if let Err(e) = koji_core::db::queries::delete_model_records(conn, repo_id) {
-                        tracing::warn!("Failed to delete DB records for {}: {}", repo_id, e);
-                    }
-                }
-            }
-            config.save()?;
-            found_any = true;
-        }
-    }
-
-    // Check existing models for untracked GGUFs
-    for model in &models {
-        let untracked = registry.untracked_ggufs(&model.dir, &model.card)?;
-        if !untracked.is_empty() {
-            println!(
-                "  {} -- found {} untracked GGUF file(s):",
-                model.id,
-                untracked.len()
-            );
-            let mut card = model.card.clone();
-            for filename in &untracked {
-                let base_quant = pull::infer_quant_from_filename(filename)
-                    .unwrap_or_else(|| "unknown".to_string());
-                let quant_key = unique_quant_key(&card.quants, &base_quant, filename);
-                let size_bytes = model.dir.join(filename).metadata().map(|m| m.len()).ok();
-                println!("    + {} ({})", filename, base_quant);
-                card.quants.insert(
-                    quant_key,
-                    QuantInfo {
-                        file: filename.clone(),
-                        kind: koji_core::config::QuantKind::from_filename(filename),
-                        size_bytes,
-                        context_length: None,
-                    },
-                );
-            }
-            card.save(&model.card_path)?;
-            found_any = true;
-        }
-    }
-
-    // Scan for directories with GGUFs but no model card in configs/
-    let known_ids: std::collections::HashSet<String> =
-        models.iter().map(|m| m.id.clone()).collect();
-
-    if models_dir.exists() {
-        for company_entry in std::fs::read_dir(&models_dir)? {
-            let company_entry = company_entry?;
-            if !company_entry.path().is_dir() {
-                continue;
-            }
-            let company = company_entry.file_name().to_string_lossy().to_string();
-
-            for model_entry in std::fs::read_dir(company_entry.path())? {
-                let model_entry = model_entry?;
-                let model_path = model_entry.path();
-                if !model_path.is_dir() {
-                    continue;
-                }
-
-                let model_name = model_entry.file_name().to_string_lossy().to_string();
-                let model_id = format!("{}/{}", company, model_name);
-
-                // Skip if already tracked in configs/
-                if known_ids.contains(&model_id) {
-                    continue;
-                }
-
-                let gguf_files: Vec<String> = std::fs::read_dir(&model_path)?
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_name().to_string_lossy().ends_with(".gguf"))
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .collect();
-
-                if !gguf_files.is_empty() {
-                    println!(
-                        "  {} -- new model with {} GGUF file(s):",
-                        model_id,
-                        gguf_files.len()
-                    );
-
-                    let mut quants = HashMap::new();
-                    for filename in &gguf_files {
-                        let base_quant = pull::infer_quant_from_filename(filename)
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let quant_key = unique_quant_key(&quants, &base_quant, filename);
-                        let size_bytes = model_path.join(filename).metadata().map(|m| m.len()).ok();
-                        println!("    + {} ({})", filename, base_quant);
-                        quants.insert(
-                            quant_key,
-                            QuantInfo {
-                                file: filename.clone(),
-                                kind: koji_core::config::QuantKind::from_filename(filename),
-                                size_bytes,
+                        if koji_core::db::queries::get_model_config(conn, &repo_id)?.is_none() {
+                            let record = koji_core::db::queries::ModelConfigRecord {
+                                repo_id: repo_id.clone(),
+                                display_name: None,
+                                backend: "llama.cpp".to_string(),
+                                enabled: true,
+                                selected_quant: None,
+                                selected_mmproj: None,
                                 context_length: None,
-                            },
-                        );
+                                gpu_layers: None,
+                                port: None,
+                                args: None,
+                                sampling: None,
+                                modalities: None,
+                                profile: None,
+                                api_name: None,
+                                health_check: None,
+                                created_at: "now".to_string(),
+                                updated_at: "now".to_string(),
+                            };
+                            koji_core::db::queries::upsert_model_config(conn, &record)?;
+                        }
+                        *added += 1;
                     }
-
-                    let card = ModelCard {
-                        model: ModelMeta {
-                            name: model_name,
-                            source: model_id.clone(),
-                            default_context_length: Some(8192),
-                            default_gpu_layers: Some(999),
-                        },
-                        sampling: HashMap::new(),
-                        quants,
-                    };
-                    std::fs::create_dir_all(&configs_dir)?;
-                    let card_filename = format!("{}.toml", model_id.replace('/', "--"));
-                    card.save(&configs_dir.join(&card_filename))?;
-                    found_any = true;
                 }
             }
         }
+        Ok(())
     }
 
-    if !found_any {
-        println!("No untracked models or GGUF files found.");
-    } else {
-        println!();
-        println!("Model cards updated.");
+    walk_and_reconcile(&models_dir, &models_dir, &conn, &mut added_files)?;
+
+    // 2. Remove files from DB that are missing on disk
+    let all_files = koji_core::db::queries::get_all_model_files(&conn)?;
+    let mut repos_to_check = std::collections::HashSet::new();
+    for file in all_files {
+        let repo_id = file.repo_id;
+        let filename = file.filename;
+        let path = koji_core::models::repo_path(&models_dir, &repo_id).join(&filename);
+        if !path.exists() {
+            koji_core::db::queries::delete_model_file(&conn, &repo_id, &filename)?;
+            removed_files += 1;
+            repos_to_check.insert(repo_id);
+        }
     }
+
+    // 3. Remove configs whose directory doesn't exist or is empty
+    let all_configs = koji_core::db::queries::get_all_model_configs(&conn)?;
+    for config in all_configs {
+        let repo_id = config.repo_id;
+        let model_dir = koji_core::models::repo_path(&models_dir, &repo_id);
+        if !model_dir.exists()
+            || model_dir
+                .read_dir()
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true)
+        {
+            koji_core::db::queries::delete_model_config(&conn, &repo_id)?;
+            removed_configs += 1;
+        }
+    }
+
+    println!("Scan complete:");
+    println!("  Added:   {} files", added_files);
+    println!("  Removed: {} files", removed_files);
+    println!("  Removed: {} ghost configs", removed_configs);
 
     Ok(())
 }
@@ -1239,7 +1062,11 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
 
     // Build set of referenced files: (repo_id, filename)
     let mut referenced_files: HashSet<(String, String)> = HashSet::new();
-    for model_config in config.models.values() {
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    for model_config in model_configs.values() {
         if let Some(ref repo_id) = model_config.model {
             for quant_entry in model_config.quants.values() {
                 referenced_files.insert((repo_id.clone(), quant_entry.file.clone()));
@@ -1394,12 +1221,8 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
     }
 
     // Clean up DB records for actually deleted files
-    if let Ok(db_dir) = koji_core::config::Config::config_dir() {
-        if let Ok(koji_core::db::OpenResult { conn, .. }) = koji_core::db::open(&db_dir) {
-            for (repo_id, filename) in &actually_deleted {
-                let _ = koji_core::db::queries::delete_model_file(&conn, repo_id, filename);
-            }
-        }
+    for (repo_id, filename) in &actually_deleted {
+        let _ = koji_core::db::queries::delete_model_file(&conn, repo_id, filename);
     }
 
     println!();
@@ -1412,25 +1235,31 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
 }
 
 fn cmd_enable(config: &Config, name: &str) -> Result<()> {
-    let mut config = config.clone();
-    let srv = config
-        .models
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let mut model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    let srv = model_configs
         .get_mut(name)
         .with_context(|| format!("Model '{}' not found", name))?;
     srv.enabled = true;
-    config.save()?;
+
+    koji_core::db::save_model_config(&conn, name, srv)?;
     println!("Enabled model: {}", name);
     Ok(())
 }
 
 fn cmd_disable(config: &Config, name: &str) -> Result<()> {
-    let mut config = config.clone();
-    let srv = config
-        .models
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+    let mut model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    let srv = model_configs
         .get_mut(name)
         .with_context(|| format!("Model '{}' not found", name))?;
     srv.enabled = false;
-    config.save()?;
+
+    koji_core::db::save_model_config(&conn, name, srv)?;
     println!("Disabled model: {}", name);
     Ok(())
 }
@@ -1645,10 +1474,12 @@ async fn cmd_verify_existing(
 
     let models_dir = config.models_dir()?;
 
-    // Collect unique HF repo IDs from cfg.models (same source as the web UI).
+    // Load model configs from DB
+    let model_configs = koji_core::db::load_model_configs(&conn)?;
+
+    // Collect unique HF repo IDs from DB.
     // Entries without a `model` field (raw-args entries) are skipped.
-    let mut repo_ids: Vec<String> = config
-        .models
+    let mut repo_ids: Vec<String> = model_configs
         .values()
         .filter_map(|mc| mc.model.clone())
         .collect::<std::collections::HashSet<_>>()
@@ -1668,8 +1499,7 @@ async fn cmd_verify_existing(
     };
 
     // Warn about any entries that have no `model` field
-    let skipped: Vec<&str> = config
-        .models
+    let skipped: Vec<&str> = model_configs
         .iter()
         .filter(|(_, mc)| mc.model.is_none())
         .map(|(name, _)| name.as_str())
@@ -1868,24 +1698,186 @@ async fn cmd_verify_existing(
 }
 
 fn cmd_migrate(config: &Config) -> Result<()> {
-    let db_dir = koji_core::config::Config::config_dir()?;
-    let OpenResult {
-        conn,
-        needs_backfill: _,
-    } = koji_core::db::open(&db_dir)?;
+    anyhow::bail!("Migration to database is not yet implemented. Please check docs/plans/2026-04-15-model-config-to-db.md");
+}
 
-    let mut config = config.clone();
-    let migrated =
-        koji_core::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koji_core::config::Config;
+    use koji_core::db::queries::{
+        get_all_model_configs, get_model_files, upsert_model_config, upsert_model_file,
+        ModelConfigRecord,
+    };
+    use koji_core::db::{open, OpenResult};
+    use std::fs;
+    use tempfile::tempdir;
 
-    if migrated > 0 {
-        println!(
-            "Successfully migrated {} model entries from koji.toml to database.",
-            migrated
-        );
-    } else {
-        println!("Nothing to migrate.");
+    async fn setup_test_env() -> (tempfile::TempDir, Config, OpenResult) {
+        let dir = tempdir().unwrap();
+        let mut config = Config::default();
+        config.loaded_from = Some(dir.path().to_path_buf());
+
+        // Create models dir
+        let models_dir = config.models_dir().unwrap();
+        fs::create_dir_all(&models_dir).unwrap();
+
+        // Create configs dir
+        let configs_dir = config.configs_dir().unwrap();
+        fs::create_dir_all(&configs_dir).unwrap();
+
+        let open_res = open(dir.path()).unwrap();
+
+        (dir, config, open_res)
     }
 
-    Ok(())
+    #[tokio::test]
+    async fn test_scan_adds_new_files() {
+        let (dir, config, open_res) = setup_test_env().await;
+        let conn = &open_res.conn;
+
+        // Create a model file on disk
+        let repo_id = "test/model";
+        let models_dir = config.models_dir().unwrap();
+        let model_dir = models_dir.join(repo_id);
+        fs::create_dir_all(&model_dir).unwrap();
+        let filename = "model.gguf";
+        fs::write(model_dir.join(filename), "dummy data").unwrap();
+
+        // Run scan
+        cmd_scan(&config).unwrap();
+
+        // Verify it was added to DB
+        let files = koji_core::db::queries::get_model_files(conn, repo_id).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, filename);
+
+        let configs = koji_core::db::queries::get_all_model_configs(conn).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].repo_id, repo_id);
+    }
+
+    #[tokio::test]
+    async fn test_scan_removes_missing_files() {
+        let (dir, config, open_res) = setup_test_env().await;
+        let conn = &open_res.conn;
+
+        let repo_id = "test/model";
+        let filename = "missing.gguf";
+
+        // Add to DB but NOT on disk
+        upsert_model_file(conn, repo_id, filename, Some("Q4"), None, Some(100)).unwrap();
+
+        // Run scan
+        cmd_scan(&config).unwrap();
+
+        // Verify it was removed from DB
+        let files = koji_core::db::queries::get_model_files(conn, repo_id).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scan_removes_ghost_configs() {
+        let (dir, config, open_res) = setup_test_env().await;
+        let conn = &open_res.conn;
+
+        let repo_id = "ghost/model";
+        let record = ModelConfigRecord {
+            repo_id: repo_id.to_string(),
+            display_name: None,
+            backend: "llama.cpp".to_string(),
+            enabled: true,
+            selected_quant: None,
+            selected_mmproj: None,
+            context_length: None,
+            gpu_layers: None,
+            port: None,
+            args: None,
+            sampling: None,
+            modalities: None,
+            profile: None,
+            api_name: None,
+            health_check: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        upsert_model_config(conn, &record).unwrap();
+
+        // No directory on disk
+
+        // Run scan
+        cmd_scan(&config).unwrap();
+
+        // Verify config was removed
+        let configs = koji_core::db::queries::get_all_model_configs(conn).unwrap();
+        assert!(configs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scan_empty_dir_removes_everything() {
+        let (dir, config, open_res) = setup_test_env().await;
+        let conn = &open_res.conn;
+
+        // Populate DB with some garbage
+        upsert_model_config(
+            conn,
+            &ModelConfigRecord {
+                repo_id: "repo1".to_string(),
+                display_name: None,
+                backend: "llama.cpp".to_string(),
+                enabled: true,
+                selected_quant: None,
+                selected_mmproj: None,
+                context_length: None,
+                gpu_layers: None,
+                port: None,
+                args: None,
+                sampling: None,
+                modalities: None,
+                profile: None,
+                api_name: None,
+                health_check: None,
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+        )
+        .unwrap();
+        upsert_model_file(conn, "repo1", "file1.gguf", None, None, None).unwrap();
+
+        upsert_model_config(
+            conn,
+            &ModelConfigRecord {
+                repo_id: "repo2".to_string(),
+                display_name: None,
+                backend: "llama.cpp".to_string(),
+                enabled: true,
+                selected_quant: None,
+                selected_mmproj: None,
+                context_length: None,
+                gpu_layers: None,
+                port: None,
+                args: None,
+                sampling: None,
+                modalities: None,
+                profile: None,
+                api_name: None,
+                health_check: None,
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+        )
+        .unwrap();
+        upsert_model_file(conn, "repo2", "file2.gguf", None, None, None).unwrap();
+
+        // Models dir is empty
+
+        // Run scan
+        cmd_scan(&config).unwrap();
+
+        // Verify DB is clean
+        let files = koji_core::db::queries::get_model_files(conn, "repo1").unwrap();
+        assert!(files.is_empty());
+        let configs = koji_core::db::queries::get_all_model_configs(conn).unwrap();
+        assert!(configs.is_empty());
+    }
 }
