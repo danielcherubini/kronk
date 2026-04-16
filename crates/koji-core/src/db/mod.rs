@@ -90,7 +90,7 @@ pub fn save_model_config(
     // concrete value. `from_db_record` used to backfill this on load, which
     // meant unsaved rows, JSON exports, and direct DB queries saw NULL even
     // though the in-memory ModelConfig had a value.
-    if record.api_name.as_deref().map_or(true, str::is_empty) {
+    if record.api_name.as_deref().is_none_or(str::is_empty) {
         record.api_name = Some(repo_id.clone());
     }
     queries::upsert_model_config(conn, &record)
