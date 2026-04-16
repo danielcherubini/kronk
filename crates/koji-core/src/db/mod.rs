@@ -28,7 +28,23 @@ pub fn load_model_configs(conn: &Connection) -> anyhow::Result<HashMap<String, M
 
     for record in records {
         let config_key = record.repo_id.to_lowercase().replace('/', "--");
-        let config = ModelConfig::from_db_record(&record);
+        let mut config = ModelConfig::from_db_record(&record);
+
+        // Populate quants from model_files table to restore them after restart
+        let files = queries::get_model_files(conn, &record.repo_id)?;
+        for file in files {
+            let quant_key = file.quant.clone().unwrap_or_else(|| file.filename.clone());
+            config.quants.insert(
+                quant_key,
+                crate::config::QuantEntry {
+                    file: file.filename.clone(),
+                    kind: crate::config::QuantKind::from_filename(&file.filename),
+                    size_bytes: file.size_bytes.map(|s| s as u64),
+                    context_length: None,
+                },
+            );
+        }
+
         configs.insert(config_key, config);
     }
 

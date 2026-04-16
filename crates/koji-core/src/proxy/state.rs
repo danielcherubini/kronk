@@ -163,6 +163,20 @@ impl ProxyState {
         let card: crate::models::card::ModelCard = toml::from_str(&content).ok()?;
         Some(card)
     }
+
+    /// Reload model configurations from the database.
+    ///
+    /// This ensures that the in-memory registry stays in sync with mutations
+    /// made via the web API or CLI.
+    pub async fn reload_model_configs(&self) -> Result<()> {
+        let conn = self
+            .open_db()
+            .with_context(|| "Database directory not configured")?;
+        let configs = crate::db::load_model_configs(&conn)?;
+        let mut model_configs = self.model_configs.write().await;
+        *model_configs = configs;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

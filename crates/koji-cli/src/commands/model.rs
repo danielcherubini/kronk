@@ -950,7 +950,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
 
             if path.is_dir() {
                 walk_and_reconcile(&path, base_dir, conn, added)?;
-            } else if path.extension().map_or(false, |e| e == "gguf") {
+            } else if path.extension().is_some_and(|e| e == "gguf") {
                 let relative_path = path.strip_prefix(base_dir)?;
                 if let Some(repo_id_path) = relative_path.parent() {
                     let repo_id = repo_id_path
@@ -983,8 +983,8 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                                 profile: None,
                                 api_name: None,
                                 health_check: None,
-                                created_at: "now".to_string(),
-                                updated_at: "now".to_string(),
+                                created_at: manual_timestamp(),
+                                updated_at: manual_timestamp(),
                             };
                             koji_core::db::queries::upsert_model_config(conn, &record)?;
                         }
@@ -1234,7 +1234,7 @@ fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_enable(config: &Config, name: &str) -> Result<()> {
+fn cmd_enable(_config: &Config, name: &str) -> Result<()> {
     let db_dir = koji_core::config::Config::config_dir()?;
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
     let mut model_configs = koji_core::db::load_model_configs(&conn)?;
@@ -1249,7 +1249,7 @@ fn cmd_enable(config: &Config, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_disable(config: &Config, name: &str) -> Result<()> {
+fn cmd_disable(_config: &Config, name: &str) -> Result<()> {
     let db_dir = koji_core::config::Config::config_dir()?;
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
     let mut model_configs = koji_core::db::load_model_configs(&conn)?;
@@ -1704,7 +1704,8 @@ fn cmd_migrate(config: &Config) -> Result<()> {
     // We need a mutable config to call migrate_models_to_db.
     let mut mutable_config = config.clone();
 
-    let migrated = koji_core::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut mutable_config)?;
+    let migrated =
+        koji_core::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut mutable_config)?;
 
     if migrated == 0 {
         println!("Nothing to migrate.");

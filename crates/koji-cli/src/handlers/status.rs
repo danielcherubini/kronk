@@ -7,7 +7,6 @@
 use anyhow::Result;
 use koji_core::config::Config;
 use koji_core::db::OpenResult;
-use std::collections::HashMap;
 
 /// Show status of all servers
 pub async fn cmd_status(config: &Config) -> Result<()> {
@@ -224,10 +223,21 @@ fn print_offline_status(config: &Config) -> Result<()> {
         println!("  VRAM:     {} / {} MiB", vram.used_mib, vram.total_mib);
     }
 
-    let db_dir = koji_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
-    let db_active = koji_core::db::queries::get_active_models(&conn)?;
-    let model_configs = koji_core::db::load_model_configs(&conn)?;
+    let db_res = (|| -> Result<(koji_core::db::Connection, Vec<koji_core::db::queries::ActiveModelRecord>, std::collections::HashMap<String, koji_core::config::ModelConfig>)> {
+        let db_dir = koji_core::config::Config::config_dir()?;
+        let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+        let db_active = koji_core::db::queries::get_active_models(&conn)?;
+        let model_configs = koji_core::db::load_model_configs(&conn)?;
+        Ok((conn, db_active, model_configs))
+    })();
+
+    let (_conn, db_active, model_configs) = match db_res {
+        Ok(res) => res,
+        Err(e) => {
+            println!("  Database: error ({})", e);
+            return Ok(());
+        }
+    };
 
     let model_contexts = resolve_model_contexts(config);
 

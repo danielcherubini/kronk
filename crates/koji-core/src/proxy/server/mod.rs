@@ -24,7 +24,9 @@ impl ProxyServer {
             // First, run migration from koji.toml to DB if needed.
             {
                 let mut config = state.config.write().await;
-                if let Err(e) = crate::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config) {
+                if let Err(e) =
+                    crate::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config)
+                {
                     tracing::error!("Failed to migrate models from koji.toml to DB: {}", e);
                 }
             }

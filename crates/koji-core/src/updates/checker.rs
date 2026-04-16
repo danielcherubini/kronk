@@ -54,7 +54,6 @@ impl UpdateChecker {
                     .map(|b| (b.name.clone(), b.backend_type.clone()))
                     .collect();
 
-                let config = Config::load_from(&config_dir)?;
                 let open = db::open(&config_dir)?;
                 let db_models = db::load_model_configs(&open.conn)?;
                 let models: Vec<(String, Option<String>)> = db_models

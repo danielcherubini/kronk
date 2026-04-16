@@ -7,7 +7,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::proxy::handlers::{
     handle_chat_completions, handle_fallback, handle_get_model, handle_health, handle_list_models,
-    handle_metrics, handle_status, handle_stream_chat_completions,
+    handle_metrics, handle_reload_configs, handle_status, handle_stream_chat_completions,
 };
 use crate::proxy::koji_handlers::{
     handle_hf_list_quants, handle_koji_get_model as handle_koji_get_model_fn,
@@ -49,6 +49,10 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         .route("/koji/v1/hf/*repo_id", get(handle_hf_list_quants))
         // System
         .route("/koji/v1/system/health", get(handle_koji_system_health))
+        .route(
+            "/koji/v1/system/reload-configs",
+            post(handle_reload_configs),
+        )
         .route(
             "/koji/v1/system/metrics/history",
             get(handle_system_metrics_history),

@@ -55,6 +55,11 @@ impl ProxyState {
                     tracing::error!(name = %new_name, error = %e, "Failed to save renamed model config to DB");
                     // We don't rollback here because the in-memory state is updated,
                     // and DB update is best-effort.
+                } else {
+                    // Successfully saved new name, now remove the old config entry to avoid orphans
+                    if let Err(e) = crate::db::queries::delete_model_config(&conn, old_name) {
+                        tracing::error!(name = %old_name, error = %e, "Failed to delete old model config after rename");
+                    }
                 }
             }
         }

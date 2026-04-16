@@ -178,7 +178,7 @@ pub async fn handle_get_model(
     Path(model_id): Path<String>,
 ) -> Response {
     // Acquire both locks upfront
-    let config = state.config.read().await;
+    let _config = state.config.read().await;
     let model_configs = state.model_configs.read().await;
     let loaded_models = state.models.read().await;
 
@@ -250,6 +250,18 @@ pub async fn handle_status(state: State<Arc<ProxyState>>) -> Json<serde_json::Va
 }
 
 #[axum::debug_handler]
+pub async fn handle_reload_configs(state: State<Arc<ProxyState>>) -> impl IntoResponse {
+    match state.reload_model_configs().await {
+        Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[axum::debug_handler]
 pub async fn handle_health() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
@@ -274,7 +286,7 @@ pub async fn handle_metrics(state: State<Arc<ProxyState>>) -> Json<serde_json::V
 pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let loaded_models = state.models.read().await;
     let model_configs = state.model_configs.read().await;
-    let config = state.config.read().await;
+    let _config = state.config.read().await;
 
     // Build a list of all configured (enabled) models, enriched with runtime state
     let mut data: Vec<serde_json::Value> = Vec::new();

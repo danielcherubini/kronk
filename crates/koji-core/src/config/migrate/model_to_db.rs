@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::db::queries::get_all_model_configs;
 use crate::db::{save_model_config, Connection};
 use std::fs;
-use std::path::Path;
 
 /// If the DB has no model_configs rows but koji.toml contains a [models] section,
 /// import all models into DB, then save the config file (removing the [models] section).
@@ -15,7 +14,9 @@ pub fn migrate_models_to_db(conn: &Connection, config: &mut Config) -> anyhow::R
     }
 
     // 2. Find where the config file is.
-    let config_path = config.loaded_from.as_ref()
+    let config_path = config
+        .loaded_from
+        .as_ref()
         .map(|p| p.join("config.toml"))
         .ok_or_else(|| anyhow::anyhow!("Config has no loaded_from path"))?;
 
@@ -67,7 +68,7 @@ mod tests {
     fn test_migrate_models_to_db_imports_all() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-        
+
         let toml_content = r#"
 [general]
 log_level = "info"
@@ -99,7 +100,7 @@ model2 = { backend = "llama_cpp", enabled = false }
     fn test_migrate_models_to_db_skips_if_db_has_rows() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-        
+
         let toml_content = r#"
 [general]
 log_level = "info"
@@ -113,7 +114,7 @@ model1 = { backend = "llama_cpp", enabled = true }
         config.loaded_from = Some(temp_dir.path().to_path_buf());
 
         let OpenResult { conn, .. } = open_in_memory().unwrap();
-        
+
         // Pre-populate DB
         let mc = ModelConfig {
             backend: "llama_cpp".to_string(),
@@ -124,7 +125,7 @@ model1 = { backend = "llama_cpp", enabled = true }
         let migrated = migrate_models_to_db(&conn, &mut config).unwrap();
 
         assert_eq!(migrated, 0);
-        
+
         // Verify file still has [models]
         let final_content = fs::read_to_string(&config_path).unwrap();
         assert!(final_content.contains("[models]"));
@@ -134,7 +135,7 @@ model1 = { backend = "llama_cpp", enabled = true }
     fn test_migrate_models_to_db_skips_if_no_models_section() {
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
-        
+
         let toml_content = r#"
 [general]
 log_level = "info"

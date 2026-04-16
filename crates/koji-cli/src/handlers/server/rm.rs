@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use koji_core::config::Config;
 use koji_core::db::OpenResult;
+
 /// Remove a server
-pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
+pub fn cmd_server_rm(_config: &Config, name: &str, force: bool) -> Result<()> {
     let db_dir = koji_core::config::Config::config_dir()?;
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
     let model_configs = koji_core::db::load_model_configs(&conn)?;

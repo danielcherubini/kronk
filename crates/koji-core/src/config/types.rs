@@ -47,10 +47,6 @@ fn is_btreemap_empty<K, V>(map: &BTreeMap<K, V>) -> bool {
     map.is_empty()
 }
 
-fn is_hashmap_empty<K, V>(map: &HashMap<K, V>) -> bool {
-    map.is_empty()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub general: General,
@@ -288,7 +284,6 @@ impl ModelConfig {
                 .and_then(|s| serde_json::from_str(s).ok()),
             profile: record.profile.clone(),
             quants: BTreeMap::new(), // Not stored in DB record
-            ..Default::default()
         }
     }
 }

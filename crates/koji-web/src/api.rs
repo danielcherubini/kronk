@@ -88,6 +88,25 @@ async fn sync_proxy_config(state: &AppState, new_config: koji_core::config::Conf
     }
 }
 
+/// Trigger the proxy to reload its model registry from the database.
+async fn trigger_proxy_reload(state: &AppState) -> Result<(), (StatusCode, serde_json::Value)> {
+    let url = format!("{}/koji/v1/system/reload-configs", state.proxy_base_url);
+    let resp = state.client.post(&url).send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            serde_json::json!({"error": format!("Failed to reach proxy: {}", e)}),
+        )
+    })?;
+
+    if !resp.status().is_success() {
+        return Err((
+            resp.status(),
+            serde_json::json!({"error": "Proxy failed to reload configurations"}),
+        ));
+    }
+    Ok(())
+}
+
 /// Body for structured config save.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct StructuredConfigBody {
@@ -599,7 +618,7 @@ pub async fn update_model(
 ) -> impl IntoResponse {
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state)?;
+        let (_cfg, config_dir) = load_config_from_state(&state)?;
 
         // Load existing from DB
         let open = koji_core::db::open(&config_dir).map_err(|e| {
@@ -640,13 +659,8 @@ pub async fn update_model(
         Ok(Ok(val)) => {
             // Since we only updated the DB, the proxy config (which is just General, Backends, etc.)
             // doesn't need syncing. But the proxy's runtime model registry DOES.
-            if let Some(ref proxy_config) = state_clone.proxy_config {
-                // We can't easily trigger a partial reload of model_configs in ProxyState
-                // from here without adding a method to ProxyState.
-                // For now, we'll rely on the fact that the proxy might reload on restart
-                // or we can implement a reload mechanism.
-                // Actually, the proxy's `model_configs` is updated by `load_model_configs`.
-                // We should probably tell the proxy to reload its model registry.
+            if let Err(e) = trigger_proxy_reload(&state_clone).await {
+                tracing::warn!("Failed to trigger proxy reload after update: {}", e.1);
             }
             Json(val).into_response()
         }
@@ -671,6 +685,7 @@ pub async fn create_model(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateModelBody>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (_, config_dir) = load_config_from_state(&state)?;
         let id = body.id.trim().to_string();
@@ -714,7 +729,12 @@ pub async fn create_model(
     })
     .await
     {
-        Ok(Ok(val)) => (StatusCode::CREATED, Json(val)).into_response(),
+        Ok(Ok(val)) => {
+            if let Err(e) = trigger_proxy_reload(&state_clone).await {
+                tracing::warn!("Failed to trigger proxy reload after create: {}", e.1);
+            }
+            (StatusCode::CREATED, Json(val)).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -736,6 +756,7 @@ pub async fn rename_model(
     Path(id): Path<String>,
     Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (_, config_dir) = load_config_from_state(&state)?;
 
@@ -809,7 +830,12 @@ pub async fn rename_model(
     })
     .await
     {
-        Ok(Ok(val)) => Json(val).into_response(),
+        Ok(Ok(val)) => {
+            if let Err(e) = trigger_proxy_reload(&state_clone).await {
+                tracing::warn!("Failed to trigger proxy reload after rename: {}", e.1);
+            }
+            Json(val).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -918,8 +944,10 @@ pub async fn delete_quant(
     })
     .await
     {
-        Ok(Ok((cfg, val))) => {
-            sync_proxy_config(&state_clone, cfg).await;
+        Ok(Ok((_cfg, val))) => {
+            if let Err(e) = trigger_proxy_reload(&state_clone).await {
+                tracing::warn!("Failed to trigger proxy reload after delete_quant: {}", e.1);
+            }
             Json(val).into_response()
         }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
@@ -936,6 +964,7 @@ pub async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
         let (cfg, config_dir) = load_config_from_state(&state)?;
 
@@ -1017,7 +1046,12 @@ pub async fn delete_model(
     })
     .await
     {
-        Ok(Ok(val)) => Json(val).into_response(),
+        Ok(Ok(val)) => {
+            if let Err(e) = trigger_proxy_reload(&state_clone).await {
+                tracing::warn!("Failed to trigger proxy reload after delete: {}", e.1);
+            }
+            Json(val).into_response()
+        }
         Ok(Err((status, body))) => (status, Json(body)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

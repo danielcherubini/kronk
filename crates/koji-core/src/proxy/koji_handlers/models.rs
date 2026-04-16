@@ -199,7 +199,7 @@ pub async fn handle_koji_unload_model(
 /// Returns rich metadata including context limits, modalities, and capabilities.
 pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let model_configs = state.model_configs.read().await;
-    let config = state.config.read().await;
+    let _config = state.config.read().await;
 
     let mut models: Vec<serde_json::Value> = Vec::new();
 
@@ -229,9 +229,8 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
             })
         });
 
-        // Conservative output limit: 1/16 of context window.
-        // Most models use far less output than their full context.
-        let output_limit = context_length.map(|ctx| ctx / 16);
+        // Output limit: 1/8 of context window, floored at 16K and capped at 32K.
+        let output_limit = context_length.map(|ctx| (ctx / 8).clamp(16384, 32768));
 
         // API id is the lowercased HF repo name (includes org prefix).
         // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "unsloth/qwen3.5-35b-a3b-gguf"
