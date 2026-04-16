@@ -20,9 +20,10 @@ build: build-frontend
 install: build-frontend
 	cargo install --path crates/koji-cli --force
 
-# Stop service, rebuild + reinstall, restart service
-update: build
+# Stop service, rebuild + reinstall (frontend + backend), restart service
+update: build-frontend
 	koji service stop || true
+	cargo build --release --workspace
 	cargo install --path crates/koji-cli --force
 	koji service start
 
