@@ -19,6 +19,11 @@ use self::quants_vision_form::ModelEditorQuantsVisionForm;
 use self::sampling_form::ModelEditorSamplingForm;
 use self::types::*;
 
+// Debug: log to browser console
+fn debug_log(msg: &str) {
+    web_sys::console::log_1(&msg.into());
+}
+
 // Helper to convert RwSignal to Signal for Modal
 fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
     let (read, _) = sig.split();
@@ -103,8 +108,11 @@ pub fn ModelEditor() -> impl IntoView {
 
     // Populate signals when resource loads
     Effect::new(move |_| {
+        debug_log("Effect triggered");
         if let Some(guard) = detail.get() {
+            debug_log(&format!("guard: {:?}", guard.is_some()));
             if let Some(d) = guard.take() {
+                debug_log(&format!("Got model detail: id={}, backend={}", d.id, d.backend));
                 backends.set(d.backends.clone());
                 original_id.set(d.id.clone());
 
@@ -220,7 +228,9 @@ pub fn ModelEditor() -> impl IntoView {
 
                 repo_commit_sha.set(d.repo_commit_sha.clone());
                 repo_pulled_at.set(d.repo_pulled_at.clone());
+                debug_log("About to set form_ready to true");
                 form_ready.set(true);
+                debug_log("form_ready set to true");
             }
         }
     });
@@ -617,7 +627,9 @@ pub fn ModelEditor() -> impl IntoView {
                 // Use form_ready as the stability gate, NOT form.get().
                 // form.get() changes on every keystroke, which would cause
                 // the entire layout to unmount/remount and lose input focus.
+                debug_log(&format!("Rendering check: form_ready={}", form_ready.get()));
                 form_ready.get().then(|| {
+                    debug_log("form_ready was true, rendering layout");
                     view! {
                         <div class="model-editor-layout">
                             // Side navigation
