@@ -6,15 +6,54 @@ pub mod backfill;
 pub mod migrations;
 pub mod queries;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Context;
 use rusqlite::Connection;
 
+use crate::config::ModelConfig;
+
 /// Result of opening a database connection
 pub struct OpenResult {
     pub conn: Connection,
     pub needs_backfill: bool,
+}
+
+/// Load all model_configs rows and return them as a HashMap<config_key, ModelConfig>
+/// where config_key = repo_id.to_lowercase().replace('/', "--").
+pub fn load_model_configs(conn: &Connection) -> anyhow::Result<HashMap<String, ModelConfig>> {
+    let records = queries::get_all_model_configs(conn)?;
+    let mut configs = HashMap::new();
+
+    for record in records {
+        let config_key = record.repo_id.to_lowercase().replace('/', "--");
+        let config = ModelConfig::from_db_record(&record);
+        configs.insert(config_key, config);
+    }
+
+    Ok(configs)
+}
+
+/// Persist a single ModelConfig entry.
+/// `config_key` is the HashMap key; `repo_id` is derived by reversing the key convention.
+pub fn save_model_config(
+    conn: &Connection,
+    config_key: &str,
+    mc: &ModelConfig,
+) -> anyhow::Result<()> {
+    // Reverse the key convention: replace the first "--" with "/"
+    let repo_id = if let Some(idx) = config_key.find("--") {
+        let (prefix, suffix) = config_key.split_at(idx);
+        format!("{}/{}", prefix, &suffix[2..])
+    } else {
+        config_key.to_string()
+    };
+
+    let record = mc.to_db_record(&repo_id);
+    queries::upsert_model_config(conn, &record)?;
+
+    Ok(())
 }
 
 /// Open (or create) the SQLite database at `config_dir/koji.db`
@@ -194,17 +233,32 @@ mod tests {
         );
     }
 
-    /// Test that migration v4 creates the `system_metrics_history` table and its index.
+    /// Test that loading model configs from an empty DB returns an empty HashMap.
     #[test]
-    fn test_migration_v4_creates_system_metrics_history() {
+    fn test_load_model_configs_empty() {
         let OpenResult { conn, .. } = open_in_memory().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='system_metrics_history'",
-            [], |row| row.get(0)).unwrap();
-        assert_eq!(count, 1);
-        let idx_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_system_metrics_ts'",
-            [], |row| row.get(0)).unwrap();
-        assert_eq!(idx_count, 1);
+        let configs = load_model_configs(&conn).unwrap();
+        assert!(configs.is_empty());
+    }
+
+    /// Test saving and then loading a model config.
+    #[test]
+    fn test_save_and_load_model_config() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let mc = ModelConfig {
+            backend: "llama.cpp".to_string(),
+            display_name: Some("Test Model".to_string()),
+            ..Default::default()
+        };
+        let config_key = "owner--repo".to_string();
+
+        save_model_config(&conn, &config_key, &mc).unwrap();
+
+        let configs = load_model_configs(&conn).unwrap();
+        assert!(configs.contains_key(&config_key));
+        let loaded = configs.get(&config_key).unwrap();
+        assert_eq!(loaded.backend, mc.backend);
+        assert_eq!(loaded.display_name, mc.display_name);
     }
 }

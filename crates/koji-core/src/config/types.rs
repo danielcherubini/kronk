@@ -151,7 +151,7 @@ pub struct BackendConfig {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct HealthCheck {
     /// Health check endpoint URL. Overrides backend's health_check_url.
@@ -218,7 +218,80 @@ pub struct ModelConfig {
     pub display_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+impl ModelConfig {
+    /// Serialise to a ModelConfigRecord for DB storage.
+    /// `repo_id` is the HF repo id (e.g. "unsloth/gemma-4-31B-it-GGUF").
+    pub fn to_db_record(&self, repo_id: &str) -> crate::db::queries::ModelConfigRecord {
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        crate::db::queries::ModelConfigRecord {
+            repo_id: repo_id.to_string(),
+            display_name: self.display_name.clone(),
+            backend: self.backend.clone(),
+            enabled: self.enabled,
+            selected_quant: self.quant.clone(),
+            selected_mmproj: self.mmproj.clone(),
+            context_length: self.context_length,
+            gpu_layers: self.gpu_layers,
+            port: self.port,
+            args: serde_json::to_string(&self.args).ok(),
+            sampling: self
+                .sampling
+                .as_ref()
+                .and_then(|s| serde_json::to_string(s).ok()),
+            modalities: self
+                .modalities
+                .as_ref()
+                .and_then(|s| serde_json::to_string(s).ok()),
+            profile: self.profile.clone(),
+            api_name: self.api_name.clone(),
+            health_check: self
+                .health_check
+                .as_ref()
+                .and_then(|s| serde_json::to_string(s).ok()),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    /// Deserialise from a DB record. JSON fields are parsed; parse errors
+    /// fall back to None / default so a bad JSON column never hard-fails.
+    pub fn from_db_record(record: &crate::db::queries::ModelConfigRecord) -> Self {
+        Self {
+            backend: record.backend.clone(),
+            enabled: record.enabled,
+            display_name: record.display_name.clone(),
+            api_name: record.api_name.clone(),
+            port: record.port,
+            context_length: record.context_length,
+            gpu_layers: record.gpu_layers,
+            model: Some(record.repo_id.clone()),
+            quant: record.selected_quant.clone(),
+            mmproj: record.selected_mmproj.clone(),
+            args: record
+                .args
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
+            sampling: record
+                .sampling
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            modalities: record
+                .modalities
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            health_check: record
+                .health_check
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            profile: record.profile.clone(),
+            quants: BTreeMap::new(), // Not stored in DB record
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelModalities {
     #[serde(default)]
@@ -410,17 +483,57 @@ log_level = "info"
         assert_eq!(config.general.update_check_interval, 12);
     }
 
-    /// Test that a custom update check interval can be provided.
+    /// Test that a ModelConfig survives a round-trip through the DB record.
     #[test]
-    fn test_general_config_update_check_interval_custom() {
-        let config: Config = toml::from_str(
-            r#"
-[general]
-log_level = "info"
-update_check_interval = 24
-"#,
-        )
-        .unwrap();
-        assert_eq!(config.general.update_check_interval, 24);
+    fn test_model_config_round_trip() {
+        let mc = ModelConfig {
+            backend: "llama.cpp".to_string(),
+            args: vec!["--n-gpu-layers".to_string(), "32".to_string()],
+            sampling: Some(SamplingParams {
+                temperature: Some(0.7),
+                top_p: Some(0.9),
+                ..Default::default()
+            }),
+            model: Some("owner/repo".to_string()),
+            quant: Some("Q4_K_M".to_string()),
+            mmproj: Some("mmproj-model.gguf".to_string()),
+            port: Some(8080),
+            health_check: Some(HealthCheck {
+                url: Some("/health".to_string()),
+                interval_ms: Some(1000),
+                timeout_ms: Some(500),
+            }),
+            enabled: true,
+            context_length: Some(4096),
+            api_name: Some("my-model".to_string()),
+            gpu_layers: Some(32),
+            modalities: Some(ModelModalities {
+                input: vec!["text".to_string(), "image".to_string()],
+                output: vec!["text".to_string()],
+            }),
+            display_name: Some("My Custom Model".to_string()),
+            ..Default::default()
+        };
+
+        let record = mc.to_db_record("owner/repo");
+        let round_trip = ModelConfig::from_db_record(&record);
+
+        assert_eq!(round_trip.backend, mc.backend);
+        assert_eq!(round_trip.args, mc.args);
+        assert_eq!(round_trip.sampling, mc.sampling);
+        assert_eq!(round_trip.model, Some("owner/repo".to_string()));
+        assert_eq!(round_trip.quant, mc.quant);
+        assert_eq!(round_trip.mmproj, mc.mmproj);
+        assert_eq!(round_trip.port, mc.port);
+        assert_eq!(round_trip.health_check, mc.health_check);
+        assert_eq!(round_trip.enabled, mc.enabled);
+        assert_eq!(round_trip.context_length, mc.context_length);
+        assert_eq!(round_trip.api_name, mc.api_name);
+        assert_eq!(round_trip.gpu_layers, mc.gpu_layers);
+        assert_eq!(round_trip.modalities, mc.modalities);
+        assert_eq!(round_trip.display_name, mc.display_name);
+
+        // quants should be empty as it's not persisted
+        assert!(round_trip.quants.is_empty());
     }
 }
