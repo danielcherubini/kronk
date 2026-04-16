@@ -168,6 +168,8 @@ fn spawn_download_job(
                     job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
                     job.error = Some(format!("Failed to get hf-hub API client: {}", e));
                 }
+                poll_handle.abort();
+                in_flight_clone.lock().await.remove(&dest_path);
                 return;
             }
         };
@@ -213,6 +215,7 @@ fn spawn_download_job(
                     job.error = Some(format!("Download failed: {}", e));
                 }
                 poll_handle.abort();
+                in_flight_clone.lock().await.remove(&dest_path);
                 return;
             }
         };
@@ -227,6 +230,7 @@ fn spawn_download_job(
                     job.error = Some(format!("Failed to get file size: {}", e));
                 }
                 poll_handle.abort();
+                in_flight_clone.lock().await.remove(&dest_path);
                 return;
             }
         };

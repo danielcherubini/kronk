@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.35.12] - 2026-04-16
+
+### Fixed
+
+- **Pull jobs can be retried after a failed download.** The in-flight
+  dedup guard (which prevents two concurrent jobs from clobbering the
+  same temp file) was not being released on the `hf_api`, download, and
+  metadata error paths. A failed pull left the destination path
+  registered forever, so every subsequent retry of the same filename
+  failed instantly with `Another download of 'X' is already in
+  progress` and no log line beyond `Job transitioned to Running`.
+  The three error paths now release the lock (and abort the size-poll
+  task) before returning, matching the happy-path cleanup.
+
 ## [1.35.11] - 2026-04-16
 
 ### Fixed
