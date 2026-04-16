@@ -254,7 +254,7 @@ fn spawn_download_job(
         // Verify the file while it is still in the HF cache, then move/copy it
         // to the destination only if verification passes. On failure the cache
         // file is deleted so no corrupt data lingers.
-        let verified = run_verification(
+        let outcome = run_verification(
             Arc::clone(&pull_jobs_arc),
             state_clone.db_dir.clone(),
             job_id_clone.clone(),
@@ -268,8 +268,9 @@ fn spawn_download_job(
         .await;
 
         // Only register the model in config/card once the file is at its
-        // destination and known-good.
-        if verified {
+        // destination and known-good. setup_model_after_pull creates the
+        // matching model_configs row, which the model_files row below FKs to.
+        if outcome.passed {
             setup_model_after_pull(
                 Arc::clone(&state_clone),
                 &repo_id_clone,
@@ -277,6 +278,35 @@ fn spawn_download_job(
                 &dest_dir,
             )
             .await;
+
+            // Persist the hash + verification state to model_files now that
+            // the parent model_configs row exists.
+            if let Some(dir) = state_clone.db_dir.as_ref() {
+                if let Ok(open_res) = crate::db::open(dir) {
+                    let conn = open_res.conn;
+                    if let Ok(Some(rec)) = crate::db::queries::get_model_config_by_repo_id(
+                        &conn,
+                        &repo_id_clone,
+                    ) {
+                        let _ = crate::db::queries::upsert_model_file(
+                            &conn,
+                            rec.id,
+                            &repo_id_clone,
+                            &filename_clone,
+                            spec_clone.quant.as_deref(),
+                            outcome.expected_sha.as_deref(),
+                            Some(bytes as i64),
+                        );
+                        let _ = crate::db::queries::update_verification(
+                            &conn,
+                            rec.id,
+                            &filename_clone,
+                            outcome.ok,
+                            outcome.err.as_deref(),
+                        );
+                    }
+                }
+            }
         }
 
         // Release the in-flight lock after setup and verification complete
@@ -285,27 +315,37 @@ fn spawn_download_job(
     });
 }
 
+/// Outcome of a verification pass. Carries the hash info so the caller can
+/// persist it to `model_files` *after* `setup_model_after_pull` has created
+/// the matching `model_configs` row (the DB FK requires it to exist).
+pub(crate) struct VerificationOutcome {
+    pub passed: bool,
+    pub expected_sha: Option<String>,
+    pub ok: Option<bool>,
+    pub err: Option<String>,
+}
+
 /// Run the post-download verification phase for a pull job.
 ///
 /// Hashes the file **in the HF cache** (before it is moved), then:
 /// - Pass: canonicalise the cache path to the real blob, rename/copy it to
-///   `dest_path`, and delete the cache copy.  Returns `true`.
+///   `dest_path`, and delete the cache copy. Returns `passed = true`.
 /// - Fail / hash error: delete the cache copy so no corrupt data lingers.
-///   Returns `false`.
+///   Returns `passed = false`.
 ///
 /// `None` upstream hash is treated as a pass (HF had no LFS SHA to compare).
 #[allow(clippy::too_many_arguments)]
 async fn run_verification(
     pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
-    db_dir: Option<std::path::PathBuf>,
+    _db_dir: Option<std::path::PathBuf>,
     job_id: String,
     repo_id: String,
     filename: String,
-    quant_hint: Option<String>,
+    _quant_hint: Option<String>,
     cached_path: std::path::PathBuf,
     dest_path: std::path::PathBuf,
     bytes: u64,
-) -> bool {
+) -> VerificationOutcome {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     // Step 1: fetch upstream LFS hash (best-effort).
@@ -355,20 +395,6 @@ async fn run_verification(
     let hash_progress = Arc::clone(&progress);
     let hash_src = cached_path.clone(); // hash the cache file, not dest
     let hash_expected = expected_sha.clone();
-    let hash_repo = repo_id.clone();
-    let hash_filename = filename.clone();
-    let hash_quant = quant_hint.clone();
-    let hash_db_dir = db_dir.clone();
-
-    // Look up model_id from repo_id synchronously before the blocking task
-    let model_id: Option<i64> = db_dir.as_ref().and_then(|dir| {
-        crate::db::open(dir).ok().and_then(|open| {
-            crate::db::queries::get_model_config_by_repo_id(&open.conn, &repo_id)
-                .ok()
-                .flatten()
-                .map(|r| r.id)
-        })
-    });
 
     let blocking_result = tokio::task::spawn_blocking(move || -> (Option<bool>, Option<String>) {
         let actual = match crate::models::verify::sha256_file(&hash_src, |n| {
@@ -381,49 +407,22 @@ async fn run_verification(
             }
         };
 
-        let (ok, err): (Option<bool>, Option<String>) =
-            match (hash_expected.as_deref(), actual.as_deref()) {
-                (None, _) => (None, None),
-                (Some(_), None) => (
-                    Some(false),
-                    Some("hash error: failed to read file".to_string()),
-                ),
-                (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
-                (Some(exp), Some(act)) => (
-                    Some(false),
-                    Some(format!(
-                        "hash mismatch: expected {} got {}",
-                        &exp.chars().take(10).collect::<String>(),
-                        &act.chars().take(10).collect::<String>()
-                    )),
-                ),
-            };
-
-        if let Some(dir) = hash_db_dir.as_ref() {
-            if let Ok(open_res) = crate::db::open(dir) {
-                let conn = open_res.conn;
-                if let Some(model_id) = model_id {
-                    let _ = crate::db::queries::upsert_model_file(
-                        &conn,
-                        model_id,
-                        &hash_repo,
-                        &hash_filename,
-                        hash_quant.as_deref(),
-                        hash_expected.as_deref(),
-                        Some(bytes as i64),
-                    );
-                    let _ = crate::db::queries::update_verification(
-                        &conn,
-                        model_id,
-                        &hash_filename,
-                        ok,
-                        err.as_deref(),
-                    );
-                }
-            }
+        match (hash_expected.as_deref(), actual.as_deref()) {
+            (None, _) => (None, None),
+            (Some(_), None) => (
+                Some(false),
+                Some("hash error: failed to read file".to_string()),
+            ),
+            (Some(exp), Some(act)) if act.eq_ignore_ascii_case(exp) => (Some(true), None),
+            (Some(exp), Some(act)) => (
+                Some(false),
+                Some(format!(
+                    "hash mismatch: expected {} got {}",
+                    &exp.chars().take(10).collect::<String>(),
+                    &act.chars().take(10).collect::<String>()
+                )),
+            ),
         }
-
-        (ok, err)
     })
     .await;
 
@@ -472,7 +471,12 @@ async fn run_verification(
                             job.completed_at = Some(Instant::now());
                             job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
                         }
-                        return false;
+                        return VerificationOutcome {
+                            passed: false,
+                            expected_sha: expected_sha.clone(),
+                            ok,
+                            err,
+                        };
                     }
                 }
             }
@@ -491,7 +495,12 @@ async fn run_verification(
             job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
             tracing::info!(job_id = %job_id, verified_ok = ?ok, "Job completed");
         }
-        true
+        VerificationOutcome {
+            passed: true,
+            expected_sha,
+            ok,
+            err,
+        }
     } else {
         // Verification failed — delete the corrupt/mismatched cache file so it
         // cannot be mistaken for a good download on the next attempt.
@@ -509,12 +518,17 @@ async fn run_verification(
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = err.clone();
-            job.error = err;
+            job.error = err.clone();
             job.completed_at = Some(Instant::now());
             job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
             tracing::error!(job_id = %job_id, "Job failed after verification");
         }
-        false
+        VerificationOutcome {
+            passed: false,
+            expected_sha,
+            ok,
+            err,
+        }
     }
 }
 
@@ -605,9 +619,10 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         .find(|(_, m)| m.model.as_deref() == Some(repo_id))
         .map(|(k, _)| k.clone());
 
-    // For mmproj files: don't create or modify a model entry. The mmproj is
-    // a sibling file that gets attached to an existing model only when the
-    // user explicitly enables it via the editor's vision toggle.
+    // For mmproj files: if the parent model config already exists, turn on
+    // vision by wiring the mmproj filename and adding "image" to the input
+    // modalities. Downloading an mmproj is an explicit user choice, so
+    // enabling vision automatically saves an extra click in the editor.
     let is_mmproj = matches!(
         crate::config::QuantKind::from_filename(&spec.filename),
         crate::config::QuantKind::Mmproj
@@ -662,6 +677,33 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     // For mmproj, still save the card.
     let _ = std::fs::create_dir_all(&configs_dir);
     let _ = card.save(&card_path);
+
+    // Auto-enable vision on the parent model if it already exists.
+    if let Some(key) = existing_key {
+        if let Some(mc) = model_configs.get_mut(&key) {
+            mc.mmproj = Some(spec.filename.clone());
+            let modalities = mc.modalities.get_or_insert_with(Default::default);
+            if !modalities
+                .input
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("image"))
+            {
+                modalities.input.push("image".to_string());
+            }
+            if !modalities
+                .input
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("text"))
+            {
+                modalities.input.push("text".to_string());
+            }
+            if modalities.output.is_empty() {
+                modalities.output.push("text".to_string());
+            }
+        }
+        return Some(key);
+    }
+
     None
 }
 
