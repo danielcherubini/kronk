@@ -237,17 +237,18 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     // Use Config::load_from() which creates the default config file
     let mut config = koji_core::config::Config::load_from(temp_dir.path())
         .expect("Failed to load/create default config");
-    // Insert a dummy server first
-    config.models.insert(
-        "test_server".to_string(),
-        koji_core::config::ModelConfig {
+    // Insert the dummy server into the DB (cmd_server_edit loads model configs from DB)
+    let db_dir = koji_core::config::Config::config_dir().expect("Failed to get config dir");
+    {
+        let koji_core::db::OpenResult { conn, .. } =
+            koji_core::db::open(&db_dir).expect("Failed to open DB");
+        let dummy_model = koji_core::config::ModelConfig {
             backend: "test".to_string(),
             args: vec![],
             profile: None,
             sampling: None,
             model: None,
             quant: None,
-
             mmproj: None,
             port: None,
             health_check: None,
@@ -258,8 +259,10 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             quants: std::collections::BTreeMap::new(),
             modalities: None,
             display_name: None,
-        },
-    );
+        };
+        koji_core::db::save_model_config(&conn, "test_server", &dummy_model)
+            .expect("Failed to save model config to DB");
+    }
     // Need a matching backend
     config.backends.insert(
         "test".to_string(),
@@ -282,6 +285,13 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
         ],
     )
     .await;
+    // Cleanup: remove the test model from the DB
+    {
+        let koji_core::db::OpenResult { conn, .. } =
+            koji_core::db::open(&db_dir).expect("Failed to open DB for cleanup");
+        koji_core::db::queries::delete_model_config(&conn, "test_server").ok();
+    }
+
     // This should succeed since "coding" is a valid profile
     assert!(result.is_ok(), "Expected ok, got: {:?}", result.err());
 }

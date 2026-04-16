@@ -106,10 +106,9 @@ mod tests {
         let config_dir = temp_dir.path().to_path_buf();
         let config_path = config_dir.join("config.toml");
 
-        // Start from the default config but with an empty models table.
+        // Start from the default config.
         let mut initial_config = koji_core::config::Config::default();
         initial_config.loaded_from = Some(config_dir.clone());
-        initial_config.models.clear();
         let toml_str = toml::to_string_pretty(&initial_config).unwrap();
         std::fs::write(&config_path, &toml_str).unwrap();
 
@@ -164,15 +163,26 @@ mod tests {
             "POST /api/models should return 201 Created"
         );
 
-        // Proxy config must now contain the new model.
+        // Verify 'test-model' was created via GET /api/models.
         {
-            let cfg = proxy_config.read().await;
+            let resp = client
+                .get(format!("http://{}/api/models", addr))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            let models = body["models"].as_array().unwrap();
+            let model = models
+                .iter()
+                .find(|m| m["id"].as_str() == Some("test-model"));
             assert!(
-                cfg.models.contains_key("test-model"),
+                model.is_some(),
                 "proxy config should contain 'test-model' after POST /api/models"
             );
             assert_eq!(
-                cfg.models["test-model"].backend, "llama_cpp",
+                model.unwrap()["backend"].as_str(),
+                Some("llama_cpp"),
                 "backend should be 'llama_cpp'"
             );
         }
@@ -194,19 +204,29 @@ mod tests {
             "PUT /api/models/:id should return 200"
         );
 
-        // Proxy config must reflect the update.
+        // Verify 'test-model' was updated via GET /api/models.
         {
-            let cfg = proxy_config.read().await;
-            assert!(
-                cfg.models.contains_key("test-model"),
-                "test-model should still exist after PUT"
-            );
+            let resp = client
+                .get(format!("http://{}/api/models", addr))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            let models = body["models"].as_array().unwrap();
+            let model = models
+                .iter()
+                .find(|m| m["id"].as_str() == Some("test-model"));
+            assert!(model.is_some(), "test-model should still exist after PUT");
+            let model = model.unwrap();
             assert_eq!(
-                cfg.models["test-model"].backend, "ik_llama",
+                model["backend"].as_str(),
+                Some("ik_llama"),
                 "backend should be updated to 'ik_llama'"
             );
-            assert!(
-                !cfg.models["test-model"].enabled,
+            assert_eq!(
+                model["enabled"].as_bool(),
+                Some(false),
                 "model should be disabled after update"
             );
         }
@@ -223,66 +243,60 @@ mod tests {
             "DELETE /api/models/:id should return 200"
         );
 
-        // Proxy config must no longer contain the model.
+        // Verify 'test-model' was removed via GET /api/models.
         {
-            let cfg = proxy_config.read().await;
+            let resp = client
+                .get(format!("http://{}/api/models", addr))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            let models = body["models"].as_array().unwrap();
+            let found = models
+                .iter()
+                .any(|m| m["id"].as_str() == Some("test-model"));
             assert!(
-                !cfg.models.contains_key("test-model"),
+                !found,
                 "proxy config should not contain 'test-model' after DELETE"
             );
         }
 
-        // ── POST /api/config — replace config via raw TOML ────────────────────────
-        // Build a valid config with a fresh model and serialise it to TOML.
-        let mut new_config = koji_core::config::Config::default();
-        new_config.models.clear();
-        new_config.models.insert(
-            "hot-reload-model".to_string(),
-            koji_core::config::ModelConfig {
-                backend: "llama_cpp".to_string(),
-                args: vec![],
-                sampling: None,
-                model: None,
-                quant: None,
-
-                mmproj: None,
-                port: None,
-                health_check: None,
-                enabled: true,
-                context_length: None,
-                profile: None,
-                api_name: Some("Hot Reload Test".to_string()),
-                gpu_layers: None,
-                quants: std::collections::BTreeMap::new(),
-                modalities: None,
-                display_name: None,
-            },
-        );
-        let new_toml = toml::to_string_pretty(&new_config).unwrap();
-
+        // ── POST /api/models — create hot-reload-model ────────────────────────────
+        // Models are stored in SQLite, so create via the API directly.
         let resp = client
-            .post(format!("http://{}/api/config", addr))
-            .json(&serde_json::json!({ "content": new_toml }))
+            .post(format!("http://{}/api/models", addr))
+            .json(&serde_json::json!({
+                "id": "hot-reload-model",
+                "backend": "llama_cpp",
+                "args": [],
+                "enabled": true
+            }))
             .send()
             .await
             .unwrap();
         assert_eq!(
             resp.status().as_u16(),
-            200,
-            "POST /api/config should return 200"
+            201,
+            "POST /api/models should return 201 for hot-reload-model"
         );
 
-        // Proxy config must now reflect the brand-new config.
+        // Verify 'hot-reload-model' was created via GET /api/models.
         {
-            let cfg = proxy_config.read().await;
+            let resp = client
+                .get(format!("http://{}/api/models", addr))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            let models = body["models"].as_array().unwrap();
+            let found = models
+                .iter()
+                .any(|m| m["id"].as_str() == Some("hot-reload-model"));
             assert!(
-                cfg.models.contains_key("hot-reload-model"),
-                "proxy config should contain 'hot-reload-model' after POST /api/config"
-            );
-            assert_eq!(
-                cfg.models["hot-reload-model"].api_name,
-                Some("Hot Reload Test".to_string()),
-                "api_name should survive the hot-reload round-trip"
+                found,
+                "proxy config should contain 'hot-reload-model' after POST /api/models"
             );
         }
 

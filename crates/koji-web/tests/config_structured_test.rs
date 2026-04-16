@@ -119,7 +119,7 @@ async fn test_get_structured_config_returns_valid_json() {
     let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(parsed.get("general").is_some());
     assert!(parsed.get("backends").is_some());
-    assert!(parsed.get("models").is_some());
+    // models are stored in SQLite and not included in the structured config response
     assert!(parsed.get("supervisor").is_some());
     assert!(parsed.get("sampling_templates").is_some());
     assert!(parsed.get("proxy").is_some());

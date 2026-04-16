@@ -12,20 +12,22 @@ impl ProxyState {
     /// between SSE samples.
     pub async fn collect_model_statuses(&self) -> Vec<crate::gpu::ModelStatus> {
         let config = self.config.read().await;
+        let model_configs = self.model_configs.read().await;
         let runtime = self.models.read().await;
-        let mut out: Vec<crate::gpu::ModelStatus> = Vec::with_capacity(config.models.len());
-        for (model_id, model_cfg) in &config.models {
+        let mut out: Vec<crate::gpu::ModelStatus> = Vec::with_capacity(model_configs.len());
+        for (model_id, model_cfg) in model_configs.iter() {
             // A model is "loaded" iff at least one of its server entries
             // in `state.models` is in the Ready state. Mirrors the logic
             // used by build_status_response().
-            let loaded = config.resolve_servers_for_model(model_id).into_iter().any(
-                |(server_name, _, _)| {
+            let loaded = config
+                .resolve_servers_for_model(&model_configs, model_id)
+                .into_iter()
+                .any(|(server_name, _, _)| {
                     runtime
                         .get(&server_name)
                         .map(|s| s.is_ready())
                         .unwrap_or(false)
-                },
-            );
+                });
             out.push(crate::gpu::ModelStatus {
                 id: model_id.clone(),
                 api_name: model_cfg.api_name.clone(),
@@ -50,11 +52,12 @@ impl ProxyState {
         let sys_metrics = self.system_metrics.read().await.clone();
 
         let config = self.config.read().await;
+        let model_configs = self.model_configs.read().await;
         let idle_timeout_secs = config.proxy.idle_timeout_secs;
         let models = self.models.read().await;
         let mut models_obj = serde_json::Map::new();
 
-        for (model_name, model_config) in &config.models {
+        for (model_name, model_config) in model_configs.iter() {
             let backend_path = match config.backends.get(&model_config.backend) {
                 Some(b) => b.path.clone(),
                 None => continue,
@@ -203,26 +206,15 @@ mod tests {
     /// corresponding `ModelConfig.backend` value.
     #[tokio::test]
     async fn test_collect_model_statuses_reports_idle_when_no_runtime_entry() {
-        let mut config = Config::default();
-        // Clear default fixtures so the test only sees the models we add.
-        config.models.clear();
-        config.backends.insert(
-            "vllm".to_string(),
-            BackendConfig {
-                path: None,
-                default_args: vec![],
-                health_check_url: None,
-                version: None,
-            },
-        );
-        config
-            .models
-            .insert("zephyr".to_string(), make_model_config("llama_cpp"));
-        config
-            .models
-            .insert("alpha".to_string(), make_model_config("vllm"));
-
+        let config = Config::default();
         let state = ProxyState::new(config, None);
+
+        // Populate model_configs
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert("zephyr".to_string(), make_model_config("llama_cpp"));
+            mc.insert("alpha".to_string(), make_model_config("vllm"));
+        }
 
         // Sanity check: no runtime entries.
         assert!(state.models.read().await.is_empty());
@@ -263,8 +255,7 @@ mod tests {
         use std::time::{Instant, SystemTime};
 
         let mut config = Config::default();
-        // Clear default fixtures so the test only sees the models we add.
-        config.models.clear();
+        // Add backends so resolve_servers_for_model can match models.
         config.backends.insert(
             "vllm".to_string(),
             BackendConfig {
@@ -274,14 +265,23 @@ mod tests {
                 version: None,
             },
         );
-        config
-            .models
-            .insert("zephyr".to_string(), make_model_config("llama_cpp"));
-        config
-            .models
-            .insert("alpha".to_string(), make_model_config("vllm"));
-
+        config.backends.insert(
+            "llama_cpp".to_string(),
+            BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
         let state = ProxyState::new(config, None);
+
+        // Populate model_configs
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert("zephyr".to_string(), make_model_config("llama_cpp"));
+            mc.insert("alpha".to_string(), make_model_config("vllm"));
+        }
 
         // Insert a Ready entry for "alpha" under the server name that
         // `resolve_servers_for_model("alpha")` will return — the config key
@@ -342,14 +342,14 @@ mod tests {
         use std::sync::Arc;
         use std::time::Instant;
 
-        let mut config = Config::default();
-        // Clear default fixtures so the test only sees the model we add.
-        config.models.clear();
-        config
-            .models
-            .insert("alpha".to_string(), make_model_config("llama_cpp"));
-
+        let config = Config::default();
         let state = ProxyState::new(config, None);
+
+        // Populate model_configs
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert("alpha".to_string(), make_model_config("llama_cpp"));
+        }
 
         // The server name `resolve_servers_for_model("alpha")` returns is
         // the config key itself, since `make_model_config` leaves
