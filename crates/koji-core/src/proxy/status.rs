@@ -88,6 +88,8 @@ impl ProxyState {
                         .unwrap_or(0);
 
                     serde_json::json!({
+                        "id": model_config.db_id,
+                        "display_name": model_config.display_name,
                         "backend": model_config.backend,
                         "backend_path": backend_path,
                         "model": model_config.model,
@@ -108,6 +110,8 @@ impl ProxyState {
                     ..
                 }) => {
                     serde_json::json!({
+                        "id": model_config.db_id,
+                        "display_name": model_config.display_name,
                         "backend": model_config.backend,
                         "backend_path": backend_path,
                         "model": model_config.model,
@@ -126,6 +130,8 @@ impl ProxyState {
                 _ => {
                     // Not loaded or failed
                     serde_json::json!({
+                        "id": model_config.db_id,
+                        "display_name": model_config.display_name,
                         "backend": model_config.backend,
                         "backend_path": backend_path,
                         "model": model_config.model,
