@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "koji"
-version = "1.34.0"
+version = "1.35.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "koji-core"
-version = "1.34.0"
+version = "1.35.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1937,7 +1937,7 @@ dependencies = [
 
 [[package]]
 name = "koji-mock"
-version = "1.34.0"
+version = "1.35.1"
 dependencies = [
  "tokio",
  "tracing",
@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "koji-web"
-version = "1.34.0"
+version = "1.35.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1962,6 +1962,7 @@ dependencies = [
  "leptos_router",
  "mime_guess",
  "reqwest 0.12.28",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
