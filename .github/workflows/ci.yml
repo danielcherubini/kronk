@@ -52,10 +52,10 @@ jobs:
         run: cargo test --package koji-web --features ssr -- --nocapture
 
       - name: Clippy (workspace)
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Clippy (koji-web SSR)
-        run: cargo clippy --package koji-web --features ssr -- -D warnings
+        run: cargo clippy --package koji-web --features ssr --all-targets -- -D warnings
 
       - name: Format check
         run: cargo fmt --all --check

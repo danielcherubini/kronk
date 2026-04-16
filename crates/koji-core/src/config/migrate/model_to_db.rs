@@ -79,8 +79,10 @@ model2 = { backend = "llama_cpp", enabled = false }
 "#;
         fs::write(&config_path, toml_content).unwrap();
 
-        let mut config = Config::default();
-        config.loaded_from = Some(temp_dir.path().to_path_buf());
+        let mut config = Config {
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
 
         let OpenResult { conn, .. } = open_in_memory().unwrap();
         let migrated = migrate_models_to_db(&conn, &mut config).unwrap();
@@ -110,8 +112,10 @@ model1 = { backend = "llama_cpp", enabled = true }
 "#;
         fs::write(&config_path, toml_content).unwrap();
 
-        let mut config = Config::default();
-        config.loaded_from = Some(temp_dir.path().to_path_buf());
+        let mut config = Config {
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
 
         let OpenResult { conn, .. } = open_in_memory().unwrap();
 
@@ -142,8 +146,10 @@ log_level = "info"
 "#;
         fs::write(&config_path, toml_content).unwrap();
 
-        let mut config = Config::default();
-        config.loaded_from = Some(temp_dir.path().to_path_buf());
+        let mut config = Config {
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
 
         let OpenResult { conn, .. } = open_in_memory().unwrap();
         let migrated = migrate_models_to_db(&conn, &mut config).unwrap();

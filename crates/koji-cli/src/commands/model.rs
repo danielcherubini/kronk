@@ -1784,8 +1784,10 @@ mod tests {
 
     async fn setup_test_env() -> (tempfile::TempDir, Config, OpenResult) {
         let dir = tempdir().unwrap();
-        let mut config = Config::default();
-        config.loaded_from = Some(dir.path().to_path_buf());
+        let config = Config {
+            loaded_from: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
 
         // Create models dir
         let models_dir = config.models_dir().unwrap();
@@ -1802,7 +1804,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_adds_new_files() {
-        let (dir, config, open_res) = setup_test_env().await;
+        let (_dir, config, open_res) = setup_test_env().await;
         let conn = &open_res.conn;
 
         // Create a model file on disk
@@ -1830,7 +1832,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_removes_missing_files() {
-        let (dir, config, open_res) = setup_test_env().await;
+        let (_dir, config, open_res) = setup_test_env().await;
         let conn = &open_res.conn;
 
         let repo_id = "test/model";
@@ -1882,7 +1884,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_removes_ghost_configs() {
-        let (dir, config, open_res) = setup_test_env().await;
+        let (_dir, config, open_res) = setup_test_env().await;
         let conn = &open_res.conn;
 
         let repo_id = "ghost/model";
@@ -1920,7 +1922,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_empty_dir_removes_everything() {
-        let (dir, config, open_res) = setup_test_env().await;
+        let (_dir, config, open_res) = setup_test_env().await;
         let conn = &open_res.conn;
 
         // Populate DB with some garbage (let DB assign IDs via AUTOINCREMENT)

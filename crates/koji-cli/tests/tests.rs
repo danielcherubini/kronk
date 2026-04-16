@@ -182,8 +182,10 @@ use koji::{cmd_server_add, cmd_server_edit};
 #[tokio::test]
 async fn test_cmd_server_add_nonexistent_model_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut config = koji_core::config::Config::default();
-    config.loaded_from = Some(temp_dir.path().to_path_buf());
+    let config = koji_core::config::Config {
+        loaded_from: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
     let result: anyhow::Result<()> = cmd_server_add(
         &config,
         "test_server",
@@ -208,8 +210,10 @@ async fn test_cmd_server_add_nonexistent_model_errors() {
 #[tokio::test]
 async fn test_cmd_server_edit_nonexistent_server_errors() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut config = koji_core::config::Config::default();
-    config.loaded_from = Some(temp_dir.path().to_path_buf());
+    let mut config = koji_core::config::Config {
+        loaded_from: Some(temp_dir.path().to_path_buf()),
+        ..Default::default()
+    };
     let result: anyhow::Result<()> = cmd_server_edit(
         &mut config,
         "nonexistent",
@@ -242,7 +246,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     let db_dir = temp_dir.path();
     {
         let koji_core::db::OpenResult { conn, .. } =
-            koji_core::db::open(&db_dir).expect("Failed to open DB");
+            koji_core::db::open(db_dir).expect("Failed to open DB");
         let dummy_model = koji_core::config::ModelConfig {
             backend: "test".to_string(),
             args: vec![],
@@ -290,7 +294,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
     // Cleanup: remove the test model from the DB
     {
         let koji_core::db::OpenResult { conn, .. } =
-            koji_core::db::open(&db_dir).expect("Failed to open DB for cleanup");
+            koji_core::db::open(db_dir).expect("Failed to open DB for cleanup");
         // Look up model_id by repo_id for cleanup
         if let Some(record) =
             koji_core::db::queries::get_model_config_by_repo_id(&conn, "test_server")

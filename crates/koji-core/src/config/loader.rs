@@ -246,8 +246,6 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ModelConfig;
-    use std::collections::BTreeMap;
 
     #[test]
     fn normalize_migrates_flat_backend_default_args() {

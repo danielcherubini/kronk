@@ -734,7 +734,7 @@ mod tests {
         for line in sample.lines() {
             if let Some(pos) = line.find("CUDA Version:") {
                 let after = &line[pos + 13..];
-                if let Some(v) = after.trim().split_whitespace().next() {
+                if let Some(v) = after.split_whitespace().next() {
                     if !v.is_empty() {
                         version = Some(v.to_string());
                     }

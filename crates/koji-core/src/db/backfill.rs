@@ -447,16 +447,18 @@ installed_at = 1700000000
     /// those rows and wire `selected_mmproj` for vision models.
     #[test]
     fn test_repair_orphaned_model_files_rebuilds_from_disk() {
-        use crate::db::queries::{
-            get_model_files, upsert_model_config, ModelConfigRecord,
-        };
+        use crate::db::queries::{get_model_files, upsert_model_config, ModelConfigRecord};
 
         let tmp = tempfile::tempdir().unwrap();
         let models_dir = tmp.path().join("models");
         let repo_dir = models_dir.join("unsloth").join("Qwen3.6-35B-A3B-GGUF");
         std::fs::create_dir_all(&repo_dir).unwrap();
 
-        std::fs::write(repo_dir.join("Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"), b"fake-gguf-1").unwrap();
+        std::fs::write(
+            repo_dir.join("Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"),
+            b"fake-gguf-1",
+        )
+        .unwrap();
         std::fs::write(repo_dir.join("mmproj-F16.gguf"), b"fake-mmproj").unwrap();
 
         let OpenResult { conn, .. } = open_in_memory().unwrap();

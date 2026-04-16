@@ -610,6 +610,142 @@ async fn configure_cmake(
     }
 }
 
+/// Run CMake build step with parallel jobs.
+async fn build_cmake(build_output: &Path, progress: Option<&Arc<dyn ProgressSink>>) -> Result<()> {
+    let num_jobs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    emit(
+        progress,
+        format!(
+            "Building with {} parallel jobs (this may take several minutes)...",
+            num_jobs
+        ),
+    );
+
+    // On Windows, nvcc requires cl.exe to be on PATH (it's the CUDA host
+    // compiler). vcvarsall.bat was sourced during configure, but each
+    // Command::new() spawns a fresh process that doesn't inherit that
+    // environment. Wrap the build step in the same .bat-file approach.
+    #[cfg(target_os = "windows")]
+    {
+        let cmake_build_cmd = format!(
+            "cmake --build \"{}\" --config Release -j {}",
+            build_output.to_string_lossy(),
+            num_jobs
+        );
+        let llvm_path_line = match find_llvm_bin() {
+            Some(llvm_bin) => format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy()),
+            None => String::new(),
+        };
+        let bat_contents = match find_vcvarsall() {
+            Some(vcvarsall) => format!(
+                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
+                llvm_path = llvm_path_line,
+                vcvarsall = vcvarsall.to_string_lossy(),
+                cmake = cmake_build_cmd,
+            ),
+            None => format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_build_cmd),
+        };
+        let bat_path = build_output.join("koji_cmake_build.bat");
+        std::fs::write(&bat_path, &bat_contents)
+            .with_context(|| format!("Failed to write build bat file: {:?}", bat_path))?;
+        let status = tokio::process::Command::new("cmd")
+            .args(["/c", &bat_path.to_string_lossy()])
+            .status()
+            .await?;
+        if !status.success() {
+            return Err(anyhow!("Build failed. Check the output above for errors."));
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = tokio::process::Command::new("cmake")
+            .args([
+                "--build",
+                &build_output.to_string_lossy(),
+                "--config",
+                "Release",
+                "-j",
+                &num_jobs.to_string(),
+            ])
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(anyhow!("Build failed. Check the output above for errors."));
+        }
+
+        Ok(())
+    }
+}
+
+/// Copy the built binary (and shared libs) to the target directory.
+async fn install_binary(
+    build_output: &Path,
+    options: &InstallOptions,
+    progress: Option<&Arc<dyn ProgressSink>>,
+) -> Result<PathBuf> {
+    emit(progress, "Installing binary...");
+    let binary_src = find_backend_binary(build_output)?;
+
+    std::fs::create_dir_all(&options.target_dir)?;
+    let binary_name = binary_src
+        .file_name()
+        .ok_or_else(|| anyhow!("Could not determine binary filename"))?;
+    let binary_dest = options.target_dir.join(binary_name);
+
+    // Copy binary
+    std::fs::copy(&binary_src, &binary_dest)?;
+
+    // Set executable permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&binary_dest)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&binary_dest, perms)?;
+    }
+
+    // Copy shared libraries so the backend can find them at runtime.
+    // On Unix: .so / .dylib files; on Windows: .dll files (e.g. ggml-cuda.dll).
+    fn copy_shared_libs(src: &std::path::Path, dest: &std::path::Path) {
+        if let Ok(entries) = std::fs::read_dir(src) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                        let is_shared = if cfg!(target_os = "windows") {
+                            name.ends_with(".dll")
+                        } else {
+                            name.contains(".so") || name.ends_with(".dylib")
+                        };
+                        if is_shared {
+                            let dest_path = dest.join(name);
+                            if !dest_path.exists() {
+                                if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                                    tracing::warn!("Failed to copy shared library {}: {}", name, e);
+                                }
+                            }
+                        }
+                    }
+                } else if entry_path.is_dir() {
+                    copy_shared_libs(&entry_path, dest);
+                }
+            }
+        }
+    }
+    copy_shared_libs(build_output, &options.target_dir);
+
+    emit(
+        progress,
+        format!("Backend built and installed at: {:?}", binary_dest),
+    );
+    Ok(binary_dest)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,141 +1015,4 @@ mod tests {
             ))
         );
     }
-}
-
-/// Run CMake build step with parallel jobs.
-async fn build_cmake(build_output: &Path, progress: Option<&Arc<dyn ProgressSink>>) -> Result<()> {
-    let num_jobs = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-
-    emit(
-        progress,
-        format!(
-            "Building with {} parallel jobs (this may take several minutes)...",
-            num_jobs
-        ),
-    );
-
-    // On Windows, nvcc requires cl.exe to be on PATH (it's the CUDA host
-    // compiler). vcvarsall.bat was sourced during configure, but each
-    // Command::new() spawns a fresh process that doesn't inherit that
-    // environment. Wrap the build step in the same .bat-file approach.
-    #[cfg(target_os = "windows")]
-    {
-        let cmake_build_cmd = format!(
-            "cmake --build \"{}\" --config Release -j {}",
-            build_output.to_string_lossy(),
-            num_jobs
-        );
-        let llvm_path_line = match find_llvm_bin() {
-            Some(llvm_bin) => format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy()),
-            None => String::new(),
-        };
-        let bat_contents = match find_vcvarsall() {
-            Some(vcvarsall) => format!(
-                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
-                llvm_path = llvm_path_line,
-                vcvarsall = vcvarsall.to_string_lossy(),
-                cmake = cmake_build_cmd,
-            ),
-            None => format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_build_cmd),
-        };
-        let bat_path = build_output.join("koji_cmake_build.bat");
-        std::fs::write(&bat_path, &bat_contents)
-            .with_context(|| format!("Failed to write build bat file: {:?}", bat_path))?;
-        let status = tokio::process::Command::new("cmd")
-            .args(["/c", &bat_path.to_string_lossy()])
-            .status()
-            .await?;
-        if !status.success() {
-            return Err(anyhow!("Build failed. Check the output above for errors."));
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let status = tokio::process::Command::new("cmake")
-            .args([
-                "--build",
-                &build_output.to_string_lossy(),
-                "--config",
-                "Release",
-                "-j",
-                &num_jobs.to_string(),
-            ])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(anyhow!("Build failed. Check the output above for errors."));
-        }
-
-        Ok(())
-    }
-}
-
-/// Copy the built binary (and shared libs) to the target directory.
-async fn install_binary(
-    build_output: &Path,
-    options: &InstallOptions,
-    progress: Option<&Arc<dyn ProgressSink>>,
-) -> Result<PathBuf> {
-    emit(progress, "Installing binary...");
-    let binary_src = find_backend_binary(build_output)?;
-
-    std::fs::create_dir_all(&options.target_dir)?;
-    let binary_name = binary_src
-        .file_name()
-        .ok_or_else(|| anyhow!("Could not determine binary filename"))?;
-    let binary_dest = options.target_dir.join(binary_name);
-
-    // Copy binary
-    std::fs::copy(&binary_src, &binary_dest)?;
-
-    // Set executable permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&binary_dest)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&binary_dest, perms)?;
-    }
-
-    // Copy shared libraries so the backend can find them at runtime.
-    // On Unix: .so / .dylib files; on Windows: .dll files (e.g. ggml-cuda.dll).
-    fn copy_shared_libs(src: &std::path::Path, dest: &std::path::Path) {
-        if let Ok(entries) = std::fs::read_dir(src) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                if entry_path.is_file() {
-                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                        let is_shared = if cfg!(target_os = "windows") {
-                            name.ends_with(".dll")
-                        } else {
-                            name.contains(".so") || name.ends_with(".dylib")
-                        };
-                        if is_shared {
-                            let dest_path = dest.join(name);
-                            if !dest_path.exists() {
-                                if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                    tracing::warn!("Failed to copy shared library {}: {}", name, e);
-                                }
-                            }
-                        }
-                    }
-                } else if entry_path.is_dir() {
-                    copy_shared_libs(&entry_path, dest);
-                }
-            }
-        }
-    }
-    copy_shared_libs(build_output, &options.target_dir);
-
-    emit(
-        progress,
-        format!("Backend built and installed at: {:?}", binary_dest),
-    );
-    Ok(binary_dest)
 }

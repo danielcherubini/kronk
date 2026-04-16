@@ -113,8 +113,10 @@ mod tests {
     #[tokio::test]
     async fn test_rename_model_success() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut config = Config::default();
-        config.loaded_from = Some(temp_dir.path().to_path_buf());
+        let config = Config {
+            loaded_from: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
         let state = ProxyState::new(config, None);
 
         // Add a model to the registry

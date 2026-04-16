@@ -545,9 +545,11 @@ mod tests {
         // All referencing model_files rows must survive. Before the fix this
         // was 0 because DROP TABLE cascaded.
         let files_after: i64 = conn
-            .query_row("SELECT COUNT(*) FROM model_files WHERE model_id=1", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM model_files WHERE model_id=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(
             files_after, 2,
