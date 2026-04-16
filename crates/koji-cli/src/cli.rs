@@ -292,6 +292,8 @@ pub enum ModelCommands {
         #[arg(long, default_value = "true")]
         verbose: bool,
     },
+    /// Migrate model entries from koji.toml to the database
+    Migrate,
 }
 
 #[derive(Parser, Debug)]

@@ -19,6 +19,29 @@ impl ProxyServer {
     /// Starts a background task that periodically checks for idle models
     /// and unloads them.
     pub async fn new(state: Arc<ProxyState>) -> Self {
+        // Auto-migrate koji.toml model entries to DB on first startup.
+        if let Some(conn) = state.open_db() {
+            let mut config = state.config.write().await;
+            match crate::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config) {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Auto-migrated {} models from koji.toml to database", count);
+                    }
+                }
+                Err(e) => tracing::error!("Automatic model migration failed: {}", e),
+            }
+
+            // Populate in-memory model registry from DB
+            match crate::db::load_model_configs(&conn) {
+                Ok(db_models) if !db_models.is_empty() => {
+                    tracing::info!("Loaded {} models from database", db_models.len());
+                    config.models = db_models;
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!("Failed to load model configs from database: {}", e),
+            }
+        }
+
         Self::cleanup_stale_processes(&state).await;
         let handle = Self::start_idle_timeout_checker(state.clone());
 
@@ -609,5 +632,39 @@ mod tests {
             sample.models_loaded, 0,
             "Expected models_loaded counter to be 0 when no model is loaded"
         );
+    }
+
+    #[tokio::test]
+    async fn test_proxy_loads_models_from_db_on_startup() {
+        use crate::config::ModelConfig;
+        let tmp = tempfile::tempdir().unwrap();
+        let db_dir = tmp.path().to_path_buf();
+
+        // Pre-populate DB with a model config
+        {
+            let open_res = crate::db::open(&db_dir).unwrap();
+            let conn = open_res.conn;
+            let mc = ModelConfig {
+                backend: "llama_cpp".to_string(),
+                display_name: Some("DB Model".to_string()),
+                ..Default::default()
+            };
+            crate::db::save_model_config(&conn, "db-model-key", &mc).unwrap();
+        }
+
+        let config = crate::config::Config::default();
+        let state = Arc::new(crate::proxy::ProxyState::new(config, Some(db_dir)));
+
+        // Start the server (which should load models from DB)
+        let _server = ProxyServer::new(state.clone()).await;
+
+        // Verify that the model from DB is now in the proxy state
+        let config = state.config.read().await;
+        assert!(
+            config.models.contains_key("db-model-key"),
+            "Expected model 'db-model-key' to be loaded from DB"
+        );
+        let model = config.models.get("db-model-key").unwrap();
+        assert_eq!(model.display_name.as_deref(), Some("DB Model"));
     }
 }

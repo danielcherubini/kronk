@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+pub mod model_to_db;
+
 /// Migrates model card data into the unified ModelConfig.
 pub fn migrate_cards_to_unified_config(config: &mut Config) -> anyhow::Result<()> {
     // Derive api_name from model field (HF repo ID) for ALL models, even if configs/ dir is missing

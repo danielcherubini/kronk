@@ -49,16 +49,19 @@ impl ProxyState {
             .models
             .insert(new_name.to_string(), old_config.clone());
 
-        // Attempt to save config
-        let save_result = config.save();
-        if save_result.is_err() {
-            // Rollback: remove new name, re-insert old name
-            config.models.remove(new_name);
-            config.models.insert(old_name.to_string(), old_config);
-
-            return save_result;
+        // Attempt to save config to DB instead of TOML
+        if let Some(conn) = self.open_db() {
+            if let Some(mc) = config.models.get(new_name) {
+                if let Err(e) = crate::db::save_model_config(&conn, new_name, mc) {
+                    tracing::error!(name = %new_name, error = %e, "Failed to save renamed model config to DB");
+                    // We don't rollback here because the in-memory state is updated,
+                    // and DB update is best-effort.
+                }
+            }
         }
 
+        // We no longer call config.save() because models are persisted in DB.
+        // If other non-model config changes were made, they should be saved separately.
         drop(config);
 
         // Update in-memory models map

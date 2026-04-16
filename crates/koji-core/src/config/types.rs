@@ -47,12 +47,16 @@ fn is_btreemap_empty<K, V>(map: &BTreeMap<K, V>) -> bool {
     map.is_empty()
 }
 
+fn is_hashmap_empty<K, V>(map: &HashMap<K, V>) -> bool {
+    map.is_empty()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub general: General,
     #[serde(default)]
     pub backends: HashMap<String, BackendConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_hashmap_empty")]
     pub models: HashMap<String, ModelConfig>,
     #[serde(default)]
     pub supervisor: Supervisor,

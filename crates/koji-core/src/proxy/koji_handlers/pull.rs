@@ -512,10 +512,10 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
-) {
+) -> Option<String> {
     let configs_dir = match config.configs_dir() {
         Ok(d) => d,
-        Err(_) => return,
+        Err(_) => return None,
     };
     let repo_slug = repo_id.replace('/', "--");
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
@@ -619,7 +619,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
         config
             .models
-            .entry(model_key)
+            .entry(model_key.clone())
             .or_insert_with(|| crate::config::ModelConfig {
                 backend: "llama_cpp".to_string(),
                 model: Some(repo_id.to_string()),
@@ -638,12 +638,18 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                 modalities,
                 display_name: Some(display_name),
             });
+
+        // Save card (best-effort — download is already marked Completed)
+        let _ = std::fs::create_dir_all(&configs_dir);
+        let _ = card.save(&card_path);
+
+        return Some(model_key);
     }
 
-    // Save card and config (best-effort — download is already marked Completed)
+    // For mmproj, still save the card.
     let _ = std::fs::create_dir_all(&configs_dir);
     let _ = card.save(&card_path);
-    let _ = config.save();
+    None
 }
 
 /// Post-download: auto-create model card and config entries.
@@ -659,7 +665,17 @@ pub(crate) async fn setup_model_after_pull(
 ) {
     let _guard = CONFIG_WRITE_LOCK.lock().await;
     let mut config = state.config.write().await;
-    _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+    let model_key = _setup_model_after_pull_with_config(&mut config, repo_id, spec, dest_dir).await;
+
+    if let Some(key) = model_key {
+        if let Some(conn) = state.open_db() {
+            if let Some(mc) = config.models.get(&key) {
+                if let Err(e) = crate::db::save_model_config(&conn, &key, mc) {
+                    tracing::error!(key = %key, error = %e, "Failed to save model config to DB after pull");
+                }
+            }
+        }
+    }
     // _guard dropped here, releasing the lock
     // config write guard also dropped here, making the new model entry visible immediately
 }

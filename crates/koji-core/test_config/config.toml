@@ -1,0 +1,56 @@
+[general]
+log_level = "info"
+update_check_interval = 12
+
+[backends.ik_llama]
+default_args = []
+health_check_url = "http://localhost:8080/health"
+
+[backends.llama_cpp]
+default_args = []
+health_check_url = "http://localhost:8080/health"
+
+[supervisor]
+restart_policy = "always"
+max_restarts = 10
+restart_delay_ms = 3000
+health_check_interval_ms = 5000
+health_check_timeout_ms = 30000
+health_check_retries = 3
+
+[sampling_templates.chat]
+temperature = 0.7
+top_k = 40
+top_p = 0.95
+min_p = 0.05
+presence_penalty = 0.0
+
+[sampling_templates.analysis]
+temperature = 0.3
+top_k = 20
+top_p = 0.9
+min_p = 0.05
+presence_penalty = 0.0
+
+[sampling_templates.coding]
+temperature = 0.3
+top_k = 50
+top_p = 0.9
+min_p = 0.05
+presence_penalty = 0.1
+
+[sampling_templates.creative]
+temperature = 0.9
+top_k = 50
+top_p = 0.95
+min_p = 0.02
+presence_penalty = 0.0
+
+[proxy]
+host = "0.0.0.0"
+port = 11434
+idle_timeout_secs = 300
+startup_timeout_secs = 120
+circuit_breaker_threshold = 3
+circuit_breaker_cooldown_seconds = 60
+metrics_retention_secs = 86400

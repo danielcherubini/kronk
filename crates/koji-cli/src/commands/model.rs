@@ -128,6 +128,7 @@ pub async fn run(config: &Config, command: ModelCommands) -> Result<()> {
         ModelCommands::VerifyExisting { model, verbose } => {
             cmd_verify_existing(config, model, verbose).await
         }
+        ModelCommands::Migrate => cmd_migrate(config),
     }
 }
 
@@ -1861,6 +1862,29 @@ async fn cmd_verify_existing(
 
     if any_failed {
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn cmd_migrate(config: &Config) -> Result<()> {
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult {
+        conn,
+        needs_backfill: _,
+    } = koji_core::db::open(&db_dir)?;
+
+    let mut config = config.clone();
+    let migrated =
+        koji_core::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config)?;
+
+    if migrated > 0 {
+        println!(
+            "Successfully migrated {} model entries from koji.toml to database.",
+            migrated
+        );
+    } else {
+        println!("Nothing to migrate.");
     }
 
     Ok(())

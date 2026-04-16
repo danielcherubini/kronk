@@ -1,7 +1,7 @@
 mod args_helpers;
 mod defaults;
 mod loader;
-mod migrate;
+pub mod migrate;
 mod rename_legacy;
 mod resolve;
 mod types;
