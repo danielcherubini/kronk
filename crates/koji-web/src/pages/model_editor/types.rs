@@ -46,7 +46,7 @@ pub struct ModelModalities {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDetail {
-    pub id: String,
+    pub id: i64,
     pub backend: String,
     pub model: Option<String>,
     pub quant: Option<String>,

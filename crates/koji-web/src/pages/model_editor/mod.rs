@@ -123,7 +123,7 @@ pub fn ModelEditor() -> impl IntoView {
             if let Some(d) = guard.take() {
                 debug_log(&format!("Got model detail: id={}, backend={}", d.id, d.backend));
                 backends.set(d.backends.clone());
-                original_id.set(d.id.clone());
+                original_id.set(d.id.to_string());
 
                 // Build consolidated form
                 let mut sampling_fields = std::collections::HashMap::new();
@@ -218,7 +218,7 @@ pub fn ModelEditor() -> impl IntoView {
                     });
                 }
                 form.set(Some(ModelForm {
-                    id: d.id.clone(),
+                    id: d.id.to_string(),
                     backend: d.backend.clone(),
                     model: d.model,
                     quant: d.quant,

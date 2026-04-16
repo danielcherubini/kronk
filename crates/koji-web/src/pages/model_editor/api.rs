@@ -16,7 +16,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             .ok()?;
         let list: ModelListResponse = resp.json().await.ok()?;
         return Some(ModelDetail {
-            id: String::new(),
+            id: 0,
             backend: list.backends.first().cloned().unwrap_or_default(),
             model: None,
             quant: None,
