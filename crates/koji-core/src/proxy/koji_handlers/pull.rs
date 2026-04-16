@@ -644,7 +644,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                 port: None,
                 health_check: None,
                 profile: None,
-                api_name: None,
+                api_name: Some(repo_id.to_string()),
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
                 modalities,
@@ -685,10 +685,19 @@ pub(crate) async fn setup_model_after_pull(
 
     if let Some(key) = model_key {
         if let Some(conn) = state.open_db() {
-            if let Some(mc) = model_configs.get(&key) {
-                if let Err(e) = crate::db::save_model_config(&conn, &key, mc) {
+            let save_result = model_configs
+                .get(&key)
+                .map(|mc| crate::db::save_model_config(&conn, &key, mc));
+            match save_result {
+                Some(Ok(id)) => {
+                    if let Some(mc_mut) = model_configs.get_mut(&key) {
+                        mc_mut.db_id = Some(id);
+                    }
+                }
+                Some(Err(e)) => {
                     tracing::error!(key = %key, error = %e, "Failed to save model config to DB after pull");
                 }
+                None => {}
             }
         }
     }
