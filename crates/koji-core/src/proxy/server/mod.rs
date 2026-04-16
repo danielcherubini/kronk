@@ -21,6 +21,14 @@ impl ProxyServer {
     pub async fn new(state: Arc<ProxyState>) -> Self {
         // Populate in-memory model registry from DB
         if let Some(conn) = state.open_db() {
+            // First, run migration from koji.toml to DB if needed.
+            {
+                let mut config = state.config.write().await;
+                if let Err(e) = crate::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut config) {
+                    tracing::error!("Failed to migrate models from koji.toml to DB: {}", e);
+                }
+            }
+
             match crate::db::load_model_configs(&conn) {
                 Ok(db_models) if !db_models.is_empty() => {
                     tracing::info!("Loaded {} models from database", db_models.len());

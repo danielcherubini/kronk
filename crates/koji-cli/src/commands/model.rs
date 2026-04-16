@@ -1698,7 +1698,21 @@ async fn cmd_verify_existing(
 }
 
 fn cmd_migrate(config: &Config) -> Result<()> {
-    anyhow::bail!("Migration to database is not yet implemented. Please check docs/plans/2026-04-15-model-config-to-db.md");
+    let db_dir = koji_core::config::Config::config_dir()?;
+    let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
+
+    // We need a mutable config to call migrate_models_to_db.
+    let mut mutable_config = config.clone();
+
+    let migrated = koji_core::config::migrate::model_to_db::migrate_models_to_db(&conn, &mut mutable_config)?;
+
+    if migrated == 0 {
+        println!("Nothing to migrate.");
+    } else {
+        println!("Successfully migrated {} models to the database.", migrated);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
