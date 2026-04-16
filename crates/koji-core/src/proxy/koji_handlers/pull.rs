@@ -687,12 +687,12 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         // Reuse the existing model key if we found one, otherwise create a
         // new entry keyed by the bare repo slug (no per-quant suffix).
         let model_key = existing_key.unwrap_or_else(|| repo_slug.to_lowercase());
-        model_configs
+        let entry = model_configs
             .entry(model_key.clone())
             .or_insert_with(|| crate::config::ModelConfig {
                 backend: "llama_cpp".to_string(),
                 model: Some(repo_id.to_string()),
-                quant: Some(quant_key),
+                quant: Some(quant_key.clone()),
                 mmproj: None,
                 context_length: spec.context_length,
                 enabled: true,
@@ -704,10 +704,28 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                 api_name: Some(repo_id.to_string()),
                 gpu_layers: None,
                 quants: std::collections::BTreeMap::new(),
-                modalities,
-                display_name: Some(display_name),
+                modalities: modalities.clone(),
+                display_name: Some(display_name.clone()),
                 db_id: None, // will be set after reload_model_configs()
             });
+
+        // Promote a stub entry (created by a prior mmproj-first pull) into a
+        // real, enabled model once the main quant arrives. Without this, the
+        // stub's `quant=None, enabled=false` would persist even though the
+        // model file is now on disk.
+        if entry.quant.is_none() {
+            entry.quant = Some(quant_key);
+            entry.enabled = true;
+        }
+        if entry.context_length.is_none() && spec.context_length.is_some() {
+            entry.context_length = spec.context_length;
+        }
+        if entry.modalities.is_none() {
+            entry.modalities = modalities;
+        }
+        if entry.display_name.is_none() {
+            entry.display_name = Some(display_name);
+        }
 
         // Save card (best-effort — download is already marked Completed)
         let _ = std::fs::create_dir_all(&configs_dir);
@@ -720,33 +738,64 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     let _ = std::fs::create_dir_all(&configs_dir);
     let _ = card.save(&card_path);
 
-    // Auto-enable vision on the parent model if it already exists.
-    if let Some(key) = existing_key {
-        if let Some(mc) = model_configs.get_mut(&key) {
-            mc.mmproj = Some(spec.filename.clone());
-            let modalities = mc.modalities.get_or_insert_with(Default::default);
-            if !modalities
-                .input
-                .iter()
-                .any(|m| m.eq_ignore_ascii_case("image"))
-            {
-                modalities.input.push("image".to_string());
-            }
-            if !modalities
-                .input
-                .iter()
-                .any(|m| m.eq_ignore_ascii_case("text"))
-            {
-                modalities.input.push("text".to_string());
-            }
-            if modalities.output.is_empty() {
-                modalities.output.push("text".to_string());
-            }
+    let key = match existing_key {
+        Some(k) => k,
+        None => {
+            // mmproj pulled before any main quant. Create a stub entry with
+            // enabled=false so the file is tracked; the next main-quant pull
+            // will find this entry by `model == repo_id` and flip enabled to
+            // true. Without the stub, the mmproj file sits on disk invisible
+            // to the editor.
+            let display_name = crate::proxy::koji_handlers::generate_display_name(repo_id);
+            let stub_key = repo_slug.to_lowercase();
+            model_configs
+                .entry(stub_key.clone())
+                .or_insert_with(|| crate::config::ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    model: Some(repo_id.to_string()),
+                    quant: None,
+                    mmproj: None,
+                    context_length: None,
+                    enabled: false,
+                    args: vec![],
+                    sampling: None,
+                    port: None,
+                    health_check: None,
+                    profile: None,
+                    api_name: Some(repo_id.to_string()),
+                    gpu_layers: None,
+                    quants: std::collections::BTreeMap::new(),
+                    modalities: None,
+                    display_name: Some(display_name),
+                    db_id: None,
+                });
+            stub_key
         }
-        return Some(key);
-    }
+    };
 
-    None
+    // Wire mmproj + image modality onto the entry (stub or existing parent).
+    if let Some(mc) = model_configs.get_mut(&key) {
+        mc.mmproj = Some(spec.filename.clone());
+        let modalities = mc.modalities.get_or_insert_with(Default::default);
+        if !modalities
+            .input
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("text"))
+        {
+            modalities.input.push("text".to_string());
+        }
+        if !modalities
+            .input
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("image"))
+        {
+            modalities.input.push("image".to_string());
+        }
+        if modalities.output.is_empty() {
+            modalities.output.push("text".to_string());
+        }
+    }
+    Some(key)
 }
 
 /// Post-download: auto-create model card and config entries.

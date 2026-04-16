@@ -85,7 +85,14 @@ pub fn save_model_config(
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| config_key_to_repo_id(config_key));
-    let record = mc.to_db_record(&repo_id);
+    let mut record = mc.to_db_record(&repo_id);
+    // Default api_name to repo_id at save time so the DB always stores a
+    // concrete value. `from_db_record` used to backfill this on load, which
+    // meant unsaved rows, JSON exports, and direct DB queries saw NULL even
+    // though the in-memory ModelConfig had a value.
+    if record.api_name.as_deref().map_or(true, str::is_empty) {
+        record.api_name = Some(repo_id.clone());
+    }
     queries::upsert_model_config(conn, &record)
 }
 

@@ -105,18 +105,7 @@ impl Config {
 
         config.loaded_from = Some(config_dir.to_path_buf());
 
-        // Strip stale `--mmproj <path>` entries from args (broken v1.15.0
-        // frontend wrote these). This is now handled by DB migrations or
-        // during model load if necessary.
-        let mmproj_cleaned = false;
-        if mmproj_cleaned {
-            tracing::info!(
-                "Cleaned stale --mmproj entries from model args in {}",
-                config_path.display()
-            );
-        }
-
-        if args_migrated || mmproj_cleaned {
+        if args_migrated {
             // Best-effort save; if it fails (e.g. read-only filesystem),
             // log a warning but do not fail the load.
             if let Err(e) = config.save_to(config_dir) {
