@@ -260,6 +260,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             quants: std::collections::BTreeMap::new(),
             modalities: None,
             display_name: None,
+            db_id: None,
         };
         koji_core::db::save_model_config(&conn, "test_server", &dummy_model)
             .expect("Failed to save model config to DB");

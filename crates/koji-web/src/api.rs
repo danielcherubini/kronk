@@ -638,6 +638,7 @@ fn apply_model_body(
         quants: std::collections::BTreeMap::new(),
         modalities: None,
         display_name: None,
+        db_id: None,
     });
 
     // Handle sampling from body
@@ -687,6 +688,7 @@ fn apply_model_body(
                 )
             })
             .collect(),
+        db_id: base.db_id,
     }
 }
 
@@ -1520,6 +1522,7 @@ mod tests {
             quants,
             modalities: None,
             display_name: None,
+            db_id: None,
         }
     }
 

@@ -140,6 +140,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }
@@ -181,6 +182,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
             model_configs.insert(
@@ -203,6 +205,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }
@@ -244,6 +247,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }
@@ -285,6 +289,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }
@@ -323,6 +328,7 @@ mod tests {
                     quants: std::collections::BTreeMap::new(),
                     modalities: None,
                     display_name: None,
+                    db_id: None,
                 },
             );
         }

@@ -153,10 +153,10 @@ pub async fn cmd_server_add(
         quants: std::collections::BTreeMap::new(),
         modalities: None,
         display_name: None,
+        db_id: None,
     };
 
     koji_core::db::save_model_config(&conn, name, &model_config)?;
-    // config.save()?; // No longer needed as model config is saved to DB
 
     // Output
     println!("Server added successfully.");

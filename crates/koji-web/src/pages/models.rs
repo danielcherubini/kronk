@@ -7,7 +7,7 @@ use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
-    id: String,
+    id: i64,
     backend: String,
     model: Option<String>,
     quant: Option<String>,
@@ -40,10 +40,9 @@ fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Si
 /// then `api_name`, falling back to the model `id` otherwise.
 fn model_display_name(m: &ModelEntry) -> String {
     m.display_name
-        .as_deref()
-        .or(m.api_name.as_deref())
-        .unwrap_or(m.id.as_str())
-        .to_string()
+        .clone()
+        .or(m.api_name.clone())
+        .unwrap_or_else(|| m.id.to_string())
 }
 
 #[component]
@@ -220,9 +219,9 @@ pub fn Models() -> impl IntoView {
                                                 <h2 class="model-section__title">"Loaded Models"</h2>
                                                 <div class="models-grid">
                                                     {loaded.into_iter().map(|m| {
-                                                        let id_load = m.id.clone();
-                                                        let id_unload = m.id.clone();
-                                                        let id_edit = m.id.clone();
+                                                        let id_load = m.id.to_string();
+                                                        let id_unload = m.id.to_string();
+                                                        let id_edit = m.id.to_string();
                                                         let enabled_class = if m.enabled { "badge badge-success" } else { "badge badge-warning" };
                                                         let loaded_class = if m.loaded { "badge badge-success" } else { "badge badge-muted" };
                                                         view! {
@@ -302,9 +301,9 @@ pub fn Models() -> impl IntoView {
                                                 <h2 class="model-section__title">"Unloaded Models"</h2>
                                                 <div class="models-grid">
                                                     {unloaded.into_iter().map(|m| {
-                                                        let id_load = m.id.clone();
-                                                        let id_unload = m.id.clone();
-                                                        let id_edit = m.id.clone();
+                                                        let id_load = m.id.to_string();
+                                                        let id_unload = m.id.to_string();
+                                                        let id_edit = m.id.to_string();
                                                         let enabled_class = if m.enabled { "badge badge-success" } else { "badge badge-warning" };
                                                         let loaded_class = if m.loaded { "badge badge-success" } else { "badge badge-muted" };
                                                         view! {
@@ -418,7 +417,7 @@ mod tests {
     fn test_all_loaded_returns_n_zero() {
         let models = vec![
             ModelEntry {
-                id: "model-1".to_string(),
+                id: 1,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama2".to_string()),
                 quant: None,
@@ -428,7 +427,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-2".to_string(),
+                id: 2,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama3".to_string()),
                 quant: None,
@@ -447,7 +446,7 @@ mod tests {
     fn test_all_unloaded_returns_zero_n() {
         let models = vec![
             ModelEntry {
-                id: "model-1".to_string(),
+                id: 1,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama2".to_string()),
                 quant: None,
@@ -457,7 +456,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-2".to_string(),
+                id: 2,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama3".to_string()),
                 quant: None,
@@ -476,7 +475,7 @@ mod tests {
     fn test_mixed_returns_correct_split() {
         let models = vec![
             ModelEntry {
-                id: "model-1".to_string(),
+                id: 1,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama2".to_string()),
                 quant: None,
@@ -486,7 +485,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-2".to_string(),
+                id: 2,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama3".to_string()),
                 quant: None,
@@ -496,7 +495,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-3".to_string(),
+                id: 3,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama4".to_string()),
                 quant: None,
@@ -523,7 +522,7 @@ mod tests {
     fn test_sorts_both_partitions_by_id() {
         let models = vec![
             ModelEntry {
-                id: "model-2".to_string(),
+                id: 2,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama3".to_string()),
                 quant: None,
@@ -533,7 +532,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-1".to_string(),
+                id: 1,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama2".to_string()),
                 quant: None,
@@ -543,7 +542,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-4".to_string(),
+                id: 4,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama5".to_string()),
                 quant: None,
@@ -553,7 +552,7 @@ mod tests {
                 display_name: None,
             },
             ModelEntry {
-                id: "model-3".to_string(),
+                id: 3,
                 backend: "llama.cpp".to_string(),
                 model: Some("llama4".to_string()),
                 quant: None,
@@ -565,10 +564,10 @@ mod tests {
         ];
         let (loaded, unloaded) = partition_models_by_loaded(models);
         // Check loaded partition is sorted by id
-        assert_eq!(loaded[0].id, "model-1");
-        assert_eq!(loaded[1].id, "model-2");
+        assert_eq!(loaded[0].id, 1);
+        assert_eq!(loaded[1].id, 2);
         // Check unloaded partition is sorted by id
-        assert_eq!(unloaded[0].id, "model-3");
-        assert_eq!(unloaded[1].id, "model-4");
+        assert_eq!(unloaded[0].id, 3);
+        assert_eq!(unloaded[1].id, 4);
     }
 }
