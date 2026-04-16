@@ -210,9 +210,8 @@ health_check_interval_ms = 5000
 ```
 ~/.config/koji/
 ├── config.toml              Main configuration
-├── koji.db                   SQLite database
-├── profiles/                Sampling presets (coding, chat, analysis, creative)
-├── configs/                 Model cards with quant info and context settings
+├── koji.db                   SQLite database (models, backends, pull history)
+├── configs/                 Model cards with quant info and sampling presets
 │   └── bartowski--OmniCoder-8B.toml
 ├── models/                  GGUF model files
 │   └── bartowski/OmniCoder-8B/*.gguf

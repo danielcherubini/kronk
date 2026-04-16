@@ -1,5 +1,36 @@
 # Migration Guide
 
+## v1.35.11 — Model files auto-repair
+
+Versions v1.35.0 through v1.35.10 shipped a database migration (v9) that
+unintentionally deleted every row in the `model_files` table. With SQLite's
+`foreign_keys=ON`, the `DROP TABLE model_configs` step inside the migration
+fired `ON DELETE CASCADE` on `model_files.model_id` before the table was
+rebuilt. The symptom: `llama-server` launches without `-m <model_path>` and
+the proxy logs `Quant '<name>' not found in ModelConfig for model '<repo>'`.
+
+### What v1.35.11 does
+
+- **Fixes the migration.** Migration v9 now toggles `PRAGMA foreign_keys=OFF`
+  around the table rebuild, so child rows survive.
+- **Auto-repairs on startup.** The proxy scans `<models_dir>/<repo>/` on boot
+  and inserts any `.gguf` files it finds back into `model_files` for the
+  matching `model_configs` row. Mmproj files are detected automatically and
+  set as `selected_mmproj` if the row doesn't already have one.
+
+### Upgrade steps
+
+1. Install v1.35.11 (deb/rpm/installer or `cargo install`).
+2. Restart the service. The repair runs once at startup; check the log for
+   `repair_orphaned_model_files` if you want to confirm.
+3. If a model still won't launch, open the Models page and the quants should
+   now appear — or run `koji model scan` to force a rescan.
+
+No manual SQL is required if your GGUF files are still on disk. If the files
+are gone, re-pull the model.
+
+---
+
 ## v2.0 — Renamed to `koji`
 
 The project was renamed from `kronk` to `koji` because the `kronk` name was
