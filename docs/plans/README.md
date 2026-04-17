@@ -15,9 +15,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 59
-- **Completed**: 57 ✅
-- **In Progress**: 1 🚧
-- **Remaining**: 1
+- **Completed**: 58 ✅
+- **In Progress**: 0 🚧
+- **Remaining**: 0
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -43,7 +43,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Status Command Redesign](2026-03-21-status-command-plan.md) | Unified status command with /status endpoint, removed model ps | `4de3b5a`, `b077271`, `7a49b44` |
 | [Server Add/Edit Flag Extraction](2026-03-21-server-add-flag-extraction-plan.md) | Extract koji flags from args, validate model cards | `c8327c8`, `4de3b5a` |
 | [Self-Update](2026-04-12-self-update.md) | CLI `koji self-update` and web UI update button with GitHub release download | #56 `efd5459`, `0b47435`, `cc51c83`, `1bf5ee8`, `5587df1` |
-| [Move Self-Update to Updates Center](2026-04-17-move-self-update-to-updates-center.md) | Move self-update UI from sidebar to /updates page, keep minimal version indicator in sidebar | 🚧 IN PROGRESS |
+| [Move Self-Update to Updates Center](2026-04-17-move-self-update-to-updates-center.md) | Move self-update UI from sidebar to /updates page, keep minimal version indicator in sidebar | #62 `fa2cc94` ✅ COMPLETED |
 
 ### Database & Storage
 
@@ -135,11 +135,6 @@ This directory contains implementation plans for the Koji project. Each plan doc
 ---
 
 ## Remaining Work
-
-| Plan | Description | Status |
-|------|-------------|--------|
-| [Move Self-Update to Updates Center](2026-04-17-move-self-update-to-updates-center.md) | Move self-update UI from sidebar to /updates page, keep minimal version indicator in sidebar | 🚧 IN PROGRESS |
-
 
 ## Roadmap
 
