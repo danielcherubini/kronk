@@ -298,48 +298,48 @@ pub fn BackendCard(
                     view! { <span/> }.into_any()
                 }}
 
-                // Show "Remove Version" (removes just this version) on inactive versions
+                // Show "Remove Version" and "Activate" buttons on inactive versions (only if version info exists)
                 {if installed && !is_active {
-                    let cb = on_remove_version;
+                    let cb_remove = on_remove_version;
+                    let cb_activate = on_activate;
                     let bt = type_delete.clone();
-                    let ver = activate_version.clone().unwrap_or_default();
-                    view! {
-                        <button
-                            type="button"
-                            class="btn btn-secondary"
-                            style="color:#6b7280;"
-                            on:click=move |_| {
-                                if let Some(c) = cb {
-                                    c.run((bt.clone(), ver.clone()));
-                                }
-                            }
-                        >
-                            "Remove Version"
-                        </button>
-                    }.into_any()
-                } else {
-                    view! { <span/> }.into_any()
-                }}
+                    let bt_activate = type_activate.clone();
 
-                // Show "Activate" button on inactive versions (only if not removing)
-                {if installed && !is_active {
-                    let cb = on_activate;
-                    let bt = type_activate.clone();
-                    let ver = activate_version.clone().unwrap_or_default();
-                    view! {
-                        <button
-                            type="button"
-                            class="btn btn-primary"
-                            style="background:#22c55e;"
-                            on:click=move |_| {
-                                if let Some(c) = cb {
-                                    c.run((bt.clone(), ver.clone()));
-                                }
-                            }
-                        >
-                            "Activate"
-                        </button>
-                    }.into_any()
+                    // Only render buttons if we have a valid version string
+                    if let Some(ref ver) = activate_version {
+                        let ver_remove = ver.clone();
+                        let ver_activate = ver.clone();
+                        view! {
+                            <>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary"
+                                    style="color:#6b7280;"
+                                    on:click=move |_| {
+                                        if let Some(c) = cb_remove {
+                                            c.run((bt.clone(), ver_remove.clone()));
+                                        }
+                                    }
+                                >
+                                    "Remove Version"
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-primary"
+                                    style="background:#22c55e;"
+                                    on:click=move |_| {
+                                        if let Some(c) = cb_activate {
+                                            c.run((bt_activate.clone(), ver_activate.clone()));
+                                        }
+                                    }
+                                >
+                                    "Activate"
+                                </button>
+                            </>
+                        }.into_any()
+                    } else {
+                        view! { <span/> }.into_any()
+                    }
                 } else {
                     view! { <span/> }.into_any()
                 }}

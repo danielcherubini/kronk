@@ -1245,6 +1245,22 @@ pub async fn remove_backend_version(
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    // Validate path params (prevent path traversal)
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid backend name: path separators or traversal sequences not allowed"})),
+        )
+            .into_response();
+    }
+    if version.contains('/') || version.contains('\\') || version.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid version: path separators or traversal sequences not allowed"})),
+        )
+            .into_response();
+    }
+
     let config_path = match &state.config_path {
         Some(p) => p.clone(),
         None => {
@@ -1333,6 +1349,26 @@ pub async fn remove_backend_version(
         gpu_type: None,
         source: None,
     };
+
+    // Check if a job is running for this backend
+    if let Some(jobs) = &state.jobs {
+        if let Some(active_job) = jobs.active().await {
+            let active_type = active_job
+                .backend_type
+                .as_ref()
+                .map(|b| b.to_string())
+                .unwrap_or_default();
+            if active_type == info.backend_type.to_string() {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "a job is currently running for this backend"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
 
     if info_to_remove.path.exists() {
         if let Err(e) = koji_core::backends::safe_remove_installation(&info_to_remove) {
