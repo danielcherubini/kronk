@@ -175,6 +175,46 @@ pub fn delete_backend_installation(conn: &Connection, name: &str, version: &str)
     Ok(())
 }
 
+/// Deactivate all versions for a backend name, then activate the specified version.
+///
+/// This is an atomic operation executed in a transaction:
+/// 1. Check if the target version exists
+/// 2. If not, return Ok(false) without any changes
+/// 3. SET is_active = 0 for all rows with the given name
+/// 4. SET is_active = 1 for the row matching (name, version)
+///
+/// Returns Ok(true) if the version was found and activated, Ok(false) if no matching row exists.
+pub fn activate_backend_version(conn: &Connection, name: &str, version: &str) -> Result<bool> {
+    let tx = conn.unchecked_transaction()?;
+
+    // Check if the target version exists before making any changes
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM backend_installations WHERE name = ?1 AND version = ?2",
+        (name, version),
+        |row| row.get(0),
+    )?;
+
+    if exists == 0 {
+        tx.commit()?;
+        return Ok(false);
+    }
+
+    // Deactivate all versions for this backend
+    tx.execute(
+        "UPDATE backend_installations SET is_active = 0 WHERE name = ?1",
+        [name],
+    )?;
+
+    // Activate the requested version
+    let changes = tx.execute(
+        "UPDATE backend_installations SET is_active = 1 WHERE name = ?1 AND version = ?2",
+        (name, version),
+    )?;
+
+    tx.commit()?;
+    Ok(changes > 0)
+}
+
 /// Delete all installation rows for a backend name (used by `backend remove`).
 pub fn delete_all_backend_versions(conn: &Connection, name: &str) -> Result<()> {
     conn.execute("DELETE FROM backend_installations WHERE name = ?1", [name])?;

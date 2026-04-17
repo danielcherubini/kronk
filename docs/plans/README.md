@@ -15,9 +15,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 57
-- **Completed**: 53 ✅
-- **In Progress**: 2 🚧 (ROCm Build Flags, Updates Center)
-- **Remaining**: 2 ❌ (VLLM Backend, Backup & Restore)
+- **Completed**: 56 ✅
+- **In Progress**: 0 🚧
+- **Remaining**: 1 ❌ (VLLM Backend)
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -51,6 +51,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [SQLite DB and Model Update](2026-03-30-sqlite-db-and-model-update.md) | SQLite database foundation with migration system | `e7e73e0`, `8d01ccb` |
 | [DB Autobackfill and Process Tracking](2026-03-30-db-autobackfill-and-process-tracking.md) | Active models table, backfill detection | `fe9efcb`, `1fa1f9d` |
 | [Backend Registry to DB](2026-04-04-backend-registry-to-db.md) | Migrate from TOML to SQLite, add migration v3 | `998256c`, `d9aa88f`, `e3565e9`, `e954552` |
+| [Backup & Restore](2026-04-13-backup-restore.md) | Backup config + DB archive, restore with model re-download and backend re-install | `ad77da6`, `b225b8c`, `58f13b3`, `07643e9` ✅ COMPLETED |
 
 ### Backend Management
 
@@ -59,7 +60,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Backend Naming and Version Pinning](2026-04-04-backend-naming-and-config-version-pinning.md) | Canonical backend names, version pin field | `bce6928`, `90898b4`, `211546d` |
 | [Backends Install/Update UI](2026-04-08-backends-install-update-ui-spec.md) | Install, update, and check-updates for backends from web UI | #43 `f500c27`, `89f71ed`, `32ae3f6`, `9a70c1e` |
 | [Fix Backend Default Args](2026-04-10-fix-backend-default-args-spec.md) | Fix default_args display bug and add page-level save button | #49 `aefe2fe`, `29b26fc`, `6bee43d` |
-| [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | 🚧 IN PROGRESS |
+| [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | `e862ab6`, `69d492a`, `c99304a`, `7698a11` ✅ COMPLETED |
 
 ### Model Management
 
@@ -114,6 +115,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 |------|-------------|---------------------|
 | [Proxy Shutdown](2026-04-06-proxy-shutdown.md) | Graceful shutdown method for ProxyState | `6c83743`, `82ec8ab` |
 | [System Restart](2026-04-06-system-restart.md) | Process-level restart handler with graceful exit | `3a1b7a0`, `eea20ef`, `ec0fc08`, `0fe3ab5` |
+| [Updates Center](2026-04-15-updates-center-plan.md) | Centralized `/updates` page with background checker, DB-cached results, and apply flows | `2099edb`, `29fb946`, `9db8ccf`, `e2bbec8` ✅ COMPLETED |
 
 ### Code Quality
 
@@ -134,9 +136,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 | Plan | Description | Status |
 |------|-------------|--------|
-| [Updates Center](2026-04-15-updates-center-plan.md) | Centralized `/updates` page with background checker, DB-cached results, and apply flows | 🚧 IN PROGRESS |
 | [VLLM Backend](2026-03-30-vllm-backend.md) | Add vLLM as a first-class backend type with PyPI version checking | ❌ NOT STARTED |
-| [Backup & Restore](2026-04-13-backup-restore.md) | Backup config + DB archive, restore with model re-download and backend re-install | 🚧 IN PROGRESS |
 
 ## Roadmap
 

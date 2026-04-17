@@ -6,8 +6,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::queries::{
-    delete_all_backend_versions, get_active_backend, insert_backend_installation,
-    list_active_backends, BackendInstallationRecord,
+    activate_backend_version, delete_all_backend_versions, delete_backend_installation,
+    get_active_backend, get_backend_by_version, insert_backend_installation, list_active_backends,
+    list_backend_versions, BackendInstallationRecord,
 };
 use crate::gpu::GpuType;
 
@@ -127,6 +128,78 @@ impl BackendRegistry {
         };
 
         self.add(updated)
+    }
+
+    /// List ALL versions of a backend (active + inactive), ordered by installed_at DESC.
+    ///
+    /// Returns Ok(None) if no backend with that name exists at all.
+    pub fn list_all_versions(&self, name: &str) -> Result<Option<Vec<BackendInfo>>> {
+        let records = list_backend_versions(&self.conn, name)
+            .with_context(|| format!("Failed to query versions for backend '{}'", name))?;
+
+        if records.is_empty() {
+            return Ok(None);
+        }
+
+        records
+            .into_iter()
+            .map(Self::record_to_backend_info)
+            .collect::<Result<Vec<_>>>()
+            .map(Some)
+    }
+
+    /// Activate a specific version of a backend.
+    ///
+    /// Deactivates all other versions and activates the requested one.
+    /// Returns Ok(true) if the version was found and activated, Ok(false) if not found.
+    pub fn activate(&mut self, name: &str, version: &str) -> Result<bool> {
+        activate_backend_version(&self.conn, name, version).with_context(|| {
+            format!(
+                "Failed to activate backend '{}' version '{}'",
+                name, version
+            )
+        })
+    }
+
+    /// Remove a single (name, version) installation from the registry.
+    ///
+    /// **Note:** This method handles **DB operations only** — it does NOT delete files from disk.
+    /// File deletion is the caller's responsibility (e.g., in the CLI command).
+    ///
+    /// If this was the active version and other versions remain, the newest remaining
+    /// version is activated. If this was the last version, the row is simply deleted
+    /// (no active version remains for that backend name).
+    pub fn remove_version(&mut self, name: &str, version: &str) -> Result<()> {
+        // Get the record before deleting, to check if it was active and to get the path
+        let record = get_backend_by_version(&self.conn, name, version)
+            .with_context(|| format!("Failed to query backend '{}' version '{}'", name, version))?;
+
+        let was_active = record.as_ref().is_some_and(|r| r.is_active);
+
+        // Delete the DB row
+        delete_backend_installation(&self.conn, name, version).with_context(|| {
+            format!("Failed to remove backend '{}' version '{}'", name, version)
+        })?;
+
+        // If this was the active version, we need to activate another one if available
+        if was_active {
+            let remaining = list_backend_versions(&self.conn, name).with_context(|| {
+                format!("Failed to query remaining versions for backend '{}'", name)
+            })?;
+
+            if !remaining.is_empty() {
+                // Activate the newest remaining version (first in DESC order)
+                let newest = &remaining[0];
+                activate_backend_version(&self.conn, name, &newest.version).with_context(|| {
+                    format!(
+                        "Failed to activate fallback version '{}' for backend '{}'",
+                        newest.version, name
+                    )
+                })?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -300,5 +373,155 @@ mod tests {
         let registry = BackendRegistry::open_in_memory().unwrap();
         let result = registry.get("nonexistent").unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_registry_list_all_versions() {
+        let registry = BackendRegistry::open_in_memory().unwrap();
+
+        // No versions for unknown backend
+        assert!(registry.list_all_versions("nonexistent").unwrap().is_none());
+
+        // Add two versions of the same backend with distinct timestamps
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let info1 = BackendInfo {
+            name: "llama_cpp".to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: "b8407".to_string(),
+            path: PathBuf::from("/path/to/llama_cpp"),
+            installed_at: now - 100,
+            gpu_type: None,
+            source: None,
+        };
+
+        let info2 = BackendInfo {
+            name: "llama_cpp".to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: "b9000".to_string(),
+            path: PathBuf::from("/path/to/llama_cpp"),
+            installed_at: now,
+            gpu_type: None,
+            source: None,
+        };
+
+        registry.add(info1).unwrap();
+        registry.add(info2).unwrap();
+
+        let versions = registry.list_all_versions("llama_cpp").unwrap().unwrap();
+        assert_eq!(versions.len(), 2);
+        // Newest should be first (order by installed_at DESC)
+        assert_eq!(versions[0].version, "b9000");
+        assert_eq!(versions[1].version, "b8407");
+    }
+
+    #[test]
+    fn test_registry_activate_version() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+        registry
+            .add(make_backend_info("llama_cpp", "b9000"))
+            .unwrap();
+
+        // b9000 is active (added last)
+        let active = registry.get("llama_cpp").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+
+        // Activate b8407
+        let result = registry.activate("llama_cpp", "b8407").unwrap();
+        assert!(result);
+
+        // Now b8407 should be active
+        let active = registry.get("llama_cpp").unwrap().unwrap();
+        assert_eq!(active.version, "b8407");
+    }
+
+    #[test]
+    fn test_registry_activate_nonexistent_version() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+
+        let result = registry.activate("llama_cpp", "nonexistent").unwrap();
+        assert!(!result);
+
+        // Existing version should still be active
+        let active = registry.get("llama_cpp").unwrap().unwrap();
+        assert_eq!(active.version, "b8407");
+    }
+
+    #[test]
+    fn test_registry_remove_version() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+        registry
+            .add(make_backend_info("llama_cpp", "b9000"))
+            .unwrap();
+
+        // Both versions exist
+        let all = registry.list_all_versions("llama_cpp").unwrap().unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Remove b8407
+        registry.remove_version("llama_cpp", "b8407").unwrap();
+
+        // Only b9000 remains and should be active
+        let all = registry.list_all_versions("llama_cpp").unwrap().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].version, "b9000");
+
+        let active = registry.get("llama_cpp").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+    }
+
+    #[test]
+    fn test_registry_remove_last_version_deactivates_others() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+        registry
+            .add(make_backend_info("llama_cpp", "b9000"))
+            .unwrap();
+
+        // Remove the active one (b9000) — b8407 should become active
+        registry.remove_version("llama_cpp", "b9000").unwrap();
+
+        let all = registry.list_all_versions("llama_cpp").unwrap().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].version, "b8407");
+    }
+
+    #[test]
+    fn test_registry_remove_last_version_cleans_up() {
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+
+        registry
+            .add(make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+
+        // Remove the only version
+        registry.remove_version("llama_cpp", "b8407").unwrap();
+
+        // No versions remain
+        assert!(registry.list_all_versions("llama_cpp").unwrap().is_none());
+
+        // list() returns empty for this backend
+        let active = registry.get("llama_cpp").unwrap();
+        assert!(active.is_none());
     }
 }
