@@ -14,9 +14,9 @@ use koji_core::backends::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckDto {
-    pub item_type: String, // "backend" or "model"
-    pub item_id: String,   // backend name or model config key
-    pub repo_id: Option<String>,  // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
+    pub item_type: String,       // "backend" or "model"
+    pub item_id: String,         // backend name or model config key
+    pub repo_id: Option<String>, // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,

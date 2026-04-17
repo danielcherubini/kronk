@@ -252,11 +252,7 @@ pub fn compare_files(
 /// This function's `Future` is `!Send` because `&Connection` (`Connection: !Send`) is
 /// referenced after `.await` points (the DB writes follow the async fetches). It must
 /// be called with direct `.await` — do **not** pass it to `tokio::spawn`.
-pub async fn refresh_metadata(
-    conn: &Connection,
-    models_dir: &Path,
-    repo_id: &str,
-) -> Result<()> {
+pub async fn refresh_metadata(conn: &Connection, models_dir: &Path, repo_id: &str) -> Result<()> {
     // ASYNC — fetch remote data
     let listing = pull::list_gguf_files(repo_id).await?;
     // Use the resolved repo_id from listing (may have -GGUF appended)
