@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct UpdateCheckDto {
     pub item_type: String,
     pub item_id: String,
+    pub repo_id: Option<String>,
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -168,10 +169,11 @@ pub fn Updates() -> impl IntoView {
                     {move || {
                         let models = updates.with(|u| u.models.clone());
                         models.into_iter().map(|m| {
+                            let display_name = m.repo_id.clone().unwrap_or_else(|| m.item_id.clone());
                             view! {
                                 <div class="update-item" class:update-available=m.update_available>
                                     <div class="update-item__info">
-                                        <span class="update-item__name">{m.item_id.clone()}</span>
+                                        <span class="update-item__name">{display_name}</span>
                                         <span class="update-item__version">
                                             {m.current_version.as_ref().map(|v| &v[..8.min(v.len())]).unwrap_or("—").to_string()}
                                         </span >
