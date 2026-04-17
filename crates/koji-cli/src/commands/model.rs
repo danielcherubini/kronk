@@ -724,7 +724,7 @@ async fn cmd_update(
         for model in &models {
             let repo_id = &model.card.model.source;
             print!("  Refreshing metadata for {}...", repo_id);
-            update::refresh_metadata(&conn, repo_id).await?;
+            update::refresh_metadata(&conn, &models_dir, repo_id).await?;
             println!(" done.");
         }
         println!();
@@ -835,7 +835,7 @@ async fn cmd_update(
 
         // Fetch fresh listing and blob metadata once per repo (not per file)
         let listing = koji_core::models::pull::list_gguf_files(repo_id).await?;
-        let blobs = koji_core::models::pull::fetch_blob_metadata(repo_id)
+        let blobs = koji_core::models::pull::fetch_blob_metadata(&listing.repo_id)
             .await
             .ok();
 
@@ -1618,7 +1618,7 @@ async fn cmd_verify_existing(
             }
 
             // Always refresh metadata when needed, regardless of verbose flag
-            match koji_core::models::update::refresh_metadata(&conn, repo_id).await {
+            match koji_core::models::update::refresh_metadata(&conn, &models_dir, repo_id).await {
                 Ok(_) => {
                     // Re-fetch records to see how many were successfully backfilled
                     let updated_records =
