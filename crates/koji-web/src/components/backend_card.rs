@@ -82,6 +82,9 @@ pub struct BackendCardDto {
     pub release_notes_url: Option<String>,
     #[serde(default)]
     pub default_args: Vec<String>,
+    /// Whether this specific version card is the active one.
+    #[serde(default)]
+    pub is_active: bool,
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -106,13 +109,21 @@ pub fn BackendCard(
     /// Called when default_args input changes with (backend_type, new_value)
     #[prop(optional)]
     on_default_args_change: Option<Callback<(String, String)>>,
+    /// Called with (backend_type, version) when "Activate" is clicked.
+    #[prop(optional)]
+    on_activate: Option<Callback<(String, String)>>,
+    /// Called with (backend_type, version) when "Remove Version" is clicked.
+    #[prop(optional)]
+    on_remove_version: Option<Callback<(String, String)>>,
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
     let type_check = backend.r#type.clone();
     let type_delete = backend.r#type.clone();
+    let type_activate = backend.r#type.clone();
 
     let installed = backend.installed;
+    let is_active = backend.is_active;
     let display_name = backend.display_name.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
@@ -133,12 +144,17 @@ pub fn BackendCard(
         None => (None, None, None),
     };
 
+    // Clone the version for the Activate button callback.
+    let activate_version = backend.info.as_ref().map(|info| info.version.clone());
+
     view! {
         <fieldset style="border:1px solid var(--border,#ccc);padding:1rem;border-radius:6px;">
             <legend style="font-weight:600;display:flex;align-items:center;gap:0.5rem;">
                 <span>{display_name}</span>
-                {if installed {
-                    view! { <span class="badge" style="background:#22c55e;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">"Installed"</span> }.into_any()
+                {if is_active {
+                    view! { <span class="badge" style="background:#22c55e;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">"Active"</span> }.into_any()
+                } else if installed {
+                    view! { <span class="badge" style="background:#94a3b8;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">"Installed"</span> }.into_any()
                 } else {
                     view! { <span class="badge" style="background:#94a3b8;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">"Not installed"</span> }.into_any()
                 }}
@@ -260,7 +276,8 @@ pub fn BackendCard(
                     view! { <span/> }.into_any()
                 }}
 
-                {if installed {
+                // Show "Uninstall" (removes ALL versions) only on the active version card
+                {if installed && is_active {
                     let cb = on_delete;
                     let bt = type_delete.clone();
                     view! {
@@ -277,6 +294,52 @@ pub fn BackendCard(
                             "Uninstall"
                         </button>
                     }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }}
+
+                // Show "Remove Version" and "Activate" buttons on inactive versions (only if version info exists)
+                {if installed && !is_active {
+                    let cb_remove = on_remove_version;
+                    let cb_activate = on_activate;
+                    let bt = type_delete.clone();
+                    let bt_activate = type_activate.clone();
+
+                    // Only render buttons if we have a valid version string
+                    if let Some(ref ver) = activate_version {
+                        let ver_remove = ver.clone();
+                        let ver_activate = ver.clone();
+                        view! {
+                            <>
+                                <button
+                                    type="button"
+                                    class="btn btn-secondary"
+                                    style="color:#6b7280;"
+                                    on:click=move |_| {
+                                        if let Some(c) = cb_remove {
+                                            c.run((bt.clone(), ver_remove.clone()));
+                                        }
+                                    }
+                                >
+                                    "Remove Version"
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-primary"
+                                    style="background:#22c55e;"
+                                    on:click=move |_| {
+                                        if let Some(c) = cb_activate {
+                                            c.run((bt_activate.clone(), ver_activate.clone()));
+                                        }
+                                    }
+                                >
+                                    "Activate"
+                                </button>
+                            </>
+                        }.into_any()
+                    } else {
+                        view! { <span/> }.into_any()
+                    }
                 } else {
                     view! { <span/> }.into_any()
                 }}
@@ -328,9 +391,53 @@ mod tests {
             update: UpdateStatusDto::default(),
             release_notes_url: Some("https://example.com".to_string()),
             default_args: vec![],
+            is_active: false,
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains("llama_cpp"));
         assert!(json.contains("\"installed\":false"));
+    }
+
+    #[test]
+    fn test_backend_card_dto_is_active_field() {
+        let dto_active = BackendCardDto {
+            r#type: "llama_cpp".to_string(),
+            display_name: "llama.cpp".to_string(),
+            installed: true,
+            info: None,
+            update: UpdateStatusDto::default(),
+            release_notes_url: None,
+            default_args: vec![],
+            is_active: true,
+        };
+        let json = serde_json::to_string(&dto_active).unwrap();
+        assert!(json.contains("\"is_active\":true"));
+
+        let dto_inactive = BackendCardDto {
+            r#type: "llama_cpp".to_string(),
+            display_name: "llama.cpp".to_string(),
+            installed: true,
+            info: None,
+            update: UpdateStatusDto::default(),
+            release_notes_url: None,
+            default_args: vec![],
+            is_active: false,
+        };
+        let json2 = serde_json::to_string(&dto_inactive).unwrap();
+        assert!(json2.contains("\"is_active\":false"));
+    }
+
+    #[test]
+    fn test_backend_card_dto_is_active_default() {
+        // Deserializing without is_active should default to false
+        let json = r#"{
+            "type": "llama_cpp",
+            "display_name": "llama.cpp",
+            "installed": true,
+            "update": {},
+            "default_args": []
+        }"#;
+        let dto: BackendCardDto = serde_json::from_str(json).unwrap();
+        assert!(!dto.is_active);
     }
 }

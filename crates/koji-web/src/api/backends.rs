@@ -46,6 +46,8 @@ pub struct BackendCardDto {
     pub release_notes_url: Option<String>,
     #[serde(default)]
     pub default_args: Vec<String>,
+    #[serde(default)]
+    pub is_active: bool,
 }
 
 impl BackendCardDto {
@@ -63,6 +65,7 @@ impl BackendCardDto {
             update: UpdateStatusDto::default(),
             release_notes_url: release_notes_url.map(String::from),
             default_args,
+            is_active: false,
         }
     }
 }
@@ -236,6 +239,44 @@ pub struct InstallResponse {
 #[serde(rename_all = "snake_case")]
 pub struct DeleteResponse {
     pub removed: bool,
+}
+
+/// Version info returned by the versions endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackendVersionDto {
+    pub name: String,
+    pub version: String,
+    pub path: String,
+    pub installed_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_type: Option<GpuTypeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<BackendSourceDto>,
+    pub is_active: bool,
+}
+
+/// Response for GET /api/backends/:name/versions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BackendVersionsResponse {
+    pub versions: Vec<BackendVersionDto>,
+    pub active_version: Option<String>,
+}
+
+/// Request body for POST /api/backends/:name/activate.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivateRequest {
+    pub version: String,
+}
+
+/// Response for POST /api/backends/:name/activate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivateResponse {
+    pub version: String,
+    pub is_active: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -456,38 +497,42 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     match registry_result {
         Ok(registry) => {
-            // List all installed backends from registry
-            let all_backends = registry.list().unwrap_or_default();
-
-            // Build a map of installed backends by backend_type
-            // (take the first/latest installation for each type)
-            let mut installed_by_type: std::collections::HashMap<String, BackendInfo> =
-                std::collections::HashMap::new();
-            for info in &all_backends {
-                let bt = info.backend_type.to_string();
-                // Only keep one entry per backend type (latest installation)
-                installed_by_type.entry(bt).or_insert(info.clone());
-            }
-
-            // Always emit both known cards
+            // Emit cards for all versions of known backends
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                #[allow(clippy::unnecessary_to_owned)]
-                let installed = installed_by_type.get(&type_.to_string());
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
                     .unwrap_or_default();
-                if let Some(info) = installed {
-                    backends.push(BackendCardDto {
-                        r#type: type_.to_string(),
-                        display_name: display_name.to_string(),
-                        installed: true,
-                        info: Some(BackendInfoDto::from(info.clone())),
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: release_notes_url.map(String::from),
-                        default_args,
-                    });
+
+                // Get ALL versions for this backend type (not just active)
+                let versions_opt = registry.list_all_versions(type_).unwrap_or(None);
+
+                if let Some(versions) = versions_opt {
+                    // Get the active version info for comparison
+                    let active_version = registry.get(type_).ok().flatten();
+
+                    // One card per version (sorted by installed_at DESC)
+                    let mut sorted_versions = versions.clone();
+                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+
+                    for info in &sorted_versions {
+                        let is_active = active_version
+                            .as_ref()
+                            .map(|a| a.version.as_str() == info.version)
+                            .unwrap_or(false);
+                        backends.push(BackendCardDto {
+                            r#type: type_.to_string(),
+                            display_name: display_name.to_string(),
+                            installed: true,
+                            info: Some(BackendInfoDto::from((*info).clone())),
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: release_notes_url.map(String::from),
+                            default_args: default_args.clone(),
+                            is_active,
+                        });
+                    }
                 } else {
+                    // No versions installed — show uninstalled card
                     backends.push(BackendCardDto::default_uninstalled(
                         type_,
                         display_name,
@@ -497,25 +542,44 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 }
             }
 
-            // List all backends and filter for custom ones
-            for info in &all_backends {
-                let bt = info.backend_type.to_string();
+            // Custom backends — one card per version (sorted by installed_at DESC)
+            // We need to discover custom backends by checking all known types and any
+            // additional ones. Since list_all_versions only works for known names,
+            // we use list() to find installed backends, then get all versions for each.
+            let active_backends = registry.list().unwrap_or_default();
+
+            for active in &active_backends {
+                let bt = active.backend_type.to_string();
                 // Skip known backends (they're already in the backends list)
-                if bt != "llama_cpp" && bt != "ik_llama" {
-                    // Avoid duplicates - only show custom backends we haven't seen
-                    if !custom
-                        .iter()
-                        .any(|c| c.r#type == format!("{}", info.backend_type))
-                    {
-                        let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+                if bt == "llama_cpp" || bt == "ik_llama" {
+                    continue;
+                }
+
+                // Get ALL versions for this custom backend
+                let versions_opt = registry.list_all_versions(&active.name).unwrap_or(None);
+
+                if let Some(versions) = versions_opt {
+                    let active_version = registry.get(&active.name).ok().flatten();
+                    let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+
+                    // One card per version (sorted by installed_at DESC)
+                    let mut sorted_versions = versions.clone();
+                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+
+                    for info in &sorted_versions {
+                        let is_active = active_version
+                            .as_ref()
+                            .map(|a| a.version.as_str() == info.version)
+                            .unwrap_or(false);
                         custom.push(BackendCardDto {
                             r#type: format!("{}", info.backend_type),
                             display_name: format!("Custom ({})", info.name),
                             installed: true,
-                            info: Some(BackendInfoDto::from(info.clone())),
+                            info: Some(BackendInfoDto::from((*info).clone())),
                             update: UpdateStatusDto::default(),
                             release_notes_url: None,
-                            default_args,
+                            default_args: default_args.clone(),
+                            is_active,
                         });
                     }
                 }
@@ -1176,6 +1240,173 @@ pub async fn remove_backend(
     Json(DeleteResponse { removed: true }).into_response()
 }
 
+/// DELETE /api/backends/:name/versions/:version
+pub async fn remove_backend_version(
+    State(state): State<Arc<AppState>>,
+    Path((name, version)): Path<(String, String)>,
+) -> impl IntoResponse {
+    // Validate path params (prevent path traversal)
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid backend name: path separators or traversal sequences not allowed"})),
+        )
+            .into_response();
+    }
+    if version.contains('/') || version.contains('\\') || version.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid version: path separators or traversal sequences not allowed"})),
+        )
+            .into_response();
+    }
+
+    let config_path = match &state.config_path {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "config_path not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Open registry and get the specific version
+    let config_dir_clone = config_dir.clone();
+    let registry_result: Result<koji_core::backends::BackendRegistry, _> =
+        tokio::task::spawn_blocking(move || {
+            koji_core::backends::BackendRegistry::open(&config_dir_clone)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+        .and_then(|r| r);
+
+    let mut registry = match registry_result {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to open registry: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    // Get the specific version record before deleting
+    // Use list_all_versions and find the matching version (conn is private)
+    let versions = match registry.list_all_versions(&name) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": format!("Backend '{}' version '{}' not found", name, version)
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to query backend: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    let info = match versions.iter().find(|v| v.version == version) {
+        Some(v) => v.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": format!("Backend '{}' version '{}' not found", name, version)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Delete files FIRST (before any DB changes)
+    let info_to_remove = BackendInfo {
+        name: info.name.clone(),
+        backend_type: info.backend_type.clone(),
+        version: info.version.clone(),
+        path: std::path::PathBuf::from(&info.path),
+        installed_at: info.installed_at,
+        gpu_type: None,
+        source: None,
+    };
+
+    // Check if a job is running for this backend
+    if let Some(jobs) = &state.jobs {
+        if let Some(active_job) = jobs.active().await {
+            let active_type = active_job
+                .backend_type
+                .as_ref()
+                .map(|b| b.to_string())
+                .unwrap_or_default();
+            if active_type == info.backend_type.to_string() {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "a job is currently running for this backend"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    if info_to_remove.path.exists() {
+        if let Err(e) = koji_core::backends::safe_remove_installation(&info_to_remove) {
+            let err_msg = e.to_string();
+            if err_msg.contains("outside the managed backends directory") {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "path is outside the managed backends directory; remove manually"
+                    })),
+                )
+                    .into_response();
+            }
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to remove files: {}", e)})),
+            )
+                .into_response();
+        }
+    }
+
+    // Remove from registry (DB only — activates another version if this was active)
+    if let Err(e) = registry.remove_version(&name, &version) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to remove version from registry: {}", e)})),
+        )
+            .into_response();
+    }
+
+    // Clean up update_check record for this backend
+    if let Ok(open) = koji_core::db::open(&config_dir) {
+        let _ = koji_core::db::queries::delete_update_check(&open.conn, "backend", &name);
+    }
+
+    Json(DeleteResponse { removed: true }).into_response()
+}
+
 /// POST /api/backends/check-updates
 pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let jobs = match &state.jobs {
@@ -1252,16 +1483,21 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
     match registry_result {
         Ok(registry) => {
-            // Always emit both known cards
+            // Emit cards for all versions of known backends
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
                     .unwrap_or_default();
-                match registry.get(type_) {
-                    Ok(Some(info)) => {
-                        // Check for updates
-                        let update_check = match koji_core::backends::check_updates(&info).await {
+
+                // Get ALL versions for this backend type
+                let versions_opt = registry.list_all_versions(type_).unwrap_or(None);
+
+                if let Some(versions) = versions_opt {
+                    // Check for updates against the active version
+                    let active_version = registry.get(type_).ok().flatten();
+                    let update_check = match active_version.as_ref() {
+                        Some(info) => match koji_core::backends::check_updates(info).await {
                             Ok(check) => UpdateStatusDto {
                                 checked: true,
                                 latest_version: Some(check.latest_version),
@@ -1272,57 +1508,80 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                                 latest_version: None,
                                 update_available: None,
                             },
-                        };
+                        },
+                        None => UpdateStatusDto::default(),
+                    };
 
+                    // One card per version (sorted by installed_at DESC)
+                    let mut sorted_versions = versions.clone();
+                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+
+                    for info in &sorted_versions {
+                        let is_active = active_version
+                            .as_ref()
+                            .map(|a| a.version.as_str() == info.version)
+                            .unwrap_or(false);
                         backends.push(BackendCardDto {
                             r#type: type_.to_string(),
                             display_name: display_name.to_string(),
                             installed: true,
-                            info: Some(BackendInfoDto::from(info)),
+                            info: Some(BackendInfoDto::from((*info).clone())),
                             update: UpdateStatusDto {
-                                checked: true,
-                                latest_version: update_check.latest_version,
+                                checked: update_check.checked,
+                                latest_version: update_check.latest_version.clone(),
                                 update_available: update_check.update_available,
                             },
                             release_notes_url: release_notes_url.map(String::from),
-                            default_args,
+                            default_args: default_args.clone(),
+                            is_active,
                         });
                     }
-                    Ok(None) => {
-                        backends.push(BackendCardDto::default_uninstalled(
-                            type_,
-                            display_name,
-                            *release_notes_url,
-                            default_args,
-                        ));
-                    }
-                    Err(_) => {
-                        backends.push(BackendCardDto::default_uninstalled(
-                            type_,
-                            display_name,
-                            *release_notes_url,
-                            default_args,
-                        ));
-                    }
+                } else {
+                    // No versions installed — show uninstalled card
+                    backends.push(BackendCardDto::default_uninstalled(
+                        type_,
+                        display_name,
+                        *release_notes_url,
+                        default_args,
+                    ));
                 }
             }
 
-            // List all backends and filter for custom ones
-            let all_backends = registry.list().unwrap_or_default();
-            for info in all_backends {
-                let bt = info.backend_type.to_string();
+            // Custom backends — one card per version (sorted by installed_at DESC)
+            let active_backends = registry.list().unwrap_or_default();
+            for active in &active_backends {
+                let bt = active.backend_type.to_string();
                 // Skip known backends (they're already in the backends list)
-                if bt != "llama_cpp" && bt != "ik_llama" {
+                if bt == "llama_cpp" || bt == "ik_llama" {
+                    continue;
+                }
+
+                // Get ALL versions for this custom backend
+                let versions_opt = registry.list_all_versions(&active.name).unwrap_or(None);
+
+                if let Some(versions) = versions_opt {
+                    let active_version = registry.get(&active.name).ok().flatten();
                     let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
-                    custom.push(BackendCardDto {
-                        r#type: format!("{}", info.backend_type),
-                        display_name: format!("Custom ({})", info.name),
-                        installed: true,
-                        info: Some(BackendInfoDto::from(info)),
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: None,
-                        default_args,
-                    });
+
+                    let mut sorted_versions = versions.clone();
+                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+
+                    for info in &sorted_versions {
+                        let is_active = active_version
+                            .as_ref()
+                            .map(|a| a.version.as_str() == info.version)
+                            .unwrap_or(false);
+                        custom.push(BackendCardDto {
+                            r#type: format!("{}", info.backend_type),
+                            display_name: format!("Custom ({})", info.name),
+                            installed: true,
+                            info: Some(BackendInfoDto::from((*info).clone())),
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: None,
+                            default_args: default_args.clone(),
+                            is_active,
+                        });
+                    }
                 }
             }
         }
@@ -1350,6 +1609,182 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         custom,
     })
     .into_response()
+}
+
+/// GET /api/backends/:name/versions
+pub async fn list_backend_versions(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    // Validate name (prevent path traversal)
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid backend name"})),
+        )
+            .into_response();
+    }
+
+    let config_path = match &state.config_path {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "config_path not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir_clone = config_dir.clone();
+    let registry_result: Result<koji_core::backends::BackendRegistry, _> =
+        tokio::task::spawn_blocking(move || {
+            koji_core::backends::BackendRegistry::open(&config_dir_clone)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+        .and_then(|r| r);
+
+    match registry_result {
+        Ok(registry) => {
+            let versions_opt = match registry.list_all_versions(&name) {
+                Ok(v) => v,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": format!("Failed to list versions: {}", e)})),
+                    )
+                        .into_response();
+                }
+            };
+
+            let versions = match versions_opt {
+                Some(v) => v,
+                None => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Get the active version for comparison
+            let active_version = registry.get(&name).ok().flatten().map(|a| a.version);
+
+            let dto_versions: Vec<BackendVersionDto> = versions
+                .iter()
+                .map(|info| BackendVersionDto {
+                    name: info.name.clone(),
+                    version: info.version.clone(),
+                    path: info.path.to_string_lossy().to_string(),
+                    installed_at: info.installed_at,
+                    gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                    source: info.source.as_ref().map(|s| s.into()),
+                    is_active: active_version.as_deref() == Some(&info.version),
+                })
+                .collect();
+
+            Json(BackendVersionsResponse {
+                versions: dto_versions,
+                active_version,
+            })
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to open registry: {}", e)})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/backends/:name/activate
+pub async fn activate_backend_version(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<ActivateRequest>,
+) -> impl IntoResponse {
+    // Validate name
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid backend name"})),
+        )
+            .into_response();
+    }
+
+    let config_path = match &state.config_path {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "config_path not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir = match config_path.parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Cannot determine config directory"})),
+            )
+                .into_response();
+        }
+    };
+
+    let config_dir_clone = config_dir.clone();
+    let version_clone = req.version.clone();
+    let name_clone = name.clone();
+    let version_for_error = version_clone.clone();
+    let registry_result: Result<(koji_core::backends::BackendRegistry, bool), _> =
+        tokio::task::spawn_blocking(move || {
+            let mut reg = koji_core::backends::BackendRegistry::open(&config_dir_clone)?;
+            let activated = reg.activate(&name_clone, &version_clone)?;
+            Ok((reg, activated))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+        .and_then(|r| r);
+
+    match registry_result {
+        Ok((_, activated)) => {
+            if !activated {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "error": format!("Version '{}' not found for backend '{}'", version_for_error, name)
+                    })),
+                )
+                    .into_response();
+            }
+
+            Json(ActivateResponse {
+                version: req.version,
+                is_active: true,
+            })
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to activate: {}", e)})),
+        )
+            .into_response(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

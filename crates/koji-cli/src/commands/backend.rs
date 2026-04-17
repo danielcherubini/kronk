@@ -5,6 +5,7 @@ use koji_core::backends::{
     update_backend, BackendInfo, BackendRegistry, BackendSource, BackendType, InstallOptions,
 };
 use koji_core::config::Config;
+use koji_core::db::queries::get_backend_by_version;
 use koji_core::gpu;
 
 #[derive(Debug, Args)]
@@ -70,6 +71,30 @@ pub enum BackendSubcommand {
 
     /// Check for updates to all installed backends
     CheckUpdates,
+
+    /// List all versions of a backend (not just the active one)
+    #[command(alias = "versions")]
+    AllVersions {
+        /// Name of the backend (omit to list all backends with all their versions)
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// Activate a specific version of a backend
+    Switch {
+        /// Name of the backend
+        name: String,
+        /// Version to activate
+        version: String,
+    },
+
+    /// Remove a single version (not all versions)
+    RemoveVersion {
+        /// Name of the backend
+        name: String,
+        /// Version to remove
+        version: String,
+    },
 }
 
 pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
@@ -99,6 +124,11 @@ pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
         BackendSubcommand::List => cmd_list(config).await,
         BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
         BackendSubcommand::CheckUpdates => cmd_check_updates(config).await,
+        BackendSubcommand::AllVersions { name } => cmd_all_versions(config, name.as_deref()).await,
+        BackendSubcommand::Switch { name, version } => cmd_switch(config, &name, &version).await,
+        BackendSubcommand::RemoveVersion { name, version } => {
+            cmd_remove_version(config, &name, &version).await
+        }
     }
 }
 
@@ -490,15 +520,46 @@ async fn cmd_list(_config: &Config) -> Result<()> {
         return Ok(());
     }
 
+    // registry.list() only returns active backends, so all shown are active.
+    // Use list_all_versions to show all versions with * active marker.
     println!("Installed backends:\n");
     for backend in &backends {
-        println!("  {}  [{}]", backend.name, backend.backend_type);
-        println!("    Version:  {}", backend.version);
-        println!("    Path:     {}", backend.path.display());
-        if let Some(ref gpu) = backend.gpu_type {
-            println!("    GPU:      {:?}", gpu);
+        let name = backend.name.clone();
+        let all_versions = registry.list_all_versions(&name).unwrap_or(None);
+
+        if let Some(versions) = all_versions {
+            // Show all versions, marking the active one
+            let active_version = backend.version.clone();
+            for v in &versions {
+                let marker = if v.version == active_version {
+                    " * active"
+                } else {
+                    ""
+                };
+                println!(
+                    "  {} [{}]{} (v{})",
+                    v.name, v.backend_type, marker, v.version
+                );
+                println!("    Version:  {}", v.version);
+                println!("    Path:     {}", v.path.display());
+                if let Some(ref gpu) = v.gpu_type {
+                    println!("    GPU:      {:?}", gpu);
+                }
+                println!();
+            }
+        } else {
+            // Fallback if list_all_versions fails
+            println!(
+                "  {} [{}] (v{})",
+                backend.name, backend.backend_type, backend.version
+            );
+            println!("    Version:  {}", backend.version);
+            println!("    Path:     {}", backend.path.display());
+            if let Some(ref gpu) = backend.gpu_type {
+                println!("    GPU:      {:?}", gpu);
+            }
+            println!();
         }
-        println!();
     }
     // Tip using first backend as example
     if let Some(first) = backends.first() {
@@ -578,6 +639,187 @@ async fn cmd_check_updates(_config: &Config) -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+struct VersionEntry {
+    name: String,
+    backend_type: BackendType,
+    version: String,
+    path: std::path::PathBuf,
+    gpu_type: Option<koji_core::gpu::GpuType>,
+    is_active: bool,
+}
+
+async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
+    let registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let active_backends = registry.list()?;
+
+    if active_backends.is_empty() {
+        println!("No backends installed.");
+        return Ok(());
+    }
+
+    let mut entries: Vec<VersionEntry> = Vec::new();
+
+    if let Some(target_name) = name {
+        // Show all versions for a specific backend
+        match registry.list_all_versions(target_name)? {
+            Some(versions) => {
+                // Get the active version for comparison
+                let active_version = registry.get(target_name)?.map(|a| a.version);
+
+                for v in versions {
+                    entries.push(VersionEntry {
+                        name: v.name.clone(),
+                        backend_type: v.backend_type.clone(),
+                        version: v.version.clone(),
+                        path: v.path.clone(),
+                        gpu_type: v.gpu_type.clone(),
+                        is_active: active_version.as_deref() == Some(&v.version),
+                    });
+                }
+            }
+            None => {
+                println!("Backend '{}' not found.", target_name);
+                return Ok(());
+            }
+        }
+    } else {
+        // Show all versions for all backends
+        for active in &active_backends {
+            let name = active.name.clone();
+            let _backend_type = active.backend_type.clone();
+            let _gpu_type = active.gpu_type.clone();
+            let active_version = active.version.clone();
+
+            // Get all versions for this backend
+            let all_versions = match registry.list_all_versions(&name)? {
+                Some(v) => v,
+                None => vec![active.clone()],
+            };
+
+            for v in all_versions {
+                entries.push(VersionEntry {
+                    name: v.name.clone(),
+                    backend_type: v.backend_type.clone(),
+                    version: v.version.clone(),
+                    path: v.path.clone(),
+                    gpu_type: v.gpu_type.clone(),
+                    is_active: v.version == active_version,
+                });
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        println!("No versions found.");
+        return Ok(());
+    }
+
+    println!("Backend versions:\n");
+    for entry in &entries {
+        let active_marker = if entry.is_active { " * active" } else { "" };
+        println!(
+            "  {} [{}]{} (v{})",
+            entry.name, entry.backend_type, active_marker, entry.version
+        );
+        println!("    Path:     {}", entry.path.display());
+        if let Some(ref gpu) = entry.gpu_type {
+            println!("    GPU:      {:?}", gpu);
+        }
+        println!();
+    }
+
+    // Show usage tip
+    if let Some(target) = name {
+        println!(
+            "To activate a version: koji backend switch {} <version>",
+            target
+        );
+    } else {
+        println!("To activate a version: koji backend switch <backend_name> <version>");
+    }
+
+    Ok(())
+}
+
+async fn cmd_switch(_config: &Config, name: &str, version: &str) -> Result<()> {
+    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+
+    // Check the version exists
+    let versions = match registry.list_all_versions(name)? {
+        Some(v) => v,
+        None => anyhow::bail!(
+            "Backend '{}' not found. Run `koji backend list` to see installed backends.",
+            name
+        ),
+    };
+
+    let version_exists = versions.iter().any(|v| v.version == version);
+    if !version_exists {
+        let available: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
+        anyhow::bail!(
+            "Version '{}' not found for backend '{}'. Available: {}",
+            version,
+            name,
+            available.join(", ")
+        );
+    }
+
+    // Activate the version
+    let activated = registry.activate(name, version)?;
+    if !activated {
+        anyhow::bail!("Failed to activate version '{}'", version);
+    }
+
+    println!("Activated backend '{}' version '{}'.", name, version);
+
+    Ok(())
+}
+
+async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Result<()> {
+    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+
+    // Get the version info before removing
+    let record = get_backend_by_version(&Config::open_db(), name, version)?
+        .ok_or_else(|| anyhow!("Backend '{}' version '{}' not found", name, version))?;
+
+    println!("Removing backend '{}' version '{}'", name, version);
+    println!("  Path: {}", record.path);
+
+    let confirm = inquire::Confirm::new("Are you sure? This will delete the backend files.")
+        .with_default(false)
+        .prompt()?;
+
+    if !confirm {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    // STEP 1: Delete files FIRST (before any DB changes)
+    let info = BackendInfo {
+        name: record.name.clone(),
+        backend_type: record
+            .backend_type
+            .parse()
+            .map_err(|e| anyhow!("Invalid backend type: {}", e))?,
+        version: record.version.clone(),
+        path: std::path::PathBuf::from(&record.path),
+        installed_at: record.installed_at,
+        gpu_type: None,
+        source: None,
+    };
+
+    if info.path.exists() {
+        safe_remove_installation(&info)?;
+    }
+
+    // STEP 2: Remove from registry (activates another version if this was active)
+    registry.remove_version(name, version)?;
+
+    println!("Version '{}' removed.", version);
 
     Ok(())
 }

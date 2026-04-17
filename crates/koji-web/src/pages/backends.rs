@@ -180,6 +180,47 @@ pub fn Backends() -> impl IntoView {
             save_status.set(None); // Clear status when user makes new edits
         });
 
+    let on_activate_click = Callback::new(move |(backend_type, version): (String, String)| {
+        action_error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            let url = format!("/api/backends/{}/activate", backend_type);
+            let body = serde_json::json!({ "version": version });
+            match gloo_net::http::Request::post(&url)
+                .json(&body)
+                .unwrap()
+                .send()
+                .await
+            {
+                Ok(resp) if resp.ok() => {
+                    refresh_tick.update(|n| *n += 1);
+                }
+                Ok(resp) => {
+                    let text = resp.text().await.unwrap_or_default();
+                    action_error.set(Some(format!("Activate failed: {text}")));
+                }
+                Err(e) => action_error.set(Some(format!("Activate request failed: {e}"))),
+            }
+        });
+    });
+
+    let on_remove_version_click =
+        Callback::new(move |(backend_type, version): (String, String)| {
+            action_error.set(None);
+            wasm_bindgen_futures::spawn_local(async move {
+                let url = format!("/api/backends/{}/versions/{}", backend_type, version);
+                match gloo_net::http::Request::delete(&url).send().await {
+                    Ok(resp) if resp.ok() => {
+                        refresh_tick.update(|n| *n += 1);
+                    }
+                    Ok(resp) => {
+                        let text = resp.text().await.unwrap_or_default();
+                        action_error.set(Some(format!("Remove version failed: {text}")));
+                    }
+                    Err(e) => action_error.set(Some(format!("Remove version request failed: {e}"))),
+                }
+            });
+        });
+
     let save = move |_| {
         if saving.get() {
             return;
@@ -273,6 +314,8 @@ pub fn Backends() -> impl IntoView {
                     let list = backends_list.get();
                     let mut cards = Vec::new();
                     for backend in list.backends.into_iter().chain(list.custom.into_iter()) {
+                        let activate_cb = on_activate_click;
+                        let remove_version_cb = on_remove_version_click;
                         cards.push(view! {
                             <BackendCard
                                 backend=backend
@@ -281,6 +324,8 @@ pub fn Backends() -> impl IntoView {
                                 on_check_updates=on_check_updates_click
                                 on_delete=on_delete_click
                                 on_default_args_change=on_default_args_change
+                                on_activate=activate_cb
+                                on_remove_version=remove_version_cb
                             />
                         }.into_any());
                     }
