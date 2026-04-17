@@ -9,6 +9,7 @@ pub mod modal;
 pub mod pull_quant_wizard;
 pub mod pull_wizard;
 pub mod sampling_templates_section;
+pub mod self_update_section;
 pub mod sidebar;
 pub mod sparkline;
 pub mod supervisor_section;

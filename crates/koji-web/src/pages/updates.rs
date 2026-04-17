@@ -1,11 +1,14 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::components::self_update_section::SelfUpdateSection;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UpdateCheckDto {
     pub item_type: String,
     pub item_id: String,
     pub repo_id: Option<String>,
+    pub display_name: Option<String>,
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -109,6 +112,9 @@ pub fn Updates() -> impl IntoView {
                 <div class="error-banner">{e}</div>
             })}
 
+            // Self-update section for the Koji application itself
+            <SelfUpdateSection />
+
             <section class="updates-section">
                 <h2 class="section__title">"Backends"</h2>
                 <div class="updates-list">
@@ -169,7 +175,10 @@ pub fn Updates() -> impl IntoView {
                     {move || {
                         let models = updates.with(|u| u.models.clone());
                         models.into_iter().map(|m| {
-                            let display_name = m.repo_id.clone().unwrap_or_else(|| m.item_id.clone());
+                            let display_name = m.display_name
+                                .clone()
+                                .or_else(|| m.repo_id.clone())
+                                .unwrap_or_else(|| m.item_id.clone());
                             view! {
                                 <div class="update-item" class:update-available=m.update_available>
                                     <div class="update-item__info">

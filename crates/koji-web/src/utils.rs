@@ -1,3 +1,5 @@
+pub mod self_update;
+
 /// Helper to convert event.target.value as String
 /// Handles input, select, and textarea elements uniformly
 pub fn target_value(ev: &leptos::ev::Event) -> String {
