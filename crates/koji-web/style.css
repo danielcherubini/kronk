@@ -1539,15 +1539,16 @@ label {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  flex-grow: 1;
 }
 
 .model-row__meta {
   font-size: 0.8rem;
   color: var(--text-muted);
   min-width: 40px;
-  max-width: 60px;
   text-align: center;
   flex-shrink: 0;
+  flex-grow: 1;
 }
 
 .model-row__backend {
@@ -1560,6 +1561,7 @@ label {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  flex-grow: 1;
 }
 
 .model-row__badge {
@@ -1645,4 +1647,3 @@ label {
 .modal-body {
   padding: 1.5rem;
 }
-
