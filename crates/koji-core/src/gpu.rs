@@ -228,7 +228,7 @@ pub fn detect_build_prerequisites() -> BuildPrerequisites {
                 program_files
             );
             let vswhere_available = std::process::Command::new(&vswhere_path)
-                .args(&[
+                .args([
                     "-latest",
                     "-products",
                     "*",

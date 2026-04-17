@@ -658,7 +658,7 @@ async fn build_cmake(build_output: &Path, progress: Option<&Arc<dyn ProgressSink
         if !status.success() {
             return Err(anyhow!("Build failed. Check the output above for errors."));
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]
