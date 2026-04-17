@@ -600,6 +600,9 @@ aside.sidebar--collapsed ~ main {
 .btn-sm {
   padding: 0.3rem 0.6rem;
   font-size: 0.8rem;
+  text-align: center;
+  vertical-align: middle;
+  display: inline-block;
 }
 
 /* 8. Forms */
@@ -1579,6 +1582,10 @@ label {
 .model-row .badge {
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;
+  min-width: 65px;
+  text-align: center;
+  align-items: center;
+  display: inline-block;
 }
 
 @media (max-width: 900px) {
