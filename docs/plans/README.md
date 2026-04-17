@@ -14,10 +14,10 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 57
-- **Completed**: 56 ✅
+- **Total Plans**: 58
+- **Completed**: 57 ✅
 - **In Progress**: 0 🚧
-- **Remaining**: 1 ❌ (VLLM Backend)
+- **Remaining**: 0
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -61,6 +61,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Backends Install/Update UI](2026-04-08-backends-install-update-ui-spec.md) | Install, update, and check-updates for backends from web UI | #43 `f500c27`, `89f71ed`, `32ae3f6`, `9a70c1e` |
 | [Fix Backend Default Args](2026-04-10-fix-backend-default-args-spec.md) | Fix default_args display bug and add page-level save button | #49 `aefe2fe`, `29b26fc`, `6bee43d` |
 | [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | `e862ab6`, `69d492a`, `c99304a`, `7698a11` ✅ COMPLETED |
+| [Backend Version Cards](2026-04-17-backend-version-cards.md) | Multiple backend versions with visual cards, activate/switch, version-specific remove | #61
 
 ### Model Management
 
@@ -136,7 +137,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 | Plan | Description | Status |
 |------|-------------|--------|
-| [VLLM Backend](2026-03-30-vllm-backend.md) | Add vLLM as a first-class backend type with PyPI version checking | ❌ NOT STARTED |
+
 
 ## Roadmap
 
@@ -197,4 +198,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-15
+**Last Updated**: 2026-04-17
