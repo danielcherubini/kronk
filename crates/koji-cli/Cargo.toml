@@ -1,6 +1,6 @@
 [package]
 name = "koji"
-version = "1.36.1"
+version = "1.37.0"
 edition.workspace = true
 description = "Koji — local AI service manager and process supervisor"
 license = "MIT"
