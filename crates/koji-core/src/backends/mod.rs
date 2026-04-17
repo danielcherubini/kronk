@@ -135,11 +135,15 @@ mod tests {
 
     #[test]
     fn test_safe_remove_installation_rejects_outside_path() {
+        // Use a real temp directory path that exists on all platforms.
+        // Keep the TempDir alive so the path remains valid during the test.
+        let _outside_dir = tempfile::tempdir().expect("tempdir");
+        let outside_path = _outside_dir.path().join("llama-server");
         let outside_info = BackendInfo {
             name: "test".to_string(),
             backend_type: BackendType::LlamaCpp,
             version: "test".to_string(),
-            path: std::path::PathBuf::from("/tmp/llama-server"),
+            path: outside_path,
             installed_at: 0,
             gpu_type: None,
             source: None,

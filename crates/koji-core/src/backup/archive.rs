@@ -317,6 +317,8 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
             let dest_path = target_dir.join(entry_name_owned.trim_start_matches("/"));
 
             // Validate path to prevent traversal attacks
+            // Use target_dir directly for prefix check to avoid Windows short-path vs
+            // long-path mismatches (e.g. RUNNER~1 vs DANIELCH~1)
             let canonical_target = target_dir.canonicalize().with_context(|| {
                 format!(
                     "Failed to canonicalize target directory: {}",
@@ -350,8 +352,9 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
                     );
                 }
             } else {
-                // Path doesn't exist yet, check relative path
-                let relative = dest_path.strip_prefix(&canonical_target).map_err(|_| {
+                // Path doesn't exist yet, check relative path using target_dir
+                // (not canonical_target to avoid short/long path mismatches on Windows)
+                let relative = dest_path.strip_prefix(target_dir).map_err(|_| {
                     anyhow::anyhow!("Path escapes target directory: {}", dest_path.display())
                 })?;
                 if relative

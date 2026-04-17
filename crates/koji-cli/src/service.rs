@@ -57,7 +57,7 @@ pub fn service_dispatch() -> Result<()> {
         .iter()
         .position(|a| a == "--config-dir")
         .and_then(|i| raw_args.get(i + 1))
-        .map(|s| std::path::PathBuf::from(s));
+        .map(std::path::PathBuf::from);
 
     let ctx = raw_args
         .iter()
@@ -339,7 +339,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                 tracing::warn!("Failed to get logs directory: {}, using current dir", e);
                 std::path::PathBuf::from(".")
             });
-            let health_check = config.resolve_health_check(&srv);
+            let health_check = config.resolve_health_check(srv);
             // Resolve backend binary path from DB (priority) or config.path (fallback)
             let backend_path_str = {
                 let conn = Config::open_db_from(config_dir.as_deref());
