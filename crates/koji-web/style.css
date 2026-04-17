@@ -1505,6 +1505,99 @@ label {
   font-weight: 600;
 }
 
+/* ── Dashboard model rows — horizontal single-line layout ───────────────── */
+.models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0;
+  border-radius: 0.5rem;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.model-row:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.model-row__name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 140px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+  flex-grow: 1;
+}
+
+.model-row__meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: center;
+  flex-shrink: 0;
+  flex-grow: 1;
+}
+
+.model-row__backend {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  min-width: 60px;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+  flex-grow: 1;
+}
+
+.model-row__badge {
+  flex-shrink: 0;
+}
+
+.model-row__actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Ensure badges render at appropriate size on rows */
+.model-row .badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+}
+
+@media (max-width: 900px) {
+  .model-row {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .model-row__name {
+    min-width: 100%;
+    max-width: 100%;
+  }
+
+  .model-row__backend,
+  .model-row__meta {
+    min-width: auto;
+  }
+}
+
 /* ── Modal overlay ──────────────────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed;
@@ -1554,4 +1647,3 @@ label {
 .modal-body {
   padding: 1.5rem;
 }
-
