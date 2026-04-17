@@ -15,7 +15,10 @@ use koji_core::backends::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckDto {
     pub item_type: String, // "backend" or "model"
-    pub item_id: String,   // backend name or model config key
+    pub item_id: String,   // backend name (e.g. "ingest-worker") or model ID
+    // (e.g. "gpt-4o-mini" or HF repo like
+    // "unsloth/Qwen3.6-35B-A3B-GGUF")
+    pub repo_id: Option<String>, // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -56,15 +59,24 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
             let mut backends = Vec::new();
             let mut models = Vec::new();
             for r in records {
+                let details: Option<serde_json::Value> =
+                    r.details_json.and_then(|j| serde_json::from_str(&j).ok());
+                // Extract repo_id from details JSON if present (for models)
+                let repo_id = details
+                    .as_ref()
+                    .and_then(|d| d.get("repo_id"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let dto = UpdateCheckDto {
                     item_type: r.item_type,
                     item_id: r.item_id,
+                    repo_id,
                     current_version: r.current_version,
                     latest_version: r.latest_version,
                     update_available: r.update_available,
                     status: r.status,
                     error_message: r.error_message,
-                    details_json: r.details_json.and_then(|j| serde_json::from_str(&j).ok()),
+                    details_json: details,
                     checked_at: r.checked_at,
                 };
                 if dto.item_type == "backend" {

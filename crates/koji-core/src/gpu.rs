@@ -89,6 +89,12 @@ pub struct ModelStatus {
     pub display_name: Option<String>,
     pub backend: String,
     pub loaded: bool,
+    /// Quantization name (e.g. "Q4_K_M", "Q8_0"). Display-only on dashboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quant: Option<String>,
+    /// Model's configured context length in tokens. Display-only on dashboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u32>,
 }
 
 /// Collect a snapshot of system metrics using a caller-owned `System`.

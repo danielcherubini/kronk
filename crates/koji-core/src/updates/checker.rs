@@ -8,7 +8,10 @@ use crate::db::queries::{
     get_active_backend, get_all_model_configs, get_all_update_checks, get_model_pull,
     get_oldest_check_time,
 };
-use crate::models::pull::list_gguf_files;
+use crate::models::{
+    pull,
+    update::{compare_files, FileStatus},
+};
 
 /// Shared state for the update checker. Uses Arc<Mutex<()>> as a binary semaphore
 /// to ensure that only one update check run occurs at any given time across the system.
@@ -163,7 +166,9 @@ impl UpdateChecker {
     }
 
     /// Check a single model for updates.
-    /// Uses 3-phase approach: sync DB read, async HF network, sync DB write.
+    /// Uses the same two-tier strategy as `models::update::check_for_updates`:
+    /// (1) commit SHA quick check, then (2) per-file LFS hash comparison so
+    /// that non-GGUF repo changes don't trigger false positives.
     pub async fn check_model(
         &self,
         config_dir: &std::path::Path,
@@ -189,32 +194,50 @@ impl UpdateChecker {
             }
         };
 
-        // Sync: Get current commit from DB
-        let current_version = tokio::task::spawn_blocking({
+        // Phase 1 — SYNC: read DB state (no .await)
+        let db_state = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             let repo_id = repo_id.to_string();
-            move || -> anyhow::Result<Option<String>> {
+            move || -> anyhow::Result<Option<(db::queries::ModelPullRecord, Vec<db::queries::ModelFileRecord>)>> {
                 let open = db::open(&config_dir)?;
                 let model_record =
                     match db::queries::get_model_config_by_repo_id(&open.conn, &repo_id)? {
                         Some(r) => r,
                         None => return Ok(None),
                     };
-                let pull = get_model_pull(&open.conn, model_record.id)?;
-                Ok(pull.map(|p| p.commit_sha))
+                let pull_record = get_model_pull(&open.conn, model_record.id)?;
+                let file_records = db::queries::get_model_files(&open.conn, model_record.id)?;
+                Ok(pull_record.map(|pr| (pr, file_records)))
             }
         })
         .await??;
 
-        // Async: List remote files
-        let latest_listing = match list_gguf_files(repo_id).await {
+        // Handle no prior record
+        let Some((pull_record, file_records)) = db_state else {
+            self.save_check_result(
+                config_dir,
+                "model",
+                &model_id.to_string(),
+                None,
+                None,
+                false,
+                "no_prior_record",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(());
+        };
+
+        // Phase 2 — ASYNC: fetch remote state (conn not referenced after this point)
+        let remote_listing = match pull::list_gguf_files(repo_id).await {
             Ok(l) => l,
             Err(e) => {
                 self.save_check_result(
                     config_dir,
                     "model",
                     &model_id.to_string(),
-                    current_version.as_deref(),
+                    Some(&pull_record.commit_sha),
                     None,
                     false,
                     "error",
@@ -226,35 +249,92 @@ impl UpdateChecker {
             }
         };
 
-        // Pure logic - determine update availability
-        let update_available = current_version
-            .as_ref()
-            .map(|c| *c != latest_listing.commit_sha)
-            .unwrap_or(true);
+        // Tier 1 — quick check: commit SHA match?
+        if remote_listing.commit_sha == pull_record.commit_sha {
+            self.save_check_result(
+                config_dir,
+                "model",
+                &model_id.to_string(),
+                Some(&pull_record.commit_sha),
+                Some(&remote_listing.commit_sha),
+                false,
+                "up_to_date",
+                None,
+                None,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        // Tier 2 — per-file LFS hash comparison
+        let resolved_repo_id = &remote_listing.repo_id;
+        let remote_blobs = match pull::fetch_blob_metadata(resolved_repo_id).await {
+            Ok(blobs) => blobs,
+            Err(e) => {
+                self.save_check_result(
+                    config_dir,
+                    "model",
+                    &model_id.to_string(),
+                    Some(&pull_record.commit_sha),
+                    Some(&remote_listing.commit_sha),
+                    false,
+                    "error",
+                    Some(&format!(
+                        "Commit changed but failed to fetch file details: {e}"
+                    )),
+                    None,
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+        // Phase 3 — PURE: compare local vs remote (testable, no I/O)
+        let file_updates = compare_files(&file_records, &remote_blobs);
+
+        let has_unknown = file_updates
+            .iter()
+            .any(|f| matches!(f.status, FileStatus::Unknown));
+
+        let has_changes = file_updates
+            .iter()
+            .any(|f| matches!(f.status, FileStatus::Changed { .. } | FileStatus::NewRemote));
+
+        let (update_available, status, error_message) = if has_unknown {
+            (
+                false,
+                "verification_failed",
+                Some("No stored hashes — run `model update --refresh`"),
+            )
+        } else if has_changes {
+            (true, "update_available", None)
+        } else {
+            (false, "up_to_date", None)
+        };
 
         let details_json = serde_json::json!({
-            "repo_id": latest_listing.repo_id,
-            "commit_sha": latest_listing.commit_sha,
-            "file_count": latest_listing.files.len(),
-            "files": latest_listing.files.iter().map(|f| f.filename.clone()).collect::<Vec<_>>(),
+            "repo_id": remote_listing.repo_id,
+            "commit_sha": remote_listing.commit_sha,
+            "file_count": file_updates.len(),
+            "files": file_updates.iter().map(|f| {
+                serde_json::json!({
+                    "filename": f.filename,
+                    "status": format!("{:?}", f.status),
+                    "quant": f.quant,
+                })
+            }).collect::<Vec<_>>(),
         })
         .to_string();
-
-        let status = if update_available {
-            "update_available"
-        } else {
-            "up_to_date"
-        };
 
         self.save_check_result(
             config_dir,
             "model",
             &model_id.to_string(),
-            current_version.as_deref(),
-            Some(&latest_listing.commit_sha),
+            Some(&pull_record.commit_sha),
+            Some(&remote_listing.commit_sha),
             update_available,
             status,
-            None,
+            error_message,
             Some(&details_json),
         )
         .await

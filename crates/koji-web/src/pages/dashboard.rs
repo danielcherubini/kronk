@@ -82,6 +82,10 @@ struct ModelStatus {
     display_name: Option<String>,
     backend: String,
     loaded: bool,
+    #[serde(default)]
+    quant: Option<String>,
+    #[serde(default)]
+    context_length: Option<u32>,
 }
 
 /// Format a number with comma separators (e.g. `8460` → `"8,460"`).
@@ -156,17 +160,6 @@ fn model_display_name(m: &ModelStatus) -> String {
         .or(m.api_name.as_deref())
         .unwrap_or(m.id.as_str())
         .to_string()
-}
-
-/// Partition model statuses into loaded and unloaded vectors, sorted by ID.
-///
-/// This is extracted to avoid duplicating the partition logic between the
-/// "Loaded Models" and "Idle Models" sections.
-fn partition_model_statuses(models: Vec<ModelStatus>) -> (Vec<ModelStatus>, Vec<ModelStatus>) {
-    let (mut loaded, mut unloaded): (Vec<_>, Vec<_>) = models.into_iter().partition(|m| m.loaded);
-    loaded.sort_by(|a, b| a.id.cmp(&b.id));
-    unloaded.sort_by(|a, b| a.id.cmp(&b.id));
-    (loaded, unloaded)
 }
 
 #[component]
@@ -445,142 +438,75 @@ pub fn Dashboard() -> impl IntoView {
                                 </div>
                             }.into_any()
                         } else {
-                            // Partition models into loaded and idle sections
-                            let (loaded, idle) = partition_model_statuses(models);
+                            // Sort by id (stable order, matching the backend)
+                            let mut sorted = models;
+                            sorted.sort_by(|a, b| a.id.cmp(&b.id));
                             view! {
-                                // Plain wrapper div (NOT `.models-grid`) so the two
-                                // `.model-section` children stack vertically, matching
-                                // the Models page. The inner `.models-grid` inside each
-                                // section is what flows the model cards horizontally.
-                                <div>
-                                    // Loaded models section
-                                    {if !loaded.is_empty() {
-                                         view! {
-                                             <div class="model-section">
-                                                 <h2 class="model-section__title">"Loaded Models"</h2>
-                                                 <div class="models-grid">
-                                                     {loaded.into_iter().map(|m| {
-                                                         let id_load = m.id.clone();
-                                                         let id_unload = m.id.clone();
-                                                         let id_edit = m.db_id
-                                                             .map(|n| n.to_string())
-                                                             .unwrap_or_else(|| m.id.clone());
-                                                         let badge_class = model_status_badge_class(m.loaded);
-                                                         let badge_label = model_status_badge_label(m.loaded);
-                                                         let button_class = model_action_button_class(m.loaded);
-                                                         let button_label = model_action_button_label(m.loaded);
-                                                         view! {
-                                                             <div class="model-card card">
-                                                                 <div class="model-card__header">
-                                                                     <span class="model-card__id">{model_display_name(&m)}</span>
-                                                                     <span class={badge_class}>{badge_label}</span>
-                                                                 </div>
-                                                                 <div class="model-card__body">
-                                                                     <div class="model-card__field">
-                                                                         <span class="model-card__label">"Backend"</span>
-                                                                         <span class="model-card__value text-mono">{m.backend}</span>
-                                                                     </div>
-                                                                 </div>
-                                                                 <div class="model-card__actions">
-                                                                     {if m.loaded {
-                                                                         view! {
-                                                                             <button
-                                                                                 class={button_class}
-                                                                                 prop:disabled=move || unload_pending.get()
-                                                                                 on:click=move |_| { unload_action.dispatch(id_unload.clone()); }
-                                                                             >
-                                                                                 {button_label}
-                                                                             </button>
-                                                                         }.into_any()
-                                                                     } else {
-                                                                         view! {
-                                                                             <button
-                                                                                 class={button_class}
-                                                                                 prop:disabled=move || load_pending.get()
-                                                                                 on:click=move |_| { load_action.dispatch(id_load.clone()); }
-                                                                             >
-                                                                                 {button_label}
-                                                                             </button>
-                                                                         }.into_any()
-                                                                     }}
-                                                                     <A href=format!("/models/{}/edit", id_edit)>
-                                                                         <button class="btn btn-secondary btn-sm">"Edit"</button>
-                                                                     </A>
-                                                                 </div>
-                                                             </div>
-                                                         }
-                                                     }).collect::<Vec<_>>()}
-                                                 </div>
-                                             </div>
-                                         }.into_any()
-
-                                    } else {
-                                        ().into_any()
-                                    }}
-                                    // Idle models section
-                                    {if !idle.is_empty() {
-                                         view! {
-                                             <div class="model-section">
-                                                 <h2 class="model-section__title">"Idle Models"</h2>
-                                                 <div class="models-grid">
-                                                     {idle.into_iter().map(|m| {
-                                                         let id_load = m.id.clone();
-                                                         let id_unload = m.id.clone();
-                                                         let id_edit = m.db_id
-                                                             .map(|n| n.to_string())
-                                                             .unwrap_or_else(|| m.id.clone());
-                                                         let badge_class = model_status_badge_class(m.loaded);
-                                                         let badge_label = model_status_badge_label(m.loaded);
-                                                         let button_class = model_action_button_class(m.loaded);
-                                                         let button_label = model_action_button_label(m.loaded);
-                                                         view! {
-                                                             <div class="model-card card">
-                                                                 <div class="model-card__header">
-                                                                     <span class="model-card__id">{model_display_name(&m)}</span>
-                                                                     <span class={badge_class}>{badge_label}</span>
-                                                                 </div>
-                                                                 <div class="model-card__body">
-                                                                     <div class="model-card__field">
-                                                                         <span class="model-card__label">"Backend"</span>
-                                                                         <span class="model-card__value text-mono">{m.backend}</span>
-                                                                     </div>
-                                                                 </div>
-                                                                 <div class="model-card__actions">
-                                                                     {if m.loaded {
-                                                                         view! {
-                                                                             <button
-                                                                                 class={button_class}
-                                                                                 prop:disabled=move || unload_pending.get()
-                                                                                 on:click=move |_| { unload_action.dispatch(id_unload.clone()); }
-                                                                             >
-                                                                                 {button_label}
-                                                                             </button>
-                                                                         }.into_any()
-                                                                     } else {
-                                                                         view! {
-                                                                             <button
-                                                                                 class={button_class}
-                                                                                 prop:disabled=move || load_pending.get()
-                                                                                 on:click=move |_| { load_action.dispatch(id_load.clone()); }
-                                                                             >
-                                                                                 {button_label}
-                                                                             </button>
-                                                                         }.into_any()
-                                                                     }}
-                                                                     <A href=format!("/models/{}/edit", id_edit)>
-                                                                         <button class="btn btn-secondary btn-sm">"Edit"</button>
-                                                                     </A>
-                                                                 </div>
-                                                             </div>
-                                                         }
-                                                     }).collect::<Vec<_>>()}
-                                                 </div>
-                                             </div>
-                                         }.into_any()
-
-                                    } else {
-                                        ().into_any()
-                                    }}
+                                <div class="models-list">
+                                    {sorted.into_iter().map(|m| {
+                                        let id_load = m.id.clone();
+                                        let id_unload = m.id.clone();
+                                        let id_edit = m.db_id
+                                            .map(|n| n.to_string())
+                                            .unwrap_or_else(|| m.id.clone());
+                                        let badge_class = model_status_badge_class(m.loaded);
+                                        let badge_label = model_status_badge_label(m.loaded);
+                                        let button_class = model_action_button_class(m.loaded);
+                                        let button_label = model_action_button_label(m.loaded);
+                                        let display_name = model_display_name(&m);
+                                        let quant_display: String = m
+                                            .quant
+                                            .as_deref()
+                                            .unwrap_or("\u{2014}")
+                                            .into();
+                                        let context_display = m.context_length.map(|n| {
+                                            if n >= 1024 && n % 1024 == 0 {
+                                                format!("{}k", n / 1024)
+                                            } else if n >= 1000 && n % 1000 == 0 {
+                                                format!("{}k", n / 1000)
+                                            } else {
+                                                n.to_string()
+                                            }
+                                        }).unwrap_or_else(|| "—".to_string());
+                                        view! {
+                                            <div class="model-row card">
+                                                <span class="model-row__name">{display_name}</span>
+                                                <span class="model-row__meta">{quant_display}</span>
+                                                <span class="model-row__meta">{context_display}</span>
+                                                <span class="model-row__backend text-mono">{m.backend}</span>
+                                                <span class={badge_class}>{badge_label}</span>
+                                                <div class="model-row__actions">
+                                                    {if m.loaded {
+                                                        view! {
+                                                            <button
+                                                                class={button_class}
+                                                                prop:disabled=move || unload_pending.get()
+                                                                on:click=move |_| { unload_action.dispatch(id_unload.clone()); }
+                                                            >
+                                                                {button_label}
+                                                            </button>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <button
+                                                                class={button_class}
+                                                                prop:disabled=move || load_pending.get()
+                                                                on:click=move |_| { load_action.dispatch(id_load.clone()); }
+                                                            >
+                                                                {button_label}
+                                                            </button>
+                                                        }.into_any()
+                                                    }}
+                                                    <A
+                                                        href=format!("/models/{}/edit", id_edit)
+                                                        attr:class="btn btn-secondary btn-sm"
+                                                    >
+                                                        "Edit"
+                                                    </A>
+                                                </div>
+                                            </div>
+                                        }
+                                    }).collect::<Vec<_>>()}
                                 </div>
                             }.into_any()
                         }
@@ -725,6 +651,8 @@ mod tests {
                 display_name: None,
                 backend: "llama_cpp".into(),
                 loaded: true,
+                quant: None,
+                context_length: None,
             },
             ModelStatus {
                 id: "b".into(),
@@ -733,6 +661,8 @@ mod tests {
                 display_name: None,
                 backend: "llama_cpp".into(),
                 loaded: false,
+                quant: None,
+                context_length: None,
             },
             ModelStatus {
                 id: "c".into(),
@@ -741,6 +671,8 @@ mod tests {
                 display_name: None,
                 backend: "ik_llama".into(),
                 loaded: true,
+                quant: None,
+                context_length: None,
             },
             ModelStatus {
                 id: "d".into(),
@@ -749,6 +681,8 @@ mod tests {
                 display_name: None,
                 backend: "ik_llama".into(),
                 loaded: false,
+                quant: None,
+                context_length: None,
             },
         ];
 

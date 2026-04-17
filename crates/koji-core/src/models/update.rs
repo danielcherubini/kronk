@@ -13,6 +13,7 @@
 //! `&Connection` is never referenced across `.await` points.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -243,14 +244,15 @@ pub fn compare_files(
 
 /// Refresh DB metadata for a model without re-downloading.
 ///
-/// Fetches current commit SHA and file LFS OIDs from HuggingFace and writes to DB.
-/// Used to establish a baseline for models pulled before the DB existed.
+/// Fetches current commit SHA and file LFS OIDs from HuggingFace and writes to DB
+/// **only for files that already exist on disk**. Used to establish a baseline for
+/// models pulled before the DB existed.
 ///
 /// # !Send note
 /// This function's `Future` is `!Send` because `&Connection` (`Connection: !Send`) is
 /// referenced after `.await` points (the DB writes follow the async fetches). It must
 /// be called with direct `.await` — do **not** pass it to `tokio::spawn`.
-pub async fn refresh_metadata(conn: &Connection, repo_id: &str) -> Result<()> {
+pub async fn refresh_metadata(conn: &Connection, models_dir: &Path, repo_id: &str) -> Result<()> {
     // ASYNC — fetch remote data
     let listing = pull::list_gguf_files(repo_id).await?;
     // Use the resolved repo_id from listing (may have -GGUF appended)
@@ -273,7 +275,23 @@ pub async fn refresh_metadata(conn: &Connection, repo_id: &str) -> Result<()> {
         }
     };
     upsert_model_pull(conn, model_record.id, repo_id, &listing.commit_sha)?;
+
+    // Only upsert files that actually exist on disk — don't pollute the DB
+    // with every remote GGUF just because we're backfilling hashes.
+    // The input `repo_id` may differ from `listing.repo_id` (e.g. auto-
+    // resolved "-GGUF" suffix), so check both directories.
     for file in &listing.files {
+        let input_path = models_dir.join(repo_id).join(&file.filename);
+        let resolved_path = models_dir.join(&listing.repo_id).join(&file.filename);
+        if !input_path.exists() && !resolved_path.exists() {
+            continue;
+        }
+        // Use whichever path exists (resolved takes precedence).
+        let _file_path = if resolved_path.exists() {
+            resolved_path
+        } else {
+            input_path
+        };
         let blob = blobs.get(&file.filename);
         upsert_model_file(
             conn,

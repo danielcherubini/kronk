@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 9;
+pub const LATEST_VERSION: i32 = 10;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -311,6 +311,26 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 ALTER TABLE model_configs_new RENAME TO model_configs;
                 "#,
         ),
+        (
+            10,
+            r#"
+                -- Deduplicate historical rows first (keep row with highest id
+                -- per model_id). Without this, CREATE UNIQUE INDEX would fail
+                -- on upgraded databases that have duplicate model_pulls rows.
+                DELETE FROM model_pulls
+                WHERE id NOT IN (
+                    SELECT MAX(id) FROM model_pulls GROUP BY model_id
+                );
+
+                -- Add UNIQUE index on model_pulls.model_id so that
+                -- upsert_model_pull's ON CONFLICT(model_id) has a matching
+                -- constraint. Without it, refresh_metadata (which calls
+                -- upsert_model_pull before upserting files) fails entirely,
+                -- leaving all file hashes unbaked.
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_model_pulls_model_id
+                    ON model_pulls(model_id);
+                "#,
+        ),
     ];
 
     let current_version: i32 =
@@ -562,5 +582,68 @@ mod tests {
             .pragma_query_value(None, "foreign_keys", |row| row.get(0))
             .unwrap();
         assert_eq!(fk_on, 1, "foreign_keys must be re-enabled after migration");
+    }
+
+    /// Regression test for the v10 ON CONFLICT bug. Before the fix,
+    /// `upsert_model_pull` used `ON CONFLICT(model_id)` but the
+    /// `model_pulls` table had no UNIQUE constraint on `model_id`,
+    /// causing `refresh_metadata` to fail and leave all file hashes
+    /// unbaked.
+    #[test]
+    fn test_migration_v10_adds_model_pulls_unique_index() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring the DB up to v9 — the pre-v10 schema.
+        run_up_to(&conn, 9).unwrap();
+
+        // Verify the unique index does NOT exist yet.
+        let idx_before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_model_pulls_model_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_before, 0);
+
+        // Apply v10.
+        run(&conn).unwrap();
+
+        // Verify the unique index now exists.
+        let idx_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_model_pulls_model_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_after, 1);
+
+        // Verify ON CONFLICT(model_id) now works.
+        conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        conn.execute(
+            "INSERT INTO model_pulls (model_id, repo_id, commit_sha, pulled_at) \
+             VALUES (1, 'test/repo', 'abc123', '2024-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO model_pulls (model_id, repo_id, commit_sha, pulled_at) \
+             VALUES (1, 'test/repo', 'def456', '2024-01-02T00:00:00Z') \
+             ON CONFLICT(model_id) DO UPDATE SET commit_sha=excluded.commit_sha",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        // Verify the row was upserted (commit_sha updated).
+        let commit_sha: String = conn
+            .query_row(
+                "SELECT commit_sha FROM model_pulls WHERE model_id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(commit_sha, "def456");
     }
 }
