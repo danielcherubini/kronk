@@ -7,7 +7,6 @@ pub fn Sidebar() -> impl IntoView {
     let collapsed = RwSignal::new(false);
     let mobile_open = RwSignal::new(false);
     let update_badge_visible = RwSignal::new(false);
-    let current_version = RwSignal::new(String::new());
 
     // Check for backend/model updates on mount (separate from self-update)
     Effect::new(move |_| {
@@ -63,20 +62,6 @@ pub fn Sidebar() -> impl IntoView {
             window().and_then(|w| w.local_storage().ok()).flatten(),
         ) {
             let _ = ls.set("koji-sidebar-collapsed", val);
-        }
-    });
-
-    // Minimal version check: single GET on mount
-    leptos::task::spawn_local(async move {
-        if let Ok(resp) = gloo_net::http::Request::get("/api/self-update/check")
-            .send()
-            .await
-        {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                if let Some(v) = data["current_version"].as_str() {
-                    current_version.set(v.to_string());
-                }
-            }
         }
     });
 
@@ -142,19 +127,7 @@ pub fn Sidebar() -> impl IntoView {
                     </A>
                 </div>
 
-                // Minimal version indicator (links to /updates)
-                <div class="sidebar-version-minimal">
-                    <A href="/updates" on:click=move |_| mobile_open.set(false)>
-                        {move || {
-                            let cv = current_version.get();
-                            if !cv.is_empty() {
-                                format!("v{}", cv)
-                            } else {
-                                String::new()
-                            }
-                        }}
-                    </A>
-                </div>
+
 
                 <button class="sidebar-toggle" on:click=move |_| collapsed.update(|c| *c = !*c)>
                     <span class="sidebar-toggle__icon">"↔"</span>

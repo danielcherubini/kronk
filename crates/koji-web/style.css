@@ -252,26 +252,6 @@ code {
 }
 
 /* Minimal version indicator in sidebar footer */
-.sidebar-version-minimal {
-  padding: 4px 8px;
-  margin: 4px 0;
-}
-
-.sidebar-version-minimal a {
-  font-size: 0.75rem;
-  color: var(--text-muted, #94a3b8);
-  text-decoration: none;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-  transition: background-color 0.15s ease;
-}
-
-.sidebar-version-minimal a:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary, #e2e8f0);
-}
-
 /* Self-update section card on /updates page */
 .self-update-section {
   background: var(--bg-secondary, #1e293b);
