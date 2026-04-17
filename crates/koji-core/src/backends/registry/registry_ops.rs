@@ -174,7 +174,7 @@ impl BackendRegistry {
         let record = get_backend_by_version(&self.conn, name, version)
             .with_context(|| format!("Failed to query backend '{}' version '{}'", name, version))?;
 
-        let was_active = record.as_ref().map_or(false, |r| r.is_active);
+        let was_active = record.as_ref().is_some_and(|r| r.is_active);
 
         // Delete the DB row
         delete_backend_installation(&self.conn, name, version).with_context(|| {
