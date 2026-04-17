@@ -194,7 +194,8 @@ pub fn BackendCard(
 
                 {/* Version count badge when multiple versions exist */}
                 {if version_count > 1 {
-                    view! { <span class="badge" style="background:#64748b;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;">format!("{} versions", version_count)</span> }.into_any()
+                    let count = version_count;
+                    view! { <span class="badge" style="background:#64748b;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;">{format!("{} versions", count)}</span> }.into_any()
                 } else {
                     view! { <span/> }.into_any()
                 }}
