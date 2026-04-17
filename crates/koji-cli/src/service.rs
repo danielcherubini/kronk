@@ -310,7 +310,15 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             }
         } else {
             // Legacy single-backend mode
-            let (srv, backend) = match config.resolve_server(&server) {
+            let conn = Config::open_db_from(config_dir.as_deref());
+            let model_configs = match koji_core::db::load_model_configs(&conn) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to load model configs: {}", e);
+                    return;
+                }
+            };
+            let (srv, backend) = match config.resolve_server(&model_configs, &server) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!("Failed to resolve server '{}': {}", server, e);

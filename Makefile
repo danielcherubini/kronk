@@ -1,4 +1,4 @@
-.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target
+.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows
 
 # Ensure the wasm32 target is installed (idempotent — safe to run multiple times)
 wasm-target:
@@ -36,7 +36,7 @@ test: build-frontend-dev
 	cargo test --workspace
 	cargo test --package koji-web --features ssr
 
-check: fmt-check clippy test
+check: fmt-check clippy test build-windows
 
 fmt:
 	cargo fmt --all
@@ -58,3 +58,7 @@ build-web: build
 
 build-web-dev: build-frontend-dev
 	cargo build --workspace
+
+# Cross-compile to Windows from Linux (requires mingw64-gcc-c++)
+build-windows:
+	cargo build --target x86_64-pc-windows-gnu --release
