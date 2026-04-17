@@ -19,6 +19,7 @@ pub struct UpdateCheckDto {
     // (e.g. "gpt-4o-mini" or HF repo like
     // "unsloth/Qwen3.6-35B-A3B-GGUF")
     pub repo_id: Option<String>, // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
+    pub display_name: Option<String>, // user-friendly model name from config
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -67,10 +68,28 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
                     .and_then(|d| d.get("repo_id"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
+                // For models, look up display_name from the model config table.
+                // item_id for models is the integer model ID as a string.
+                let display_name = if r.item_type == "model" {
+                    r.item_id.parse::<i64>().ok().and_then(|model_id| {
+                        match koji_core::db::open(&config_dir) {
+                            Ok(open) => {
+                                koji_core::db::queries::get_model_config(&open.conn, model_id)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|m| m.display_name)
+                            }
+                            Err(_) => None,
+                        }
+                    })
+                } else {
+                    None
+                };
                 let dto = UpdateCheckDto {
                     item_type: r.item_type,
                     item_id: r.item_id,
                     repo_id,
+                    display_name,
                     current_version: r.current_version,
                     latest_version: r.latest_version,
                     update_available: r.update_available,
