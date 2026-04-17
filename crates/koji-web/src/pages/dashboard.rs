@@ -460,7 +460,9 @@ pub fn Dashboard() -> impl IntoView {
                                             .unwrap_or("\u{2014}")
                                             .into();
                                         let context_display = m.context_length.map(|n| {
-                                            if n >= 1000 {
+                                            if n >= 1024 && n % 1024 == 0 {
+                                                format!("{}k", n / 1024)
+                                            } else if n >= 1000 && n % 1000 == 0 {
                                                 format!("{}k", n / 1000)
                                             } else {
                                                 n.to_string()
@@ -495,8 +497,11 @@ pub fn Dashboard() -> impl IntoView {
                                                             </button>
                                                         }.into_any()
                                                     }}
-                                                    <A href=format!("/models/{}/edit", id_edit)>
-                                                        <button class="btn btn-secondary btn-sm">"Edit"</button>
+                                                    <A
+                                                        href=format!("/models/{}/edit", id_edit)
+                                                        attr:class="btn btn-secondary btn-sm"
+                                                    >
+                                                        "Edit"
                                                     </A>
                                                 </div>
                                             </div>
