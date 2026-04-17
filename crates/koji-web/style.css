@@ -605,6 +605,7 @@ aside.sidebar--collapsed ~ main {
   text-align: center;
   vertical-align: middle;
   display: inline-block;
+  min-width: 60px;
 }
 
 /* 8. Forms */
