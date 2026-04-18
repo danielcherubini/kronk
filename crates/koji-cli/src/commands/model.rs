@@ -2025,4 +2025,171 @@ mod tests {
         let configs = koji_core::db::queries::get_all_model_configs(conn).unwrap();
         assert!(configs.is_empty());
     }
+
+    // ── secs_to_datetime tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_secs_to_datetime_epoch() {
+        let (y, mo, d, h, mi, s) = secs_to_datetime(0);
+        assert_eq!(y, 1970);
+        assert_eq!(mo, 1);
+        assert_eq!(d, 1);
+        assert_eq!(h, 0);
+        assert_eq!(mi, 0);
+        assert_eq!(s, 0);
+    }
+
+    #[test]
+    fn test_secs_to_datetime_midnight() {
+        let (y, mo, d, h, mi, s) = secs_to_datetime(86400);
+        assert_eq!(y, 1970);
+        assert_eq!(mo, 1);
+        assert_eq!(d, 2);
+        assert_eq!(h, 0);
+        assert_eq!(mi, 0);
+        assert_eq!(s, 0);
+    }
+
+    #[test]
+    fn test_secs_to_datetime_leap_year() {
+        // Feb 29, 2024 at midnight UTC = 1709164800
+        let (y, mo, d, h, mi, s) = secs_to_datetime(1709164800);
+        assert_eq!(y, 2024);
+        assert_eq!(mo, 2);
+        assert_eq!(d, 29);
+        assert_eq!(h, 0);
+        assert_eq!(mi, 0);
+        assert_eq!(s, 0);
+    }
+
+    #[test]
+    fn test_secs_to_datetime_non_leap_year() {
+        // Mar 1, 2023 at midnight UTC (not a leap year)
+        let (y, mo, d, h, mi, s) = secs_to_datetime(1677628800);
+        assert_eq!(y, 2023);
+        assert_eq!(mo, 3);
+        assert_eq!(d, 1);
+        assert_eq!(h, 0);
+        assert_eq!(mi, 0);
+        assert_eq!(s, 0);
+    }
+
+    #[test]
+    fn test_secs_to_datetime_year_boundary() {
+        // Jan 1, 2025 at midnight UTC
+        let (y, mo, d, h, mi, s) = secs_to_datetime(1735689600);
+        assert_eq!(y, 2025);
+        assert_eq!(mo, 1);
+        assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_secs_to_datetime_with_time() {
+        // 14:30:45 on a given day
+        let secs = 86400 + (14 * 3600) + (30 * 60) + 45;
+        let (y, mo, d, h, mi, s) = secs_to_datetime(secs);
+        assert_eq!(h, 14);
+        assert_eq!(mi, 30);
+        assert_eq!(s, 45);
+    }
+
+    // ── unique_quant_key tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_unique_quant_key_no_collision() {
+        let mut quants: HashMap<String, QuantInfo> = HashMap::new();
+        let key = unique_quant_key(&quants, "Q4_K_M", "model.gguf");
+        assert_eq!(key, "Q4_K_M");
+    }
+
+    #[test]
+    fn test_unique_quant_key_with_filename_stem() {
+        let mut quants: HashMap<String, QuantInfo> = HashMap::new();
+        quants.insert("Q4_K_M".to_string(), QuantInfo::default());
+        let key = unique_quant_key(&quants, "Q4_K_M", "model.gguf");
+        assert_eq!(key, "Q4_K_M:model");
+    }
+
+    #[test]
+    fn test_unique_quant_key_numeric_suffix() {
+        let mut quants: HashMap<String, QuantInfo> = HashMap::new();
+        quants.insert("Q4_K_M".to_string(), QuantInfo::default());
+        quants.insert("Q4_K_M:model".to_string(), QuantInfo::default());
+        let key = unique_quant_key(&quants, "Q4_K_M", "model.gguf");
+        assert_eq!(key, "Q4_K_M-1");
+    }
+
+    #[test]
+    fn test_unique_quant_key_no_gguf_suffix() {
+        let mut quants: HashMap<String, QuantInfo> = HashMap::new();
+        quants.insert("Q4_K_M".to_string(), QuantInfo::default());
+        let key = unique_quant_key(&quants, "Q4_K_M", "mmproj");
+        assert_eq!(key, "Q4_K_M:mmproj");
+    }
+
+    // ── format_downloads tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_format_downloads_zero() {
+        assert_eq!(format_downloads(0), "0");
+    }
+
+    #[test]
+    fn test_format_downloads_single() {
+        assert_eq!(format_downloads(42), "42");
+    }
+
+    #[test]
+    fn test_format_downloads_thousands() {
+        assert_eq!(format_downloads(1_500), "1.5K");
+    }
+
+    #[test]
+    fn test_format_downloads_thousands_exact() {
+        assert_eq!(format_downloads(1_000), "1.0K");
+    }
+
+    #[test]
+    fn test_format_downloads_millions() {
+        assert_eq!(format_downloads(2_500_000), "2.5M");
+    }
+
+    #[test]
+    fn test_format_downloads_millions_exact() {
+        assert_eq!(format_downloads(1_000_000), "1.0M");
+    }
+
+    #[test]
+    fn test_format_downloads_boundary_thousands() {
+        // Just below 1K threshold
+        assert_eq!(format_downloads(999), "999");
+        // At 1K threshold
+        assert_eq!(format_downloads(1_000), "1.0K");
+    }
+
+    #[test]
+    fn test_format_downloads_boundary_millions() {
+        // Just below 1M threshold (999999 / 1000 = 999.999 → "1000.0K")
+        assert_eq!(format_downloads(999_999), "1000.0K");
+        // At 1M threshold
+        assert_eq!(format_downloads(1_000_000), "1.0M");
+    }
+
+    // ── manual_timestamp tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_manual_timestamp_format() {
+        let ts = manual_timestamp();
+        // Should match ISO 8601 format: YYYY-MM-DDTHH:MM:SS.000Z
+        assert!(ts.ends_with(".000Z"));
+        assert!(ts.contains('T'));
+        assert_eq!(ts.len(), 24);
+    }
+
+    #[test]
+    fn test_manual_timestamp_year() {
+        let ts = manual_timestamp();
+        let year: u64 = ts[..4].parse().unwrap();
+        assert!(year >= 2024 && year <= 2030);
+    }
 }
