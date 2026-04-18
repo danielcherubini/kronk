@@ -610,7 +610,7 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         let deserialized: UpdateInfo = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.update_available, false);
+        assert!(!deserialized.update_available);
         assert_eq!(deserialized.release_notes, "");
     }
 

@@ -266,6 +266,6 @@ mod tests {
     fn test_manual_timestamp_year() {
         let ts = manual_timestamp();
         let year: u64 = ts[..4].parse().unwrap();
-        assert!(year >= 2024 && year <= 2030);
+        assert!((2024..=2030).contains(&year));
     }
 }

@@ -543,11 +543,11 @@ mod tests {
         assert!(manager.get(&job_ids[1]).await.is_none());
 
         // Last 8 should exist
-        for i in 2..10 {
+        for (idx, job_id) in job_ids.iter().enumerate().skip(2) {
             assert!(
-                manager.get(&job_ids[i]).await.is_some(),
+                manager.get(job_id).await.is_some(),
                 "job {} should exist",
-                i
+                idx + 2
             );
         }
     }
