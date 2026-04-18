@@ -81,6 +81,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         Ok(registry) => {
             // Emit one card per backend type with all versions in a `versions` array
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
+                #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
@@ -191,6 +192,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             tracing::warn!("Failed to open backend registry: {}", e);
             // On error, still return known backends as not installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
+                #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
@@ -291,6 +293,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         Ok(registry) => {
             // Emit one card per backend type with all versions in a `versions` array
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
+                #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
@@ -418,6 +421,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             tracing::warn!("Failed to open backend registry: {}", e);
             // On error, still return known backends as not installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
+                #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
                     .get(&type_.to_string())
                     .cloned()
