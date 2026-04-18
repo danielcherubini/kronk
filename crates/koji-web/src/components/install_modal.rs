@@ -362,4 +362,82 @@ mod tests {
         let caps = CapabilitiesDto::default();
         assert_eq!(caps.supported_cuda_versions.len(), 3);
     }
+
+    #[test]
+    fn test_install_request_serialization_ik_llama() {
+        let req = InstallRequest {
+            backend_type: "ik_llama".to_string(),
+            version: None,
+            gpu_type: GpuTypeDto::CpuOnly,
+            build_from_source: true,
+            force: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("ik_llama"));
+        assert!(json.contains("cpu_only"));
+        assert!(json.contains("build_from_source"));
+    }
+
+    #[test]
+    fn test_install_request_serialization_vulkan() {
+        let req = InstallRequest {
+            backend_type: "llama_cpp".to_string(),
+            version: Some("latest".to_string()),
+            gpu_type: GpuTypeDto::Vulkan,
+            build_from_source: false,
+            force: true,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("llama_cpp"));
+        assert!(json.contains("vulkan"));
+        assert!(json.contains("force"));
+    }
+
+    #[test]
+    fn test_install_request_serialization_rocm() {
+        let req = InstallRequest {
+            backend_type: "llama_cpp".to_string(),
+            version: Some("7.2".to_string()),
+            gpu_type: GpuTypeDto::Rocm {
+                version: "7.2".to_string(),
+            },
+            build_from_source: false,
+            force: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("rocm"));
+    }
+
+    #[test]
+    fn test_install_request_serialization_custom() {
+        let req = InstallRequest {
+            backend_type: "custom".to_string(),
+            version: None,
+            gpu_type: GpuTypeDto::CpuOnly,
+            build_from_source: false,
+            force: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("custom"));
+    }
+
+    #[test]
+    fn test_install_request_roundtrip() {
+        let original = InstallRequest {
+            backend_type: "llama_cpp".to_string(),
+            version: Some("b8407".to_string()),
+            gpu_type: GpuTypeDto::Cuda {
+                version: "12.4".to_string(),
+            },
+            build_from_source: false,
+            force: false,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: InstallRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.backend_type, "llama_cpp");
+        assert_eq!(deserialized.version, Some("b8407".to_string()));
+        assert!(!deserialized.build_from_source);
+    }
 }

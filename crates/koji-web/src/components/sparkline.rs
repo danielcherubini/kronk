@@ -328,3 +328,40 @@ pub fn SparklineChart(
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_duration_label_seconds() {
+        assert_eq!(format_duration_label(30), "-30s");
+        assert_eq!(format_duration_label(59), "-59s");
+    }
+
+    #[test]
+    fn test_format_duration_label_minutes() {
+        assert_eq!(format_duration_label(60), "-1m");
+        assert_eq!(format_duration_label(120), "-2m");
+        assert_eq!(format_duration_label(3540), "-59m");
+    }
+
+    #[test]
+    fn test_format_duration_label_hours() {
+        assert_eq!(format_duration_label(3600), "-1h");
+        assert_eq!(format_duration_label(7200), "-2h");
+        assert_eq!(format_duration_label(86400), "-24h");
+    }
+
+    #[test]
+    fn test_format_duration_label_zero() {
+        assert_eq!(format_duration_label(0), "-0s");
+    }
+
+    #[test]
+    fn test_format_duration_label_negative() {
+        // Negative values should still produce output (though unusual)
+        let result = format_duration_label(-1);
+        assert!(result.contains("-"));
+    }
+}
