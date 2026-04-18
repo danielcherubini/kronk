@@ -323,7 +323,7 @@ pub fn ModelEditor() -> impl IntoView {
 
         async move {
             let Some(initial_form) = form_val else {
-                save_status.set(Some((false, "Form not loaded.".into())));
+                save_status.set(Some((false, "❌ Form not loaded.".into())));
                 return;
             };
 
@@ -366,7 +366,7 @@ pub fn ModelEditor() -> impl IntoView {
                 match rename_model(&old_id, &new_id).await {
                     Ok(()) => (),
                     Err(e) => {
-                        save_status.set(Some((false, format!("Rename failed: {}", e))));
+                        save_status.set(Some((false, format!("❌ Rename failed: {}", e))));
                         return;
                     }
                 }
@@ -376,28 +376,30 @@ pub fn ModelEditor() -> impl IntoView {
             match save_model(args, form_data, is_new_val).await {
                 Ok(()) => {
                     original_id.set(form_id);
-                    save_status.set(Some((true, "Saved.".into())));
+                    save_status.set(Some((true, "✅ Saved".into())));
                 }
                 Err(e) => {
                     if old_id != new_id && !old_id.is_empty() {
                         match rename_model(&new_id, &old_id).await {
                             Ok(()) => {
                                 original_id.set(old_id.clone());
-                                save_status
-                                    .set(Some((false, format!("Save failed, rolled back: {}", e))));
+                                save_status.set(Some((
+                                    false,
+                                    format!("❌ Save failed, rolled back: {}", e),
+                                )));
                             }
                             Err(rename_err) => {
                                 save_status.set(Some((
                                     false,
                                     format!(
-                                        "Save failed ({}), and rollback also failed ({})",
+                                        "❌ Save failed ({}), and rollback also failed ({})",
                                         e, rename_err
                                     ),
                                 )));
                             }
                         }
                     } else {
-                        save_status.set(Some((false, format!("Error: {}", e))));
+                        save_status.set(Some((false, format!("❌ Error: {}", e))));
                     }
                 }
             }
@@ -408,12 +410,12 @@ pub fn ModelEditor() -> impl IntoView {
         Action::new_unsync(move |_: &()| async move {
             let form_opt = form.get();
             let Some(form) = form_opt else {
-                save_status.set(Some((false, "Form not loaded.".into())));
+                save_status.set(Some((false, "❌ Form not loaded.".into())));
                 return;
             };
             match delete_model_api(form.id.clone()).await {
                 Ok(()) => deleted.set(true),
-                Err(e) => save_status.set(Some((false, format!("Delete failed: {}", e)))),
+                Err(e) => save_status.set(Some((false, format!("❌ Delete failed: {}", e)))),
             }
         });
 
@@ -438,10 +440,10 @@ pub fn ModelEditor() -> impl IntoView {
                                 }
                             }
                         });
-                        save_status.set(Some((true, "Quant deleted from disk.".into())));
+                        save_status.set(Some((true, "✅ Quant deleted from disk.".into())));
                     }
                     Err(e) => {
-                        save_status.set(Some((false, format!("Delete failed: {}", e))));
+                        save_status.set(Some((false, format!("❌ Delete failed: {}", e))));
                     }
                 }
             }
@@ -554,6 +556,7 @@ pub fn ModelEditor() -> impl IntoView {
                 }}
             </h1>
             <div class="page-header-actions">
+                {move || save_status.get().map(|(_, msg)| view! { <span class="text-muted">{msg}</span> })}
                 <button
                     type="button"
                     class="btn btn-primary"
@@ -706,17 +709,6 @@ pub fn ModelEditor() -> impl IntoView {
                                     <h2 class="card__title">"Extra Args"</h2>
                                     <ModelEditorExtraArgsForm form=form />
                                 </div>
-
-                                {move || save_status.get().map(|(ok, msg)| {
-                                    let cls = if ok { "alert alert--success mt-2" } else { "alert alert--error mt-2" };
-                                    let icon = if ok { "✓" } else { "✕" };
-                                    view! {
-                                        <div class=cls>
-                                            <span class="alert__icon">{icon}</span>
-                                            <span>{msg}</span>
-                                        </div>
-                                    }
-                                })}
                             </div>
                         </div>
                     }.into_any()

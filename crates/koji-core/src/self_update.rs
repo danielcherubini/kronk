@@ -563,10 +563,18 @@ mod tests {
 
     // ── target_binary_name tests ──────────────────────────────────────────
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_target_binary_name_linux_macos() {
         // On non-Windows platforms, the binary name is "koji"
         assert_eq!(target_binary_name(), "koji");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_target_binary_name_windows() {
+        // On Windows, the binary name is "koji.exe"
+        assert_eq!(target_binary_name(), "koji.exe");
     }
 
     // ── UpdateInfo serialization tests ────────────────────────────────────

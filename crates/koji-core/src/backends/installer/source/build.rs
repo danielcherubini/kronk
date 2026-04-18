@@ -112,6 +112,7 @@ pub(crate) fn build_cmake_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "windows"))]
     use crate::backends::installer::source::detect;
     use crate::backends::registry::{BackendSource, BackendType};
     use std::path::PathBuf;
