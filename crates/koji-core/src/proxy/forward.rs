@@ -1,7 +1,7 @@
 use crate::proxy::{ModelState, ProxyState};
 use axum::{
     body::Body,
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
 use bytes::Bytes;
@@ -10,6 +10,80 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::info;
+
+/// Hop-by-hop headers that should be stripped from forwarded requests.
+const REQUEST_SKIP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "transfer-encoding",
+    "upgrade",
+    "trailer",
+    "host",
+];
+
+/// Hop-by-hop headers (plus content-length) that should be stripped from forwarded responses.
+const RESPONSE_SKIP_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "transfer-encoding",
+    "upgrade",
+    "trailer",
+    "content-length",
+];
+
+/// Filter request headers, removing hop-by-hop headers.
+pub fn filter_request_headers(headers: &HeaderMap) -> HeaderMap {
+    let mut filtered = HeaderMap::new();
+    for (key, value) in headers {
+        if !REQUEST_SKIP_HEADERS.contains(&key.as_str()) && value.to_str().is_ok() {
+            filtered.insert(key.clone(), value.clone());
+        }
+    }
+    filtered
+}
+
+/// Strip hop-by-hop and content-length headers from a response.
+pub fn strip_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for (key, value) in headers {
+        if RESPONSE_SKIP_HEADERS.contains(&key.as_str()) {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            result.push((key.as_str().to_string(), v.to_string()));
+        }
+    }
+    result
+}
+
+/// Rewrite the `model` field in a JSON value.
+pub fn rewrite_json_model_name(mut json: JsonValue, model_name: &str) -> JsonValue {
+    json["model"] = JsonValue::String(model_name.to_string());
+    json
+}
+
+/// Build a forward request target URI from the backend URL and request path/query.
+#[allow(dead_code)]
+pub fn build_forward_uri(backend_url: &str, parts: &Parts) -> Option<String> {
+    let path_and_query = parts.uri.path_and_query()?;
+    let (path, query) = path_and_query
+        .as_str()
+        .split_once('?')
+        .unwrap_or((path_and_query.as_str(), ""));
+
+    let mut uri = format!("{}{}", backend_url, path);
+    if !query.is_empty() {
+        uri.push('?');
+        uri.push_str(query);
+    }
+    Some(uri)
+}
 
 /// Process a complete SSE line, rewriting the `model` field in JSON data lines.
 fn process_sse_line(line: &str, model_name: &str, out: &mut String) {
@@ -169,26 +243,7 @@ pub async fn forward_request(
 
     let method = parts.method.clone();
 
-    let mut headers = reqwest::header::HeaderMap::new();
-    for (key, value) in &parts.headers {
-        // Skip hop-by-hop headers
-        if ![
-            "connection",
-            "keep-alive",
-            "proxy-authenticate",
-            "proxy-authorization",
-            "te",
-            "transfer-encoding",
-            "upgrade",
-            "trailer",
-            "host",
-        ]
-        .contains(&key.as_str())
-            && value.to_str().is_ok()
-        {
-            headers.insert(key.clone(), value.clone());
-        }
-    }
+    let headers = filter_request_headers(&parts.headers);
 
     let mut query_string = query.to_string();
     if !query_string.is_empty() {
@@ -250,31 +305,8 @@ pub async fn forward_request(
 
             let mut builder = Response::builder().status(status);
 
-            for (key, value) in response.headers().iter() {
-                // Skip hop-by-hop headers and content-length in response.
-                // content-length must be removed because we rewrite the JSON
-                // body (model name substitution) which changes its size; keeping
-                // the original value would cause HTTP framing errors on
-                // keep-alive connections. Hyper will set the correct
-                // content-length (or use chunked encoding) automatically.
-                if [
-                    "connection",
-                    "keep-alive",
-                    "proxy-authenticate",
-                    "proxy-authorization",
-                    "te",
-                    "transfer-encoding",
-                    "upgrade",
-                    "trailer",
-                    "content-length",
-                ]
-                .contains(&key.as_str())
-                {
-                    continue;
-                }
-                if let Ok(v) = value.to_str() {
-                    builder = builder.header(key.as_str(), v);
-                }
+            for (key, value) in strip_response_headers(response.headers()) {
+                builder = builder.header(&key, value);
             }
 
             // Check if this is a streaming response
@@ -323,14 +355,14 @@ pub async fn forward_request(
                 // Non-streaming response - parse, rewrite, and re-serialize
                 let body_bytes = response.bytes().await.unwrap_or_default();
                 // Only attempt JSON rewrite if content is valid JSON
-                let new_body =
-                    if let Ok(mut parsed) = serde_json::from_slice::<JsonValue>(&body_bytes) {
-                        parsed["model"] = JsonValue::String(model_name.to_string());
-                        serde_json::to_vec(&parsed).unwrap_or(body_bytes.to_vec())
-                    } else {
-                        // Not JSON, pass through unchanged
-                        body_bytes.to_vec()
-                    };
+                let new_body = if let Ok(parsed) = serde_json::from_slice::<JsonValue>(&body_bytes)
+                {
+                    let rewritten = rewrite_json_model_name(parsed, model_name);
+                    serde_json::to_vec(&rewritten).unwrap_or(body_bytes.to_vec())
+                } else {
+                    // Not JSON, pass through unchanged
+                    body_bytes.to_vec()
+                };
                 Body::from(new_body)
             };
 
@@ -405,84 +437,280 @@ pub async fn forward_request(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value as JsonValue;
+    use super::*;
+    use axum::http::{header::HeaderName, request::Parts, HeaderMap, HeaderValue};
 
-    #[tokio::test]
-    async fn test_rewrite_model_name_in_json_response() {
-        // Create a mock backend response with a different model name
-        let backend_model = "backend-filename.gguf";
-        let user_model = "my-model";
-        let original_body = serde_json::json!({
-            "model": backend_model,
-            "choices": [{"message": {"role": "assistant", "content": "Hello"}}]
-        });
-        let body_bytes = serde_json::to_vec(&original_body).unwrap();
+    // ── filter_request_headers tests ──────────────────────────────────────
 
-        // Simulate the response processing
-        let parsed: JsonValue = serde_json::from_slice(&body_bytes).unwrap();
-        let mut modified = parsed.clone();
-        modified["model"] = JsonValue::String(user_model.to_string());
-        let expected_body = serde_json::to_vec(&modified).unwrap();
+    #[test]
+    fn test_filter_request_headers_strips_dangerous_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("localhost:8080"));
+        headers.insert("connection", HeaderValue::from_static("keep-alive"));
+        headers.insert("keep-alive", HeaderValue::from_static("timeout=5"));
+        headers.insert("transfer-encoding", HeaderValue::from_static("chunked"));
+        headers.insert("upgrade", HeaderValue::from_static("websocket"));
+        headers.insert("proxy-authenticate", HeaderValue::from_static("Basic"));
+        headers.insert(
+            "proxy-authorization",
+            HeaderValue::from_static("Bearer token"),
+        );
+        headers.insert("te", HeaderValue::from_static("trailers"));
+        headers.insert("trailer", HeaderValue::from_static("X-Signature"));
 
-        // Verify the model was replaced
-        let result: JsonValue = serde_json::from_slice(&expected_body).unwrap();
-        assert_eq!(result["model"], JsonValue::String(user_model.to_string()));
+        let filtered = filter_request_headers(&headers);
+
+        assert!(!filtered.contains_key("host"));
+        assert!(!filtered.contains_key("connection"));
+        assert!(!filtered.contains_key("keep-alive"));
+        assert!(!filtered.contains_key("transfer-encoding"));
+        assert!(!filtered.contains_key("upgrade"));
+        assert!(!filtered.contains_key("proxy-authenticate"));
+        assert!(!filtered.contains_key("proxy-authorization"));
+        assert!(!filtered.contains_key("te"));
+        assert!(!filtered.contains_key("trailer"));
+    }
+
+    #[test]
+    fn test_filter_request_headers_passes_safe_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("user-agent", HeaderValue::from_static("Mozilla/5.0"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert("authorization", HeaderValue::from_static("Bearer secret"));
+        headers.insert("accept", HeaderValue::from_static("text/event-stream"));
+
+        let filtered = filter_request_headers(&headers);
+
+        assert_eq!(filtered.get("user-agent").unwrap(), "Mozilla/5.0");
+        assert_eq!(filtered.get("content-type").unwrap(), "application/json");
+        assert_eq!(filtered.get("authorization").unwrap(), "Bearer secret");
+        assert_eq!(filtered.get("accept").unwrap(), "text/event-stream");
+    }
+
+    #[test]
+    fn test_filter_request_headers_skips_invalid_utf8() {
+        let mut headers = HeaderMap::new();
+        // Insert a header with invalid UTF-8 value — should be skipped
+        headers.insert(
+            HeaderName::from_static("x-custom"),
+            HeaderValue::from_bytes(b"\xff\xfe").unwrap(),
+        );
+        headers.insert("content-type", HeaderValue::from_static("text/plain"));
+
+        let filtered = filter_request_headers(&headers);
+
+        // Invalid UTF-8 header should be skipped, valid one should pass
+        assert!(!filtered.contains_key("x-custom"));
+        assert_eq!(filtered.get("content-type").unwrap(), "text/plain");
+    }
+
+    #[test]
+    fn test_filter_request_headers_empty_input() {
+        let headers = HeaderMap::new();
+        let filtered = filter_request_headers(&headers);
+        assert!(filtered.is_empty());
+    }
+
+    // ── strip_response_headers tests ──────────────────────────────────────
+
+    #[test]
+    fn test_strip_response_headers_removes_hop_by_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert("connection", HeaderValue::from_static("keep-alive"));
+        headers.insert("content-length", HeaderValue::from_static("1234"));
+        headers.insert("transfer-encoding", HeaderValue::from_static("chunked"));
+        headers.insert("x-custom", HeaderValue::from_static("value"));
+
+        let stripped = strip_response_headers(&headers);
+
+        let keys: Vec<&str> = stripped.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(!keys.contains(&"connection"));
+        assert!(!keys.contains(&"content-length"));
+        assert!(!keys.contains(&"transfer-encoding"));
+        assert!(keys.contains(&"x-custom"));
+        assert_eq!(
+            stripped.iter().find(|(k, _)| k == "x-custom").unwrap().1,
+            "value"
+        );
+    }
+
+    #[test]
+    fn test_strip_response_headers_passes_safe_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert("x-request-id", HeaderValue::from_static("abc123"));
+
+        let stripped = strip_response_headers(&headers);
+
+        assert_eq!(stripped.len(), 2);
+        assert!(stripped
+            .iter()
+            .any(|(k, v)| k == "content-type" && v == "application/json"));
+        assert!(stripped
+            .iter()
+            .any(|(k, v)| k == "x-request-id" && v == "abc123"));
+    }
+
+    #[test]
+    fn test_strip_response_headers_empty_input() {
+        let headers = HeaderMap::new();
+        let stripped = strip_response_headers(&headers);
+        assert!(stripped.is_empty());
+    }
+
+    // ── rewrite_json_model_name tests ─────────────────────────────────────
+
+    #[test]
+    fn test_rewrite_json_model_name_replaces_existing() {
+        let json = serde_json::json!({"model": "old-model", "choices": [{"message": {"content": "Hello"}}]});
+        let result = rewrite_json_model_name(json, "new-model");
+
+        assert_eq!(result["model"], "new-model");
         assert_eq!(result["choices"][0]["message"]["content"], "Hello");
     }
 
-    #[tokio::test]
-    async fn test_rewrite_model_name_in_streaming_response() {
-        let user_model = "my-model";
-        let backend_model = "backend-filename.gguf";
+    #[test]
+    fn test_rewrite_json_model_name_adds_missing_field() {
+        let json = serde_json::json!({"choices": [{"delta": {"content": "Hi"}}]});
+        let result = rewrite_json_model_name(json, "my-model");
 
-        // Create SSE chunks with model field
-        let chunk1 = format!(
-            "data: {{\"model\":\"{}\",\"choices\":[{{\"delta\":{{\"role\":\"assistant\"}}}}]}}\n",
-            backend_model
-        );
-        let chunk2 = format!(
-            "data: {{\"model\":\"{}\",\"choices\":[{{\"delta\":{{\"content\":\"Hello\"}}}}]}}\n",
-            backend_model
-        );
-        let chunk3 = "data: [DONE]\n".to_string();
-
-        // Process chunk1
-        let mut modified1: JsonValue = serde_json::from_str(&chunk1["data: ".len()..]).unwrap();
-        modified1["model"] = JsonValue::String(user_model.to_string());
-        let expected1 = format!("data: {}\n", serde_json::to_string(&modified1).unwrap());
-        assert!(expected1.contains(&format!("\"model\":\"{}\"", user_model)));
-
-        // Process chunk2
-        let mut modified2: JsonValue = serde_json::from_str(&chunk2["data: ".len()..]).unwrap();
-        modified2["model"] = JsonValue::String(user_model.to_string());
-        let expected2 = format!("data: {}\n", serde_json::to_string(&modified2).unwrap());
-        assert!(expected2.contains(&format!("\"model\":\"{}\"", user_model)));
-
-        // DONE should pass through unchanged
-        assert_eq!(chunk3, "data: [DONE]\n");
+        assert_eq!(result["model"], "my-model");
+        assert!(result["choices"].is_array());
     }
 
-    #[tokio::test]
-    async fn test_streaming_passthrough_non_data_lines() {
-        // Comments and empty lines should pass through unchanged
-        let comment_line = ": this is a comment\n";
-        let empty_line = "\n";
+    #[test]
+    fn test_rewrite_json_model_name_preserves_other_fields() {
+        let json = serde_json::json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "old",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Test"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20}
+        });
+        let result = rewrite_json_model_name(json, "new-model");
 
-        assert_eq!(comment_line, ": this is a comment\n");
-        assert_eq!(empty_line, "\n");
+        assert_eq!(result["model"], "new-model");
+        assert_eq!(result["id"], "chatcmpl-123");
+        assert_eq!(result["object"], "chat.completion");
+        assert_eq!(result["created"], 1234567890);
+        assert_eq!(result["usage"]["prompt_tokens"], 10);
     }
 
-    /// Verify that the response header skip-list used by forward_request
-    /// includes `content-length`.  The proxy rewrites the JSON body (model
-    /// name substitution) which changes its size; forwarding the backend's
-    /// original Content-Length would cause HTTP framing errors on keep-alive
-    /// connections (the client reads too few/many bytes, then interprets
-    /// leftover body data as the next HTTP response → "Expected HTTP/" error).
+    #[test]
+    fn test_rewrite_json_model_name_empty_model_name() {
+        let json = serde_json::json!({"model": "old", "choices": []});
+        let result = rewrite_json_model_name(json, "");
+
+        assert_eq!(result["model"], "");
+    }
+
+    #[test]
+    fn test_rewrite_json_model_name_long_model_name() {
+        let json = serde_json::json!({"model": "m", "choices": []});
+        let long_name = "unsloth/gemma-4-E2B-it-GGUF:q4_k_m";
+        let result = rewrite_json_model_name(json, long_name);
+
+        assert_eq!(result["model"], long_name);
+    }
+
+    // ── build_forward_uri tests ───────────────────────────────────────────
+
+    fn make_parts(path: &str) -> Parts {
+        let req = axum::http::Request::get(path).body(()).unwrap();
+        let (parts, _) = req.into_parts();
+        parts
+    }
+
+    #[test]
+    fn test_build_forward_uri_simple_path() {
+        let parts = make_parts("http://localhost/v1/chat/completions");
+
+        let uri = build_forward_uri("http://backend:8080", &parts).unwrap();
+        assert_eq!(uri, "http://backend:8080/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_forward_uri_with_query_string() {
+        let parts = make_parts("http://localhost/v1/models?limit=10");
+
+        let uri = build_forward_uri("http://backend:8080", &parts).unwrap();
+        assert_eq!(uri, "http://backend:8080/v1/models?limit=10");
+    }
+
+    #[test]
+    fn test_build_forward_uri_no_query_returns_path_only() {
+        let parts = make_parts("http://localhost/v1/completions");
+
+        let uri = build_forward_uri("http://backend:8080", &parts).unwrap();
+        assert_eq!(uri, "http://backend:8080/v1/completions");
+    }
+
+    // ── process_sse_line tests (existing but expanded) ────────────────────
+
+    #[test]
+    fn test_process_sse_line_rewrites_model_in_data() {
+        let mut out = String::new();
+        process_sse_line(
+            "data: {\"model\": \"backend-model\", \"choices\": []}",
+            "user-model",
+            &mut out,
+        );
+        // serde_json serializes without spaces by default
+        assert!(out.contains("\"model\""), "output: {}", out);
+        assert!(out.contains("user-model"), "output: {}", out);
+    }
+
+    #[test]
+    fn test_process_sse_line_passes_done_unchanged() {
+        let mut out = String::new();
+        process_sse_line("data: [DONE]", "any-model", &mut out);
+        // DONE is pushed as-is (no trailing newline added by this function)
+        assert_eq!(out, "data: [DONE]");
+    }
+
+    #[test]
+    fn test_process_sse_line_passes_comment_unchanged() {
+        let mut out = String::new();
+        process_sse_line(": heartbeat", "any-model", &mut out);
+        assert_eq!(out, ": heartbeat");
+    }
+
+    #[test]
+    fn test_process_sse_line_passes_empty_line_unchanged() {
+        let mut out = String::new();
+        process_sse_line("", "any-model", &mut out);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn test_process_sse_line_handles_invalid_json() {
+        let mut out = String::new();
+        process_sse_line("data: not valid json {", "any-model", &mut out);
+        assert_eq!(out, "data: not valid json {");
+    }
+
+    #[test]
+    fn test_process_sse_line_handles_non_data_lines() {
+        let mut out = String::new();
+        process_sse_line("event: message", "any-model", &mut out);
+        assert_eq!(out, "event: message");
+    }
+
+    #[test]
+    fn test_process_sse_line_multiline_buffer() {
+        // A single call to process_sse_line processes one line at a time.
+        // Lines without trailing newline are not processed as complete SSE lines.
+        let mut out = String::new();
+        // First line with newline - should be processed
+        process_sse_line("data: {\"model\": \"a\"}\n", "user", &mut out);
+        assert!(out.contains("user"), "output: {}", out);
+    }
+
+    // ── Integration: header skip list consistency ─────────────────────────
+
     #[test]
     fn test_content_length_is_stripped_from_forwarded_response_headers() {
-        // This is the exact skip-list from forward_request's response-header
-        // copying loop.  If someone removes "content-length" from the list
-        // this test will fail, reminding them why it must be there.
         let skip_list: &[&str] = &[
             "connection",
             "keep-alive",
@@ -502,10 +730,6 @@ mod tests {
         );
     }
 
-    /// Demonstrates the size mismatch that occurs when the model name in a
-    /// JSON response body is rewritten to a longer name.  If the original
-    /// Content-Length were forwarded, the HTTP client would see fewer bytes
-    /// than actually sent, corrupting keep-alive connections.
     #[test]
     fn test_body_size_changes_after_model_rewrite() {
         let short_model = "m.gguf";
@@ -517,14 +741,9 @@ mod tests {
         });
         let original_bytes = serde_json::to_vec(&original).unwrap();
 
-        let mut rewritten: JsonValue = serde_json::from_slice(&original_bytes).unwrap();
-        rewritten["model"] = JsonValue::String(long_model.to_string());
+        let rewritten = rewrite_json_model_name(original, long_model);
         let rewritten_bytes = serde_json::to_vec(&rewritten).unwrap();
 
-        // The rewritten body is longer because the model name grew.
-        // If Content-Length from the backend (original_bytes.len()) were kept,
-        // the client would only read that many bytes and the remaining bytes
-        // would corrupt the next HTTP response on a keep-alive connection.
         assert_ne!(
             original_bytes.len(),
             rewritten_bytes.len(),

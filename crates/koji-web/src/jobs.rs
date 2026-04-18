@@ -464,4 +464,91 @@ mod tests {
         // but it should not panic
         manager.kill_children(&job).await;
     }
+
+    #[tokio::test]
+    async fn test_finish_with_error_message() {
+        let manager = JobManager::new();
+        let job = manager
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
+            .await
+            .expect("submit should succeed");
+
+        // Finish with an error message
+        manager
+            .finish(&job, JobStatus::Failed, Some("out of memory".to_string()))
+            .await;
+
+        {
+            let state = job.state.read().await;
+            assert_eq!(state.status, JobStatus::Failed);
+        }
+        assert!(manager.active().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_finish_without_error_clears_message() {
+        let manager = JobManager::new();
+        let job = manager
+            .submit(
+                JobKind::Install,
+                Some(koji_core::backends::BackendType::LlamaCpp),
+            )
+            .await
+            .expect("submit should succeed");
+
+        // Finish without error message
+        manager.finish(&job, JobStatus::Succeeded, None).await;
+
+        {
+            let state = job.state.read().await;
+            assert_eq!(state.status, JobStatus::Succeeded);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_job() {
+        let manager = JobManager::new();
+        assert!(manager.get(&"nonexistent-job".to_string()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_active_returns_none_when_no_jobs() {
+        let manager = JobManager::new();
+        assert!(manager.active().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fifo_eviction_preserves_order() {
+        let manager = JobManager::new();
+        let mut job_ids = Vec::new();
+
+        // Submit and finish 10 jobs (limit is 8)
+        for i in 0..10 {
+            let job = manager
+                .submit(
+                    JobKind::Install,
+                    Some(koji_core::backends::BackendType::LlamaCpp),
+                )
+                .await
+                .expect("submit should succeed");
+            manager.finish(&job, JobStatus::Succeeded, None).await;
+            job_ids.push(job.id.clone());
+        }
+
+        // First 2 should be evicted (10 - 8 = 2)
+        assert!(manager.get(&job_ids[0]).await.is_none());
+        assert!(manager.get(&job_ids[1]).await.is_none());
+
+        // Last 8 should exist
+        for i in 2..10 {
+            assert!(
+                manager.get(&job_ids[i]).await.is_some(),
+                "job {} should exist",
+                i
+            );
+        }
+    }
 }

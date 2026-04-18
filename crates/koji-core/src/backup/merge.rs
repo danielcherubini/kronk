@@ -273,4 +273,205 @@ mod tests {
             Some("/local/path".to_string())
         );
     }
+
+    #[test]
+    fn test_merge_config_empty_backup() {
+        let mut local = Config::default();
+        local.backends.clear(); // Clear defaults for predictable test
+        let mut backup = Config::default();
+        backup.backends.clear(); // Also clear backup defaults
+
+        let stats = merge_config(&mut local, &backup);
+
+        assert!(stats.new_backends.is_empty());
+        assert!(stats.skipped_backends.is_empty());
+    }
+
+    #[test]
+    fn test_merge_config_empty_local() {
+        let local = Config::default();
+        let mut backup = Config::default();
+        backup.backends.insert(
+            "new".to_string(),
+            crate::config::BackendConfig {
+                path: None,
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        // This should work — local gets the backup's backends
+        let mut local_mut = Config::default();
+        let stats = merge_config(&mut local_mut, &backup);
+        assert_eq!(stats.new_backends.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_config_multiple_new_backends() {
+        let mut local = Config::default();
+        let mut backup = Config::default();
+        local.backends.clear();
+        backup.backends.clear();
+
+        for i in 1..=5 {
+            backup.backends.insert(
+                format!("backend{}", i),
+                crate::config::BackendConfig {
+                    path: None,
+                    default_args: vec![],
+                    health_check_url: None,
+                    version: None,
+                },
+            );
+        }
+
+        let stats = merge_config(&mut local, &backup);
+        assert_eq!(stats.new_backends.len(), 5);
+        assert_eq!(local.backends.len(), 5);
+    }
+
+    #[test]
+    fn test_merge_config_mixed_new_and_existing() {
+        let mut local = Config::default();
+        let mut backup = Config::default();
+        local.backends.clear();
+        backup.backends.clear();
+
+        // Add some to local
+        for i in 1..=3 {
+            local.backends.insert(
+                format!("local{}", i),
+                crate::config::BackendConfig {
+                    path: None,
+                    default_args: vec![],
+                    health_check_url: None,
+                    version: None,
+                },
+            );
+        }
+        // Add some to backup (some overlapping with local)
+        for i in 1..=5 {
+            backup.backends.insert(
+                format!("backend{}", i),
+                crate::config::BackendConfig {
+                    path: None,
+                    default_args: vec![],
+                    health_check_url: None,
+                    version: None,
+                },
+            );
+        }
+        // Overlap: local1, local2 are in both (backup overrides)
+        backup.backends.insert(
+            "local1".to_string(),
+            crate::config::BackendConfig {
+                path: Some("/backup/path".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+        backup.backends.insert(
+            "local2".to_string(),
+            crate::config::BackendConfig {
+                path: Some("/backup/path".to_string()),
+                default_args: vec![],
+                health_check_url: None,
+                version: None,
+            },
+        );
+
+        let stats = merge_config(&mut local, &backup);
+        // New: backend1, backend2, backend3, backend4, backend5 (5 new)
+        // Skipped: local1, local2 (2 skipped)
+        assert_eq!(stats.new_backends.len(), 5);
+        assert_eq!(stats.skipped_backends.len(), 2);
+    }
+
+    #[test]
+    fn test_merge_config_sampling_templates() {
+        let mut local = Config::default();
+        let mut backup = Config::default();
+        local.sampling_templates.clear();
+        backup.sampling_templates.clear();
+
+        let params = crate::profiles::SamplingParams {
+            temperature: Some(0.7),
+            top_k: Some(50),
+            top_p: None,
+            min_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            repeat_penalty: None,
+        };
+        backup
+            .sampling_templates
+            .insert("coding".to_string(), params);
+
+        let stats = merge_config(&mut local, &backup);
+        assert_eq!(stats.new_sampling_templates.len(), 1);
+        assert!(local.sampling_templates.contains_key("coding"));
+    }
+
+    #[test]
+    fn test_merge_config_local_wins_for_sampling_templates() {
+        let mut local = Config::default();
+        let mut backup = Config::default();
+        local.sampling_templates.clear();
+        backup.sampling_templates.clear();
+
+        // Local has a template with temperature 0.5
+        local.sampling_templates.insert(
+            "coding".to_string(),
+            crate::profiles::SamplingParams {
+                temperature: Some(0.5),
+                top_k: None,
+                top_p: None,
+                min_p: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                repeat_penalty: None,
+            },
+        );
+
+        // Backup has a different template with same name (temperature 0.9)
+        backup.sampling_templates.insert(
+            "coding".to_string(),
+            crate::profiles::SamplingParams {
+                temperature: Some(0.9),
+                top_k: None,
+                top_p: None,
+                min_p: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                repeat_penalty: None,
+            },
+        );
+
+        let stats = merge_config(&mut local, &backup);
+        // Local should win — no new templates added
+        assert!(stats.new_sampling_templates.is_empty());
+        assert_eq!(local.sampling_templates["coding"].temperature, Some(0.5));
+    }
+
+    #[test]
+    fn test_merge_stats_default() {
+        let stats = MergeStats::default();
+        assert!(stats.new_backends.is_empty());
+        assert!(stats.new_sampling_templates.is_empty());
+        assert!(stats.skipped_backends.is_empty());
+    }
+
+    #[test]
+    fn test_merge_stats_debug() {
+        let stats = MergeStats {
+            new_backends: vec!["a".to_string()],
+            new_sampling_templates: vec!["b".to_string()],
+            skipped_backends: vec!["c".to_string()],
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("new_backends"));
+        assert!(debug_str.contains("skipped_backends"));
+    }
 }

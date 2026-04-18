@@ -78,3 +78,224 @@ pub fn rename_active_model(conn: &Connection, old_name: &str, new_name: &str) ->
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create an in-memory SQLite connection with the active_models table.
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE active_models (
+                server_name TEXT PRIMARY KEY,
+                model_name TEXT NOT NULL,
+                backend TEXT NOT NULL,
+                pid INTEGER NOT NULL,
+                port INTEGER NOT NULL,
+                backend_url TEXT NOT NULL,
+                loaded_at TEXT NOT NULL,
+                last_accessed TEXT NOT NULL
+            )",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_insert_active_model() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "server1",
+            "model.gguf",
+            "llama-cpp",
+            1234,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].server_name, "server1");
+        assert_eq!(models[0].model_name, "model.gguf");
+        assert_eq!(models[0].pid, 1234);
+    }
+
+    #[test]
+    fn test_insert_active_model_replaces_existing() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "server1",
+            "model.gguf",
+            "llama-cpp",
+            1234,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+        // Insert again with different values — should replace
+        insert_active_model(
+            &conn,
+            "server1",
+            "model-v2.gguf",
+            "llama-cpp",
+            5678,
+            8081,
+            "http://127.0.0.1:8081",
+        )
+        .unwrap();
+
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model_name, "model-v2.gguf");
+        assert_eq!(models[0].pid, 5678);
+    }
+
+    #[test]
+    fn test_remove_active_model() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "server1",
+            "model.gguf",
+            "llama-cpp",
+            1234,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+        remove_active_model(&conn, "server1").unwrap();
+
+        let models = get_active_models(&conn).unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_remove_active_model_nonexistent() {
+        let conn = test_conn();
+        // Should not error even if server doesn't exist
+        remove_active_model(&conn, "nonexistent").unwrap();
+    }
+
+    #[test]
+    fn test_get_active_models_empty() {
+        let conn = test_conn();
+        let models = get_active_models(&conn).unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_get_active_models_multiple() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "server1",
+            "model1.gguf",
+            "llama-cpp",
+            100,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+        insert_active_model(
+            &conn,
+            "server2",
+            "model2.gguf",
+            "vllm",
+            200,
+            8081,
+            "http://127.0.0.1:8081",
+        )
+        .unwrap();
+
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn test_clear_active_models() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "s1",
+            "m1.gguf",
+            "llama-cpp",
+            100,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+        insert_active_model(
+            &conn,
+            "s2",
+            "m2.gguf",
+            "vllm",
+            200,
+            8081,
+            "http://127.0.0.1:8081",
+        )
+        .unwrap();
+
+        clear_active_models(&conn).unwrap();
+        assert!(get_active_models(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_touch_active_model() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "server1",
+            "model.gguf",
+            "llama-cpp",
+            1234,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+
+        // Touch should succeed without error
+        touch_active_model(&conn, "server1").unwrap();
+
+        // Verify the record still exists
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models.len(), 1);
+    }
+
+    #[test]
+    fn test_touch_active_model_nonexistent() {
+        let conn = test_conn();
+        // Should not error even if server doesn't exist
+        touch_active_model(&conn, "nonexistent").unwrap();
+    }
+
+    #[test]
+    fn test_rename_active_model() {
+        let conn = test_conn();
+        insert_active_model(
+            &conn,
+            "old-name",
+            "model.gguf",
+            "llama-cpp",
+            1234,
+            8080,
+            "http://127.0.0.1:8080",
+        )
+        .unwrap();
+
+        rename_active_model(&conn, "old-name", "new-name").unwrap();
+
+        let models = get_active_models(&conn).unwrap();
+        assert_eq!(models[0].server_name, "new-name");
+    }
+
+    #[test]
+    fn test_rename_active_model_nonexistent() {
+        let conn = test_conn();
+        // Should not error even if old name doesn't exist
+        rename_active_model(&conn, "old", "new").unwrap();
+    }
+}

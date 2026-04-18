@@ -328,3 +328,191 @@ pub struct UploadEntry {
     pub path: std::path::PathBuf,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── RestorePreviewRequest tests ───────────────────────────────────────
+
+    #[test]
+    fn test_restore_preview_request_fields() {
+        let req = RestorePreviewRequest {
+            upload_id: "upload-abc123".to_string(),
+        };
+
+        assert_eq!(req.upload_id, "upload-abc123");
+    }
+
+    #[test]
+    fn test_restore_preview_request_empty_upload_id() {
+        let req = RestorePreviewRequest {
+            upload_id: String::new(),
+        };
+
+        assert!(req.upload_id.is_empty());
+    }
+
+    // ── RestorePreviewResponse tests ──────────────────────────────────────
+
+    #[test]
+    fn test_restore_preview_response_fields() {
+        let response = RestorePreviewResponse {
+            upload_id: "upload-abc123".to_string(),
+            created_at: "2026-04-18T10:00:00Z".to_string(),
+            koji_version: "1.26.2".to_string(),
+            models: vec![BackupModelEntry {
+                repo_id: "unsloth/Qwen3.5-35B-A3B-GGUF".to_string(),
+                quants: vec!["Q4_K_M".to_string(), "Q8_0".to_string()],
+                total_size_bytes: 20_000_000,
+            }],
+            backends: vec![BackendEntry {
+                name: "llama-cpp".to_string(),
+                version: "b8407".to_string(),
+                backend_type: "llama_cpp".to_string(),
+                source: "prebuilt".to_string(),
+            }],
+        };
+
+        assert_eq!(response.upload_id, "upload-abc123");
+        assert_eq!(response.koji_version, "1.26.2");
+        assert_eq!(response.models.len(), 1);
+        assert_eq!(response.backends.len(), 1);
+        assert_eq!(response.models[0].repo_id, "unsloth/Qwen3.5-35B-A3B-GGUF");
+    }
+
+    #[test]
+    fn test_restore_preview_response_empty() {
+        let response = RestorePreviewResponse {
+            upload_id: "upload-empty".to_string(),
+            created_at: "2026-04-18T10:00:00Z".to_string(),
+            koji_version: "1.26.2".to_string(),
+            models: vec![],
+            backends: vec![],
+        };
+
+        assert!(response.models.is_empty());
+        assert!(response.backends.is_empty());
+        assert_eq!(response.upload_id, "upload-empty");
+    }
+
+    // ── RestoreRequest tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_restore_request_fields() {
+        let req = RestoreRequest {
+            upload_id: "upload-abc123".to_string(),
+            selected_models: None,
+            skip_backends: true,
+            skip_models: false,
+        };
+
+        assert_eq!(req.upload_id, "upload-abc123");
+        assert!(!req.skip_models);
+        assert!(req.skip_backends);
+    }
+
+    #[test]
+    fn test_restore_request_all_skipped() {
+        let req = RestoreRequest {
+            upload_id: "upload-abc123".to_string(),
+            selected_models: None,
+            skip_backends: true,
+            skip_models: true,
+        };
+
+        assert!(req.skip_models);
+        assert!(req.skip_backends);
+    }
+
+    #[test]
+    fn test_restore_request_with_selected_models() {
+        let req = RestoreRequest {
+            upload_id: "upload-abc123".to_string(),
+            selected_models: Some(vec!["model1.gguf".to_string(), "model2.gguf".to_string()]),
+            skip_backends: false,
+            skip_models: false,
+        };
+
+        assert_eq!(req.selected_models.as_ref().unwrap().len(), 2);
+        assert!(!req.skip_models);
+    }
+
+    // ── RestoreResponse tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_restore_response_fields() {
+        let response = RestoreResponse {
+            job_id: "restore-job-123".to_string(),
+        };
+
+        assert_eq!(response.job_id, "restore-job-123");
+    }
+
+    // ── BackupModelEntry tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_backup_model_entry_fields() {
+        let entry = BackupModelEntry {
+            repo_id: "unsloth/Qwen3.5-35B-A3B-GGUF".to_string(),
+            quants: vec!["Q4_K_M".to_string(), "Q8_0".to_string()],
+            total_size_bytes: 20_000_000,
+        };
+
+        assert_eq!(entry.repo_id, "unsloth/Qwen3.5-35B-A3B-GGUF");
+        assert_eq!(entry.quants.len(), 2);
+        assert_eq!(entry.total_size_bytes, 20_000_000);
+    }
+
+    #[test]
+    fn test_backup_model_entry_single_quant() {
+        let entry = BackupModelEntry {
+            repo_id: "test/model".to_string(),
+            quants: vec!["Q4_K_M".to_string()],
+            total_size_bytes: 5_000_000,
+        };
+
+        assert_eq!(entry.quants.len(), 1);
+        assert_eq!(entry.quants[0], "Q4_K_M");
+    }
+
+    #[test]
+    fn test_backup_model_entry_negative_size() {
+        let entry = BackupModelEntry {
+            repo_id: "test/model".to_string(),
+            quants: vec!["Q4_K_M".to_string()],
+            total_size_bytes: -1,
+        };
+
+        assert_eq!(entry.total_size_bytes, -1);
+    }
+
+    // ── BackendEntry tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_backend_entry_fields() {
+        let entry = BackendEntry {
+            name: "llama-cpp".to_string(),
+            version: "b8407".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            source: "prebuilt".to_string(),
+        };
+
+        assert_eq!(entry.name, "llama-cpp");
+        assert_eq!(entry.version, "b8407");
+        assert_eq!(entry.backend_type, "llama_cpp");
+        assert_eq!(entry.source, "prebuilt");
+    }
+
+    #[test]
+    fn test_backend_entry_source_build() {
+        let entry = BackendEntry {
+            name: "llama-cpp".to_string(),
+            version: "b8407".to_string(),
+            backend_type: "llama_cpp".to_string(),
+            source: "build".to_string(),
+        };
+
+        assert_eq!(entry.source, "build");
+    }
+}

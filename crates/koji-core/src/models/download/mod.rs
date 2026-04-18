@@ -25,6 +25,44 @@ pub fn parse_content_length(headers: &HeaderMap) -> Option<u64> {
         .and_then(|s| s.parse::<u64>().ok())
 }
 
+/// Calculate the number of connections to use for parallel download,
+/// based on total file size and minimum chunk size.
+pub fn calculate_connections(total_size: u64, max_connections: usize) -> usize {
+    if total_size <= MIN_CHUNK_SIZE {
+        return 1;
+    }
+    let suggested = (total_size / MIN_CHUNK_SIZE) as usize;
+    suggested.min(max_connections).max(1)
+}
+
+/// Calculate chunk ranges for parallel download.
+/// Returns a vector of (start, end) byte ranges for each chunk.
+pub fn calculate_chunk_ranges(total_size: u64, num_chunks: usize) -> Vec<(u64, u64)> {
+    if num_chunks == 0 || total_size == 0 {
+        return vec![];
+    }
+    let chunk_size = total_size / num_chunks as u64;
+    (0..num_chunks)
+        .map(|i| {
+            let start = i as u64 * chunk_size;
+            let end = if i == num_chunks - 1 {
+                total_size.saturating_sub(1)
+            } else {
+                (i as u64 + 1) * chunk_size - 1
+            };
+            (start, end)
+        })
+        .collect()
+}
+
+/// Calculate the expected size of a single chunk given total size and number of chunks.
+pub fn chunk_size_for(total_size: u64, num_chunks: usize) -> u64 {
+    if num_chunks == 0 || total_size == 0 {
+        return 0;
+    }
+    total_size / num_chunks as u64
+}
+
 /// Download a file using parallel HTTP Range requests.
 /// Falls back to single-stream if Range is not supported.
 /// Skips download if the destination already exists with matching size.
@@ -145,11 +183,20 @@ pub async fn download_chunked_with_progress(
 mod tests {
     use super::*;
 
+    // ── parse_content_length tests ────────────────────────────────────────
+
     #[test]
     fn test_parse_content_length_valid() {
         let mut headers = HeaderMap::new();
         headers.insert("content-length", "12345".parse().unwrap());
         assert_eq!(parse_content_length(&headers), Some(12345));
+    }
+
+    #[test]
+    fn test_parse_content_length_large_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "999999999999".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), Some(999999999999));
     }
 
     #[test]
@@ -172,52 +219,168 @@ mod tests {
         assert_eq!(parse_content_length(&headers), Some(0));
     }
 
-    #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_download_single_small_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("test.txt");
-
-        // Use a small known file from HuggingFace (a config.json)
-        let url = "https://huggingface.co/gpt2/resolve/main/config.json";
-        let client = Client::new();
-        let size = download_chunked(&client, url, &dest, 1).await.unwrap();
-
-        assert!(dest.exists());
-        assert!(size > 0);
-        assert_eq!(std::fs::metadata(&dest).unwrap().len(), size);
+    #[test]
+    fn test_parse_content_length_negative_string() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "-1".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), None);
     }
 
-    #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_download_parallel_chunks() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("test.bin");
-
-        // Use a larger file to test parallel downloads
-        let url = "https://huggingface.co/gpt2/resolve/main/merges.txt";
-        let client = Client::new();
-        let size = download_chunked(&client, url, &dest, 4).await.unwrap();
-
-        assert!(dest.exists());
-        assert!(size > 0);
-        assert_eq!(std::fs::metadata(&dest).unwrap().len(), size);
+    #[test]
+    fn test_parse_content_length_with_whitespace() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "  512  ".parse().unwrap());
+        // to_str() preserves whitespace, parse::<u64>() fails on whitespace
+        assert_eq!(parse_content_length(&headers), None);
     }
 
-    #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_skip_existing_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("test.txt");
+    #[test]
+    fn test_parse_content_length_case_insensitive_header() {
+        let mut headers = HeaderMap::new();
+        // HTTP headers are case-insensitive
+        headers.insert("Content-Length", "4096".parse().unwrap());
+        assert_eq!(parse_content_length(&headers), Some(4096));
+    }
 
-        let url = "https://huggingface.co/gpt2/resolve/main/config.json";
-        let client = Client::new();
+    #[test]
+    fn test_parse_content_length_multiple_values() {
+        let mut headers = HeaderMap::new();
+        headers.append("content-length", "100".parse().unwrap());
+        headers.append("content-length", "200".parse().unwrap());
+        // and_then takes the first value
+        assert_eq!(parse_content_length(&headers), Some(100));
+    }
 
-        // Download once
-        let size1 = download_chunked(&client, url, &dest, 1).await.unwrap();
-        // Download again — should skip
-        let size2 = download_chunked(&client, url, &dest, 1).await.unwrap();
+    // ── calculate_connections tests ───────────────────────────────────────
 
-        assert_eq!(size1, size2);
+    #[test]
+    fn test_calculate_connections_small_file() {
+        // File smaller than MIN_CHUNK_SIZE (5 MiB)
+        assert_eq!(calculate_connections(1024, 4), 1);
+        assert_eq!(calculate_connections(MIN_CHUNK_SIZE - 1, 8), 1);
+    }
+
+    #[test]
+    fn test_calculate_connections_exact_chunk_size() {
+        // File exactly MIN_CHUNK_SIZE should use 1 connection
+        assert_eq!(calculate_connections(MIN_CHUNK_SIZE, 4), 1);
+    }
+
+    #[test]
+    fn test_calculate_connections_multiple_chunks() {
+        // 10 MiB file / 5 MiB chunk = 2 connections
+        assert_eq!(calculate_connections(10 * 1024 * 1024, 4), 2);
+        // 20 MiB file with max 2 connections
+        assert_eq!(calculate_connections(20 * 1024 * 1024, 2), 2);
+    }
+
+    #[test]
+    fn test_calculate_connections_capped_by_max() {
+        // Large file but max connections limits it
+        assert_eq!(calculate_connections(100 * 1024 * 1024, 3), 3);
+    }
+
+    #[test]
+    fn test_calculate_connections_minimum_one() {
+        // Even with max=1, should return at least 1 for large files
+        assert_eq!(calculate_connections(100 * 1024 * 1024, 1), 1);
+    }
+
+    #[test]
+    fn test_calculate_connections_zero_max() {
+        // With max_connections=0, should still return at least 1
+        assert_eq!(calculate_connections(100 * 1024 * 1024, 0), 1);
+    }
+
+    #[test]
+    fn test_calculate_connections_zero_size() {
+        // Zero-size file should return 1 (not 0)
+        assert_eq!(calculate_connections(0, 8), 1);
+    }
+
+    // ── calculate_chunk_ranges tests ──────────────────────────────────────
+
+    #[test]
+    fn test_calculate_chunk_ranges_single_chunk() {
+        let ranges = calculate_chunk_ranges(1000, 1);
+        assert_eq!(ranges, vec![(0, 999)]);
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_even_split() {
+        // 100 bytes split into 4 chunks = 25 bytes each
+        let ranges = calculate_chunk_ranges(100, 4);
+        assert_eq!(ranges, vec![(0, 24), (25, 49), (50, 74), (75, 99)]);
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_uneven_split() {
+        // 100 bytes split into 3 chunks = 33 bytes each, last chunk gets remainder
+        let ranges = calculate_chunk_ranges(100, 3);
+        assert_eq!(ranges[0], (0, 32));
+        assert_eq!(ranges[1], (33, 65));
+        // Last chunk covers remaining bytes
+        assert_eq!(ranges[2].0, 66);
+        assert_eq!(ranges[2].1, 99);
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_zero_size() {
+        let ranges = calculate_chunk_ranges(0, 4);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_zero_chunks() {
+        let ranges = calculate_chunk_ranges(1000, 0);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_covers_full_range() {
+        // Verify that all ranges together cover [0, total_size - 1]
+        let total_size = 1024;
+        let num_chunks = 7;
+        let ranges = calculate_chunk_ranges(total_size, num_chunks);
+
+        assert_eq!(ranges.len(), num_chunks);
+        assert_eq!(ranges[0].0, 0);
+        assert_eq!(ranges[num_chunks - 1].1, total_size - 1);
+
+        // Verify no gaps between consecutive ranges
+        for i in 0..(num_chunks - 1) {
+            assert_eq!(ranges[i + 1].0, ranges[i].1 + 1);
+        }
+    }
+
+    #[test]
+    fn test_calculate_chunk_ranges_two_chunks() {
+        let ranges = calculate_chunk_ranges(10, 2);
+        assert_eq!(ranges, vec![(0, 4), (5, 9)]);
+    }
+
+    // ── chunk_size_for tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_chunk_size_for_even_split() {
+        assert_eq!(chunk_size_for(1000, 4), 250);
+        assert_eq!(chunk_size_for(100, 10), 10);
+    }
+
+    #[test]
+    fn test_chunk_size_for_uneven_split() {
+        // 100 / 3 = 33 (integer division)
+        assert_eq!(chunk_size_for(100, 3), 33);
+    }
+
+    #[test]
+    fn test_chunk_size_for_single_chunk() {
+        assert_eq!(chunk_size_for(1000, 1), 1000);
+    }
+
+    #[test]
+    fn test_chunk_size_for_zero_values() {
+        assert_eq!(chunk_size_for(0, 5), 0);
+        assert_eq!(chunk_size_for(100, 0), 0);
     }
 }

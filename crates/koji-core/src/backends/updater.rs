@@ -157,3 +157,111 @@ pub async fn update_backend(
 ) -> Result<()> {
     update_backend_with_progress(registry, backend_name, options, latest_version, None).await
 }
+
+/// Check if a GitHub API response indicates rate limiting.
+pub fn is_rate_limited(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::FORBIDDEN
+}
+
+/// Determine if an update is available by comparing version strings.
+pub fn has_update(current: &str, latest: &str) -> bool {
+    current != latest
+}
+
+/// Check if a backend type supports update checking.
+pub fn supports_update_check(backend_type: &BackendType) -> bool {
+    !matches!(backend_type, BackendType::Custom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_rate_limited tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_is_rate_limited_forbidden() {
+        assert!(is_rate_limited(reqwest::StatusCode::FORBIDDEN));
+    }
+
+    #[test]
+    fn test_is_rate_limited_not_rate_limited() {
+        assert!(!is_rate_limited(reqwest::StatusCode::OK));
+        assert!(!is_rate_limited(reqwest::StatusCode::NOT_FOUND));
+        assert!(!is_rate_limited(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    }
+
+    // ── has_update tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_update_newer_version_available() {
+        assert!(has_update("1.0.0", "1.1.0"));
+        assert!(has_update("1.0.0", "2.0.0"));
+    }
+
+    #[test]
+    fn test_has_update_no_update_available() {
+        assert!(!has_update("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn test_has_update_older_version() {
+        // Even if latest is older, versions differ so update_available is true
+        assert!(has_update("2.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn test_has_update_empty_strings() {
+        assert!(has_update("", "1.0.0"));
+        assert!(!has_update("", ""));
+    }
+
+    // ── supports_update_check tests ───────────────────────────────────────
+
+    #[test]
+    fn test_supports_update_check_llamacpp() {
+        assert!(supports_update_check(&BackendType::LlamaCpp));
+    }
+
+    #[test]
+    fn test_supports_update_check_ikllama() {
+        assert!(supports_update_check(&BackendType::IkLlama));
+    }
+
+    #[test]
+    fn test_supports_update_check_custom() {
+        assert!(!supports_update_check(&BackendType::Custom));
+    }
+
+    // ── UpdateCheck construction tests ────────────────────────────────────
+
+    #[test]
+    fn test_update_check_construction() {
+        let check = UpdateCheck {
+            current_version: "1.0.0".to_string(),
+            latest_version: "1.1.0".to_string(),
+            update_available: true,
+        };
+        assert_eq!(check.current_version, "1.0.0");
+        assert_eq!(check.latest_version, "1.1.0");
+        assert!(check.update_available);
+    }
+
+    #[test]
+    fn test_update_check_no_update() {
+        let check = UpdateCheck {
+            current_version: "1.0.0".to_string(),
+            latest_version: "1.0.0".to_string(),
+            update_available: false,
+        };
+        assert!(!check.update_available);
+    }
+
+    // ── github_token tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_github_token_not_set() {
+        std::env::remove_var("GITHUB_TOKEN");
+        assert!(github_token().is_none());
+    }
+}

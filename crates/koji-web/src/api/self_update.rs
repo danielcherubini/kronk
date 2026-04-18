@@ -267,3 +267,74 @@ pub async fn update_events(
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── UpdateCheckResponse serialization tests ───────────────────────────
+
+    #[test]
+    fn test_update_check_response_serialization() {
+        let response = UpdateCheckResponse {
+            update_available: true,
+            current_version: "1.26.2".to_string(),
+            latest_version: "1.27.0".to_string(),
+            release_notes: "Bug fixes and improvements".to_string(),
+            published_at: "2026-04-18T10:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: UpdateCheckResponse = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.update_available);
+        assert_eq!(deserialized.current_version, "1.26.2");
+        assert_eq!(deserialized.latest_version, "1.27.0");
+    }
+
+    #[test]
+    fn test_update_check_response_no_update() {
+        let response = UpdateCheckResponse {
+            update_available: false,
+            current_version: "1.26.2".to_string(),
+            latest_version: "1.26.2".to_string(),
+            release_notes: String::new(),
+            published_at: String::new(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: UpdateCheckResponse = serde_json::from_str(&json).unwrap();
+
+        assert!(!deserialized.update_available);
+    }
+
+    // ── UpdateTriggerResponse serialization tests ─────────────────────────
+
+    #[test]
+    fn test_update_trigger_response_serialization() {
+        let response = UpdateTriggerResponse {
+            ok: true,
+            message: "Update started".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: UpdateTriggerResponse = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.ok);
+        assert_eq!(deserialized.message, "Update started");
+    }
+
+    #[test]
+    fn test_update_trigger_response_error() {
+        let response = UpdateTriggerResponse {
+            ok: false,
+            message: "Update already in progress".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: UpdateTriggerResponse = serde_json::from_str(&json).unwrap();
+
+        assert!(!deserialized.ok);
+        assert_eq!(deserialized.message, "Update already in progress");
+    }
+}

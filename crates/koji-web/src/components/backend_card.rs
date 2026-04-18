@@ -526,4 +526,155 @@ mod tests {
         let dto: BackendCardDto = serde_json::from_str(json).unwrap();
         assert!(!dto.is_active);
     }
+
+    #[test]
+    fn test_backend_card_dto_with_versions() {
+        let dto = BackendCardDto {
+            r#type: "llama_cpp".to_string(),
+            display_name: "llama.cpp".to_string(),
+            installed: true,
+            info: Some(BackendInfoDto {
+                name: "llama-cpp".to_string(),
+                version: "1.0.0".to_string(),
+                path: "/path/to/backend".to_string(),
+                installed_at: 1700000000,
+                gpu_type: Some(GpuTypeDto::Cuda {
+                    version: "12.4".to_string(),
+                }),
+                source: Some(BackendSourceDto::Prebuilt {
+                    version: "1.0.0".to_string(),
+                }),
+            }),
+            versions: vec![BackendVersionDto {
+                name: "llama-cpp".to_string(),
+                version: "1.0.0".to_string(),
+                path: "/path/to/backend".to_string(),
+                installed_at: 1700000000,
+                gpu_type: Some(GpuTypeDto::Cuda {
+                    version: "12.4".to_string(),
+                }),
+                source: Some(BackendSourceDto::Prebuilt {
+                    version: "1.0.0".to_string(),
+                }),
+                is_active: true,
+            }],
+            update: UpdateStatusDto {
+                checked: true,
+                latest_version: Some("1.0.0".to_string()),
+                update_available: Some(false),
+            },
+            release_notes_url: None,
+            default_args: vec!["--threads".to_string()],
+            is_active: true,
+        };
+
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("llama_cpp"));
+        assert!(json.contains("1.0.0"));
+    }
+
+    #[test]
+    fn test_backend_card_dto_ik_llama_type() {
+        let dto = BackendCardDto {
+            r#type: "ik_llama".to_string(),
+            display_name: "ik_llama".to_string(),
+            installed: false,
+            info: None,
+            versions: vec![],
+            update: UpdateStatusDto::default(),
+            release_notes_url: None,
+            default_args: vec![],
+            is_active: false,
+        };
+
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("ik_llama"));
+    }
+
+    #[test]
+    fn test_backend_card_dto_custom_type() {
+        let dto = BackendCardDto {
+            r#type: "custom".to_string(),
+            display_name: "Custom Backend".to_string(),
+            installed: true,
+            info: Some(BackendInfoDto {
+                name: "custom-backend".to_string(),
+                version: "custom-1.0".to_string(),
+                path: "/custom/path".to_string(),
+                installed_at: 1700000000,
+                gpu_type: None,
+                source: None,
+            }),
+            versions: vec![],
+            update: UpdateStatusDto {
+                checked: false,
+                latest_version: None,
+                update_available: None,
+            },
+            release_notes_url: None,
+            default_args: vec![],
+            is_active: false,
+        };
+
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("custom"));
+        assert!(json.contains("Custom Backend"));
+    }
+
+    #[test]
+    fn test_backend_card_dto_roundtrip() {
+        let original = BackendCardDto {
+            r#type: "llama_cpp".to_string(),
+            display_name: "llama.cpp".to_string(),
+            installed: true,
+            info: Some(BackendInfoDto {
+                name: "llama-cpp".to_string(),
+                version: "b8407".to_string(),
+                path: "/home/user/.local/share/koji/backends/llama-cpp/b8407".to_string(),
+                installed_at: 1700000000,
+                gpu_type: Some(GpuTypeDto::Cuda {
+                    version: "12.4".to_string(),
+                }),
+                source: Some(BackendSourceDto::Prebuilt {
+                    version: "b8407".to_string(),
+                }),
+            }),
+            versions: vec![BackendVersionDto {
+                name: "llama-cpp".to_string(),
+                version: "b8407".to_string(),
+                path: "/home/user/.local/share/koji/backends/llama-cpp/b8407".to_string(),
+                installed_at: 1700000000,
+                gpu_type: Some(GpuTypeDto::Cuda {
+                    version: "12.4".to_string(),
+                }),
+                source: Some(BackendSourceDto::Prebuilt {
+                    version: "b8407".to_string(),
+                }),
+                is_active: true,
+            }],
+            update: UpdateStatusDto {
+                checked: true,
+                latest_version: Some("b8500".to_string()),
+                update_available: Some(true),
+            },
+            release_notes_url: Some(
+                "https://github.com/ggml-org/llama.cpp/releases/tag/b8500".to_string(),
+            ),
+            default_args: vec!["--threads".to_string(), "4".to_string()],
+            is_active: true,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: BackendCardDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.r#type, "llama_cpp");
+        assert_eq!(deserialized.display_name, "llama.cpp");
+        assert!(deserialized.installed);
+        assert!(deserialized.is_active);
+        assert_eq!(deserialized.update.update_available, Some(true));
+        assert_eq!(
+            deserialized.update.latest_version,
+            Some("b8500".to_string())
+        );
+    }
 }

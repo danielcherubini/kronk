@@ -2079,3 +2079,96 @@ pub async fn update_backend_default_args(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jobs::JobKind;
+
+    /// Helper to create an ActiveJobDto for testing.
+    fn make_active_dto(id: &str, kind: &str, backend_type: &str) -> ActiveJobDto {
+        ActiveJobDto {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            backend_type: backend_type.to_string(),
+        }
+    }
+
+    // ── ActiveJobDto serialization tests ──────────────────────────────────
+
+    #[test]
+    fn test_active_job_dto_serialization() {
+        let dto = make_active_dto("job-123", "install", "llama_cpp");
+        let json = serde_json::to_string(&dto).unwrap();
+        let deserialized: ActiveJobDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, "job-123");
+        assert_eq!(deserialized.kind, "install");
+        assert_eq!(deserialized.backend_type, "llama_cpp");
+    }
+
+    #[test]
+    fn test_active_job_dto_update_kind() {
+        let dto = make_active_dto("job-456", "update", "ik_llama");
+        assert_eq!(dto.kind, "update");
+        assert_eq!(dto.backend_type, "ik_llama");
+    }
+
+    #[test]
+    fn test_active_job_dto_restore_kind() {
+        let dto = make_active_dto("job-789", "restore", "custom");
+        assert_eq!(dto.kind, "restore");
+        assert_eq!(dto.backend_type, "custom");
+    }
+
+    #[test]
+    fn test_active_job_dto_empty_backend() {
+        let dto = make_active_dto("job-000", "install", "");
+        assert_eq!(dto.backend_type, "");
+    }
+
+    // ── CapabilitiesDto serialization tests ───────────────────────────────
+
+    #[test]
+    fn test_capabilities_dto_serialization() {
+        let caps = CapabilitiesDto {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            git_available: true,
+            cmake_available: true,
+            compiler_available: true,
+            detected_cuda_version: Some("12.4".to_string()),
+            supported_cuda_versions: vec!["12.0".to_string(), "12.4".to_string()],
+        };
+
+        let json = serde_json::to_string(&caps).unwrap();
+        let deserialized: CapabilitiesDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.os, "linux");
+        assert_eq!(deserialized.arch, "x86_64");
+        assert!(deserialized.git_available);
+        assert!(deserialized.cmake_available);
+        assert!(deserialized.compiler_available);
+        assert_eq!(deserialized.detected_cuda_version, Some("12.4".to_string()));
+        assert_eq!(deserialized.supported_cuda_versions.len(), 2);
+    }
+
+    #[test]
+    fn test_capabilities_dto_minimal() {
+        let caps = CapabilitiesDto {
+            os: "macos".to_string(),
+            arch: "aarch64".to_string(),
+            git_available: false,
+            cmake_available: false,
+            compiler_available: false,
+            detected_cuda_version: None,
+            supported_cuda_versions: vec![],
+        };
+
+        let json = serde_json::to_string(&caps).unwrap();
+        let deserialized: CapabilitiesDto = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.os, "macos");
+        assert!(!deserialized.git_available);
+    }
+}

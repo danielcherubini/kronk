@@ -209,7 +209,7 @@ fn perform_update_sync(
         "koji"
     };
 
-    let archive_kind = detect_archive_kind(&asset.name);
+    let archive_kind = crate::self_update::detect_archive_kind(&asset.name);
     tracing::info!(
         bin_name = bin_name,
         archive_kind = ?archive_kind,
@@ -345,13 +345,36 @@ fn list_tar_gz_contents(archive_path: &std::path::Path) -> String {
 }
 
 /// Detect the archive kind from the filename extension.
-fn detect_archive_kind(filename: &str) -> self_update::ArchiveKind {
+pub fn detect_archive_kind(filename: &str) -> self_update::ArchiveKind {
     if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
         self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
     } else if filename.ends_with(".zip") {
         self_update::ArchiveKind::Zip
     } else {
         self_update::ArchiveKind::Plain(None)
+    }
+}
+
+/// Compare two semver strings, returning true if `latest` is strictly greater
+/// than `current`.
+pub fn is_newer_version(latest: &str, current: &str) -> Option<bool> {
+    let latest_semver = match semver::Version::parse(latest) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let current_semver = match semver::Version::parse(current) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    Some(latest_semver > current_semver)
+}
+
+/// Determine the binary name for the current platform.
+pub fn target_binary_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "koji.exe"
+    } else {
+        "koji"
     }
 }
 
@@ -440,9 +463,20 @@ fn restart_as_cli() -> Result<()> {
 mod tests {
     use super::*;
 
+    // ── detect_archive_kind tests ─────────────────────────────────────────
+
     #[test]
     fn test_detect_archive_kind_tar_gz() {
         let kind = detect_archive_kind("koji-x86_64-unknown-linux-gnu.tar.gz");
+        assert!(matches!(
+            kind,
+            self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
+        ));
+    }
+
+    #[test]
+    fn test_detect_archive_kind_tgz() {
+        let kind = detect_archive_kind("koji-linux-amd64.tgz");
         assert!(matches!(
             kind,
             self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
@@ -456,18 +490,86 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_archive_kind_plain() {
+    fn test_detect_archive_kind_plain_binary() {
         let kind = detect_archive_kind("koji");
         assert!(matches!(kind, self_update::ArchiveKind::Plain(None)));
     }
 
     #[test]
-    fn test_is_running_as_service_default() {
-        // In a test environment, we should not be running as a service
-        // (unless test runner is inside systemd, which is unlikely for unit tests)
-        // This test mainly checks that the function doesn't panic.
-        let _result = is_running_as_service();
+    fn test_detect_archive_kind_plain_with_extension() {
+        // Files with no recognized archive extension are treated as plain
+        let kind = detect_archive_kind("koji.bin");
+        assert!(matches!(kind, self_update::ArchiveKind::Plain(None)));
     }
+
+    #[test]
+    fn test_detect_archive_kind_with_path() {
+        // Paths with recognized extensions should still work
+        let kind = detect_archive_kind("/tmp/releases/v1.0/koji.tar.gz");
+        assert!(matches!(
+            kind,
+            self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
+        ));
+    }
+
+    // ── is_newer_version tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_is_newer_version_major_bump() {
+        assert_eq!(is_newer_version("2.0.0", "1.0.0"), Some(true));
+    }
+
+    #[test]
+    fn test_is_newer_version_minor_bump() {
+        assert_eq!(is_newer_version("1.1.0", "1.0.0"), Some(true));
+    }
+
+    #[test]
+    fn test_is_newer_version_patch_bump() {
+        assert_eq!(is_newer_version("1.0.1", "1.0.0"), Some(true));
+    }
+
+    #[test]
+    fn test_is_newer_version_same_version() {
+        assert_eq!(is_newer_version("1.0.0", "1.0.0"), Some(false));
+    }
+
+    #[test]
+    fn test_is_newer_version_older_version() {
+        assert_eq!(is_newer_version("1.0.0", "2.0.0"), Some(false));
+    }
+
+    #[test]
+    fn test_is_newer_version_prerelease() {
+        // Pre-release versions are lower than the release version
+        assert_eq!(is_newer_version("1.0.0-alpha", "1.0.0"), Some(false));
+        assert_eq!(is_newer_version("1.0.0-beta.1", "1.0.0-alpha"), Some(true));
+    }
+
+    #[test]
+    fn test_is_newer_version_invalid_latest() {
+        assert_eq!(is_newer_version("not-a-version", "1.0.0"), None);
+    }
+
+    #[test]
+    fn test_is_newer_version_invalid_current() {
+        assert_eq!(is_newer_version("1.0.0", "not-a-version"), None);
+    }
+
+    #[test]
+    fn test_is_newer_version_both_invalid() {
+        assert_eq!(is_newer_version("bad", "worse"), None);
+    }
+
+    // ── target_binary_name tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_target_binary_name_linux_macos() {
+        // On non-Windows platforms, the binary name is "koji"
+        assert_eq!(target_binary_name(), "koji");
+    }
+
+    // ── UpdateInfo serialization tests ────────────────────────────────────
 
     #[test]
     fn test_update_info_serialization() {
@@ -488,6 +590,57 @@ mod tests {
     }
 
     #[test]
+    fn test_update_info_serialization_empty_fields() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".to_string(),
+            latest_version: "1.0.0".to_string(),
+            release_notes: String::new(),
+            published_at: String::new(),
+            update_available: false,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: UpdateInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.update_available, false);
+        assert_eq!(deserialized.release_notes, "");
+    }
+
+    #[test]
+    fn test_update_info_toml_roundtrip() {
+        let info = UpdateInfo {
+            current_version: "1.26.2".to_string(),
+            latest_version: "1.27.0".to_string(),
+            release_notes: "New features".to_string(),
+            published_at: "2026-04-15T10:30:00Z".to_string(),
+            update_available: true,
+        };
+
+        let toml_str = toml::to_string(&info).unwrap();
+        let deserialized: UpdateInfo = toml::from_str(&toml_str).unwrap();
+
+        assert_eq!(deserialized.current_version, "1.26.2");
+        assert_eq!(deserialized.latest_version, "1.27.0");
+    }
+
+    // ── is_running_as_service tests ───────────────────────────────────────
+
+    #[test]
+    fn test_is_running_as_service_default() {
+        // In a test environment, we should not be running as a service
+        let _result = is_running_as_service();
+    }
+
+    #[test]
+    fn test_github_token_not_set() {
+        // Ensure github_token() returns None when GITHUB_TOKEN is not set
+        std::env::remove_var("GITHUB_TOKEN");
+        assert!(github_token().is_none());
+    }
+
+    // ── check_for_update_sync invalid version tests ───────────────────────
+
+    #[test]
     fn test_check_for_update_sync_invalid_version() {
         let result = check_for_update_sync("not-a-version");
         assert!(result.is_err());
@@ -496,5 +649,11 @@ mod tests {
             err.contains("Invalid current version") || err.contains("Failed to fetch"),
             "Unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_check_for_update_sync_empty_string() {
+        let result = check_for_update_sync("");
+        assert!(result.is_err());
     }
 }

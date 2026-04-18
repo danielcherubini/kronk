@@ -349,3 +349,230 @@ impl ProxyState {
         to_unload
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Helper to create a Ready ModelState for testing.
+    fn make_ready_state(model_name: &str, backend: &str) -> ModelState {
+        ModelState::Ready {
+            model_name: model_name.to_string(),
+            backend: backend.to_string(),
+            backend_pid: 12345,
+            backend_url: "http://127.0.0.1:8080".to_string(),
+            load_time: std::time::SystemTime::now(),
+            last_accessed: Instant::now(),
+            consecutive_failures: Arc::new(AtomicU32::new(0)),
+            failure_timestamp: None,
+        }
+    }
+
+    /// Helper to create a Starting ModelState for testing.
+    fn make_starting_state(model_name: &str, backend: &str) -> ModelState {
+        ModelState::Starting {
+            model_name: model_name.to_string(),
+            backend: backend.to_string(),
+            backend_url: String::new(),
+            last_accessed: Instant::now(),
+            consecutive_failures: Arc::new(AtomicU32::new(0)),
+            failure_timestamp: None,
+        }
+    }
+
+    /// Helper to create a Failed ModelState for testing.
+    fn make_failed_state() -> ModelState {
+        ModelState::Failed {
+            model_name: "failed-model".to_string(),
+            backend: "llama-cpp".to_string(),
+            error: "test error".to_string(),
+        }
+    }
+
+    /// Test that idle timeout of 0 disables auto-unload.
+    #[tokio::test]
+    async fn test_idle_timeout_zero_disables_auto_unload() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        // With default config, idle_timeout_secs is 0 (disabled)
+        let result = state.check_idle_timeouts().await;
+        assert!(
+            result.is_empty(),
+            "Idle timeout of 0 should disable auto-unload"
+        );
+    }
+
+    /// Test that Starting state servers are skipped during idle check.
+    #[tokio::test]
+    async fn test_starting_state_skipped_in_idle_check() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        state.models.write().await.insert(
+            "test-server".to_string(),
+            make_starting_state("model.gguf", "llama-cpp"),
+        );
+
+        let result = state.check_idle_timeouts().await;
+        assert!(
+            result.is_empty(),
+            "Starting servers should be skipped in idle check"
+        );
+    }
+
+    /// Test that Ready servers with recent access are not marked for unload.
+    #[tokio::test]
+    async fn test_recently_accessed_server_not_unloaded() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        state.models.write().await.insert(
+            "active-server".to_string(),
+            make_ready_state("model.gguf", "llama-cpp"),
+        );
+
+        // The server was just created, so last_accessed is now — well within timeout
+        let result = state.check_idle_timeouts().await;
+        assert!(
+            result.is_empty(),
+            "Recently accessed servers should not be unloaded"
+        );
+    }
+
+    /// Test that Failed servers without last_accessed are marked for cleanup.
+    #[tokio::test]
+    async fn test_failed_server_marked_for_cleanup() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        state
+            .models
+            .write()
+            .await
+            .insert("failed-server".to_string(), make_failed_state());
+
+        let result = state.check_idle_timeouts().await;
+        assert!(
+            result.contains(&"failed-server".to_string()),
+            "Failed servers should be marked for cleanup"
+        );
+    }
+
+    /// Test that the idle timeout value from config is used.
+    #[tokio::test]
+    async fn test_idle_timeout_from_config() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        state.models.write().await.insert(
+            "test-server".to_string(),
+            make_ready_state("model.gguf", "llama-cpp"),
+        );
+
+        let result = state.check_idle_timeouts().await;
+        assert!(result.is_empty());
+    }
+
+    /// Test ModelState::is_ready() returns correct values for each variant.
+    #[test]
+    fn test_model_state_is_ready() {
+        let ready = make_ready_state("m", "llama-cpp");
+        assert!(ready.is_ready());
+
+        let starting = make_starting_state("m", "llama-cpp");
+        assert!(!starting.is_ready());
+
+        let failed = make_failed_state();
+        assert!(!failed.is_ready());
+    }
+
+    /// Test ModelState::last_accessed() returns correct values.
+    #[test]
+    fn test_model_state_last_accessed() {
+        let ready = make_ready_state("m", "llama-cpp");
+        assert!(ready.last_accessed().is_some());
+
+        let starting = make_starting_state("m", "llama-cpp");
+        assert!(starting.last_accessed().is_some());
+
+        // Failed state has no last_accessed
+        let failed = make_failed_state();
+        assert!(failed.last_accessed().is_none());
+    }
+
+    /// Test ModelState::backend() returns the correct backend name.
+    #[test]
+    fn test_model_state_backend() {
+        let ready = make_ready_state("m", "llama-cpp-cuda");
+        assert_eq!(ready.backend(), "llama-cpp-cuda");
+
+        let starting = make_starting_state("m", "vllm");
+        assert_eq!(starting.backend(), "vllm");
+    }
+
+    /// Test ModelState::backend_pid() returns the correct PID.
+    #[test]
+    fn test_model_state_backend_pid() {
+        let ready = make_ready_state("m", "llama-cpp");
+        assert_eq!(ready.backend_pid(), Some(12345));
+
+        let starting = make_starting_state("m", "llama-cpp");
+        assert!(starting.backend_pid().is_none());
+
+        let failed = make_failed_state();
+        assert!(failed.backend_pid().is_none());
+    }
+
+    /// Test that consecutive_failures counter is accessible.
+    #[test]
+    fn test_model_state_consecutive_failures() {
+        let ready = make_ready_state("m", "llama-cpp");
+        let failures = ready.consecutive_failures();
+        assert!(failures.is_some());
+        assert_eq!(failures.unwrap().load(Ordering::Relaxed), 0);
+    }
+
+    /// Test that ModelState::is_ready() distinguishes all variants correctly.
+    #[test]
+    fn test_model_state_variants() {
+        let ready = make_ready_state("m", "llama-cpp");
+        assert!(matches!(ready, ModelState::Ready { .. }));
+
+        let starting = make_starting_state("m", "llama-cpp");
+        assert!(matches!(starting, ModelState::Starting { .. }));
+
+        let failed = make_failed_state();
+        assert!(matches!(failed, ModelState::Failed { .. }));
+    }
+
+    /// Test that can_reload() returns true when no failure timestamp is set.
+    #[test]
+    fn test_can_reload_no_failure_timestamp() {
+        let ready = make_ready_state("m", "llama-cpp");
+        assert!(ready.can_reload(60));
+    }
+
+    /// Test that can_reload() returns true when cooldown has elapsed.
+    #[test]
+    fn test_can_reload_cooldown_elapsed() {
+        let mut ready = make_ready_state("m", "llama-cpp");
+        if let ModelState::Ready {
+            failure_timestamp, ..
+        } = &mut ready
+        {
+            *failure_timestamp = Some(std::time::SystemTime::now() - Duration::from_secs(120));
+        }
+        assert!(ready.can_reload(60));
+    }
+
+    /// Test that can_reload() returns false when cooldown is active.
+    #[test]
+    fn test_can_reload_cooldown_active() {
+        let mut ready = make_ready_state("m", "llama-cpp");
+        if let ModelState::Ready {
+            failure_timestamp, ..
+        } = &mut ready
+        {
+            *failure_timestamp = Some(std::time::SystemTime::now());
+        }
+        assert!(!ready.can_reload(60));
+    }
+}

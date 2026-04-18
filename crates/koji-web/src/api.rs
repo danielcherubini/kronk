@@ -1623,4 +1623,191 @@ mod tests {
         assert_eq!(result.quants.get("Q4_K_M").unwrap().size_bytes, Some(1_000));
         assert_eq!(result.quants.get("Q8_0").unwrap().size_bytes, Some(2_000));
     }
+
+    // ── apply_model_body additional tests ─────────────────────────────────
+
+    #[test]
+    fn test_apply_model_body_preserves_existing_size() {
+        let existing = existing_with_size("Q4_K_M", "Model-Q4_K_M.gguf", Some(10_000));
+
+        let mut incoming = BTreeMap::new();
+        incoming.insert(
+            "Q4_K_M".to_string(),
+            QuantEntry {
+                file: "Model-Q4_K_M-new.gguf".to_string(), // different file
+                kind: QuantKind::Model,
+                size_bytes: Some(5_000), // client sends smaller size
+                context_length: None,
+            },
+        );
+
+        let result = apply_model_body(body_with_quants(incoming), Some(existing));
+        // Existing size_bytes should be preserved (server-side authoritative)
+        assert_eq!(
+            result.quants.get("Q4_K_M").unwrap().size_bytes,
+            Some(10_000)
+        );
+    }
+
+    #[test]
+    fn test_apply_model_body_enabled_override() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: Some(false),
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert!(!result.enabled);
+    }
+
+    #[test]
+    fn test_apply_model_body_enabled_default() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None, // Not specified
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        // Default enabled is true
+        assert!(result.enabled);
+    }
+
+    #[test]
+    fn test_apply_model_body_with_api_name() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: Some("my-api-name".to_string()),
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.api_name, Some("my-api-name".to_string()));
+    }
+
+    #[test]
+    fn test_apply_model_body_with_gpu_layers() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: Some(32),
+            quants: None,
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.gpu_layers, Some(32));
+    }
+
+    #[test]
+    fn test_apply_model_body_with_display_name() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: Some("My Model".to_string()),
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.display_name, Some("My Model".to_string()));
+    }
+
+    #[test]
+    fn test_apply_model_body_context_length() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: Some(8192),
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.context_length, Some(8192));
+    }
+
+    #[test]
+    fn test_apply_model_body_empty_quants() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: Some(BTreeMap::new()), // empty map
+            modalities: None,
+            display_name: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert!(result.quants.is_empty());
+    }
 }

@@ -509,4 +509,112 @@ mod tests {
             result.status
         );
     }
+
+    // ── compare_files edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn test_compare_files_empty_inputs() {
+        let local: Vec<ModelFileRecord> = vec![];
+        let remote: HashMap<String, BlobInfo> = HashMap::new();
+
+        let result = compare_files(&local, &remote);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_compare_files_no_lfs_oid_no_remote() {
+        // Local file with no hash and no remote equivalent — should be RemovedFromRemote
+        // (no remote entry means the file was removed from remote)
+        let local = vec![make_file_record("orphan.gguf", None, None)];
+        let remote: HashMap<String, BlobInfo> = HashMap::new();
+
+        let result = compare_files(&local, &remote);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0].status, FileStatus::RemovedFromRemote));
+    }
+
+    #[test]
+    fn test_compare_files_size_mismatch_same_hash() {
+        // Same LFS hash but different sizes — should still be Unchanged
+        // (size can differ between platforms/quant variants)
+        let local = vec![make_file_record("model.gguf", Some("sha_same"), Some(1000))];
+        let mut remote = HashMap::new();
+        remote.insert(
+            "model.gguf".to_string(),
+            make_blob("model.gguf", Some("sha_same"), Some(2000)),
+        );
+
+        let result = compare_files(&local, &remote);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0].status, FileStatus::Unchanged));
+    }
+
+    #[test]
+    fn test_compare_files_multiple_unchanged() {
+        let local = vec![
+            make_file_record("a.gguf", Some("sha_a"), Some(100)),
+            make_file_record("b.gguf", Some("sha_b"), Some(200)),
+            make_file_record("c.gguf", Some("sha_c"), Some(300)),
+        ];
+        let mut remote = HashMap::new();
+        remote.insert(
+            "a.gguf".to_string(),
+            make_blob("a.gguf", Some("sha_a"), Some(100)),
+        );
+        remote.insert(
+            "b.gguf".to_string(),
+            make_blob("b.gguf", Some("sha_b"), Some(200)),
+        );
+        remote.insert(
+            "c.gguf".to_string(),
+            make_blob("c.gguf", Some("sha_c"), Some(300)),
+        );
+
+        let result = compare_files(&local, &remote);
+        assert_eq!(result.len(), 3);
+        assert!(result
+            .iter()
+            .all(|f| matches!(f.status, FileStatus::Unchanged)));
+    }
+
+    // ── BlobInfo tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_blob_info_no_hash() {
+        let blob = make_blob("model.gguf", None, Some(1000));
+        assert_eq!(blob.filename, "model.gguf");
+        assert!(blob.lfs_sha256.is_none());
+        assert_eq!(blob.size, Some(1000));
+    }
+
+    #[test]
+    fn test_blob_info_with_all_fields() {
+        let blob = make_blob("model.gguf", Some("sha_abc"), Some(1000));
+        assert_eq!(blob.filename, "model.gguf");
+        assert_eq!(blob.lfs_sha256, Some("sha_abc".to_string()));
+        assert_eq!(blob.size, Some(1000));
+    }
+
+    // ── FileStatus tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_file_status_debug() {
+        let unchanged = FileStatus::Unchanged;
+        assert!(format!("{:?}", unchanged).contains("Unchanged"));
+
+        let changed = FileStatus::Changed {
+            old_oid: "a".to_string(),
+            new_oid: "b".to_string(),
+        };
+        assert!(format!("{:?}", changed).contains("Changed"));
+
+        let unknown = FileStatus::Unknown;
+        assert!(format!("{:?}", unknown).contains("Unknown"));
+
+        let new_remote = FileStatus::NewRemote;
+        assert!(format!("{:?}", new_remote).contains("NewRemote"));
+
+        let removed = FileStatus::RemovedFromRemote;
+        assert!(format!("{:?}", removed).contains("RemovedFromRemote"));
+    }
 }
