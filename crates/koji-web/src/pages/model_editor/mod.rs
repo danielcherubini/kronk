@@ -3,6 +3,7 @@ mod extra_args_form;
 mod general_form;
 mod quants_vision_form;
 mod sampling_form;
+mod sections;
 mod types;
 
 use leptos::prelude::*;
@@ -25,37 +26,9 @@ fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Si
     read.into()
 }
 
-// ── Section Navigation ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Section {
-    General,
-    Sampling,
-    QuantsVision,
-    ExtraArgs,
-}
-
-impl Section {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::General => "General",
-            Self::Sampling => "Sampling",
-            Self::QuantsVision => "Quants & Vision",
-            Self::ExtraArgs => "Extra Args",
-        }
-    }
-
-    fn icon(&self) -> &'static str {
-        match self {
-            Self::General => "⚙️",
-            Self::Sampling => "🎲",
-            Self::QuantsVision => "📊 👁️",
-            Self::ExtraArgs => "📝",
-        }
-    }
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
+
+use self::sections::Section;
 
 #[component]
 pub fn ModelEditor() -> impl IntoView {
