@@ -14,9 +14,9 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 62
+- **Total Plans**: 63
 - **Completed**: 61 ✅
-- **In Progress**: 0 🚧
+- **In Progress**: 1 🚧
 - **Remaining**: 0 📋
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -32,6 +32,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Rename Kronk to Koji](2026-04-06-rename-kronk-to-koji.md) | Complete rename across README, crates, routes, service names | `6d3a220`, `8281739`, `ab25016`, `bb8b734`, `d731eab` |
 | [Split Large Files (Wave 1 & 2)](2026-03-23-split-large-files.md) | Split CLI and core files into focused modules | #20 `9915565`, `57b1fe2`, `3ee005e` |
 | [Split Large Files (Wave 3)](2026-04-10-split-large-files.md) | Split remaining large files into domain submodules | #48 `b1e2f7d`, `8705ad0`, `7c6d50c` |
+| [Split Large Files (Wave 4)](2026-04-18-file-size-refactor.md) | Split remaining files >400 lines: model.rs, backends.rs, api.rs, gpu.rs, source.rs, backend.rs, model_editor/mod.rs | 🚧 IN PROGRESS |
 | [Split Server Handler](2026-03-28-split-server-handler.md) | Split handlers/server.rs and proxy/server.rs into submodules | `a9b3a84`, `92c110f` |
 | [Split Windows Platform](2026-03-28-split-windows-platform.md) | Split platform/windows.rs into install, service, firewall, permissions | `5d20835` |
 

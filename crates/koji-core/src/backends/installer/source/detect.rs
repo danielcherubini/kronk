@@ -1,5 +1,3 @@
-
-
 /// Find the LLVM bin directory containing clang-cl.
 /// Searches well-known install locations on Windows.
 #[cfg(target_os = "windows")]

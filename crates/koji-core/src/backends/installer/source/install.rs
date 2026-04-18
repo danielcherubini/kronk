@@ -3,19 +3,19 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use super::build::emit;
 use super::build::build_cmake_args;
+use super::build::emit;
+#[cfg(not(target_os = "windows"))]
+use super::detect::detect_hip_env;
 #[cfg(target_os = "windows")]
 use super::detect::find_llvm_bin;
 #[cfg(target_os = "windows")]
 use super::detect::find_vcvarsall;
-#[cfg(not(target_os = "windows"))]
-use super::detect::detect_hip_env;
-use crate::backends::InstallOptions;
-use crate::backends::ProgressSink;
 use crate::backends::installer::extract::find_backend_binary;
 use crate::backends::installer::prebuilt::prepare_target_dir;
 use crate::backends::registry::BackendType;
+use crate::backends::InstallOptions;
+use crate::backends::ProgressSink;
 use crate::gpu::{detect_amdgpu_targets, GpuType};
 
 /// Build and install a backend from source using git + cmake.
