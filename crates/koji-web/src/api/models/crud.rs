@@ -319,7 +319,7 @@ pub async fn rename_model(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let model_config = koji_core::config::ModelConfig::from_db_record(&existing_record);
+        let mut model_config = koji_core::config::ModelConfig::from_db_record(&existing_record);
 
         let new_repo_id = body.new_repo_id.trim().to_string();
         if new_repo_id.is_empty() {
@@ -344,6 +344,9 @@ pub async fn rename_model(
                 serde_json::json!({"error": format!("Model '{}' already exists", new_repo_id)}),
             ));
         }
+
+        // Update the model field (repo_id) in the config to reflect the rename
+        model_config.model = Some(new_repo_id.clone());
 
         // Save with new repo_id (keeps same integer id)
         let config_key = new_repo_id.to_lowercase().replace('/', "--");

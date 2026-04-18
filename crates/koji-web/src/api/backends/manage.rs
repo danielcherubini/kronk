@@ -147,14 +147,20 @@ pub async fn update_backend(
             // Fallback: use source code if no source recorded
             koji_core::backends::BackendSource::SourceCode {
                 version: "main".to_string(),
-                git_url: match backend_type {
+                git_url: match &backend_type {
                     koji_core::backends::BackendType::LlamaCpp => {
                         "https://github.com/ggml-org/llama.cpp.git"
                     }
                     koji_core::backends::BackendType::IkLlama => {
                         "https://github.com/ikawrakow/ik_llama.cpp.git"
                     }
-                    _ => "https://github.com/ggml-org/llama.cpp.git",
+                    other => {
+                        tracing::warn!(
+                            "No source URL configured for backend type {:?}, using llama.cpp fallback",
+                            other
+                        );
+                        "https://github.com/ggml-org/llama.cpp.git"
+                    }
                 }
                 .to_string(),
                 commit: None,

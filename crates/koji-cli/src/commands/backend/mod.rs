@@ -236,7 +236,7 @@ async fn cmd_install(
                         "CUDA 11.x (default: 11.1)" => "11.1".to_string(),
                         "CUDA 12.x (default: 12.4)" => "12.4".to_string(),
                         "CUDA 13.x (default: 13.1)" => "13.1".to_string(),
-                        _ => unreachable!(),
+                        other => anyhow::bail!("Unexpected CUDA version choice: {}", other),
                     },
                 }
             }
@@ -251,7 +251,7 @@ async fn cmd_install(
                     version: match rocm_ver_choice {
                         "ROCm 5.x (default: 5.7)" => "5.7".to_string(),
                         "ROCm 6.x (default: 6.1)" => "6.1".to_string(),
-                        _ => unreachable!(),
+                        other => anyhow::bail!("Unexpected ROCm version choice: {}", other),
                     },
                 }
             }

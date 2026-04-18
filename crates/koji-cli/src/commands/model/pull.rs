@@ -312,11 +312,11 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
     // Use the directory the config was loaded from as the base for the DB.
     // This ensures that in tests (and Windows services), we use the temporary/specified
     // directory instead of the default system config path.
-    let db_dir = config
-        .loaded_from
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| koji_core::config::Config::config_dir().unwrap());
+    let db_dir = match config.loaded_from {
+        Some(ref p) => p.clone(),
+        None => koji_core::config::Config::config_dir()
+            .map_err(|e| anyhow::anyhow!("Failed to determine config directory: {e}"))?,
+    };
 
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
 

@@ -86,55 +86,55 @@ mod tests {
     #[test]
     fn test_parse_backend_type_llama_cpp() {
         let result = parse_backend_type("llama_cpp").unwrap();
-        matches!(result, BackendType::LlamaCpp);
+        assert!(matches!(result, BackendType::LlamaCpp));
     }
 
     #[test]
     fn test_parse_backend_type_llama_dot_cpp() {
         let result = parse_backend_type("llama.cpp").unwrap();
-        matches!(result, BackendType::LlamaCpp);
+        assert!(matches!(result, BackendType::LlamaCpp));
     }
 
     #[test]
     fn test_parse_backend_type_llamacpp() {
         let result = parse_backend_type("llamacpp").unwrap();
-        matches!(result, BackendType::LlamaCpp);
+        assert!(matches!(result, BackendType::LlamaCpp));
     }
 
     #[test]
     fn test_parse_backend_type_ik_llama() {
         let result = parse_backend_type("ik_llama").unwrap();
-        matches!(result, BackendType::IkLlama);
+        assert!(matches!(result, BackendType::IkLlama));
     }
 
     #[test]
     fn test_parse_backend_type_ik_llama_dash() {
         let result = parse_backend_type("ik-llama").unwrap();
-        matches!(result, BackendType::IkLlama);
+        assert!(matches!(result, BackendType::IkLlama));
     }
 
     #[test]
     fn test_parse_backend_type_ikllama() {
         let result = parse_backend_type("ikllama").unwrap();
-        matches!(result, BackendType::IkLlama);
+        assert!(matches!(result, BackendType::IkLlama));
     }
 
     #[test]
     fn test_parse_backend_type_ik_llama_dot_cpp() {
         let result = parse_backend_type("ik_llama.cpp").unwrap();
-        matches!(result, BackendType::IkLlama);
+        assert!(matches!(result, BackendType::IkLlama));
     }
 
     #[test]
     fn test_parse_backend_type_case_insensitive() {
         let llama_result = parse_backend_type("LLAMA_CPP").unwrap();
-        matches!(llama_result, BackendType::LlamaCpp);
+        assert!(matches!(llama_result, BackendType::LlamaCpp));
 
         let ik_result = parse_backend_type("IK_LLAMA").unwrap();
-        matches!(ik_result, BackendType::IkLlama);
+        assert!(matches!(ik_result, BackendType::IkLlama));
 
         let mixed = parse_backend_type("Llama.Cpp").unwrap();
-        matches!(mixed, BackendType::LlamaCpp);
+        assert!(matches!(mixed, BackendType::LlamaCpp));
     }
 
     #[test]

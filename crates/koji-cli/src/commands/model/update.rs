@@ -162,6 +162,9 @@ pub(super) async fn cmd_update(
         // Clone card once before the loop so all file updates are accumulated
         let mut card = model.card.clone();
 
+        // Reuse a single HTTP client for all downloads in this repo
+        let client = Client::new();
+
         for file_info in &result.file_updates {
             let should_download = matches!(
                 file_info.status,
@@ -182,7 +185,6 @@ pub(super) async fn cmd_update(
             }
 
             println!("  Downloading {}...", file_info.filename);
-            let client = Client::new();
             let dl = koji_core::models::pull::download_gguf(
                 &client,
                 repo_id,

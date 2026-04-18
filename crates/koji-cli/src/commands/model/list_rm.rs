@@ -101,21 +101,21 @@ pub(super) fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         .find(model_id)?
         .with_context(|| format!("Model '{}' not found.", model_id))?;
 
-    // Check for referencing servers in DB
+    // Check for referencing model configurations in DB
     let db_dir = koji_core::config::Config::config_dir()?;
     let OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
     let model_configs = koji_core::db::load_model_configs(&conn)?;
-    let linked_servers: Vec<&str> = model_configs
+    let linked_configs: Vec<&str> = model_configs
         .iter()
         .filter(|(_, p)| p.model.as_deref() == Some(model_id))
         .map(|(name, _)| name.as_str())
         .collect();
 
-    if !linked_servers.is_empty() {
+    if !linked_configs.is_empty() {
         anyhow::bail!(
-            "Cannot remove '{}': referenced by servers: {}. Remove those first.",
+            "Cannot remove '{}': referenced by model configurations: {}. Remove those first.",
             model_id,
-            linked_servers.join(", ")
+            linked_configs.join(", ")
         );
     }
 
