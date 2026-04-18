@@ -347,8 +347,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_happy_path() {
-        let result =
-            detect::hip_env_from_hipconfig_output("/opt/rocm/llvm/bin\n", "/opt/rocm\n");
+        let result = detect::hip_env_from_hipconfig_output("/opt/rocm/llvm/bin\n", "/opt/rocm\n");
         assert_eq!(
             result,
             Some((
@@ -361,10 +360,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_empty_stdout_returns_none() {
-        assert_eq!(
-            detect::hip_env_from_hipconfig_output("", "/opt/rocm"),
-            None
-        );
+        assert_eq!(detect::hip_env_from_hipconfig_output("", "/opt/rocm"), None);
         assert_eq!(
             detect::hip_env_from_hipconfig_output("/opt/rocm/llvm/bin", "   "),
             None
@@ -374,10 +370,8 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_trims_whitespace() {
-        let result = detect::hip_env_from_hipconfig_output(
-            "  /opt/rocm/llvm/bin  \n",
-            "\t/opt/rocm\t\n",
-        );
+        let result =
+            detect::hip_env_from_hipconfig_output("  /opt/rocm/llvm/bin  \n", "\t/opt/rocm\t\n");
         assert_eq!(
             result,
             Some((
