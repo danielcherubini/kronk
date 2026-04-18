@@ -798,4 +798,90 @@ mod tests {
             metrics.ram_total_mib
         );
     }
+
+    // ── VramInfo tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vram_info_zero_available() {
+        let info = VramInfo {
+            used_mib: 8000,
+            total_mib: 8000,
+        };
+        assert_eq!(info.available_mib(), 0);
+    }
+
+    #[test]
+    fn test_vram_info_full() {
+        let info = VramInfo {
+            used_mib: 0,
+            total_mib: 16384,
+        };
+        assert_eq!(info.available_mib(), 16384);
+    }
+
+    // ── Context size suggestion edge cases ────────────────────────────────
+
+    #[test]
+    fn test_suggest_context_sizes_empty_model() {
+        let vram = VramInfo {
+            used_mib: 0,
+            total_mib: 8192,
+        };
+        let suggestions = suggest_context_sizes(0, Some(&vram));
+        assert!(!suggestions.is_empty());
+        // With no model, all contexts should fit
+        assert!(suggestions.iter().all(|s| s.fits));
+    }
+
+    #[test]
+    fn test_suggest_context_sizes_very_large_model() {
+        // 24 GB model on 8 GB GPU — nothing should fit
+        let vram = VramInfo {
+            used_mib: 0,
+            total_mib: 8192,
+        };
+        let suggestions = suggest_context_sizes(24_000_000_000, Some(&vram));
+        assert!(suggestions.iter().all(|s| !s.fits));
+    }
+
+    #[test]
+    fn test_suggest_context_sizes_no_gpu_all_fits() {
+        let suggestions = suggest_context_sizes(1_000_000_000, None);
+        // Without GPU info, all should be marked as fits
+        assert!(suggestions.iter().all(|s| s.fits));
+    }
+
+    // ── parse_rocminfo edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_empty() {
+        assert!(parse_rocminfo_gfx_names("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_rocminfo_gfx_names_only_whitespace() {
+        assert!(parse_rocminfo_gfx_names("   \n\n  ").is_empty());
+    }
+
+    // ── detect_amdgpu_targets edge cases ──────────────────────────────────
+
+    #[test]
+    fn test_detect_amdgpu_targets_env_override_single_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        std::env::set_var("KOJI_AMDGPU_TARGETS", "gfx1100");
+        let result = detect_amdgpu_targets();
+        std::env::remove_var("KOJI_AMDGPU_TARGETS");
+        assert_eq!(result, vec!["gfx1100"]);
+    }
+
+    // ── DEFAULT_CUDA_VERSION tests ────────────────────────────────────────
+
+    #[test]
+    fn test_default_cuda_version_format() {
+        // Should be a valid version string like "12.4"
+        assert!(DEFAULT_CUDA_VERSION
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.'));
+    }
 }

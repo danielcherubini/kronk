@@ -160,6 +160,12 @@ mod tests {
     }
 
     #[test]
+    fn test_log_path_with_special_profile() {
+        let path = log_path(Path::new("/tmp/logs"), "profile-with-dashes");
+        assert_eq!(path, PathBuf::from("/tmp/logs/profile-with-dashes.log"));
+    }
+
+    #[test]
     fn test_open_and_tail() {
         let tmp = tempfile::tempdir().unwrap();
         let mut f = open_log(tmp.path(), "test").unwrap();
@@ -177,5 +183,60 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let lines = tail_lines(&log_path(tmp.path(), "nonexistent"), 10).unwrap();
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_tail_more_lines_than_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut f = open_log(tmp.path(), "test").unwrap();
+        for i in 1..=10 {
+            writeln!(f, "line {}", i).unwrap();
+        }
+        drop(f);
+
+        // Request only 3 lines from a 10-line file
+        let lines = tail_lines(&log_path(tmp.path(), "test"), 3).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "line 8");
+        assert_eq!(lines[1], "line 9");
+        assert_eq!(lines[2], "line 10");
+    }
+
+    #[test]
+    fn test_tail_fewer_lines_than_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut f = open_log(tmp.path(), "test").unwrap();
+        writeln!(f, "line 1").unwrap();
+        writeln!(f, "line 2").unwrap();
+        drop(f);
+
+        // Request 10 lines from a 2-line file
+        let lines = tail_lines(&log_path(tmp.path(), "test"), 10).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "line 1");
+        assert_eq!(lines[1], "line 2");
+    }
+
+    #[test]
+    fn test_tail_zero_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut f = open_log(tmp.path(), "test").unwrap();
+        writeln!(f, "line 1").unwrap();
+        drop(f);
+
+        let lines = tail_lines(&log_path(tmp.path(), "test"), 0).unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_max_log_size_constant() {
+        // Verify the max log size is 10 MB
+        assert_eq!(MAX_LOG_SIZE, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_log_files_constant() {
+        // Verify the max number of log files
+        assert_eq!(MAX_LOG_FILES, 5);
     }
 }
