@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+use anyhow::Context;
+
 use anyhow::{anyhow, Result};
 
 use super::build::build_cmake_args;
@@ -364,7 +367,7 @@ async fn configure_cmake(
 async fn configure_cmake_windows(
     cmake_args: &[String],
     build_output: &Path,
-    progress: Option<&Arc<dyn ProgressSink>>,
+    #[allow(unused_variables)] progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // Build the cmake invocation line for inside the .bat file.
     // Each arg containing spaces gets double-quoted (safe in .bat context).

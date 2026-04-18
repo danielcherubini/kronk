@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_merge_config_empty_local() {
-        let local = Config::default();
+        let _local = Config::default();
         let mut backup = Config::default();
         backup.backends.insert(
             "new".to_string(),

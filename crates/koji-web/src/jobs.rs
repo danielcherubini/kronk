@@ -526,7 +526,7 @@ mod tests {
         let mut job_ids = Vec::new();
 
         // Submit and finish 10 jobs (limit is 8)
-        for i in 0..10 {
+        for _i in 0..10 {
             let job = manager
                 .submit(
                     JobKind::Install,
