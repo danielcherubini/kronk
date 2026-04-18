@@ -14,10 +14,10 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 59
+- **Total Plans**: 62
 - **Completed**: 58 ✅
 - **In Progress**: 0 🚧
-- **Remaining**: 0
+- **Remaining**: 3 📋
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -135,6 +135,14 @@ This directory contains implementation plans for the Koji project. Each plan doc
 ---
 
 ## Remaining Work
+
+### Test Coverage Improvements
+
+| Plan | Description | Status |
+|------|-------------|--------|
+| [Core Test Coverage](2026-04-18-core-test-coverage.md) | Increase `koji-core` coverage from ~30% to ~50% — proxy forwarding, lifecycle, downloads, updates | 📋 DRAFT |
+| [Web Test Coverage](2026-04-18-web-test-coverage.md) | Increase `koji-web` coverage from ~15% to ~35% — API routes, component DTOs, server config | 📋 DRAFT |
+| [CLI Test Coverage](2026-04-18-cli-test-coverage.md) | Increase `koji-cli` coverage from ~25% to ~45% — command handlers, argument parsing, server management | 📋 DRAFT |
 
 ## Roadmap
 
