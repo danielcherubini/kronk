@@ -1,4 +1,4 @@
-.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows
+.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows coverage
 
 # Ensure the wasm32 target is installed (idempotent — safe to run multiple times)
 wasm-target:
@@ -62,3 +62,7 @@ build-web-dev: build-frontend-dev
 # Cross-compile to Windows from Linux (requires mingw64-gcc-c++)
 build-windows:
 	cargo build --target x86_64-pc-windows-gnu --release
+
+# Run code coverage analysis with cargo-tarpaulin (HTML report in target/coverage/)
+coverage:
+	cargo tarpaulin --workspace --features ssr --out Html --output-dir target/coverage --timeout 300
