@@ -132,4 +132,58 @@ mod tests {
         let result = parse_comma_sizes("");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_comma_sizes_large_value() {
+        let result = parse_comma_sizes("4096");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![4096]);
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_many_values() {
+        let result = parse_comma_sizes("128,256,512,1024,2048,4096");
+        assert!(result.is_ok());
+        let v = result.unwrap();
+        assert_eq!(v.len(), 6);
+        assert_eq!(v, vec![128, 256, 512, 1024, 2048, 4096]);
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_negative_in_string() {
+        let result = parse_comma_sizes("-1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_trailing_comma() {
+        // Trailing comma produces empty parts which are filtered
+        let result = parse_comma_sizes("128,256,");
+        assert!(result.is_ok());
+        let v = result.unwrap();
+        assert_eq!(v, vec![128, 256]);
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_leading_comma() {
+        // Leading comma produces empty parts which are filtered
+        let result = parse_comma_sizes(",128,256");
+        assert!(result.is_ok());
+        let v = result.unwrap();
+        assert_eq!(v, vec![128, 256]);
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_multiple_commas() {
+        let result = parse_comma_sizes("128,,256");
+        assert!(result.is_ok());
+        let v = result.unwrap();
+        assert_eq!(v, vec![128, 256]);
+    }
+
+    #[test]
+    fn test_parse_comma_sizes_spaces_only() {
+        let result = parse_comma_sizes(" , , ");
+        assert!(result.is_err());
+    }
 }
