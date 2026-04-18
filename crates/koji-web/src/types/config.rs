@@ -620,3 +620,214 @@ impl From<Config> for CoreConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── QuantKind serialization tests ─────────────────────────────────────
+
+    #[test]
+    fn test_quant_kind_serialization() {
+        let json_model = serde_json::to_string(&QuantKind::Model).unwrap();
+        assert!(json_model.contains("model"));
+        let deserialized: QuantKind = serde_json::from_str(&json_model).unwrap();
+        assert_eq!(deserialized, QuantKind::Model);
+
+        let json_mmproj = serde_json::to_string(&QuantKind::Mmproj).unwrap();
+        assert!(json_mmproj.contains("mmproj"));
+        let deserialized: QuantKind = serde_json::from_str(&json_mmproj).unwrap();
+        assert_eq!(deserialized, QuantKind::Mmproj);
+    }
+
+    // ── QuantEntry serialization tests ────────────────────────────────────
+
+    #[test]
+    fn test_quant_entry_serialization() {
+        let entry = QuantEntry {
+            file: "model-Q4_K_M.gguf".to_string(),
+            kind: QuantKind::Model,
+            size_bytes: Some(5_000_000),
+            context_length: None,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: QuantEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.file, "model-Q4_K_M.gguf");
+        assert_eq!(deserialized.kind, QuantKind::Model);
+        assert_eq!(deserialized.size_bytes, Some(5_000_000));
+    }
+
+    #[test]
+    fn test_quant_entry_no_size() {
+        let entry = QuantEntry {
+            file: "model.gguf".to_string(),
+            kind: QuantKind::Model,
+            size_bytes: None,
+            context_length: None,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: QuantEntry = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.size_bytes.is_none());
+    }
+
+    // ── HealthCheck serialization tests ───────────────────────────────────
+
+    #[test]
+    fn test_health_check_serialization() {
+        let health = HealthCheck {
+            url: Some("http://localhost:8080/health".to_string()),
+            interval_ms: Some(5000),
+            timeout_ms: Some(3000),
+        };
+
+        let json = serde_json::to_string(&health).unwrap();
+        let deserialized: HealthCheck = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.url,
+            Some("http://localhost:8080/health".to_string())
+        );
+        assert_eq!(deserialized.interval_ms, Some(5000));
+        assert_eq!(deserialized.timeout_ms, Some(3000));
+    }
+
+    // ── SamplingParams serialization tests ────────────────────────────────
+
+    #[test]
+    fn test_sampling_params_serialization() {
+        let params = SamplingParams {
+            temperature: Some(0.7),
+            top_k: Some(40),
+            top_p: Some(0.95),
+            min_p: Some(0.05),
+            presence_penalty: Some(0.1),
+            frequency_penalty: Some(0.2),
+            repeat_penalty: Some(1.1),
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        let deserialized: SamplingParams = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.temperature, Some(0.7));
+        assert_eq!(deserialized.top_k, Some(40));
+        assert_eq!(deserialized.top_p, Some(0.95));
+    }
+
+    #[test]
+    fn test_sampling_params_empty() {
+        let params = SamplingParams::default();
+        let json = serde_json::to_string(&params).unwrap();
+        // Default should serialize to empty object or minimal JSON
+        assert!(!json.is_empty());
+    }
+
+    // ── General config serialization tests ────────────────────────────────
+
+    #[test]
+    fn test_general_serialization() {
+        let general = General {
+            log_level: "info".to_string(),
+            models_dir: None,
+            logs_dir: None,
+            hf_token: None,
+            update_check_interval: 24,
+        };
+
+        let json = serde_json::to_string(&general).unwrap();
+        let deserialized: General = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.update_check_interval, 24);
+        assert_eq!(deserialized.log_level, "info");
+    }
+
+    // ── Supervisor config serialization tests ─────────────────────────────
+
+    #[test]
+    fn test_supervisor_serialization() {
+        let supervisor = Supervisor {
+            restart_policy: "always".to_string(),
+            max_restarts: 3,
+            restart_delay_ms: 5000,
+            health_check_interval_ms: 10000,
+            health_check_timeout_ms: 5000,
+            health_check_retries: 2,
+        };
+
+        let json = serde_json::to_string(&supervisor).unwrap();
+        let deserialized: Supervisor = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.restart_policy, "always");
+        assert_eq!(deserialized.max_restarts, 3);
+    }
+
+    // ── ProxyConfig serialization tests ───────────────────────────────────
+
+    #[test]
+    fn test_proxy_config_serialization() {
+        let proxy = ProxyConfig {
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            idle_timeout_secs: 0,
+            startup_timeout_secs: 60,
+            circuit_breaker_threshold: 5,
+            circuit_breaker_cooldown_seconds: 300,
+            metrics_retention_secs: 86400,
+        };
+
+        let json = serde_json::to_string(&proxy).unwrap();
+        let deserialized: ProxyConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.host, "0.0.0.0");
+        assert_eq!(deserialized.port, 8080);
+        assert_eq!(deserialized.circuit_breaker_threshold, 5);
+    }
+
+    // ── ModelModalities serialization tests ───────────────────────────────
+
+    #[test]
+    fn test_model_modalities_serialization() {
+        let modalities = ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["text".to_string()],
+        };
+
+        let json = serde_json::to_string(&modalities).unwrap();
+        let deserialized: ModelModalities = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.input, vec!["text".to_string()]);
+        assert_eq!(deserialized.output, vec!["text".to_string()]);
+    }
+
+    #[test]
+    fn test_model_modalities_empty() {
+        let modalities = ModelModalities {
+            input: vec![],
+            output: vec![],
+        };
+
+        let json = serde_json::to_string(&modalities).unwrap();
+        let deserialized: ModelModalities = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.input.is_empty());
+        assert!(deserialized.output.is_empty());
+    }
+
+    // ── is_btreemap_empty tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_is_btreemap_empty_true() {
+        let map: BTreeMap<String, String> = BTreeMap::new();
+        assert!(is_btreemap_empty(&map));
+    }
+
+    #[test]
+    fn test_is_btreemap_empty_false() {
+        let mut map = BTreeMap::new();
+        map.insert("key".to_string(), "value".to_string());
+        assert!(!is_btreemap_empty(&map));
+    }
+}
