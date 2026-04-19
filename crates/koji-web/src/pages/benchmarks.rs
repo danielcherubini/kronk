@@ -87,7 +87,7 @@ fn format_timestamp(ts: i64) -> String {
     let days_since_epoch = (secs / 60 / 60 / 24) as i64;
 
     // Compute year, month, day from days since Unix epoch (1970-01-01)
-    let mut days = days_since_epoch as i64;
+    let mut days = days_since_epoch;
     let mut year: i64 = 1970;
     loop {
         let ydays = if is_leap_year(year) { 366i64 } else { 365i64 };
@@ -109,7 +109,7 @@ fn format_timestamp(ts: i64) -> String {
 
     // Verify with js_sys Date to handle timezone correctly
     let date = js_sys::Date::new_with_year_month_day(year as u32, month_idx, day);
-    let month = (date.get_month() + 1) as u32;
+    let month = date.get_month() + 1;
     format!(
         "{}-{:02}-{:02} {:02}:{:02}",
         date.get_full_year(),
