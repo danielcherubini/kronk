@@ -361,18 +361,9 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
         });
 
         if let Some(item) = running_item {
-            // Check if the download task is still alive in pull_jobs.
-            // If not, verify the actual DB status before re-queuing — the task
-            // may have completed successfully and already updated the DB.
-            let is_alive = {
-                let jobs = state.pull_jobs.read().await;
-                jobs.contains_key(&item.job_id)
-            };
-            if is_alive {
-                continue; // Download is alive, wait for it to finish
-            }
-            // Task is gone from pull_jobs. Check the actual DB status to avoid
-            // re-queueing a download that completed or failed.
+            // Check the actual DB status directly — pull_jobs may not have
+            // registered yet (race condition after spawn) or may have cleaned up
+            // (task finished). The DB is the source of truth.
             let conn = match svc.open_conn() {
                 Ok(c) => c,
                 Err(e) => {
@@ -397,11 +388,34 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
                 tracing::debug!(job_id=%item.job_id, status=%current.status, "Task finished, not re-queuing");
                 continue;
             }
-            // Task died without reaching a terminal state. Re-queue it.
-            tracing::warn!(job_id=%item.job_id, "Download task died without reaching terminal state, re-queuing");
-            if let Err(e) = mark_stale_running_as_queued(&conn) {
-                tracing::error!(error=%e, job_id=%item.job_id, "Failed to re-queue stale item");
+            // Task is still running. Check if it's actually alive in pull_jobs
+            // (has registered itself). If not, the task may still be initializing.
+            let is_alive = {
+                let jobs = state.pull_jobs.read().await;
+                jobs.contains_key(&item.job_id)
+            };
+            if !is_alive {
+                // Task hasn't registered yet — could be a race condition after spawn,
+                // or the task may have crashed before registering. Wait one more poll
+                // cycle to give it time, unless started_at is very old (stale).
+                let started = item.started_at.as_ref().and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s).ok()
+                });
+                if let Some(st) = started {
+                    let now_utc = chrono::Utc::now();
+                    let st_utc = st.with_timezone(&chrono::Utc);
+                    let age = std::time::Duration::from_secs(
+                        (now_utc - st_utc).num_seconds().max(0) as u64,
+                    );
+                    if age < std::time::Duration::from_secs(10) {
+                        // Task started recently, just wait for it to register
+                        continue;
+                    }
+                }
+                // Task has been running > 10s without registering — definitely dead.
+                tracing::warn!(job_id=%item.job_id, "Download task died before registering in pull_jobs");
             }
+            // Task is alive or just needs more time. Don't re-queue yet.
             continue;
         }
 
