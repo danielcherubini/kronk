@@ -536,6 +536,59 @@ mod tests {
         assert_eq!(summaries[2].test_name, "pg512-128");
     }
 
+    /// Verifies that `parse_bench_json` handles an empty JSON array.
+    #[test]
+    fn test_parse_bench_json_empty_array() {
+        let json = "[]";
+        let summaries = parse_bench_json(json).unwrap();
+        assert!(summaries.is_empty());
+    }
+
+    /// Verifies that `build_args` produces comma-separated values for multiple sizes.
+    #[test]
+    fn test_build_args_multi_values() {
+        let model_path = std::path::PathBuf::from("/test/model.gguf");
+        let config = LlamaBenchConfig {
+            pp_sizes: vec![128, 256, 512],
+            tg_sizes: vec![32, 64],
+            runs: 5,
+            warmup: 2,
+            threads: None,
+            ngl_range: None,
+            ctx_override: None,
+        };
+
+        let args = build_args(&model_path, &config);
+
+        assert!(args.contains(&"-p".to_string()));
+        // Multi values should be comma-separated
+        let pp_idx = args.iter().position(|a| a == "-p").unwrap();
+        assert_eq!(args[pp_idx + 1], "128,256,512");
+        let tg_idx = args.iter().position(|a| a == "-n").unwrap();
+        assert_eq!(args[tg_idx + 1], "32,64");
+    }
+
+    /// Verifies that `build_args` handles a single thread count correctly.
+    #[test]
+    fn test_build_args_with_single_thread() {
+        let model_path = std::path::PathBuf::from("/test/model.gguf");
+        let config = LlamaBenchConfig {
+            pp_sizes: vec![512],
+            tg_sizes: vec![128],
+            runs: 3,
+            warmup: 1,
+            threads: Some(vec![4]),
+            ngl_range: None,
+            ctx_override: None,
+        };
+
+        let args = build_args(&model_path, &config);
+
+        assert!(args.contains(&"--threads".to_string()));
+        let threads_idx = args.iter().position(|a| a == "--threads").unwrap();
+        assert_eq!(args[threads_idx + 1], "4");
+    }
+
     /// Verifies that `detect_gpu_type` identifies CUDA from path.
     #[test]
     fn test_detect_gpu_type_cuda() {

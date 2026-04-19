@@ -361,4 +361,56 @@ mod tests {
         assert!(benchmarks[0].display_name.is_none());
         assert!(benchmarks[0].quant.is_none());
     }
+
+    // Tests using open_in_memory() with full migration schema
+
+    /// Create an in-memory connection via the real migration system.
+    fn migration_conn() -> Connection {
+        use crate::db::OpenResult;
+        let OpenResult { conn, .. } = crate::db::open_in_memory().unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_insert_and_list_benchmarks_via_migration() {
+        let conn = migration_conn();
+        let id = insert_benchmark(
+            &conn,
+            "test-model",
+            Some("Test Model"),
+            Some("Q4_K_M"),
+            "llama_cpp",
+            "llama_bench",
+            "[512,1024]",
+            "[128,256]",
+            Some("[8,16]"),
+            Some("0-99+1"),
+            3,
+            1,
+            r#"[{"test_name":"tg128","pp_mean":120.5,"tg_mean":45.2}]"#,
+            Some(1500.0),
+            Some(6144),
+            Some(8192),
+            45.5,
+            "success",
+        ).unwrap();
+
+        assert_eq!(id, 1);
+
+        let entries = list_benchmarks(&conn).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].model_id, "test-model");
+        assert_eq!(entries[0].display_name, Some("Test Model".to_string()));
+        assert_eq!(entries[0].quant, Some("Q4_K_M".to_string()));
+        assert_eq!(entries[0].runs, 3);
+    }
+
+    #[test]
+    fn test_insert_benchmark_returns_incrementing_ids_via_migration() {
+        let conn = migration_conn();
+        let id1 = insert_benchmark(&conn, "a", None, None, "llama_cpp", "llama_bench", "[512]", "[128]", None, None, 3, 1, "[]", None, None, None, 0.0, "success").unwrap();
+        let id2 = insert_benchmark(&conn, "b", None, None, "llama_cpp", "llama_bench", "[512]", "[128]", None, None, 3, 1, "[]", None, None, None, 0.0, "success").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
 }
