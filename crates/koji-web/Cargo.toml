@@ -33,7 +33,7 @@ async-stream = { version = "0.3", optional = true }
 koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "js"] }
 rusqlite = { workspace = true, optional = true }
 urlencoding = "2.1"
 chrono = "0.4.44"
