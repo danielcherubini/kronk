@@ -5,6 +5,7 @@
 
 mod active_model_queries;
 mod backend_queries;
+mod benchmark_queries;
 mod download_queue_queries;
 mod metrics_queries;
 mod model_config_queries;
@@ -14,6 +15,7 @@ mod update_check_queries;
 
 pub use active_model_queries::*;
 pub use backend_queries::*;
+pub use benchmark_queries::*;
 pub use download_queue_queries::*;
 pub use metrics_queries::*;
 pub use model_config_queries::*;
