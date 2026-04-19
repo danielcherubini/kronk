@@ -27,27 +27,30 @@ pub struct BenchmarkRow {
     pub status: String,
 }
 
+/// Parameters for inserting a benchmark result row.
+#[derive(Debug, Clone)]
+pub struct BenchmarkInsertParams<'a> {
+    pub model_id: &'a str,
+    pub display_name: Option<&'a str>,
+    pub quant: Option<&'a str>,
+    pub backend: &'a str,
+    pub engine: &'a str,
+    pub pp_sizes_json: &'a str,
+    pub tg_sizes_json: &'a str,
+    pub threads_json: Option<&'a str>,
+    pub ngl_range: Option<&'a str>,
+    pub runs: u32,
+    pub warmup: u32,
+    pub results_json: &'a str,
+    pub load_time_ms: Option<f64>,
+    pub vram_used_mib: Option<i64>,
+    pub vram_total_mib: Option<i64>,
+    pub duration_seconds: f64,
+    pub status: &'a str,
+}
+
 /// Insert a benchmark result row. Returns the new row id.
-pub fn insert_benchmark(
-    conn: &Connection,
-    model_id: &str,
-    display_name: Option<&str>,
-    quant: Option<&str>,
-    backend: &str,
-    engine: &str,
-    pp_sizes_json: &str,
-    tg_sizes_json: &str,
-    threads_json: Option<&str>,
-    ngl_range: Option<&str>,
-    runs: u32,
-    warmup: u32,
-    results_json: &str,
-    load_time_ms: Option<f64>,
-    vram_used_mib: Option<i64>,
-    vram_total_mib: Option<i64>,
-    duration_seconds: f64,
-    status: &str,
-) -> Result<i64> {
+pub fn insert_benchmark(conn: &Connection, params: &BenchmarkInsertParams) -> Result<i64> {
     let tx = conn.unchecked_transaction()?;
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -62,23 +65,23 @@ pub fn insert_benchmark(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             created_at,
-            model_id,
-            display_name,
-            quant,
-            backend,
-            engine,
-            pp_sizes_json,
-            tg_sizes_json,
-            threads_json,
-            ngl_range,
-            runs as i64,
-            warmup as i64,
-            results_json,
-            load_time_ms,
-            vram_used_mib,
-            vram_total_mib,
-            duration_seconds,
-            status,
+            params.model_id,
+            params.display_name,
+            params.quant,
+            params.backend,
+            params.engine,
+            params.pp_sizes_json,
+            params.tg_sizes_json,
+            params.threads_json,
+            params.ngl_range,
+            params.runs as i64,
+            params.warmup as i64,
+            params.results_json,
+            params.load_time_ms,
+            params.vram_used_mib,
+            params.vram_total_mib,
+            params.duration_seconds,
+            params.status,
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -163,61 +166,40 @@ mod tests {
     }
 
     /// Helper to create test benchmark parameters.
-    fn make_benchmark(
-        model_id: &str,
-        backend: &str,
-        pp_sizes: &str,
-        tg_sizes: &str,
-        results: &str,
-    ) -> (String, Option<String>, Option<String>, String, String, String, String, Option<String>, Option<String>, u32, u32, String, Option<f64>, Option<i64>, Option<i64>, f64, String) {
-        (
-            model_id.to_string(),
-            Some("Test Model".to_string()),
-            Some("Q4_K_M".to_string()),
-            backend.to_string(),
-            "llama_bench".to_string(),
-            pp_sizes.to_string(),
-            tg_sizes.to_string(),
-            Some("[4,8]".to_string()),
-            None,
-            3,
-            1,
-            results.to_string(),
-            Some(1500.0),
-            Some(4096),
-            Some(8192),
-            30.5,
-            "success".to_string(),
-        )
+    fn make_benchmark<'a>(
+        model_id: &'a str,
+        backend: &'a str,
+        pp_sizes: &'a str,
+        tg_sizes: &'a str,
+        results: &'a str,
+    ) -> BenchmarkInsertParams<'a> {
+        BenchmarkInsertParams {
+            model_id,
+            display_name: Some("Test Model"),
+            quant: Some("Q4_K_M"),
+            backend,
+            engine: "llama_bench",
+            pp_sizes_json: pp_sizes,
+            tg_sizes_json: tg_sizes,
+            threads_json: Some("[4,8]"),
+            ngl_range: None,
+            runs: 3,
+            warmup: 1,
+            results_json: results,
+            load_time_ms: Some(1500.0),
+            vram_used_mib: Some(4096),
+            vram_total_mib: Some(8192),
+            duration_seconds: 30.5,
+            status: "success",
+        }
     }
 
     #[test]
     fn test_insert_benchmark_returns_id() {
         let conn = test_conn();
-        let (model_id, display_name, quant, backend, engine, pp_sizes, tg_sizes, threads, ngl_range, runs, warmup, results, load_time_ms, vram_used, vram_total, duration, status) =
-            make_benchmark("qwen7b", "llama_cpp", "[512,1024]", "[128,256]", "[{\"pp\":100}]");
+        let params = make_benchmark("qwen7b", "llama_cpp", "[512,1024]", "[128,256]", "[{\"pp\":100}]");
 
-        let id = insert_benchmark(
-            &conn,
-            &model_id,
-            display_name.as_deref(),
-            quant.as_deref(),
-            &backend,
-            &engine,
-            &pp_sizes,
-            &tg_sizes,
-            threads.as_deref(),
-            ngl_range.as_deref(),
-            runs,
-            warmup,
-            &results,
-            load_time_ms,
-            vram_used,
-            vram_total,
-            duration,
-            &status,
-        )
-        .unwrap();
+        let id = insert_benchmark(&conn, &params).unwrap();
 
         assert_eq!(id, 1);
     }
@@ -232,30 +214,9 @@ mod tests {
     #[test]
     fn test_list_benchmarks_returns_inserted() {
         let conn = test_conn();
-        let (model_id, display_name, quant, backend, engine, pp_sizes, tg_sizes, threads, ngl_range, runs, warmup, results, load_time_ms, vram_used, vram_total, duration, status) =
-            make_benchmark("qwen7b", "llama_cpp", "[512,1024]", "[128,256]", "[{}]");
+        let params = make_benchmark("qwen7b", "llama_cpp", "[512,1024]", "[128,256]", "[{}]");
 
-        insert_benchmark(
-            &conn,
-            &model_id,
-            display_name.as_deref(),
-            quant.as_deref(),
-            &backend,
-            &engine,
-            &pp_sizes,
-            &tg_sizes,
-            threads.as_deref(),
-            ngl_range.as_deref(),
-            runs,
-            warmup,
-            &results,
-            load_time_ms,
-            vram_used,
-            vram_total,
-            duration,
-            &status,
-        )
-        .unwrap();
+        insert_benchmark(&conn, &params).unwrap();
 
         let benchmarks = list_benchmarks(&conn).unwrap();
         assert_eq!(benchmarks.len(), 1);
@@ -267,30 +228,9 @@ mod tests {
     #[test]
     fn test_delete_benchmark() {
         let conn = test_conn();
-        let (model_id, display_name, quant, backend, engine, pp_sizes, tg_sizes, threads, ngl_range, runs, warmup, results, load_time_ms, vram_used, vram_total, duration, status) =
-            make_benchmark("qwen7b", "llama_cpp", "[512]", "[128]", "[{}]");
+        let params = make_benchmark("qwen7b", "llama_cpp", "[512]", "[128]", "[{}]");
 
-        let id = insert_benchmark(
-            &conn,
-            &model_id,
-            display_name.as_deref(),
-            quant.as_deref(),
-            &backend,
-            &engine,
-            &pp_sizes,
-            &tg_sizes,
-            threads.as_deref(),
-            ngl_range.as_deref(),
-            runs,
-            warmup,
-            &results,
-            load_time_ms,
-            vram_used,
-            vram_total,
-            duration,
-            &status,
-        )
-        .unwrap();
+        let id = insert_benchmark(&conn, &params).unwrap();
 
         delete_benchmark(&conn, id).unwrap();
 
@@ -328,31 +268,29 @@ mod tests {
     #[test]
     fn test_insert_benchmark_with_nulls() {
         let conn = test_conn();
-        let (model_id, _, _, backend, engine, pp_sizes, tg_sizes, _, _, runs, warmup, results, _, _, _, duration, status) =
-            make_benchmark("qwen7b", "llama_cpp", "[512]", "[128]", "[{}]");
 
         // Insert with None for optional fields
-        let id = insert_benchmark(
-            &conn,
-            &model_id,
-            None,          // display_name
-            None,          // quant
-            &backend,
-            &engine,
-            &pp_sizes,
-            &tg_sizes,
-            None,          // threads
-            None,          // ngl_range
-            runs,
-            warmup,
-            &results,
-            None,          // load_time_ms
-            None,          // vram_used
-            None,          // vram_total
-            duration,
-            &status,
-        )
-        .unwrap();
+        let params = BenchmarkInsertParams {
+            model_id: "qwen7b",
+            display_name: None,
+            quant: None,
+            backend: "llama_cpp",
+            engine: "llama_bench",
+            pp_sizes_json: "[512]",
+            tg_sizes_json: "[128]",
+            threads_json: None,
+            ngl_range: None,
+            runs: 3,
+            warmup: 1,
+            results_json: "[{}]",
+            load_time_ms: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+            duration_seconds: 30.5,
+            status: "success",
+        };
+
+        let id = insert_benchmark(&conn, &params).unwrap();
 
         assert_eq!(id, 1);
 
@@ -374,26 +312,26 @@ mod tests {
     #[test]
     fn test_insert_and_list_benchmarks_via_migration() {
         let conn = migration_conn();
-        let id = insert_benchmark(
-            &conn,
-            "test-model",
-            Some("Test Model"),
-            Some("Q4_K_M"),
-            "llama_cpp",
-            "llama_bench",
-            "[512,1024]",
-            "[128,256]",
-            Some("[8,16]"),
-            Some("0-99+1"),
-            3,
-            1,
-            r#"[{"test_name":"tg128","pp_mean":120.5,"tg_mean":45.2}]"#,
-            Some(1500.0),
-            Some(6144),
-            Some(8192),
-            45.5,
-            "success",
-        ).unwrap();
+        let params = BenchmarkInsertParams {
+            model_id: "test-model",
+            display_name: Some("Test Model"),
+            quant: Some("Q4_K_M"),
+            backend: "llama_cpp",
+            engine: "llama_bench",
+            pp_sizes_json: "[512,1024]",
+            tg_sizes_json: "[128,256]",
+            threads_json: Some("[8,16]"),
+            ngl_range: Some("0-99+1"),
+            runs: 3,
+            warmup: 1,
+            results_json: r#"[{"test_name":"tg128","pp_mean":120.5,"tg_mean":45.2}]"#,
+            load_time_ms: Some(1500.0),
+            vram_used_mib: Some(6144),
+            vram_total_mib: Some(8192),
+            duration_seconds: 45.5,
+            status: "success",
+        };
+        let id = insert_benchmark(&conn, &params).unwrap();
 
         assert_eq!(id, 1);
 
@@ -408,8 +346,18 @@ mod tests {
     #[test]
     fn test_insert_benchmark_returns_incrementing_ids_via_migration() {
         let conn = migration_conn();
-        let id1 = insert_benchmark(&conn, "a", None, None, "llama_cpp", "llama_bench", "[512]", "[128]", None, None, 3, 1, "[]", None, None, None, 0.0, "success").unwrap();
-        let id2 = insert_benchmark(&conn, "b", None, None, "llama_cpp", "llama_bench", "[512]", "[128]", None, None, 3, 1, "[]", None, None, None, 0.0, "success").unwrap();
+        let params_a = BenchmarkInsertParams {
+            model_id: "a", display_name: None, quant: None, backend: "llama_cpp",
+            engine: "llama_bench", pp_sizes_json: "[512]", tg_sizes_json: "[128]",
+            threads_json: None, ngl_range: None, runs: 3, warmup: 1,
+            results_json: "[]", load_time_ms: None, vram_used_mib: None,
+            vram_total_mib: None, duration_seconds: 0.0, status: "success",
+        };
+        let params_b = BenchmarkInsertParams {
+            model_id: "b", ..params_a.clone()
+        };
+        let id1 = insert_benchmark(&conn, &params_a).unwrap();
+        let id2 = insert_benchmark(&conn, &params_b).unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
     }
