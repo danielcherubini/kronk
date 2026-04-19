@@ -5,11 +5,11 @@ mod utils;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use self::types::{BenchmarkPreset, HistoryEntry};
 use self::utils::format_timestamp;
+use crate::components::job_log_panel::JobLogPanel;
 
 #[component]
 pub fn Benchmarks() -> impl IntoView {
@@ -30,12 +30,10 @@ pub fn Benchmarks() -> impl IntoView {
     let ngl_range = RwSignal::new("".to_string());
     let ctx_override = RwSignal::new("".to_string());
 
-    // Job state
+    // Job state — is_running tracks whether a benchmark is currently running
     let is_running = RwSignal::new(false);
-    let log_lines = RwSignal::new(Vec::<String>::new());
-    let _job_status = RwSignal::new(String::new());
-    let has_results = RwSignal::new(false);
-    let error_message = RwSignal::new(Option::<String>::None);
+    let current_job_id = RwSignal::new(Option::<String>::None);
+    let benchmark_results = RwSignal::new(Option::<serde_json::Value>::None);
 
     // History state
     let history = RwSignal::new(Vec::<HistoryEntry>::new());
@@ -85,6 +83,26 @@ pub fn Benchmarks() -> impl IntoView {
             }
         });
     }
+
+    // Fetch benchmark results when a job completes.
+    let _results_resource = LocalResource::new(move || {
+        let job_id = current_job_id.get();
+        async move {
+            if let Some(jid) = job_id {
+                if let Ok(resp) =
+                    gloo_net::http::Request::get(&format!("/api/benchmarks/jobs/{jid}"))
+                        .send()
+                        .await
+                {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        if let Some(results) = body.get("benchmark_results") {
+                            benchmark_results.set(Some(results.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     // Fetch benchmark history on mount
     {
@@ -174,13 +192,6 @@ pub fn Benchmarks() -> impl IntoView {
             ctx_override.get().parse::<u32>().ok()
         };
 
-        // Clone signals for async block (RwSignal is Copy)
-        let log_lines = log_lines;
-        let job_status = _job_status;
-        let is_running = is_running;
-        let has_results = has_results;
-        let error_message = error_message;
-
         spawn_local(async move {
             let backend_name = if selected_backend.get().is_empty() {
                 None
@@ -206,14 +217,9 @@ pub fn Benchmarks() -> impl IntoView {
                 if let Ok(resp) = builder.send().await {
                     if let Ok(body) = resp.json::<serde_json::Value>().await {
                         if let Some(job_id) = body.get("job_id").and_then(|v| v.as_str()) {
-                            connect_to_sse(
-                                job_id.to_string(),
-                                log_lines,
-                                job_status,
-                                is_running,
-                                has_results,
-                                error_message,
-                            );
+                            // JobLogPanel component handles SSE automatically
+                            // for this job_id.
+                            current_job_id.set(Some(job_id.to_string()));
                         }
                     }
                 }
@@ -231,11 +237,10 @@ pub fn Benchmarks() -> impl IntoView {
     let (warmup_sig, _) = warmup.split();
     let (threads_sig, _) = threads_str.split();
     let (ngl_sig, _) = ngl_range.split();
-    let (log_lines_sig, _) = log_lines.split();
-    let (error_sig, _) = error_message.split();
     let (show_sig, _) = show_history.split();
     let (history_sig, _) = history.split();
     let (is_running_sig, _) = is_running.split();
+    let (current_job_id_sig, _) = current_job_id.split();
 
     view! {
         <div class="page-header">
@@ -403,32 +408,61 @@ pub fn Benchmarks() -> impl IntoView {
             </button>
         </div>
 
-        // Progress / logs
+        // Progress / logs — handled by JobLogPanel component
         {move || {
-            if !log_lines_sig.get().is_empty() {
+            if let Some(job_id) = current_job_id_sig.get() {
                 view! {
-                    <section class="card">
-                        <h3>"Progress"</h3>
-                        <div class="log-panel">
-                            {log_lines_sig.get().into_iter().map(|line| {
-                                view! {
-                                    <pre class="log-line">{line}</pre>
-                                }.into_any()
-                            }).collect::<Vec<_>>()}
-                        </div>
-                    </section>
+                    <JobLogPanel job_id=job_id />
                 }.into_any()
             } else {
                 view! { <div></div> }.into_any()
             }
         }}
 
-        // Error message
+        // Benchmark results
         {move || {
-            if let Some(err) = error_sig.get() {
-                view! {
-                    <div class="alert alert-danger mt-3">{err}</div>
-                }.into_any()
+            if let Some(results_val) = benchmark_results.get().clone() {
+                if let Some(summaries_arr) = results_val.get("results").and_then(|v| v.as_array()) {
+                    let summaries: Vec<_> = summaries_arr.iter().map(|s| {
+                        let test_name = s.get("test_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let prompt_tokens = s.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let gen_tokens = s.get("gen_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let pp_mean = s.get("pp_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let tg_mean = s.get("tg_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        (test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)
+                    }).collect();
+                    view! {
+                        <section class="card mt-3">
+                            <h3>"Benchmark Results"</h3>
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>"Test"</th>
+                                        <th>"Prompt Tokens"</th>
+                                        <th>"Gen Tokens"</th>
+                                        <th>"PP (tok/s)"</th>
+                                        <th>"TG (tok/s)"</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {summaries.into_iter().map(|(test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)| {
+                                        view! {
+                                            <tr>
+                                                <td>{test_name}</td>
+                                                <td class="text-mono">{prompt_tokens}</td>
+                                                <td class="text-mono">{gen_tokens}</td>
+                                                <td class="text-mono">{if pp_mean > 0.01 { format!("{:.1}", pp_mean) } else { "—".to_string() }}</td>
+                                                <td class="text-mono">{if tg_mean > 0.01 { format!("{:.1}", tg_mean) } else { "—".to_string() }}</td>
+                                            </tr>
+                                        }.into_any()
+                                    }).collect::<Vec<_>>()}
+                                </tbody>
+                            </table>
+                        </section>
+                    }.into_any()
+                } else {
+                    view! { <div></div> }.into_any()
+                }
             } else {
                 view! { <div></div> }.into_any()
             }
@@ -481,73 +515,4 @@ pub fn Benchmarks() -> impl IntoView {
             }
         }}
     }
-}
-
-/// Connect to SSE for a given job_id to receive progress updates.
-/// Uses EventSource but ignores events after terminal status to handle
-/// browser auto-reconnect (which replays head/tail logs).
-fn connect_to_sse(
-    job_id: String,
-    log_lines: RwSignal<Vec<String>>,
-    status_signal: RwSignal<String>,
-    is_running_signal: RwSignal<bool>,
-    has_results_signal: RwSignal<bool>,
-    error_signal: RwSignal<Option<String>>,
-) {
-    spawn_local(async move {
-        let es = match web_sys::EventSource::new(&format!("/api/benchmarks/jobs/{}/events", job_id))
-        {
-            Ok(es) => es,
-            Err(_) => return,
-        };
-
-        // Flag to stop processing after terminal status.
-        // EventSource auto-reconnects, replaying head/tail — we ignore those.
-        use std::rc::Rc;
-        let got_terminal: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
-
-        // Handle log events
-        let got_terminal_log = got_terminal.clone();
-        let on_log =
-            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if got_terminal_log.get() {
-                    return; // Ignore replayed logs from reconnection
-                }
-                if let Some(data_str) = evt.data().as_string() {
-                    if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        if let Some(line) = event_json.get("line").and_then(|l| l.as_str()) {
-                            log_lines.update(|lines| lines.push(line.to_string()));
-                        }
-                    }
-                }
-            });
-        let _ = es.add_event_listener_with_callback("log", on_log.as_ref().unchecked_ref());
-        on_log.forget();
-
-        // Handle status events
-        let got_terminal_status = got_terminal.clone();
-        let on_status =
-            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if let Some(data_str) = evt.data().as_string() {
-                    if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        if let Some(status) = event_json.get("status").and_then(|s| s.as_str()) {
-                            status_signal.set(status.to_string());
-                            let terminal = status == "Succeeded" || status == "Failed";
-                            is_running_signal.set(!terminal);
-                            has_results_signal.set(terminal);
-                            if status == "Failed" {
-                                error_signal
-                                    .set(Some("Benchmark failed. Check logs above.".to_string()));
-                            }
-                            // Mark terminal so log events from reconnections are ignored
-                            if terminal {
-                                got_terminal_status.set(true);
-                            }
-                        }
-                    }
-                }
-            });
-        let _ = es.add_event_listener_with_callback("status", on_status.as_ref().unchecked_ref());
-        on_status.forget();
-    });
 }

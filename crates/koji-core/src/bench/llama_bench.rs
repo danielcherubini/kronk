@@ -413,6 +413,11 @@ pub async fn run_llama_bench(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let summaries = parse_bench_json(&stdout)?;
 
+    // Stream results to client via progress sink
+    if let Ok(results_json) = serde_json::to_string(&summaries) {
+        progress.result(&results_json);
+    }
+
     // Build model info
     let model_info = ModelInfo {
         name: model_id.to_string(),

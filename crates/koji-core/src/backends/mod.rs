@@ -15,6 +15,9 @@ use std::path::PathBuf;
 /// Trait for logging progress during backend installation.
 pub trait ProgressSink: Send + Sync {
     fn log(&self, line: &str);
+
+    /// Called with benchmark results as JSON when a benchmark completes.
+    fn result(&self, json: &str);
 }
 
 /// A no-op implementation of ProgressSink for use when no progress tracking is needed.
@@ -22,6 +25,7 @@ pub struct NullSink;
 
 impl ProgressSink for NullSink {
     fn log(&self, _line: &str) {}
+    fn result(&self, _json: &str) {}
 }
 
 /// Returns the backends directory path: `<config_dir>/backends`.

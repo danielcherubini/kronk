@@ -121,6 +121,7 @@ mod tests {
         fn log(&self, line: &str) {
             self.lines.lock().unwrap().push(line.to_string());
         }
+        fn result(&self, _json: &str) {}
     }
 
     /// Test that InstallOptions still derives Debug (smoke test guard).

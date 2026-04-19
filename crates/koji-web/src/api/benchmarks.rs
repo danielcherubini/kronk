@@ -142,6 +142,20 @@ async fn run_benchmark_inner(
                 jobs.append_log(&job, line).await;
             });
         }
+
+        fn result(&self, json: &str) {
+            let job = self.job.clone();
+            let data = json.to_string();
+            tokio::spawn(async move {
+                // Send benchmark results as a "result" SSE event
+                if let Err(e) = job.log_tx.send(crate::jobs::JobEvent::Log(format!(
+                    "__BENCHMARK_RESULT__:{}",
+                    data
+                ))) {
+                    tracing::warn!("Failed to send benchmark result: {}", e);
+                }
+            });
+        }
     }
 
     let sink = BenchProgressSink {
@@ -183,6 +197,11 @@ async fn run_benchmark_inner(
     // Serialize results to JSON string for storage
     let results_json = serde_json::to_string(&report.summaries)
         .context("Failed to serialize benchmark results")?;
+    // Store results in job state so get_benchmark_result can return them
+    {
+        let mut bench_results = job.benchmark_results.write().await;
+        *bench_results = Some(results_json.clone());
+    }
     let pp_sizes_json =
         serde_json::to_string(&req.pp_sizes).context("Failed to serialize pp_sizes")?;
     let tg_sizes_json =
@@ -266,6 +285,12 @@ pub async fn get_benchmark_result(
         lines
     };
 
+    // Get benchmark results if available
+    let benchmark_results = {
+        let results = job.benchmark_results.read().await;
+        results.clone()
+    };
+
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -273,6 +298,7 @@ pub async fn get_benchmark_result(
             "status": status,
             "error": error,
             "log_lines": log_lines,
+            "benchmark_results": benchmark_results,
         })),
     )
         .into_response()
@@ -348,8 +374,14 @@ pub async fn benchmark_events(
                 event = rx.recv() => {
                     match event {
                         Ok(JobEvent::Log(line)) => {
-                            yield Ok(Event::default().event("log")
-                                .json_data(json!({ "line": line}))?);
+                            // Check for benchmark result payload
+                            if let Some(result_json) = line.strip_prefix("__BENCHMARK_RESULT__:") {
+                                yield Ok(Event::default().event("result")
+                                    .json_data(json!({ "results": serde_json::from_str::<serde_json::Value>(result_json).unwrap_or_default()}))?);
+                            } else {
+                                yield Ok(Event::default().event("log")
+                                    .json_data(json!({ "line": line}))?);
+                            }
                         }
                         Ok(JobEvent::Status(s)) => {
                             yield Ok(Event::default().event("status")
