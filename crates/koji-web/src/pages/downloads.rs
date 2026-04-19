@@ -184,13 +184,16 @@ pub fn Downloads() -> impl IntoView {
                 let page: i64 = history_page.get();
                 if total > 0 {
                     let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
-                    let hp = history_page.clone();
+                    let hp_prev = history_page.clone();
+                    let hp_next = history_page.clone();
+                    let prev_disabled = page == 0;
+                    let next_disabled = page >= total_pages - 1;
                     view! {
                         <div class="pagination">
                             <button
                                 class="pagination__btn"
-                                prop:disabled=page == 0
-                                on:click=move |_| hp.update(|p| *p = p.saturating_sub(1))
+                                prop:disabled=prev_disabled
+                                on:click=move |_| hp_prev.update(|p| *p = p.saturating_sub(1))
                             >
                                 "← Prev"
                             </button>
@@ -199,8 +202,8 @@ pub fn Downloads() -> impl IntoView {
                             </span>
                             <button
                                 class="pagination__btn"
-                                prop:disabled=page >= total_pages - 1
-                                on:click=move |_| hp.update(|p| *p = p.saturating_add(1))
+                                prop:disabled=next_disabled
+                                on:click=move |_| hp_next.update(|p| *p = p.saturating_add(1))
                             >
                                 "Next →"
                             </button>
