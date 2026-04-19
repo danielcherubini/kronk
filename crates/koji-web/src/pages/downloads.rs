@@ -173,10 +173,11 @@ fn render_download_item(item: DownloadQueueItemDto) -> impl IntoView {
                 </span>
             </div>
             <div class="download-item__progress">
-                <div
-                    class="progress-bar"
-                    style=format!("width: {}%", item.progress_percent)
-                >
+                <div class="progress-bar">
+                    <div
+                        class="progress-bar__fill"
+                        style=format!("width: {}%", item.progress_percent)
+                    />
                     <span class="progress-bar__label">
                         {format!("{}%", item.progress_percent as u32)}
                     </span>

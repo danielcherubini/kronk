@@ -21,11 +21,19 @@ impl ToastStore {
     }
 
     pub fn add(&self, toast: Toast) {
+        let id = toast.id.clone();
+        let duration_secs = toast.duration_secs;
         self.toasts.update(|toasts| {
             toasts.push(toast);
             if toasts.len() > 5 {
                 toasts.remove(0); // Remove oldest when exceeding max
             }
+        });
+        // Auto-dismiss after duration_secs
+        let store_clone = self.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(duration_secs as u32 * 1000).await;
+            store_clone.remove(&id);
         });
     }
 
@@ -105,7 +113,6 @@ pub struct Toast {
     pub severity: ToastSeverity,
     pub title: String,
     pub message: String,
-    #[expect(dead_code)]
     pub duration_secs: u64,
     #[expect(dead_code)]
     pub action_label: Option<String>,

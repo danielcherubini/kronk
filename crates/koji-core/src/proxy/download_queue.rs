@@ -152,6 +152,11 @@ impl DownloadQueueService {
         )?;
 
         let event = match new_status {
+            "progress" => DownloadEvent::Progress {
+                job_id: job_id.to_string(),
+                bytes_downloaded: bytes_downloaded as u64,
+                total_bytes: total_bytes.map(|b| b as u64),
+            },
             "running" => DownloadEvent::Started {
                 job_id: job_id.to_string(),
                 repo_id: item.repo_id.clone(),

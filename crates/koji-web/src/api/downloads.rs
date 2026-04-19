@@ -203,6 +203,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Started")
                                 .json_data(serde_json::json!({
+                                    "event": "Started",
                                     "job_id": job_id,
                                     "repo_id": repo_id,
                                     "filename": filename,
@@ -213,6 +214,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Progress")
                                 .json_data(serde_json::json!({
+                                    "event": "Progress",
                                     "job_id": job_id,
                                     "bytes_downloaded": bytes_downloaded,
                                     "total_bytes": total_bytes,
@@ -222,6 +224,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Verifying")
                                 .json_data(serde_json::json!({
+                                    "event": "Verifying",
                                     "job_id": job_id,
                                     "filename": filename,
                                 }))
@@ -230,6 +233,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Completed")
                                 .json_data(serde_json::json!({
+                                    "event": "Completed",
                                     "job_id": job_id,
                                     "filename": filename,
                                     "size_bytes": size_bytes,
@@ -240,6 +244,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Failed")
                                 .json_data(serde_json::json!({
+                                    "event": "Failed",
                                     "job_id": job_id,
                                     "filename": filename,
                                     "error": error,
@@ -249,6 +254,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Cancelled")
                                 .json_data(serde_json::json!({
+                                    "event": "Cancelled",
                                     "job_id": job_id,
                                     "filename": filename,
                                 }))

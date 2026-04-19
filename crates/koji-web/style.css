@@ -1855,11 +1855,10 @@ label {
   background: var(--bg-tertiary);
   border-radius: 3px;
   overflow: hidden;
+  position: relative;
 }
 
-.progress-bar::after {
-  content: '';
-  display: block;
+.progress-bar__fill {
   height: 100%;
   background: var(--accent-blue);
   border-radius: 3px;

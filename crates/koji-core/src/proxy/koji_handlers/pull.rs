@@ -261,7 +261,7 @@ pub async fn start_download_from_queue(
                                 if let Some(ref svc) = poll_download_queue {
                                     let _ = svc.update_status(
                                         &poll_job_id,
-                                        "running",
+                                        "progress",
                                         bytes_downloaded as i64,
                                         Some(total as i64),
                                         None,
