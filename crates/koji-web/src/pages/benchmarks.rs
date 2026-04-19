@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
+/// Parse a model JSON value into (id, display_name, quant).
+fn parse_model(m: &serde_json::Value) -> Option<(String, String, String)> {
+    let id = m.get("id")?.as_str()?.to_string();
+    let name = m
+        .get("display_name")
+        .or_else(|| m.get("api_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| id.clone());
+    let quant = m
+        .get("quant")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((id, name, quant))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkRequest {
     pub model_id: String,
@@ -165,37 +182,25 @@ pub fn Benchmarks() -> impl IntoView {
     let history = RwSignal::new(Vec::<HistoryEntry>::new());
     let show_history = RwSignal::new(false);
 
-    // Fetch available models on mount
+    // Refresh trigger — increment to force a refetch
+    let model_refresh = RwSignal::new(0u32);
+
+    // Fetch available models using LocalResource (works in both SSR and CSR).
     // The /koji/v1/models endpoint returns { "models": [...] }, not a bare array.
-    {
-        spawn_local(async move {
+    let _models_resource = LocalResource::new(move || {
+        let _ = model_refresh.get(); // track the signal
+        async move {
             if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/models").send().await {
                 if let Ok(root) = resp.json::<serde_json::Value>().await {
                     if let Some(models_arr) = root.get("models").and_then(|v| v.as_array()) {
-                        let model_list: Vec<(String, String, String)> = models_arr
-                            .iter()
-                            .filter_map(|m| {
-                                let id = m.get("id")?.as_str()?.to_string();
-                                let name = m
-                                    .get("display_name")
-                                    .or_else(|| m.get("api_name"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|| id.clone());
-                                let quant = m
-                                    .get("quant")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                Some((id, name, quant))
-                            })
-                            .collect();
+                        let model_list: Vec<(String, String, String)> =
+                            models_arr.iter().filter_map(parse_model).collect();
                         available_models.update(|list| *list = model_list);
                     }
                 }
             }
-        });
-    }
+        }
+    });
 
     // Fetch benchmark history on mount
     {
