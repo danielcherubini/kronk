@@ -95,17 +95,25 @@ pub fn App() -> impl IntoView {
                             };
                             let bytes_down = event_json.bytes_downloaded;
                             let total_bytes = event_json.total_bytes;
-                            pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
-                                if let Some(item) = items.iter_mut().find(|i| i.job_id == job_id) {
-                                    item.status = status_label.to_string();
-                                    if let Some(bytes) = bytes_down {
-                                        item.bytes_downloaded = bytes as i64;
+                            // Use .set() with a new Vec so ArcRwSignal detects the change.
+                            // .update() mutates in-place but doesn't trigger re-renders.
+                            let current = pages::downloads::ACTIVE_DOWNLOADS.get_untracked();
+                            let updated: Vec<_> = current
+                                .into_iter()
+                                .map(|mut item| {
+                                    if item.job_id == job_id {
+                                        item.status = status_label.to_string();
+                                        if let Some(bytes) = bytes_down {
+                                            item.bytes_downloaded = bytes as i64;
+                                        }
+                                        if let Some(total) = total_bytes {
+                                            item.total_bytes = Some(total as i64);
+                                        }
                                     }
-                                    if let Some(total) = total_bytes {
-                                        item.total_bytes = Some(total as i64);
-                                    }
-                                }
-                            });
+                                    item
+                                })
+                                .collect();
+                            pages::downloads::ACTIVE_DOWNLOADS.set(updated);
                         }
                     }
 
