@@ -162,7 +162,6 @@ pub fn Benchmarks() -> impl IntoView {
 
     // Fetch available models on mount
     {
-        let available_models = available_models;
         spawn_local(async move {
             if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/models").send().await {
                 if let Ok(models) = resp.json::<Vec<serde_json::Value>>().await {
