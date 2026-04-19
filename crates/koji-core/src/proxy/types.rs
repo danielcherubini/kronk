@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::download_queue::DownloadQueueService;
 use super::pull_jobs::PullJob;
 
 /// State for a model backend.
@@ -146,6 +147,7 @@ pub struct ProxyState {
     /// corrupt the assembled output.
     pub in_flight_downloads: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
     pub metrics_tx: tokio::sync::broadcast::Sender<crate::gpu::MetricSample>,
+    pub download_queue: Option<Arc<DownloadQueueService>>,
 }
 
 impl ProxyState {

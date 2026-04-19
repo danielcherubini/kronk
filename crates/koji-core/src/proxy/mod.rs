@@ -1,3 +1,4 @@
+mod download_queue;
 mod forward;
 mod handlers;
 pub mod koji_handlers;
