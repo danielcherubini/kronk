@@ -184,23 +184,25 @@ async fn run_benchmark_inner(
     // Insert into database
     let _id = koji_core::db::queries::insert_benchmark(
         &conn,
-        &req.model_id,
-        display_name.as_deref(),
-        report.model_info.quant.as_deref(),
-        &report.model_info.backend,
-        "llama_bench",
-        &pp_sizes_json,
-        &tg_sizes_json,
-        threads_json.as_deref(),
-        req.ngl_range.as_deref(),
-        req.runs,
-        req.warmup,
-        &results_json,
-        Some(report.load_time_ms),
-        vram.as_ref().map(|v| v.used_mib as i64),
-        vram.as_ref().map(|v| v.total_mib as i64),
-        0.0, // duration tracked by job system
-        "success",
+        &koji_core::db::queries::BenchmarkInsertParams {
+            model_id: &req.model_id,
+            display_name: display_name.as_deref(),
+            quant: report.model_info.quant.as_deref(),
+            backend: &report.model_info.backend,
+            engine: "llama_bench",
+            pp_sizes_json: &pp_sizes_json,
+            tg_sizes_json: &tg_sizes_json,
+            threads_json: threads_json.as_deref(),
+            ngl_range: req.ngl_range.as_deref(),
+            runs: req.runs,
+            warmup: req.warmup,
+            results_json: &results_json,
+            load_time_ms: Some(report.load_time_ms),
+            vram_used_mib: vram.as_ref().map(|v| v.used_mib as i64),
+            vram_total_mib: vram.as_ref().map(|v| v.total_mib as i64),
+            duration_seconds: 0.0, // duration tracked by job system
+            status: "success",
+        },
     )?;
 
     Ok(())
