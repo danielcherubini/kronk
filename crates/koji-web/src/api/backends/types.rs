@@ -337,6 +337,10 @@ impl ProgressSink for JobAdapter {
             jobs.append_log(&job, line).await;
         });
     }
+
+    fn result(&self, _json: &str) {
+        // Not used for backend installs/updates
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

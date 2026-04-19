@@ -46,6 +46,8 @@ pub struct Job {
     pub log_tail: RwLock<VecDeque<String>>,
     pub log_dropped: AtomicU64,
     pub log_tx: broadcast::Sender<JobEvent>,
+    /// Benchmark results JSON (set when benchmark completes)
+    pub benchmark_results: RwLock<Option<String>>,
     pub child_pids: RwLock<Vec<u32>>,
 }
 
@@ -107,6 +109,7 @@ impl JobManager {
             log_dropped: AtomicU64::new(0),
             log_tx: broadcast::channel(LOG_BROADCAST_CAP).0,
             child_pids: RwLock::new(Vec::new()),
+            benchmark_results: RwLock::new(None),
         });
 
         // Atomic check-and-set: hold the active lock across check and set
