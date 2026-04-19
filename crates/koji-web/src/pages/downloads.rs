@@ -2,6 +2,8 @@ use leptos::prelude::*;
 use serde::Deserialize;
 use std::sync::LazyLock;
 
+pub use crate::utils::format_size;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DownloadQueueItemDto {
     pub job_id: String,
@@ -43,6 +45,8 @@ pub static ACTIVE_DOWNLOADS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
 pub static HISTORY_ITEMS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
     LazyLock::new(|| RwSignal::new(Vec::new()));
 pub static HISTORY_TOTAL: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
+pub static HISTORY_PAGE: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
+pub static HISTORY_LIMIT: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(50));
 
 #[component]
 pub fn Downloads() -> impl IntoView {
@@ -183,7 +187,7 @@ fn render_download_item(item: DownloadQueueItemDto) -> impl IntoView {
                     </span>
                 </div>
                 <span class="download-item__bytes">
-                    {format_size(item.bytes_downloaded as u64)} / {format_size(item.total_bytes.unwrap_or(0) as u64)}
+                    {format_size(item.bytes_downloaded as u64)} / {format_size(item.total_bytes.map(|t| t as u64).unwrap_or(0))}
                 </span>
             </div>
             <button
@@ -247,17 +251,5 @@ pub async fn cancel_download(job_id: &str) {
                 }
             }
         }
-    }
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1_073_741_824 {
-        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
-    } else if bytes >= 1_048_576 {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    } else if bytes >= 1_024 {
-        format!("{:.1} KB", bytes as f64 / 1_024.0)
-    } else {
-        format!("{} B", bytes)
     }
 }

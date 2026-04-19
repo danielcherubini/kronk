@@ -46,20 +46,88 @@ pub fn App() -> impl IntoView {
             if let Some(data) = event.data().as_string() {
                 if let Ok(event_json) = serde_json::from_str::<DownloadEvent>(&data) {
                     // Update active downloads from progress/started events
+                    // by updating the specific item in-place instead of a full refresh.
                     if matches!(
                         event_json.event.as_str(),
-                        "Started" | "Progress" | "Verifying" | "Queued"
+                        "Started" | "Progress" | "Verifying"
                     ) {
+                        let event_name = event_json.event.clone();
+                        let job_id = event_json.job_id.clone();
+                        let status_label = match event_name.as_str() {
+                            "Started" => "running",
+                            "Progress" => "running",
+                            "Verifying" => "verifying",
+                            _ => "running",
+                        };
+                        let bytes_down = event_json.bytes_downloaded;
+                        let total_bytes = event_json.total_bytes;
+                        pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
+                            if let Some(item) = items.iter_mut().find(|i| i.job_id == job_id) {
+                                item.status = status_label.to_string();
+                                if let Some(bytes) = bytes_down {
+                                    item.bytes_downloaded = bytes as i64;
+                                }
+                                if let Some(total) = total_bytes {
+                                    item.total_bytes = Some(total as i64);
+                                }
+                                // Recalculate progress
+                                if let Some(total) = item.total_bytes {
+                                    if total > 0 {
+                                        item.progress_percent =
+                                            (item.bytes_downloaded as f64 / total as f64) * 100.0;
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // For Queued events, fetch full details to get missing fields
+                    if event_json.event.as_str() == "Queued" {
+                        let job_id = event_json.job_id.clone();
                         wasm_bindgen_futures::spawn_local(async move {
-                            if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active")
-                                .send()
-                                .await
+                            if let Ok(resp) =
+                                gloo_net::http::Request::get("/api/downloads/active")
+                                    .send()
+                                    .await
                             {
                                 if let Ok(data) = resp
                                     .json::<pages::downloads::DownloadsActiveResponse>()
                                     .await
                                 {
-                                    pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
+                                    // Only replace if this job isn't already in the list
+                                    pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
+                                        if !items.iter().any(|i| i.job_id == job_id) {
+                                            pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+
+                    // Refresh history on terminal events (Completed/Failed/Cancelled)
+                    if matches!(
+                        event_json.event.as_str(),
+                        "Completed" | "Failed" | "Cancelled"
+                    ) {
+                        let limit = pages::downloads::HISTORY_LIMIT.get();
+                        let offset = pages::downloads::HISTORY_PAGE
+                            .get()
+                            * pages::downloads::HISTORY_LIMIT.get();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            if let Ok(resp) = gloo_net::http::Request::get(&format!(
+                                "/api/downloads/history?limit={}&offset={}",
+                                limit, offset
+                            ))
+                            .send()
+                            .await
+                            {
+                                if let Ok(data) =
+                                    resp.json::<pages::downloads::DownloadsHistoryResponse>()
+                                        .await
+                                {
+                                    pages::downloads::HISTORY_ITEMS.set(data.items);
+                                    pages::downloads::HISTORY_TOTAL.set(data.total);
                                 }
                             }
                         });

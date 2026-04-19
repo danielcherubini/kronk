@@ -131,32 +131,19 @@ pub enum ToastSeverity {
 #[derive(Debug, Deserialize)]
 pub struct DownloadEvent {
     pub event: String,
-    #[expect(dead_code)]
     pub job_id: String,
     // These fields vary by event type
     pub filename: Option<String>,
     #[expect(dead_code)]
     pub repo_id: Option<String>,
-    #[expect(dead_code)]
     pub bytes_downloaded: Option<u64>,
-    #[expect(dead_code)]
     pub total_bytes: Option<u64>,
     pub size_bytes: Option<u64>,
     pub duration_ms: Option<u64>,
     pub error: Option<String>,
 }
 
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1_073_741_824 {
-        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
-    } else if bytes >= 1_048_576 {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    } else if bytes >= 1_024 {
-        format!("{:.1} KB", bytes as f64 / 1_024.0)
-    } else {
-        format!("{} B", bytes)
-    }
-}
+use crate::utils::format_size;
 
 /// Render the toast container (top-right notification area).
 #[component]
