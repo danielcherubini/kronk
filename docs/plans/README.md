@@ -14,8 +14,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 64
-- **Completed**: 63 ✅
+- **Total Plans**: 65
+- **Completed**: 64 ✅
 - **In Progress**: 0 🚧
 - **Remaining**: 0 📋
 
@@ -95,6 +95,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Pull Wizard Improvements](2026-04-14-pull-wizard-improvements.md) | Consolidate quant/vision selection, smart KV cache dropdown, APEX/UD support, HF cache cleanup | #58 `10a9d7f`, `603c403`, `3be54a8`, `db955e0`, `6af6423`, `ae1c8f1` |
 | [Wizard & Cache Improvements](2026-04-14-wizard-cache-improvements.md) | Fix KV dropdown, add APEX/UD quant support, implement HF cache cleanup | #58 `3be54a8`, `db955e0`, `6af6423`, `ae1c8f1` |
 | [Context Length Selector](2026-04-14-context-length-selector.md) | Shared component for context length input with dropdown and custom value fallback | #59 |
+| [Benchmarks Page](2026-04-19-benchmarks.md) | Web UI benchmarking page with llama-bench integration, SSE progress streaming, preset configs (Quick/VRAM Sweet Spot/Thread Scaling), and benchmark history | `dd869b8`–`4be90f7` ✅ COMPLETED |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
 | [Koji Web Control Plane](2026-04-03-koji-web-control-plane.md) | Core UI — initial implementation | ✅ PARTIALLY COMPLETED |
 
@@ -202,4 +203,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-17
+**Last Updated**: 2026-04-19
