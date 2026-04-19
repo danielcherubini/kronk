@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Parse a model JSON value into (id, display_name, quant).
+/// The API returns `id` as an integer (db_id), not a string.
 pub fn parse_model(m: &serde_json::Value) -> Option<(String, String, String)> {
-    let id = m.get("id")?.as_str()?.to_string();
+    let id = m.get("id").map(|v| v.to_string()).unwrap_or_default();
     let name = m
         .get("display_name")
         .or_else(|| m.get("api_name"))
