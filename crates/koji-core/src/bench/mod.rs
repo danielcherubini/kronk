@@ -7,6 +7,7 @@
 //! - Total request latency
 
 pub mod display;
+pub mod llama_bench;
 pub mod measure;
 pub mod runner;
 
