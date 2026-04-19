@@ -436,15 +436,28 @@ pub fn Benchmarks() -> impl IntoView {
         // Benchmark results
         {move || {
             if let Some(results_val) = benchmark_results.get().clone() {
-                if let Some(summaries_arr) = results_val.get("results").and_then(|v| v.as_array()) {
-                    let summaries: Vec<_> = summaries_arr.iter().map(|s| {
-                        let test_name = s.get("test_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let prompt_tokens = s.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let gen_tokens = s.get("gen_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let pp_mean = s.get("pp_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let tg_mean = s.get("tg_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        (test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)
-                    }).collect();
+                // benchmark_results is a JSON string (array of summaries)
+                let summaries: Vec<_> = if let Some(s) = results_val.as_str() {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+                        if let Some(arr) = parsed.as_array() {
+                            arr.iter().map(|s| {
+                                let test_name = s.get("test_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let prompt_tokens = s.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let gen_tokens = s.get("gen_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let pp_mean = s.get("pp_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let tg_mean = s.get("tg_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                (test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)
+                            }).collect()
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+                if !summaries.is_empty() {
                     view! {
                         <section class="card mt-3">
                             <h3>"Benchmark Results"</h3>
