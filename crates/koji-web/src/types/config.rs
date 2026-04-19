@@ -228,6 +228,9 @@ pub struct ProxyConfig {
     pub circuit_breaker_cooldown_seconds: u64,
     #[serde(default = "default_metrics_retention")]
     pub metrics_retention_secs: u64,
+    /// How often the download queue processor checks for new items (in seconds).
+    #[serde(default = "default_download_queue_poll_interval")]
+    pub download_queue_poll_interval_secs: u64,
 }
 
 /// Main configuration struct.
@@ -277,6 +280,10 @@ fn default_circuit_breaker_cooldown() -> u64 {
 
 fn default_metrics_retention() -> u64 {
     86_400
+}
+
+fn default_download_queue_poll_interval() -> u64 {
+    2
 }
 
 fn default_enabled() -> bool {
@@ -548,6 +555,7 @@ impl From<CoreProxyConfig> for ProxyConfig {
             circuit_breaker_threshold: p.circuit_breaker_threshold,
             circuit_breaker_cooldown_seconds: p.circuit_breaker_cooldown_seconds,
             metrics_retention_secs: p.metrics_retention_secs,
+            download_queue_poll_interval_secs: p.download_queue_poll_interval_secs,
         }
     }
 }
@@ -563,6 +571,7 @@ impl From<ProxyConfig> for CoreProxyConfig {
             circuit_breaker_threshold: p.circuit_breaker_threshold,
             circuit_breaker_cooldown_seconds: p.circuit_breaker_cooldown_seconds,
             metrics_retention_secs: p.metrics_retention_secs,
+            download_queue_poll_interval_secs: p.download_queue_poll_interval_secs,
         }
     }
 }
@@ -776,6 +785,7 @@ mod tests {
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_seconds: 300,
             metrics_retention_secs: 86400,
+            download_queue_poll_interval_secs: 2,
         };
 
         let json = serde_json::to_string(&proxy).unwrap();

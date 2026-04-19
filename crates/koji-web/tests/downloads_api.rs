@@ -17,7 +17,7 @@ fn create_test_state() -> Arc<AppState> {
     let db_dir = tmp.path().to_path_buf();
 
     // Initialize the database
-    let svc = DownloadQueueService::new(Some(db_dir));
+    let svc = DownloadQueueService::new(Some(db_dir), 2);
     let _ = svc.open_conn().unwrap();
 
     Arc::new(AppState {

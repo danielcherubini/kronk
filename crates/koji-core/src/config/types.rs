@@ -80,6 +80,10 @@ pub struct ProxyConfig {
     pub circuit_breaker_cooldown_seconds: u64,
     #[serde(default = "default_metrics_retention")]
     pub metrics_retention_secs: u64,
+    /// How often the download queue processor checks for new items (in seconds).
+    /// Default is 2, minimum is 1.
+    #[serde(default = "default_download_queue_poll_interval")]
+    pub download_queue_poll_interval_secs: u64,
 }
 
 impl Default for ProxyConfig {
@@ -92,6 +96,7 @@ impl Default for ProxyConfig {
             circuit_breaker_threshold: default_circuit_breaker_threshold(),
             circuit_breaker_cooldown_seconds: default_circuit_breaker_cooldown(),
             metrics_retention_secs: default_metrics_retention(),
+            download_queue_poll_interval_secs: default_download_queue_poll_interval(),
         }
     }
 }
@@ -365,6 +370,10 @@ fn default_circuit_breaker_cooldown() -> u64 {
 
 fn default_metrics_retention() -> u64 {
     86_400
+}
+
+fn default_download_queue_poll_interval() -> u64 {
+    2
 }
 
 fn default_enabled() -> bool {

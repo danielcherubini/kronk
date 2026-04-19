@@ -64,6 +64,7 @@ pub enum DownloadEvent {
 pub struct DownloadQueueService {
     db_dir: Option<PathBuf>,
     events_tx: broadcast::Sender<DownloadEvent>,
+    poll_interval_secs: u64,
 }
 
 impl DownloadQueueService {
@@ -72,9 +73,9 @@ impl DownloadQueueService {
     /// Capacity is set to 256 to accommodate rapid progress updates during
     /// large downloads without dropping events. The SSE endpoint handles
     /// dropped events via the `Lagged` marker event.
-    pub fn new(db_dir: Option<PathBuf>) -> Self {
+    pub fn new(db_dir: Option<PathBuf>, poll_interval_secs: u64) -> Self {
         let events_tx = broadcast::channel(256).0;
-        Self { db_dir, events_tx }
+        Self { db_dir, events_tx, poll_interval_secs }
     }
 
     /// Open a database connection using the configured db_dir.
@@ -354,8 +355,9 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
         tracing::error!(error=%e, "Startup recovery failed");
     }
 
+    let poll_interval = std::cmp::max(svc.poll_interval_secs, 1);
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(poll_interval)).await;
 
         // Check if anything is currently running (only one at a time in sequential mode)
         let active = match svc.get_active_items() {
@@ -430,7 +432,7 @@ mod tests {
     fn setup_service() -> DownloadQueueService {
         // We need a temp directory for the service to work (open_conn uses db_dir)
         let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
         // Open and initialize the DB once
         let _ = svc.open_conn().unwrap();
         svc
@@ -539,7 +541,7 @@ mod tests {
     #[test]
     fn test_enqueue_download_creates_queue_row() {
         let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
         let _ = svc.open_conn().unwrap();
 
         // Subscribe before enqueue so we can receive the event
@@ -587,7 +589,7 @@ mod tests {
     #[test]
     fn test_status_transitions_through_lifecycle() {
         let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
         let _ = svc.open_conn().unwrap();
 
         // Subscribe before enqueue so we can receive events
@@ -685,7 +687,7 @@ mod tests {
     #[test]
     fn test_duration_ms_computed_via_instant() {
         let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
         let _ = svc.open_conn().unwrap();
 
         // Subscribe before enqueue so we can receive events

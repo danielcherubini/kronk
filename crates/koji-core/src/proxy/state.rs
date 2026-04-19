@@ -10,9 +10,10 @@ impl ProxyState {
         let (metrics_tx, _) = tokio::sync::broadcast::channel(64);
 
         // Initialize download queue service if db_dir is configured.
+        let poll_interval = config.proxy.download_queue_poll_interval_secs;
         let download_queue = db_dir
             .as_ref()
-            .map(|dir| Arc::new(DownloadQueueService::new(Some(dir.clone()))));
+            .map(|dir| Arc::new(DownloadQueueService::new(Some(dir.clone()), poll_interval)));
 
         let state = Self {
             config: Arc::new(tokio::sync::RwLock::new(config)),
