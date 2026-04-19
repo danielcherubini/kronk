@@ -19,6 +19,7 @@ use crate::api::backends::{
     system_capabilities, update_backend, update_backend_default_args, CapabilitiesCache,
 };
 use crate::api::backup::{create_backup, restore_preview, start_restore};
+use crate::api::benchmarks::{run_benchmark, get_benchmark_result, benchmark_events, list_benchmark_history, delete_benchmark};
 use crate::jobs::JobManager;
 
 #[allow(unused_imports)]
@@ -257,6 +258,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/self-update/events",
             get(api::self_update::update_events),
         )
+        // Benchmark routes
+        .route("/api/benchmarks/run", post(run_benchmark))
+        .route("/api/benchmarks/jobs/:id", get(get_benchmark_result))
+        .route("/api/benchmarks/jobs/:id/events", get(benchmark_events))
+        .route("/api/benchmarks/history", get(list_benchmark_history))
+        .route("/api/benchmarks/history/:id", delete(delete_benchmark))
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))

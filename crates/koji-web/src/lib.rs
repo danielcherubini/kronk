@@ -8,6 +8,9 @@ pub mod api;
 pub mod jobs;
 
 #[cfg(feature = "ssr")]
+pub mod gpu;
+
+#[cfg(feature = "ssr")]
 pub mod types;
 
 use leptos::prelude::*;

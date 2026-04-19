@@ -46,6 +46,7 @@ pub async fn get_job(
             crate::jobs::JobKind::Install => "install".to_string(),
             crate::jobs::JobKind::Update => "update".to_string(),
             crate::jobs::JobKind::Restore => "restore".to_string(),
+            crate::jobs::JobKind::Benchmark => "benchmark".to_string(),
         },
         status: state.status,
         backend_type: job

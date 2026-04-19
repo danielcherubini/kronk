@@ -21,6 +21,7 @@ pub enum JobKind {
     Install,
     Update,
     Restore,
+    Benchmark,
 }
 
 #[derive(Debug, Clone)]

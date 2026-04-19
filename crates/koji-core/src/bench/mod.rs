@@ -56,7 +56,7 @@ pub struct RequestMeasurement {
 }
 
 /// Summary statistics for a test configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchSummary {
     /// Test name (e.g., "pp512/tg128")
     pub test_name: String,
