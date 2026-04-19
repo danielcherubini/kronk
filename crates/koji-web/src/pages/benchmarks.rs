@@ -166,29 +166,32 @@ pub fn Benchmarks() -> impl IntoView {
     let show_history = RwSignal::new(false);
 
     // Fetch available models on mount
+    // The /koji/v1/models endpoint returns { "models": [...] }, not a bare array.
     {
         spawn_local(async move {
             if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/models").send().await {
-                if let Ok(models) = resp.json::<Vec<serde_json::Value>>().await {
-                    let model_list: Vec<(String, String, String)> = models
-                        .iter()
-                        .filter_map(|m| {
-                            let id = m.get("id")?.as_str()?.to_string();
-                            let name = m
-                                .get("display_name")
-                                .or_else(|| m.get("api_name"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| id.clone());
-                            let quant = m
-                                .get("quant")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            Some((id, name, quant))
-                        })
-                        .collect();
-                    available_models.update(|list| *list = model_list);
+                if let Ok(root) = resp.json::<serde_json::Value>().await {
+                    if let Some(models_arr) = root.get("models").and_then(|v| v.as_array()) {
+                        let model_list: Vec<(String, String, String)> = models_arr
+                            .iter()
+                            .filter_map(|m| {
+                                let id = m.get("id")?.as_str()?.to_string();
+                                let name = m
+                                    .get("display_name")
+                                    .or_else(|| m.get("api_name"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| id.clone());
+                                let quant = m
+                                    .get("quant")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some((id, name, quant))
+                            })
+                            .collect();
+                        available_models.update(|list| *list = model_list);
+                    }
                 }
             }
         });
