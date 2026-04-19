@@ -283,6 +283,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
                         Some(jobs),
                         Some(capabilities),
                         env!("CARGO_PKG_VERSION").to_string(),
+                        None, // DownloadQueueService (CLI service mode doesn't use downloads)
                     )
                     .await
                     {

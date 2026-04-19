@@ -33,7 +33,7 @@ async-stream = { version = "0.3", optional = true }
 koji-core = { path = "../koji-core", optional = true }
 toml = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
+uuid = { version = "1", features = ["v4", "js"] }
 rusqlite = { workspace = true, optional = true }
 urlencoding = "2.1"
 chrono = "0.4.44"
@@ -44,7 +44,7 @@ csr = []
 ssr = [
   "dep:axum", "dep:tokio", "dep:async-stream", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
-  "dep:koji-core", "dep:toml", "dep:tower-http", "dep:thiserror", "dep:uuid",
+  "dep:koji-core", "dep:toml", "dep:tower-http", "dep:thiserror",
   "dep:rusqlite",
 ]
 
@@ -56,6 +56,11 @@ required-features = ["ssr"]
 [[test]]
 name = "config_structured_test"
 path = "tests/config_structured_test.rs"
+required-features = ["ssr"]
+
+[[test]]
+name = "downloads_api"
+path = "tests/downloads_api.rs"
 required-features = ["ssr"]
 
 [dev-dependencies]

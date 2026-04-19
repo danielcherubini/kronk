@@ -2,12 +2,20 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::download_queue::{queue_processor_loop, DownloadQueueService};
 use super::types::{ModelState, ProxyMetrics, ProxyState};
 
 impl ProxyState {
     pub fn new(config: crate::config::Config, db_dir: Option<std::path::PathBuf>) -> Self {
         let (metrics_tx, _) = tokio::sync::broadcast::channel(64);
-        Self {
+
+        // Initialize download queue service if db_dir is configured.
+        let poll_interval = config.proxy.download_queue_poll_interval_secs;
+        let download_queue = db_dir
+            .as_ref()
+            .map(|dir| Arc::new(DownloadQueueService::new(Some(dir.clone()), poll_interval)));
+
+        let state = Self {
             config: Arc::new(tokio::sync::RwLock::new(config)),
             model_configs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             models: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -31,7 +39,20 @@ impl ProxyState {
                 tokio::sync::Mutex::new(std::collections::HashSet::new()),
             ),
             metrics_tx,
+            download_queue: download_queue.clone(),
+        };
+
+        // Spawn the queue processor background task if download queue is configured.
+        // This must be called from within a tokio runtime context (which is always true
+        // in practice since ProxyState::new is only called from async functions).
+        if let Some(ref _dq) = download_queue {
+            let state_clone = Arc::new(state.clone());
+            tokio::spawn(async move {
+                queue_processor_loop(state_clone).await;
+            });
         }
+
+        state
     }
 
     /// Get the backend URL for a server name.

@@ -21,6 +21,9 @@ use crate::api::backends::{
 use crate::api::backup::{create_backup, restore_preview, start_restore};
 use crate::jobs::JobManager;
 
+#[allow(unused_imports)]
+use koji_core::proxy::download_queue::DownloadQueueService;
+
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/dist");
 
 #[derive(Clone)]
@@ -42,6 +45,8 @@ pub struct AppState {
     /// Temporary upload storage for restore archives.
     pub upload_lock:
         Arc<tokio::sync::RwLock<std::collections::HashMap<String, api::backup::UploadEntry>>>,
+    /// Download queue service for managing download lifecycle and events.
+    pub download_queue: Option<Arc<DownloadQueueService>>,
 }
 
 impl AppState {
@@ -225,6 +230,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
+        // Downloads Center routes
+        .route(
+            "/api/downloads/active",
+            get(api::downloads::get_active_downloads),
+        )
+        .route(
+            "/api/downloads/history",
+            get(api::downloads::get_download_history),
+        )
+        .route(
+            "/api/downloads/:job_id/cancel",
+            post(api::downloads::cancel_download),
+        )
+        .route(
+            "/api/downloads/events",
+            get(api::downloads::download_events_sse),
+        )
         .route("/api/updates", get(api::updates::get_updates))
         // Self-update GET routes (safe methods, no CSRF protection needed)
         .route(
@@ -255,6 +277,7 @@ pub async fn run_with_opts(
     jobs: Option<Arc<JobManager>>,
     capabilities: Option<Arc<CapabilitiesCache>>,
     binary_version: String,
+    download_queue: Option<Arc<DownloadQueueService>>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
@@ -268,6 +291,7 @@ pub async fn run_with_opts(
         binary_version,
         update_tx: Arc::new(tokio::sync::Mutex::new(None)),
         upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        download_queue,
     });
     let app = build_router(state);
     tracing::info!("Koji web UI listening on http://{}", addr);
@@ -287,6 +311,7 @@ pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::
         None,
         None,
         env!("CARGO_PKG_VERSION").to_string(),
+        None,
     )
     .await
 }

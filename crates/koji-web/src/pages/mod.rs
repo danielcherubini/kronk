@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod config_editor;
 pub mod dashboard;
+pub mod downloads;
 pub mod logs;
 pub mod model_editor;
 pub mod models;

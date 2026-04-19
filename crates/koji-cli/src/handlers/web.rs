@@ -19,6 +19,7 @@ pub async fn cmd_web(
         Some(jobs),
         Some(capabilities),
         env!("CARGO_PKG_VERSION").to_string(),
+        None,
     )
     .await
 }

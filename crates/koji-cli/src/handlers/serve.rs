@@ -104,6 +104,7 @@ async fn start_proxy_server(
         let proxy_config = Some(Arc::clone(&state.config));
         let jobs = std::sync::Arc::new(koji_web::jobs::JobManager::new());
         let capabilities = std::sync::Arc::new(koji_web::api::backends::CapabilitiesCache::new());
+        let download_queue = state.download_queue.clone();
         tokio::spawn(async move {
             if let Err(e) = koji_web::server::run_with_opts(
                 web_addr,
@@ -114,6 +115,7 @@ async fn start_proxy_server(
                 Some(jobs),
                 Some(capabilities),
                 env!("CARGO_PKG_VERSION").to_string(),
+                download_queue,
             )
             .await
             {

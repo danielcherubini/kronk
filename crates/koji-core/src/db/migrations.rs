@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 10;
+pub const LATEST_VERSION: i32 = 12;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -329,6 +329,38 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 -- leaving all file hashes unbaked.
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_model_pulls_model_id
                     ON model_pulls(model_id);
+                "#,
+        ),
+        (
+            11,
+            r#"
+                -- Operational download queue table (updated as status changes,
+                -- not append-only like download_log).
+                CREATE TABLE download_queue (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id        TEXT NOT NULL UNIQUE,
+                    repo_id       TEXT NOT NULL,
+                    filename      TEXT NOT NULL,
+                    display_name  TEXT,
+                    status        TEXT NOT NULL DEFAULT 'queued',
+                    bytes_downloaded INTEGER NOT NULL DEFAULT 0,
+                    total_bytes     INTEGER,
+                    error_message TEXT,
+                    started_at     TEXT,
+                    completed_at   TEXT,
+                    queued_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    kind           TEXT NOT NULL DEFAULT 'model'
+                );
+                CREATE INDEX idx_dq_status ON download_queue(status);
+                "#,
+        ),
+        (
+            12,
+            r#"
+                -- Add quant and context_length to download_queue so the queue
+                -- processor can reconstruct a QuantDownloadSpec from the DB row.
+                ALTER TABLE download_queue ADD COLUMN quant TEXT;
+                ALTER TABLE download_queue ADD COLUMN context_length INTEGER;
                 "#,
         ),
     ];

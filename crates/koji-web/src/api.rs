@@ -5,6 +5,7 @@ use crate::server::AppState;
 
 pub mod backends;
 pub mod backup;
+pub mod downloads;
 pub mod middleware;
 pub mod models;
 pub mod self_update;

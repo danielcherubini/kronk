@@ -13,3 +13,4 @@ pub mod self_update_section;
 pub mod sidebar;
 pub mod sparkline;
 pub mod supervisor_section;
+pub mod toast;

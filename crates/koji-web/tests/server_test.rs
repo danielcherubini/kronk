@@ -20,6 +20,7 @@ mod tests {
                     std::collections::HashMap::new(),
                 )),
                 update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
+                download_queue: None,
             });
             axum::serve(listener, koji_web::server::build_router(state))
                 .await
@@ -138,6 +139,7 @@ mod tests {
                         std::collections::HashMap::new(),
                     )),
                     update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
+                    download_queue: None,
                 });
                 axum::serve(listener, koji_web::server::build_router(state))
                     .await

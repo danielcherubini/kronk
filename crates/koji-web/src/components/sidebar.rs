@@ -117,6 +117,10 @@ pub fn Sidebar() -> impl IntoView {
                         <span class="sidebar-badge">"!"</span>
                     })}
                 </A>
+                <A href="/downloads" attr:class="sidebar-item" attr:data-tooltip="Downloads" on:click=move |_| mobile_open.set(false)>
+                    <span class="sidebar-item__icon">"📥"</span>
+                    <span class="sidebar-item__text">"Downloads"</span>
+                </A>
             </nav>
 
             <div class="sidebar-footer">
