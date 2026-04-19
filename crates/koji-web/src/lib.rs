@@ -11,26 +11,26 @@ pub mod jobs;
 pub mod types;
 
 use leptos::prelude::*;
-use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
 use leptos_router::{
     components::{Route, Router, Routes},
     path,
 };
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 mod components;
 pub mod constants;
 mod pages;
 pub mod utils;
 
-use crate::components::toast::{ToastStore, DownloadEvent};
+use crate::components::toast::{DownloadEvent, ToastStore};
 
 #[component]
 pub fn App() -> impl IntoView {
     let toast_store = ToastStore::global();
 
     // Open SSE connection on app mount to receive download events
-    let es = web_sys::EventSource::new("/api/downloads/events")
-        .expect("Failed to create EventSource");
+    let es =
+        web_sys::EventSource::new("/api/downloads/events").expect("Failed to create EventSource");
 
     for event_name in [
         "Started",
@@ -51,11 +51,13 @@ pub fn App() -> impl IntoView {
                         "Started" | "Progress" | "Verifying" | "Queued"
                     ) {
                         wasm_bindgen_futures::spawn_local(async move {
-                            if let Ok(resp) =
-                                gloo_net::http::Request::get("/api/downloads/active").send().await
+                            if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active")
+                                .send()
+                                .await
                             {
-                                if let Ok(data) =
-                                    resp.json::<pages::downloads::DownloadsActiveResponse>().await
+                                if let Ok(data) = resp
+                                    .json::<pages::downloads::DownloadsActiveResponse>()
+                                    .await
                                 {
                                     pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
                                 }

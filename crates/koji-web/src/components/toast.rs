@@ -35,6 +35,7 @@ impl ToastStore {
         });
     }
 
+    #[expect(dead_code)]
     pub fn clear(&self) {
         self.toasts.set(vec![]);
     }
@@ -76,7 +77,10 @@ impl ToastStore {
                 id: format!("toast-{}", uuid::Uuid::new_v4()),
                 severity: ToastSeverity::Error,
                 title: event.filename.clone().unwrap_or_default(),
-                message: event.error.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                message: event
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string()),
                 duration_secs: 10,
                 action_label: None,
                 on_action: None,
@@ -101,8 +105,11 @@ pub struct Toast {
     pub severity: ToastSeverity,
     pub title: String,
     pub message: String,
+    #[expect(dead_code)]
     pub duration_secs: u64,
+    #[expect(dead_code)]
     pub action_label: Option<String>,
+    #[expect(dead_code)]
     pub on_action: Option<Callback<()>>,
 }
 
@@ -117,11 +124,15 @@ pub enum ToastSeverity {
 #[derive(Debug, Deserialize)]
 pub struct DownloadEvent {
     pub event: String,
+    #[expect(dead_code)]
     pub job_id: String,
     // These fields vary by event type
     pub filename: Option<String>,
+    #[expect(dead_code)]
     pub repo_id: Option<String>,
+    #[expect(dead_code)]
     pub bytes_downloaded: Option<u64>,
+    #[expect(dead_code)]
     pub total_bytes: Option<u64>,
     pub size_bytes: Option<u64>,
     pub duration_ms: Option<u64>,
@@ -169,10 +180,7 @@ pub fn ToastContainer(store: ToastStore) -> impl IntoView {
 }
 
 #[component]
-pub fn ToastCard(
-    toast: Toast,
-    on_remove: impl Fn() + Send + 'static,
-) -> impl IntoView {
+pub fn ToastCard(toast: Toast, on_remove: impl Fn() + Send + 'static) -> impl IntoView {
     let severity_class = move || match toast.severity {
         ToastSeverity::Info => "toast--info",
         ToastSeverity::Success => "toast--success",

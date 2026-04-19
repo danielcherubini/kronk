@@ -28,6 +28,7 @@ pub struct DownloadQueueItem {
 
 /// Insert a new item into the download queue.
 /// Returns the new row id.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_queue_item(
     conn: &Connection,
     job_id: &str,
@@ -305,6 +306,37 @@ pub fn get_running_item(conn: &Connection) -> Result<Option<DownloadQueueItem>> 
         Some(row) => Ok(Some(row?)),
         None => Ok(None),
     }
+}
+
+/// Get all currently running/verifying items.
+pub fn get_all_running_items(conn: &Connection) -> Result<Vec<DownloadQueueItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, repo_id, filename, display_name, status, \
+                bytes_downloaded, total_bytes, error_message, started_at, \
+                completed_at, queued_at, kind, quant, context_length \
+         FROM download_queue \
+         WHERE status IN ('running', 'verifying')",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DownloadQueueItem {
+            id: row.get(0)?,
+            job_id: row.get(1)?,
+            repo_id: row.get(2)?,
+            filename: row.get(3)?,
+            display_name: row.get(4)?,
+            status: row.get(5)?,
+            bytes_downloaded: row.get(6)?,
+            total_bytes: row.get(7)?,
+            error_message: row.get(8)?,
+            started_at: row.get(9)?,
+            completed_at: row.get(10)?,
+            queued_at: row.get(11)?,
+            kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 /// Mark stale running items as failed (process died without completing).

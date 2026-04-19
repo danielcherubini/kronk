@@ -14,8 +14,8 @@ use crate::db::OpenResult;
 // Re-export query types for use in tests and the service.
 // These are re-exported via `crate::db::queries::*`.
 use crate::db::queries::{
-    cancel_queue_item, count_history_items, get_active_items, get_history_items,
-    get_item_by_job_id, get_queued_item, get_running_item, insert_queue_item,
+    cancel_queue_item, count_history_items, get_active_items, get_all_running_items,
+    get_history_items, get_item_by_job_id, get_queued_item, insert_queue_item,
     mark_stale_running_as_failed, try_mark_running as db_try_mark_running, update_queue_status,
     DownloadQueueItem,
 };
@@ -87,6 +87,7 @@ impl DownloadQueueService {
     ///
     /// Opens a DB connection, inserts the queue item, and emits `DownloadEvent::Queued`.
     /// Returns `Err` if the job_id already exists (UNIQUE constraint violation).
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
         &self,
         job_id: &str,
@@ -240,28 +241,20 @@ impl DownloadQueueService {
     pub fn on_startup_recovery(&self) -> Result<Vec<String>> {
         let conn = self.open_conn()?;
 
-        // Get running items before marking them as failed
-        let running_items = get_running_item(&conn)?
-            .map(|item| vec![item])
-            .unwrap_or_default();
+        // Get ALL running/verifying items before marking them as failed
+        let running_items = get_all_running_items(&conn)?;
 
         mark_stale_running_as_failed(&conn)?;
 
         let mut stale_job_ids = Vec::new();
         for item in running_items {
             if item.status == "running" || item.status == "verifying" {
-                // Re-read to get updated status
-                let updated = get_item_by_job_id(&conn, &item.job_id)?;
-                if let Some(updated_item) = updated {
-                    if updated_item.status == "failed" {
-                        let _ = self.events_tx.send(DownloadEvent::Failed {
-                            job_id: item.job_id.clone(),
-                            filename: item.filename.clone(),
-                            error: "Download was interrupted (process restart)".to_string(),
-                        });
-                        stale_job_ids.push(item.job_id);
-                    }
-                }
+                let _ = self.events_tx.send(DownloadEvent::Failed {
+                    job_id: item.job_id.clone(),
+                    filename: item.filename.clone(),
+                    error: "Download was interrupted (process restart)".to_string(),
+                });
+                stale_job_ids.push(item.job_id);
             }
         }
 
@@ -306,18 +299,17 @@ async fn start_download_from_queue(
         context_length: item.context_length,
     };
 
-    // Delegate to the real download implementation in pull.rs
-    let state_clone = Arc::clone(&state);
-    tokio::spawn(async move {
-        super::koji_handlers::start_download_from_queue(
-            state_clone,
-            job_id,
-            item.repo_id,
-            item.filename,
-            spec,
-        )
-        .await;
-    });
+    // Delegate to the real download implementation in pull.rs.
+    // Note: the caller (queue_processor_loop) already spawned a task,
+    // so we call directly without another spawn.
+    super::koji_handlers::start_download_from_queue(
+        state,
+        job_id,
+        item.repo_id,
+        item.filename,
+        spec,
+    )
+    .await;
 }
 
 /// Background processor loop that picks up queued items one at a time.

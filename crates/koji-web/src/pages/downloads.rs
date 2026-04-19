@@ -2,21 +2,26 @@ use leptos::prelude::*;
 use serde::Deserialize;
 use std::sync::LazyLock;
 
-
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct DownloadQueueItemDto {
     pub job_id: String,
+    #[expect(dead_code)]
     pub repo_id: String,
     pub filename: String,
+    #[expect(dead_code)]
     pub display_name: Option<String>,
     pub status: String,
     pub bytes_downloaded: i64,
     pub total_bytes: Option<i64>,
+    #[expect(dead_code)]
     pub error_message: Option<String>,
+    #[expect(dead_code)]
     pub started_at: Option<String>,
+    #[expect(dead_code)]
     pub completed_at: Option<String>,
+    #[expect(dead_code)]
     pub queued_at: String,
+    #[expect(dead_code)]
     pub kind: String,
     pub progress_percent: f64,
 }
@@ -47,7 +52,10 @@ pub fn Downloads() -> impl IntoView {
 
     // Initial fetch of active downloads
     wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active").send().await {
+        if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active")
+            .send()
+            .await
+        {
             if let Ok(data) = resp.json::<DownloadsActiveResponse>().await {
                 ACTIVE_DOWNLOADS.set(data.items);
             }
@@ -123,7 +131,11 @@ fn render_active_list(items: Vec<DownloadQueueItemDto>) -> AnyView {
     if items.is_empty() {
         view! { <p class="empty-state">"No active downloads"</p> }.into_any()
     } else {
-        items.into_iter().map(render_download_item).collect::<Vec<_>>().into_any()
+        items
+            .into_iter()
+            .map(render_download_item)
+            .collect::<Vec<_>>()
+            .into_any()
     }
 }
 
@@ -131,7 +143,11 @@ fn render_history_list(items: Vec<DownloadQueueItemDto>) -> AnyView {
     if items.is_empty() {
         view! { <p class="empty-state">"No download history"</p> }.into_any()
     } else {
-        items.into_iter().map(render_history_item).collect::<Vec<_>>().into_any()
+        items
+            .into_iter()
+            .map(render_history_item)
+            .collect::<Vec<_>>()
+            .into_any()
     }
 }
 
@@ -221,8 +237,9 @@ pub async fn cancel_download(job_id: &str) {
     if let Ok(resp) = gloo_net::http::Request::post(&url).send().await {
         if resp.status() >= 200 && resp.status() < 300 {
             // Refresh active list
-            if let Ok(resp2) =
-                gloo_net::http::Request::get("/api/downloads/active").send().await
+            if let Ok(resp2) = gloo_net::http::Request::get("/api/downloads/active")
+                .send()
+                .await
             {
                 if let Ok(data) = resp2.json::<DownloadsActiveResponse>().await {
                     ACTIVE_DOWNLOADS.set(data.items);

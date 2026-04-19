@@ -11,6 +11,7 @@ use futures_util::stream;
 use reqwest::StatusCode;
 
 use crate::models::repo_path;
+use crate::proxy::download_queue::DownloadQueueService;
 
 use super::types::{
     is_safe_path_component, max_concurrent_pulls, PullRequest, QuantDownloadSpec, CONFIG_WRITE_LOCK,
@@ -385,6 +386,7 @@ pub async fn start_download_from_queue(
     let outcome = run_verification(
         Arc::clone(&pull_jobs_arc),
         state_clone.db_dir.clone(),
+        state_clone.download_queue.clone(),
         job_id_clone.clone(),
         repo_id_clone.clone(),
         filename_clone.clone(),
@@ -540,6 +542,7 @@ pub(crate) struct VerificationOutcome {
 async fn run_verification(
     pull_jobs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
     _db_dir: Option<std::path::PathBuf>,
+    download_queue: Option<Arc<DownloadQueueService>>,
     job_id: String,
     repo_id: String,
     filename: String,
@@ -570,6 +573,18 @@ async fn run_verification(
             job.verify_total_bytes = Some(bytes);
             tracing::info!(job_id = %job_id, "Job transitioned to Verifying");
         }
+    }
+
+    // Update DB queue item to "verifying" so Downloads Center shows progress.
+    if let Some(ref svc) = download_queue {
+        let _ = svc.update_status(
+            &job_id,
+            "verifying",
+            bytes as i64,
+            Some(bytes as i64),
+            None,
+            None,
+        );
     }
 
     // Step 3: hash the cached file in a blocking thread.
