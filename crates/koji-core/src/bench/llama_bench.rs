@@ -315,16 +315,27 @@ pub async fn run_llama_bench(
             .find(|f| f.filename.ends_with(".gguf"))
             .context("No .gguf model file found for this config")?;
 
-        // Build full path: model storage dir + filename
-        let model_data_dir = db_dir.join("models");
+        // Build full path: models_dir + repo_id + filename
+        let model_data_dir = config.models_dir()?;
         let candidate = model_data_dir
             .join(&record.repo_id)
             .join(&model_file.filename);
         if candidate.exists() {
             candidate
         } else {
-            // Fallback: try parent data dir
-            db_dir.join(&model_file.filename)
+            // Fallback: try db_dir/models (legacy location)
+            let legacy = db_dir.join("models");
+            let legacy_candidate = legacy.join(&record.repo_id).join(&model_file.filename);
+            if legacy_candidate.exists() {
+                legacy_candidate
+            } else {
+                bail!(
+                    "Model file not found: {} (searched {:?} and {:?})",
+                    model_file.filename,
+                    candidate,
+                    legacy_candidate
+                )
+            }
         }
     };
 

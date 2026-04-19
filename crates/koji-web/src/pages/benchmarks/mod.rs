@@ -499,17 +499,16 @@ fn connect_to_sse(
             Err(_) => return,
         };
 
-        // Handle log events
+        // Handle log events — the listener is already on "log" event type,
+        // so just extract the "line" field from the JSON payload.
         let on_log =
             Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
                 if let Some(data_str) = evt.data().as_string() {
                     if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        if event_json.get("type").and_then(|t| t.as_str()) == Some("log") {
-                            if let Some(line) = event_json.get("line").and_then(|l| l.as_str()) {
-                                log_lines.update(|lines| {
-                                    lines.push(line.to_string());
-                                });
-                            }
+                        if let Some(line) = event_json.get("line").and_then(|l| l.as_str()) {
+                            log_lines.update(|lines| {
+                                lines.push(line.to_string());
+                            });
                         }
                     }
                 }
