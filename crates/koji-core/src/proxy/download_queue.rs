@@ -14,10 +14,10 @@ use crate::db::OpenResult;
 // Re-export query types for use in tests and the service.
 // These are re-exported via `crate::db::queries::*`.
 use crate::db::queries::{
-    cancel_queue_item, count_history_items, get_active_items, get_all_running_items,
-    get_history_items, get_item_by_job_id, get_queued_item, insert_queue_item,
-    mark_stale_running_as_failed, try_mark_running as db_try_mark_running, update_progress_only,
-    update_queue_status, DownloadQueueItem,
+    cancel_queue_item, count_history_items, get_active_items, get_history_items,
+    get_item_by_job_id, get_queued_item, insert_queue_item, mark_stale_running_as_queued,
+    try_mark_running as db_try_mark_running, update_progress_only, update_queue_status,
+    DownloadQueueItem,
 };
 
 /// Events emitted by the download queue service during lifecycle transitions.
@@ -267,31 +267,14 @@ impl DownloadQueueService {
         self.events_tx.subscribe()
     }
 
-    /// Perform startup recovery: mark stale running items as failed.
+    /// Perform startup recovery: re-queue stale running items so they get retried.
     ///
-    /// For each stale item that was marked failed, emit `DownloadEvent::Failed`.
-    /// Returns the list of stale job_ids so the caller can clean up in-memory state.
-    pub fn on_startup_recovery(&self) -> Result<Vec<String>> {
+    /// Clears started_at so the download restarts fresh (hf-hub resumes if the
+    /// partial file exists on disk, otherwise it downloads from scratch).
+    pub fn on_startup_recovery(&self) -> Result<()> {
         let conn = self.open_conn()?;
-
-        // Get ALL running/verifying items before marking them as failed
-        let running_items = get_all_running_items(&conn)?;
-
-        mark_stale_running_as_failed(&conn)?;
-
-        let mut stale_job_ids = Vec::new();
-        for item in running_items {
-            if item.status == "running" || item.status == "verifying" {
-                let _ = self.events_tx.send(DownloadEvent::Failed {
-                    job_id: item.job_id.clone(),
-                    filename: item.filename.clone(),
-                    error: "Download was interrupted (process restart)".to_string(),
-                });
-                stale_job_ids.push(item.job_id);
-            }
-        }
-
-        Ok(stale_job_ids)
+        mark_stale_running_as_queued(&conn)?;
+        Ok(())
     }
 
     /// Atomically claim a queued item as running.
@@ -372,15 +355,40 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
             }
         };
 
-        let has_running = active
-            .iter()
-            .any(|item| item.status == "running" || item.status == "verifying");
+        // Find any running or verifying item
+        let running_item = active.iter().find(|i| {
+            i.status == "running" || i.status == "verifying"
+        });
 
-        if has_running {
-            continue; // Something is running, wait for it to finish
+        if let Some(item) = running_item {
+            // Something is supposedly running. Check if it's actually alive.
+            // Use the pull_jobs in-memory state to detect stale downloads.
+            let is_alive = {
+                let jobs = state.pull_jobs.read().await;
+                jobs.contains_key(&item.job_id)
+            };
+            if is_alive {
+                continue; // Download is alive, wait for it to finish
+            }
+            // Download task died without reaching terminal state. Re-queue it so
+            // the processor picks it up and retries (hf-hub resumes if file exists).
+            tracing::warn!(job_id=%item.job_id, "Download task died without reaching terminal state, re-queuing");
+            let conn = match svc.open_conn() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(error=%e, "Failed to open conn for re-queue");
+                    continue;
+                }
+            };
+            if let Err(e) = mark_stale_running_as_queued(&conn) {
+                tracing::error!(error=%e, job_id=%item.job_id, "Failed to re-queue stale item");
+            }
+            // Don't fall through — the re-queued item will be picked up on next poll.
+            // We need it to go through dequeue() → try_mark_running() to properly restart.
+            continue;
         }
 
-        // Try to dequeue the next item
+        // Try to dequeue the next queued item
         let Some(item) = (match svc.dequeue() {
             Ok(item) => item,
             Err(e) => {

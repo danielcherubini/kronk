@@ -302,6 +302,19 @@ pub fn mark_stale_running_as_failed(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Mark stale running items as queued so they get retried on next poll.
+/// Clears started_at so the download restarts fresh (hf-hub resumes if file exists).
+pub fn mark_stale_running_as_queued(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE download_queue SET \
+         status = 'queued', \
+         started_at = NULL \
+         WHERE status IN ('running', 'verifying') AND completed_at IS NULL",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
