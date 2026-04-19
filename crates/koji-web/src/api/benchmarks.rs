@@ -174,7 +174,7 @@ async fn run_benchmark_inner(
     let tg_sizes_json = serde_json::to_string(&req.tg_sizes)
         .context("Failed to serialize tg_sizes")?;
     let threads_json = req.threads.as_ref()
-        .map(|t| serde_json::to_string(t))
+        .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize threads")?;
 
