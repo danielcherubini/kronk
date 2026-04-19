@@ -15,6 +15,8 @@ use leptos_router::{
     components::{Route, Router, Routes},
     path,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 mod components;
@@ -23,6 +25,9 @@ mod pages;
 pub mod utils;
 
 use crate::components::toast::{DownloadEvent, ToastStore};
+
+/// Debounce flag for progress event processing — prevents spawning too many async tasks.
+static PROGRESS_DEBOUNCE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -47,38 +52,55 @@ pub fn App() -> impl IntoView {
                 if let Ok(event_json) = serde_json::from_str::<DownloadEvent>(&data) {
                     // Update active downloads from progress/started events
                     // by updating the specific item in-place instead of a full refresh.
+                    // Debounce progress events to avoid spawning too many async tasks.
                     if matches!(
                         event_json.event.as_str(),
                         "Started" | "Progress" | "Verifying"
                     ) {
-                        let event_name = event_json.event.clone();
-                        let job_id = event_json.job_id.clone();
-                        let status_label = match event_name.as_str() {
-                            "Started" => "running",
-                            "Progress" => "running",
-                            "Verifying" => "verifying",
-                            _ => "running",
-                        };
-                        let bytes_down = event_json.bytes_downloaded;
-                        let total_bytes = event_json.total_bytes;
-                        pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
-                            if let Some(item) = items.iter_mut().find(|i| i.job_id == job_id) {
-                                item.status = status_label.to_string();
-                                if let Some(bytes) = bytes_down {
-                                    item.bytes_downloaded = bytes as i64;
-                                }
-                                if let Some(total) = total_bytes {
-                                    item.total_bytes = Some(total as i64);
-                                }
-                                // Recalculate progress
-                                if let Some(total) = item.total_bytes {
-                                    if total > 0 {
-                                        item.progress_percent =
-                                            (item.bytes_downloaded as f64 / total as f64) * 100.0;
+                        let is_debounced = PROGRESS_DEBOUNCE.swap(true, Ordering::SeqCst);
+                        // Skip this progress update if one is already in flight.
+                        if event_json.event.as_str() == "Progress" && is_debounced {
+                            // Reset debounce flag after a short delay so the next batch
+                            // of progress events can be processed.
+                            wasm_bindgen_futures::spawn_local(async move {
+                                gloo_timers::future::TimeoutFuture::new(200).await;
+                                PROGRESS_DEBOUNCE.store(false, Ordering::SeqCst);
+                            });
+                        } else {
+                            let job_id = event_json.job_id.clone();
+                            let status_label = match event_json.event.as_str() {
+                                "Started" => "running",
+                                "Progress" => "running",
+                                "Verifying" => "verifying",
+                                _ => "running",
+                            };
+                            let bytes_down = event_json.bytes_downloaded;
+                            let total_bytes = event_json.total_bytes;
+                            pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
+                                if let Some(item) = items.iter_mut().find(|i| i.job_id == job_id) {
+                                    item.status = status_label.to_string();
+                                    if let Some(bytes) = bytes_down {
+                                        item.bytes_downloaded = bytes as i64;
+                                    }
+                                    if let Some(total) = total_bytes {
+                                        item.total_bytes = Some(total as i64);
+                                    }
+                                    // Recalculate progress
+                                    if let Some(total) = item.total_bytes {
+                                        if total > 0 {
+                                            item.progress_percent =
+                                                (item.bytes_downloaded as f64 / total as f64) * 100.0;
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
+                            // Reset debounce flag after a short delay so the next batch
+                            // of progress events can be processed.
+                            wasm_bindgen_futures::spawn_local(async move {
+                                gloo_timers::future::TimeoutFuture::new(200).await;
+                                PROGRESS_DEBOUNCE.store(false, Ordering::SeqCst);
+                            });
+                        }
                     }
 
                     // For Queued events, fetch full details to get missing fields
@@ -106,18 +128,16 @@ pub fn App() -> impl IntoView {
                     }
 
                     // Refresh history on terminal events (Completed/Failed/Cancelled)
+                    // Always refresh page 0 so new items are visible immediately.
                     if matches!(
                         event_json.event.as_str(),
                         "Completed" | "Failed" | "Cancelled"
                     ) {
                         let limit = pages::downloads::HISTORY_LIMIT.get();
-                        let offset = pages::downloads::HISTORY_PAGE
-                            .get()
-                            * pages::downloads::HISTORY_LIMIT.get();
                         wasm_bindgen_futures::spawn_local(async move {
                             if let Ok(resp) = gloo_net::http::Request::get(&format!(
-                                "/api/downloads/history?limit={}&offset={}",
-                                limit, offset
+                                "/api/downloads/history?limit={}&offset=0",
+                                limit
                             ))
                             .send()
                             .await

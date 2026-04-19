@@ -45,7 +45,6 @@ pub static ACTIVE_DOWNLOADS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
 pub static HISTORY_ITEMS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
     LazyLock::new(|| RwSignal::new(Vec::new()));
 pub static HISTORY_TOTAL: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
-pub static HISTORY_PAGE: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
 pub static HISTORY_LIMIT: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(50));
 
 #[component]
