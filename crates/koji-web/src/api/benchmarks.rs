@@ -3,6 +3,7 @@
 //! Provides REST endpoints for triggering llama-bench benchmarks,
 //! streaming progress via SSE, and managing benchmark history.
 
+use anyhow::{Context, Result};
 use axum::response::sse::{Event, KeepAlive};
 use axum::{
     extract::{Path, State},
@@ -11,13 +12,12 @@ use axum::{
     Json,
 };
 use futures_util::Stream;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 
 use crate::gpu::query_vram;
-use crate::jobs::{JobEvent, JobManager, JobKind, JobStatus};
+use crate::jobs::{JobEvent, JobKind, JobManager, JobStatus};
 use crate::server::AppState;
 
 // ── Request/Response DTOs ─────────────────────────────────────────────
@@ -69,7 +69,8 @@ pub async fn run_benchmark(
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({"error": "Job manager not available"})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -80,7 +81,8 @@ pub async fn run_benchmark(
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({"error": "Another job is already running"})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -91,7 +93,8 @@ pub async fn run_benchmark(
     // Spawn the benchmark in the background
     tokio::spawn(async move {
         if let Err(e) = run_benchmark_inner(jobs.clone(), &job, &req_clone, config_path).await {
-            jobs.finish(&job, JobStatus::Failed, Some(e.to_string())).await;
+            jobs.finish(&job, JobStatus::Failed, Some(e.to_string()))
+                .await;
         } else {
             jobs.finish(&job, JobStatus::Succeeded, None).await;
         }
@@ -115,10 +118,9 @@ async fn run_benchmark_inner(
         .context("Cannot determine config directory")?
         .to_path_buf();
 
-    let config = tokio::task::spawn_blocking(move || {
-        koji_core::config::Config::load_from(&config_dir)
-    })
-    .await??;
+    let config =
+        tokio::task::spawn_blocking(move || koji_core::config::Config::load_from(&config_dir))
+            .await??;
 
     // Create progress sink adapter (same pattern as backend install)
     let job_clone = job.clone();
@@ -163,17 +165,20 @@ async fn run_benchmark_inner(
 
     // Get model display name from config
     let model_configs = koji_core::db::load_model_configs(&conn)?;
-    let display_name = model_configs.get(&req.model_id)
+    let display_name = model_configs
+        .get(&req.model_id)
         .and_then(|mc| mc.display_name.clone());
 
     // Serialize results to JSON string for storage
     let results_json = serde_json::to_string(&report.summaries)
         .context("Failed to serialize benchmark results")?;
-    let pp_sizes_json = serde_json::to_string(&req.pp_sizes)
-        .context("Failed to serialize pp_sizes")?;
-    let tg_sizes_json = serde_json::to_string(&req.tg_sizes)
-        .context("Failed to serialize tg_sizes")?;
-    let threads_json = req.threads.as_ref()
+    let pp_sizes_json =
+        serde_json::to_string(&req.pp_sizes).context("Failed to serialize pp_sizes")?;
+    let tg_sizes_json =
+        serde_json::to_string(&req.tg_sizes).context("Failed to serialize tg_sizes")?;
+    let threads_json = req
+        .threads
+        .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .context("Failed to serialize threads")?;
@@ -220,7 +225,8 @@ pub async fn get_benchmark_result(
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({"error": "Job manager not available"})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -230,7 +236,8 @@ pub async fn get_benchmark_result(
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({"error": "Job not found"})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
@@ -248,12 +255,16 @@ pub async fn get_benchmark_result(
         lines
     };
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "job_id": job_id,
-        "status": status,
-        "error": error,
-        "log_lines": log_lines,
-    }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "job_id": job_id,
+            "status": status,
+            "error": error,
+            "log_lines": log_lines,
+        })),
+    )
+        .into_response()
 }
 
 // ── Handler: SSE events for benchmark progress ────────────────────────
@@ -355,55 +366,63 @@ pub async fn benchmark_events(
 
 // ── Handler: List benchmark history ───────────────────────────────────
 
-pub async fn list_benchmark_history(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let db_dir = match koji_core::config::Config::config_dir() {
         Ok(d) => d,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": e.to_string()})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
     let entries = match tokio::task::spawn_blocking(move || {
         let koji_core::db::OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
         koji_core::db::queries::list_benchmarks(&conn)
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(entries)) => entries,
         Ok(Err(e)) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": e.to_string()})),
-            ).into_response();
+            )
+                .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": e.to_string()})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
-    let history: Vec<BenchmarkHistoryEntry> = entries.into_iter().map(|e| {
-        let pp_sizes: Vec<u32> = serde_json::from_str(&e.pp_sizes).unwrap_or_default();
-        let tg_sizes: Vec<u32> = serde_json::from_str(&e.tg_sizes).unwrap_or_default();
-        BenchmarkHistoryEntry {
-            id: e.id,
-            created_at: e.created_at,
-            model_id: e.model_id,
-            display_name: e.display_name,
-            quant: e.quant,
-            backend: e.backend,
-            pp_sizes,
-            tg_sizes,
-            runs: e.runs,
-            results_count: serde_json::from_str::<Vec<serde_json::Value>>(&e.results).map(|v| v.len()).unwrap_or(0),
-            status: e.status,
-        }
-    }).collect();
+    let history: Vec<BenchmarkHistoryEntry> = entries
+        .into_iter()
+        .map(|e| {
+            let pp_sizes: Vec<u32> = serde_json::from_str(&e.pp_sizes).unwrap_or_default();
+            let tg_sizes: Vec<u32> = serde_json::from_str(&e.tg_sizes).unwrap_or_default();
+            BenchmarkHistoryEntry {
+                id: e.id,
+                created_at: e.created_at,
+                model_id: e.model_id,
+                display_name: e.display_name,
+                quant: e.quant,
+                backend: e.backend,
+                pp_sizes,
+                tg_sizes,
+                runs: e.runs,
+                results_count: serde_json::from_str::<Vec<serde_json::Value>>(&e.results)
+                    .map(|v| v.len())
+                    .unwrap_or(0),
+                status: e.status,
+            }
+        })
+        .collect();
 
     Json(history).into_response()
 }
@@ -420,22 +439,27 @@ pub async fn delete_benchmark(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": e.to_string()})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
     match tokio::task::spawn_blocking(move || {
         let koji_core::db::OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
         koji_core::db::queries::delete_benchmark(&conn, id)
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(())) => Json(serde_json::json!({"ok": true})).into_response(),
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
-        ).into_response(),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": e.to_string()})),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }

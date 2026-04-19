@@ -356,9 +356,9 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
         };
 
         // Find any running or verifying item
-        let running_item = active.iter().find(|i| {
-            i.status == "running" || i.status == "verifying"
-        });
+        let running_item = active
+            .iter()
+            .find(|i| i.status == "running" || i.status == "verifying");
 
         if let Some(item) = running_item {
             // Check the actual DB status directly — pull_jobs may not have
@@ -398,9 +398,10 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
                 // Task hasn't registered yet — could be a race condition after spawn,
                 // or the task may have crashed before registering. Wait one more poll
                 // cycle to give it time, unless started_at is very old (stale).
-                let started = item.started_at.as_ref().and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s).ok()
-                });
+                let started = item
+                    .started_at
+                    .as_ref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
                 if let Some(st) = started {
                     let now_utc = chrono::Utc::now();
                     let st_utc = st.with_timezone(&chrono::Utc);

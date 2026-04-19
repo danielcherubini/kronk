@@ -32,9 +32,7 @@ impl DownloadQueueItemDto {
     /// it's computed client-side to save bandwidth.
     pub fn progress_percent(&self) -> f64 {
         match self.total_bytes {
-            Some(total) if total > 0 => {
-                (self.bytes_downloaded as f64 / total as f64) * 100.0
-            }
+            Some(total) if total > 0 => (self.bytes_downloaded as f64 / total as f64) * 100.0,
             _ => 0.0,
         }
     }
@@ -62,12 +60,9 @@ pub static ACTIVE_DOWNLOADS: LazyLock<ArcRwSignal<Vec<DownloadQueueItemDto>>> =
     LazyLock::new(|| ArcRwSignal::new(Vec::new()));
 pub static HISTORY_ITEMS: LazyLock<ArcRwSignal<Vec<DownloadQueueItemDto>>> =
     LazyLock::new(|| ArcRwSignal::new(Vec::new()));
-pub static HISTORY_TOTAL: LazyLock<ArcRwSignal<i64>> =
-    LazyLock::new(|| ArcRwSignal::new(0));
-pub static HISTORY_PAGE: LazyLock<ArcRwSignal<i64>> =
-    LazyLock::new(|| ArcRwSignal::new(0));
-pub static HISTORY_LIMIT: LazyLock<ArcRwSignal<i64>> =
-    LazyLock::new(|| ArcRwSignal::new(50));
+pub static HISTORY_TOTAL: LazyLock<ArcRwSignal<i64>> = LazyLock::new(|| ArcRwSignal::new(0));
+pub static HISTORY_PAGE: LazyLock<ArcRwSignal<i64>> = LazyLock::new(|| ArcRwSignal::new(0));
+pub static HISTORY_LIMIT: LazyLock<ArcRwSignal<i64>> = LazyLock::new(|| ArcRwSignal::new(50));
 
 #[component]
 pub fn Downloads() -> impl IntoView {

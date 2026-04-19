@@ -1,7 +1,7 @@
 //! Benchmark history database query functions.
 
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 /// Row from the benchmarks table.
 #[derive(Debug, Clone)]
@@ -13,13 +13,13 @@ pub struct BenchmarkRow {
     pub quant: Option<String>,
     pub backend: String,
     pub engine: String,
-    pub pp_sizes: String,   // JSON array string
-    pub tg_sizes: String,   // JSON array string
-    pub threads: Option<String>,  // JSON array string or null
+    pub pp_sizes: String,        // JSON array string
+    pub tg_sizes: String,        // JSON array string
+    pub threads: Option<String>, // JSON array string or null
     pub ngl_range: Option<String>,
     pub runs: u32,
     pub warmup: u32,
-    pub results: String,    // JSON array string
+    pub results: String, // JSON array string
     pub load_time_ms: Option<f64>,
     pub vram_used_mib: Option<i64>,
     pub vram_total_mib: Option<i64>,
@@ -122,7 +122,8 @@ pub fn list_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
             status: row.get(18)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Delete a benchmark entry by id.
@@ -197,7 +198,13 @@ mod tests {
     #[test]
     fn test_insert_benchmark_returns_id() {
         let conn = test_conn();
-        let params = make_benchmark("qwen7b", "llama_cpp", "[512,1024]", "[128,256]", "[{\"pp\":100}]");
+        let params = make_benchmark(
+            "qwen7b",
+            "llama_cpp",
+            "[512,1024]",
+            "[128,256]",
+            "[{\"pp\":100}]",
+        );
 
         let id = insert_benchmark(&conn, &params).unwrap();
 
@@ -347,14 +354,27 @@ mod tests {
     fn test_insert_benchmark_returns_incrementing_ids_via_migration() {
         let conn = migration_conn();
         let params_a = BenchmarkInsertParams {
-            model_id: "a", display_name: None, quant: None, backend: "llama_cpp",
-            engine: "llama_bench", pp_sizes_json: "[512]", tg_sizes_json: "[128]",
-            threads_json: None, ngl_range: None, runs: 3, warmup: 1,
-            results_json: "[]", load_time_ms: None, vram_used_mib: None,
-            vram_total_mib: None, duration_seconds: 0.0, status: "success",
+            model_id: "a",
+            display_name: None,
+            quant: None,
+            backend: "llama_cpp",
+            engine: "llama_bench",
+            pp_sizes_json: "[512]",
+            tg_sizes_json: "[128]",
+            threads_json: None,
+            ngl_range: None,
+            runs: 3,
+            warmup: 1,
+            results_json: "[]",
+            load_time_ms: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+            duration_seconds: 0.0,
+            status: "success",
         };
         let params_b = BenchmarkInsertParams {
-            model_id: "b", ..params_a.clone()
+            model_id: "b",
+            ..params_a.clone()
         };
         let id1 = insert_benchmark(&conn, &params_a).unwrap();
         let id2 = insert_benchmark(&conn, &params_b).unwrap();

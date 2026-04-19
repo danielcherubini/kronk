@@ -3,13 +3,13 @@
 //! Wraps the llama-bench binary from llama.cpp's tools/ directory.
 //! Runs raw inference benchmarks without spawning a server.
 
-use std::path::PathBuf;
-use std::process::Stdio;
-use anyhow::{Context, Result, bail};
-use tokio::process::Command;
+use crate::backends::ProgressSink;
 use crate::bench::{BenchConfig, BenchReport, BenchSummary, ModelInfo};
 use crate::config::Config;
-use crate::backends::ProgressSink;
+use anyhow::{bail, Context, Result};
+use std::path::PathBuf;
+use std::process::Stdio;
+use tokio::process::Command;
 
 /// Configuration for llama-bench specific parameters.
 #[derive(Debug, Clone)]
@@ -51,9 +51,7 @@ pub fn find_llama_bench(backend_path: &std::path::Path) -> Result<PathBuf> {
     // Parent is: /path/to/ (bin dir)
     // Grandparent is: /path/to/llama.cpp/ or similar
     // Tools are at: <grandparent>/tools/llama-bench
-    let grandparent = backend_path
-        .parent()
-        .and_then(|p| p.parent());
+    let grandparent = backend_path.parent().and_then(|p| p.parent());
 
     if let Some(parent_dir) = grandparent {
         let tools_dir = parent_dir.join("tools");
@@ -88,10 +86,7 @@ pub fn find_llama_bench(backend_path: &std::path::Path) -> Result<PathBuf> {
 }
 
 /// Build the command-line arguments for llama-bench based on config.
-fn build_args(
-    model_path: &std::path::Path,
-    config: &LlamaBenchConfig,
-) -> Vec<String> {
+fn build_args(model_path: &std::path::Path, config: &LlamaBenchConfig) -> Vec<String> {
     let mut args = Vec::new();
 
     // Model file(s) — llama-bench accepts --model for single model
@@ -104,7 +99,14 @@ fn build_args(
         args.push(config.pp_sizes[0].to_string());
     } else {
         args.push("-p".to_string());
-        args.push(config.pp_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
+        args.push(
+            config
+                .pp_sizes
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
 
     // Generation lengths: single value with -n, multiple comma-separated
@@ -113,7 +115,14 @@ fn build_args(
         args.push(config.tg_sizes[0].to_string());
     } else {
         args.push("-n".to_string());
-        args.push(config.tg_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
+        args.push(
+            config
+                .tg_sizes
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
 
     // Repetitions
@@ -127,7 +136,13 @@ fn build_args(
             args.push(threads[0].to_string());
         } else {
             args.push("--threads".to_string());
-            args.push(threads.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
+            args.push(
+                threads
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
     }
 
@@ -158,10 +173,11 @@ fn build_args(
 ///   - avg_ts: average tokens/second
 ///   - stddev_ts: standard deviation
 fn parse_bench_json(output: &str) -> Result<Vec<BenchSummary>> {
-    let entries: serde_json::Value = serde_json::from_str(output)
-        .context("Failed to parse llama-bench JSON output")?;
+    let entries: serde_json::Value =
+        serde_json::from_str(output).context("Failed to parse llama-bench JSON output")?;
 
-    let arr = entries.as_array()
+    let arr = entries
+        .as_array()
         .context("llama-bench JSON output is not an array")?;
 
     let mut summaries = Vec::new();
@@ -207,9 +223,9 @@ fn parse_bench_json(output: &str) -> Result<Vec<BenchSummary>> {
             pp_stddev,
             tg_mean,
             tg_stddev,
-            ttft_mean: 0.0,    // llama-bench doesn't measure TTFT
+            ttft_mean: 0.0, // llama-bench doesn't measure TTFT
             ttft_stddev: 0.0,
-            total_mean: 0.0,    // llama-bench doesn't measure total latency
+            total_mean: 0.0, // llama-bench doesn't measure total latency
             total_stddev: 0.0,
         });
     }
@@ -252,7 +268,8 @@ pub async fn run_llama_bench(
     let OpenResult { conn, .. } = crate::db::open(&db_dir)?;
     let model_configs = crate::db::load_model_configs(&conn)?;
 
-    let (server_config, _backend_config) = config.resolve_server(&model_configs, model_id)
+    let (server_config, _backend_config) = config
+        .resolve_server(&model_configs, model_id)
         .context("Failed to resolve server config for benchmark")?;
 
     // Get the model file path from the model config's first model file
@@ -290,8 +307,7 @@ pub async fn run_llama_bench(
     };
 
     // Find llama-bench binary
-    let bench_binary = find_llama_bench(&backend_path)
-        .context("llama-bench not found")?;
+    let bench_binary = find_llama_bench(&backend_path).context("llama-bench not found")?;
 
     // Get llama-bench version for reporting
     let _version_output = Command::new(&bench_binary)
@@ -309,7 +325,11 @@ pub async fn run_llama_bench(
     // Build command arguments
     let args = build_args(&model_path, bench_config);
 
-    progress.log(&format!("Running: {} {}", bench_binary.display(), args.join(" ")));
+    progress.log(&format!(
+        "Running: {} {}",
+        bench_binary.display(),
+        args.join(" ")
+    ));
 
     // Run llama-bench
     let start_time = std::time::Instant::now();
@@ -337,7 +357,11 @@ pub async fn run_llama_bench(
     // Check exit status
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("llama-bench exited with error (code {}): {}", output.status, stderr);
+        bail!(
+            "llama-bench exited with error (code {}): {}",
+            output.status,
+            stderr
+        );
     }
 
     // Parse JSON output

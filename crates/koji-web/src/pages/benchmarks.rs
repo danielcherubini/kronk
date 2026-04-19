@@ -3,8 +3,8 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkRequest {
@@ -91,18 +91,23 @@ fn format_timestamp(ts: i64) -> String {
     let mut year: i64 = 1970;
     loop {
         let ydays = if is_leap_year(year) { 366i64 } else { 365i64 };
-        if days < ydays { break; }
+        if days < ydays {
+            break;
+        }
         days -= ydays;
         year += 1;
     }
     let leap = is_leap_year(year);
     let month_lengths: [i32; 12] = match leap {
-        true => [31,29,31,30,31,30,31,31,30,31,30,31],
-        false => [31,28,31,30,31,30,31,31,30,31,30,31],
+        true => [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
+        false => [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
     };
     let mut month_idx: i32 = 0;
     for (i, &ml) in month_lengths.iter().enumerate() {
-        if days < ml as i64 { month_idx = i as i32; break; }
+        if days < ml as i64 {
+            month_idx = i as i32;
+            break;
+        }
         days -= ml as i64;
     }
     let day = (days + 1) as i32;
@@ -165,19 +170,24 @@ pub fn Benchmarks() -> impl IntoView {
         spawn_local(async move {
             if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/models").send().await {
                 if let Ok(models) = resp.json::<Vec<serde_json::Value>>().await {
-                    let model_list: Vec<(String, String, String)> = models.iter().filter_map(|m| {
-                        let id = m.get("id")?.as_str()?.to_string();
-                        let name = m.get("display_name")
-                            .or_else(|| m.get("api_name"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| id.clone());
-                        let quant = m.get("quant")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        Some((id, name, quant))
-                    }).collect();
+                    let model_list: Vec<(String, String, String)> = models
+                        .iter()
+                        .filter_map(|m| {
+                            let id = m.get("id")?.as_str()?.to_string();
+                            let name = m
+                                .get("display_name")
+                                .or_else(|| m.get("api_name"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| id.clone());
+                            let quant = m
+                                .get("quant")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            Some((id, name, quant))
+                        })
+                        .collect();
                     available_models.update(|list| *list = model_list);
                 }
             }
@@ -188,7 +198,10 @@ pub fn Benchmarks() -> impl IntoView {
     {
         let history_signal = history;
         spawn_local(async move {
-            if let Ok(resp) = gloo_net::http::Request::get("/api/benchmarks/history").send().await {
+            if let Ok(resp) = gloo_net::http::Request::get("/api/benchmarks/history")
+                .send()
+                .await
+            {
                 if let Ok(entries) = resp.json::<Vec<HistoryEntry>>().await {
                     history_signal.set(entries);
                 }
@@ -198,12 +211,33 @@ pub fn Benchmarks() -> impl IntoView {
 
     // Apply preset
     let apply_preset = move |preset: BenchmarkPreset| {
-        pp_sizes_str.set(preset.pp_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
-        tg_sizes_str.set(preset.tg_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
+        pp_sizes_str.set(
+            preset
+                .pp_sizes
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        tg_sizes_str.set(
+            preset
+                .tg_sizes
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
         runs.set(preset.runs);
         threads_str.set(
-            preset.threads.map(|t| t.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
-                .unwrap_or("auto".to_string())
+            preset
+                .threads
+                .map(|t| {
+                    t.iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or("auto".to_string()),
         );
         ngl_range.set(preset.ngl_range.unwrap_or("").to_string());
     };
@@ -217,45 +251,56 @@ pub fn Benchmarks() -> impl IntoView {
         let error_signal = error_message;
 
         spawn_local(async move {
-            let es = match web_sys::EventSource::new(&format!("/api/benchmarks/jobs/{}/events", job_id)) {
-                Ok(es) => es,
-                Err(_) => return,
-            };
+            let es =
+                match web_sys::EventSource::new(&format!("/api/benchmarks/jobs/{}/events", job_id))
+                {
+                    Ok(es) => es,
+                    Err(_) => return,
+                };
 
             // Handle log events
-            let on_log = Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if let Some(data_str) = evt.data().as_string() {
-                    if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        if event_json.get("type").and_then(|t| t.as_str()) == Some("log") {
-                            if let Some(line) = event_json.get("line").and_then(|l| l.as_str()) {
-                                log_lines_signal.update(|lines| {
-                                    lines.push(line.to_string());
-                                });
+            let on_log =
+                Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                    if let Some(data_str) = evt.data().as_string() {
+                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str)
+                        {
+                            if event_json.get("type").and_then(|t| t.as_str()) == Some("log") {
+                                if let Some(line) = event_json.get("line").and_then(|l| l.as_str())
+                                {
+                                    log_lines_signal.update(|lines| {
+                                        lines.push(line.to_string());
+                                    });
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
             let _ = es.add_event_listener_with_callback("log", on_log.as_ref().unchecked_ref());
             on_log.forget();
 
             // Handle status events
-            let on_status = Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if let Some(data_str) = evt.data().as_string() {
-                    if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        if let Some(status) = event_json.get("status").and_then(|s| s.as_str()) {
-                            status_signal.set(status.to_string());
-                            let terminal = status == "Succeeded" || status == "Failed";
-                            is_running_signal.set(!terminal);
-                            has_results_signal.set(terminal);
-                            if status == "Failed" {
-                                error_signal.set(Some("Benchmark failed. Check logs above.".to_string()));
+            let on_status =
+                Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                    if let Some(data_str) = evt.data().as_string() {
+                        if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str)
+                        {
+                            if let Some(status) = event_json.get("status").and_then(|s| s.as_str())
+                            {
+                                status_signal.set(status.to_string());
+                                let terminal = status == "Succeeded" || status == "Failed";
+                                is_running_signal.set(!terminal);
+                                has_results_signal.set(terminal);
+                                if status == "Failed" {
+                                    error_signal.set(Some(
+                                        "Benchmark failed. Check logs above.".to_string(),
+                                    ));
+                                }
                             }
                         }
                     }
-                }
-            });
-            let _ = es.add_event_listener_with_callback("status", on_status.as_ref().unchecked_ref());
+                });
+            let _ =
+                es.add_event_listener_with_callback("status", on_status.as_ref().unchecked_ref());
             on_status.forget();
 
             on_cleanup(move || {
@@ -265,35 +310,37 @@ pub fn Benchmarks() -> impl IntoView {
     };
 
     // Run benchmark action (unsync because gloo_net returns !Send futures in WASM)
-    let run_action: Action<BenchmarkRequest, (), LocalStorage> = Action::new_unsync(move |req: &BenchmarkRequest| {
-        let req_clone = req.clone();
-        async move {
-            // Serialize request body
-            let body = serde_json::json!({
-                "model_id": req_clone.model_id,
-                "pp_sizes": req_clone.pp_sizes,
-                "tg_sizes": req_clone.tg_sizes,
-                "runs": req_clone.runs,
-                "warmup": req_clone.warmup,
-                "threads": req_clone.threads,
-                "ngl_range": req_clone.ngl_range,
-                "ctx_override": req_clone.ctx_override,
-            });
-            // Submit benchmark job
-            if let Ok(builder) = gloo_net::http::Request::post("/api/benchmarks/run")
-                .header("Content-Type", "application/json")
-                .body(body.to_string()) {
-                if let Ok(resp) = builder.send().await {
-                    if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        if let Some(job_id) = body.get("job_id").and_then(|v| v.as_str()) {
-                            // Connect to SSE for progress streaming
-                            connect_to_sse(job_id.to_string());
+    let run_action: Action<BenchmarkRequest, (), LocalStorage> =
+        Action::new_unsync(move |req: &BenchmarkRequest| {
+            let req_clone = req.clone();
+            async move {
+                // Serialize request body
+                let body = serde_json::json!({
+                    "model_id": req_clone.model_id,
+                    "pp_sizes": req_clone.pp_sizes,
+                    "tg_sizes": req_clone.tg_sizes,
+                    "runs": req_clone.runs,
+                    "warmup": req_clone.warmup,
+                    "threads": req_clone.threads,
+                    "ngl_range": req_clone.ngl_range,
+                    "ctx_override": req_clone.ctx_override,
+                });
+                // Submit benchmark job
+                if let Ok(builder) = gloo_net::http::Request::post("/api/benchmarks/run")
+                    .header("Content-Type", "application/json")
+                    .body(body.to_string())
+                {
+                    if let Ok(resp) = builder.send().await {
+                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                            if let Some(job_id) = body.get("job_id").and_then(|v| v.as_str()) {
+                                // Connect to SSE for progress streaming
+                                connect_to_sse(job_id.to_string());
+                            }
                         }
                     }
                 }
             }
-        }
-    });
+        });
 
     // Parse comma-separated strings into Vec<u32> for the request
     let parse_sizes = move |s: &str| -> Vec<u32> {
@@ -308,10 +355,12 @@ pub fn Benchmarks() -> impl IntoView {
         if s.trim().to_lowercase() == "auto" || s.trim().is_empty() {
             None
         } else {
-            Some(s.split(',')
-                .map(|v| v.trim().parse::<u32>().unwrap_or(0))
-                .filter(|v| *v > 0)
-                .collect())
+            Some(
+                s.split(',')
+                    .map(|v| v.trim().parse::<u32>().unwrap_or(0))
+                    .filter(|v| *v > 0)
+                    .collect(),
+            )
         }
     };
 

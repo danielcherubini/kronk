@@ -46,7 +46,7 @@ fmt-check:
 
 # Lint everything including the server-side koji-web code
 clippy:
-	cargo clippy --workspace -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 	cargo clippy --package koji-web --features ssr -- -D warnings
 
 clean:
