@@ -87,21 +87,31 @@ pub fn Downloads() -> impl IntoView {
         }
     });
 
-    // Load history
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(resp) = gloo_net::http::Request::get(&format!(
-            "/api/downloads/history?limit={}&offset={}",
-            history_limit.get(),
-            history_page.get() * history_limit.get()
-        ))
-        .send()
-        .await
-        {
-            if let Ok(data) = resp.json::<DownloadsHistoryResponse>().await {
-                HISTORY_ITEMS.set(data.items);
-                HISTORY_TOTAL.set(data.total);
+    // Load history (initial + whenever page changes)
+    let load_history = move || {
+        let limit = history_limit.get();
+        let page = history_page.get();
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(resp) = gloo_net::http::Request::get(&format!(
+                "/api/downloads/history?limit={}&offset={}",
+                limit,
+                page * limit
+            ))
+            .send()
+            .await
+            {
+                if let Ok(data) = resp.json::<DownloadsHistoryResponse>().await {
+                    HISTORY_ITEMS.set(data.items);
+                    HISTORY_TOTAL.set(data.total);
+                }
             }
-        }
+        });
+    };
+    // Load on mount
+    load_history();
+    // Re-load whenever page or limit changes
+    Effect::new(move |_| {
+        load_history();
     });
 
     view! {
@@ -142,6 +152,39 @@ pub fn Downloads() -> impl IntoView {
                             {move || {
                                 let items = HISTORY_ITEMS.get();
                                 render_history_list(items)
+                            }}
+                            // Pagination controls
+                            {move || {
+                                let total = HISTORY_TOTAL.get();
+                                let limit = history_limit.get();
+                                let page = history_page.get();
+                                if total > 0 {
+                                    let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
+                                    view! {
+                                        <div class="pagination">
+                                            <button
+                                                class="pagination__btn"
+                                                disabled=page == 0
+                                                on:click=move |_| history_page.update(|p| *p = p.saturating_sub(1))
+                                            >
+                                                "← Prev"
+                                            </button>
+                                            <span class="pagination__info">
+                                                {format!("Page {} of {}", page + 1, total_pages)}
+                                            </span>
+                                            <button
+                                                class="pagination__btn"
+                                                disabled=page >= total_pages - 1
+                                                on:click=move |_| history_page.update(|p| *p = p.saturating_add(1))
+                                            >
+                                                "Next →"
+                                            </button>
+                                        </div>
+                                    }
+                                    .into_any()
+                                } else {
+                                    view! { <div></div> }.into_any()
+                                }
                             }}
                         </div>
                     }
