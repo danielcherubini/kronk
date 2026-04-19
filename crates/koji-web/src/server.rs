@@ -19,7 +19,9 @@ use crate::api::backends::{
     system_capabilities, update_backend, update_backend_default_args, CapabilitiesCache,
 };
 use crate::api::backup::{create_backup, restore_preview, start_restore};
-use crate::api::benchmarks::{run_benchmark, get_benchmark_result, benchmark_events, list_benchmark_history, delete_benchmark};
+use crate::api::benchmarks::{
+    benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history, run_benchmark,
+};
 use crate::jobs::JobManager;
 
 #[allow(unused_imports)]
