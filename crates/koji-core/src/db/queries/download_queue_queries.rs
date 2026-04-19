@@ -127,6 +127,24 @@ pub fn update_queue_status(
     Ok(())
 }
 
+/// Update only the progress fields (bytes_downloaded, total_bytes) without
+/// changing the status. Used for real-time progress streaming via SSE.
+pub fn update_progress_only(
+    conn: &Connection,
+    job_id: &str,
+    bytes_downloaded: i64,
+    total_bytes: Option<i64>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE download_queue SET \
+         bytes_downloaded = ?1, \
+         total_bytes = ?2 \
+         WHERE job_id = ?3",
+        (bytes_downloaded, total_bytes, job_id),
+    )?;
+    Ok(())
+}
+
 /// Atomically claim a queued item as running.
 ///
 /// Returns `true` if a row was affected (item was queued, now running),

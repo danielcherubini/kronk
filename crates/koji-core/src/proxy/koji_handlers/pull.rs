@@ -259,13 +259,10 @@ pub async fn start_download_from_queue(
                                 last_progress_pct = pct;
                                 drop(jobs);
                                 if let Some(ref svc) = poll_download_queue {
-                                    let _ = svc.update_status(
+                                    let _ = svc.update_progress(
                                         &poll_job_id,
-                                        "progress",
                                         bytes_downloaded as i64,
                                         Some(total as i64),
-                                        None,
-                                        None,
                                     );
                                 }
                             }

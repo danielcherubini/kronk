@@ -16,8 +16,8 @@ use crate::db::OpenResult;
 use crate::db::queries::{
     cancel_queue_item, count_history_items, get_active_items, get_all_running_items,
     get_history_items, get_item_by_job_id, get_queued_item, insert_queue_item,
-    mark_stale_running_as_failed, try_mark_running as db_try_mark_running, update_queue_status,
-    DownloadQueueItem,
+    mark_stale_running_as_failed, try_mark_running as db_try_mark_running,
+    update_progress_only, update_queue_status, DownloadQueueItem,
 };
 
 /// Events emitted by the download queue service during lifecycle transitions.
@@ -186,6 +186,27 @@ impl DownloadQueueService {
         };
 
         let _ = self.events_tx.send(event);
+        Ok(())
+    }
+
+    /// Update only progress fields without changing status.
+    ///
+    /// Emits `DownloadEvent::Progress` and updates bytes_downloaded/total_bytes
+    /// in the DB without overwriting the current status (running/verifying).
+    pub fn update_progress(
+        &self,
+        job_id: &str,
+        bytes_downloaded: i64,
+        total_bytes: Option<i64>,
+    ) -> Result<()> {
+        let conn = self.open_conn()?;
+        update_progress_only(&conn, job_id, bytes_downloaded, total_bytes)?;
+
+        let _ = self.events_tx.send(DownloadEvent::Progress {
+            job_id: job_id.to_string(),
+            bytes_downloaded: bytes_downloaded as u64,
+            total_bytes: total_bytes.map(|b| b as u64),
+        });
         Ok(())
     }
 

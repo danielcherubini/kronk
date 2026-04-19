@@ -263,6 +263,7 @@ pub async fn download_events_sse(
                             Event::default()
                                 .event("Queued")
                                 .json_data(serde_json::json!({
+                                    "event": "Queued",
                                     "job_id": job_id,
                                     "repo_id": repo_id,
                                     "filename": filename,
