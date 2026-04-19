@@ -361,8 +361,9 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
         });
 
         if let Some(item) = running_item {
-            // Something is supposedly running. Check if it's actually alive.
-            // Use the pull_jobs in-memory state to detect stale downloads.
+            // Check if the download task is still alive in pull_jobs.
+            // If not, verify the actual DB status before re-queuing — the task
+            // may have completed successfully and already updated the DB.
             let is_alive = {
                 let jobs = state.pull_jobs.read().await;
                 jobs.contains_key(&item.job_id)
@@ -370,21 +371,37 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
             if is_alive {
                 continue; // Download is alive, wait for it to finish
             }
-            // Download task died without reaching terminal state. Re-queue it so
-            // the processor picks it up and retries (hf-hub resumes if file exists).
-            tracing::warn!(job_id=%item.job_id, "Download task died without reaching terminal state, re-queuing");
+            // Task is gone from pull_jobs. Check the actual DB status to avoid
+            // re-queueing a download that completed or failed.
             let conn = match svc.open_conn() {
                 Ok(c) => c,
                 Err(e) => {
-                    tracing::error!(error=%e, "Failed to open conn for re-queue");
+                    tracing::error!(error=%e, "Failed to open conn for status check");
                     continue;
                 }
             };
+            let current = match get_item_by_job_id(&conn, &item.job_id) {
+                Ok(Some(row)) => row,
+                Ok(None) => {
+                    // Item was deleted, nothing to do
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!(error=%e, job_id=%item.job_id, "Failed to check current status");
+                    continue;
+                }
+            };
+            // Only re-queue if it's still in a running state. If it's completed,
+            // failed, or cancelled, leave it alone — the lifecycle finished normally.
+            if current.status != "running" && current.status != "verifying" {
+                tracing::debug!(job_id=%item.job_id, status=%current.status, "Task finished, not re-queuing");
+                continue;
+            }
+            // Task died without reaching a terminal state. Re-queue it.
+            tracing::warn!(job_id=%item.job_id, "Download task died without reaching terminal state, re-queuing");
             if let Err(e) = mark_stale_running_as_queued(&conn) {
                 tracing::error!(error=%e, job_id=%item.job_id, "Failed to re-queue stale item");
             }
-            // Don't fall through — the re-queued item will be picked up on next poll.
-            // We need it to go through dequeue() → try_mark_running() to properly restart.
             continue;
         }
 
