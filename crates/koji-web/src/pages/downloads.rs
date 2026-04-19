@@ -25,7 +25,19 @@ pub struct DownloadQueueItemDto {
     pub queued_at: String,
     #[expect(dead_code)]
     pub kind: String,
-    pub progress_percent: f64,
+}
+
+impl DownloadQueueItemDto {
+    /// Compute progress percentage from bytes. The API doesn't send this —
+    /// it's computed client-side to save bandwidth.
+    pub fn progress_percent(&self) -> f64 {
+        match self.total_bytes {
+            Some(total) if total > 0 => {
+                (self.bytes_downloaded as f64 / total as f64) * 100.0
+            }
+            _ => 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -172,6 +184,10 @@ fn render_download_item(item: DownloadQueueItemDto) -> impl IntoView {
         "queued" => "Queued".to_string(),
         _ => status_str.clone(),
     };
+    let prog = item.progress_percent();
+    let prog_u32 = prog as u32;
+    let bytes_down = item.bytes_downloaded as u64;
+    let bytes_total = item.total_bytes.map(|t| t as u64).unwrap_or(0);
 
     view! {
         <div class="download-item">
@@ -189,14 +205,14 @@ fn render_download_item(item: DownloadQueueItemDto) -> impl IntoView {
                 <div class="progress-bar">
                     <div
                         class="progress-bar__fill"
-                        style=format!("width: {}%", item.progress_percent)
+                        style=format!("width: {}%", prog)
                     />
                     <span class="progress-bar__label">
-                        {format!("{}%", item.progress_percent as u32)}
+                        {format!("{}%", prog_u32)}
                     </span>
                 </div>
                 <span class="download-item__bytes">
-                    {format_size(item.bytes_downloaded as u64)} / {format_size(item.total_bytes.map(|t| t as u64).unwrap_or(0))}
+                    {format_size(bytes_down)} / {format_size(bytes_total)}
                 </span>
             </div>
             <button

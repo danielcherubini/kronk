@@ -104,14 +104,6 @@ pub fn App() -> impl IntoView {
                                     if let Some(total) = total_bytes {
                                         item.total_bytes = Some(total as i64);
                                     }
-                                    // Recalculate progress
-                                    if let Some(total) = item.total_bytes {
-                                        if total > 0 {
-                                            item.progress_percent = (item.bytes_downloaded as f64
-                                                / total as f64)
-                                                * 100.0;
-                                        }
-                                    }
                                 }
                             });
                         }
