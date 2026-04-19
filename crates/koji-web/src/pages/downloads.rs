@@ -68,10 +68,10 @@ pub fn Downloads() -> impl IntoView {
 
     // Sync local history signals with shared signals so the SSE handler
     // knows which page to refresh on terminal events.
-    Effect::new(move |_| {
+    let _sync_page = Effect::new(move |_| {
         HISTORY_PAGE.set(history_page.get());
     });
-    Effect::new(move |_| {
+    let _sync_limit = Effect::new(move |_| {
         HISTORY_LIMIT.set(history_limit.get());
     });
 
@@ -154,42 +154,43 @@ pub fn Downloads() -> impl IntoView {
                                 let items = HISTORY_ITEMS.get();
                                 render_history_list(items)
                             }}
-                            // Pagination controls
-                            {move || {
-                                let total = HISTORY_TOTAL.get();
-                                let limit = history_limit.get();
-                                let page = history_page.get();
-                                if total > 0 {
-                                    let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
-                                    view! {
-                                        <div class="pagination">
-                                            <button
-                                                class="pagination__btn"
-                                                disabled=page == 0
-                                                on:click=move |_| history_page.update(|p| *p = p.saturating_sub(1))
-                                            >
-                                                "← Prev"
-                                            </button>
-                                            <span class="pagination__info">
-                                                {format!("Page {} of {}", page + 1, total_pages)}
-                                            </span>
-                                            <button
-                                                class="pagination__btn"
-                                                disabled=page >= total_pages - 1
-                                                on:click=move |_| history_page.update(|p| *p = p.saturating_add(1))
-                                            >
-                                                "Next →"
-                                            </button>
-                                        </div>
-                                    }
-                                    .into_any()
-                                } else {
-                                    view! { <div></div> }.into_any()
-                                }
-                            }}
                         </div>
                     }
                     .into_any()
+                }
+            }}
+            // Pagination controls (only relevant when history tab is active,
+            // but kept outside the conditional to avoid nested reactive closures)
+            {move || {
+                let total = HISTORY_TOTAL.get();
+                let limit = history_limit.get();
+                let page = history_page.get();
+                if total > 0 {
+                    let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
+                    view! {
+                        <div class="pagination">
+                            <button
+                                class="pagination__btn"
+                                disabled=page == 0
+                                on:click=move |_| history_page.update(|p| *p = p.saturating_sub(1))
+                            >
+                                "← Prev"
+                            </button>
+                            <span class="pagination__info">
+                                {format!("Page {} of {}", page + 1, total_pages)}
+                            </span>
+                            <button
+                                class="pagination__btn"
+                                disabled=page >= total_pages - 1
+                                on:click=move |_| history_page.update(|p| *p = p.saturating_add(1))
+                            >
+                                "Next →"
+                            </button>
+                        </div>
+                    }
+                    .into_any()
+                } else {
+                    view! { <div></div> }.into_any()
                 }
             }}
         </div>
