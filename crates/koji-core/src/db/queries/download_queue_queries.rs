@@ -22,6 +22,8 @@ pub struct DownloadQueueItem {
     pub completed_at: Option<String>,
     pub queued_at: String,
     pub kind: String, // "model" | "backend"
+    pub quant: Option<String>,
+    pub context_length: Option<u32>,
 }
 
 /// Insert a new item into the download queue.
@@ -33,12 +35,22 @@ pub fn insert_queue_item(
     filename: &str,
     display_name: Option<&str>,
     kind: &str,
+    quant: Option<&str>,
+    context_length: Option<u32>,
 ) -> Result<i64> {
     let id = conn.execute(
         "INSERT INTO download_queue \
-         (job_id, repo_id, filename, display_name, status, kind, queued_at) \
-         VALUES (?1, ?2, ?3, ?4, 'queued', ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-        (job_id, repo_id, filename, display_name, kind),
+         (job_id, repo_id, filename, display_name, status, kind, queued_at, quant, context_length) \
+         VALUES (?1, ?2, ?3, ?4, 'queued', ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?6, ?7)",
+        (
+            job_id,
+            repo_id,
+            filename,
+            display_name,
+            kind,
+            quant,
+            context_length,
+        ),
     )?;
     Ok(id as i64)
 }
@@ -48,7 +60,7 @@ pub fn get_queued_item(conn: &Connection) -> Result<Option<DownloadQueueItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, job_id, repo_id, filename, display_name, status, \
                 bytes_downloaded, total_bytes, error_message, started_at, \
-                completed_at, queued_at, kind \
+                completed_at, queued_at, kind, quant, context_length \
          FROM download_queue \
          WHERE status = 'queued' \
          ORDER BY queued_at ASC \
@@ -69,6 +81,8 @@ pub fn get_queued_item(conn: &Connection) -> Result<Option<DownloadQueueItem>> {
             completed_at: row.get(10)?,
             queued_at: row.get(11)?,
             kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
         })
     })?;
     match rows.next() {
@@ -133,7 +147,7 @@ pub fn get_item_by_job_id(conn: &Connection, job_id: &str) -> Result<Option<Down
     let mut stmt = conn.prepare(
         "SELECT id, job_id, repo_id, filename, display_name, status, \
                 bytes_downloaded, total_bytes, error_message, started_at, \
-                completed_at, queued_at, kind \
+                completed_at, queued_at, kind, quant, context_length \
          FROM download_queue \
          WHERE job_id = ?1 \
          LIMIT 1",
@@ -153,6 +167,8 @@ pub fn get_item_by_job_id(conn: &Connection, job_id: &str) -> Result<Option<Down
             completed_at: row.get(10)?,
             queued_at: row.get(11)?,
             kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
         })
     })?;
     match rows.next() {
@@ -166,7 +182,7 @@ pub fn get_active_items(conn: &Connection) -> Result<Vec<DownloadQueueItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, job_id, repo_id, filename, display_name, status, \
                 bytes_downloaded, total_bytes, error_message, started_at, \
-                completed_at, queued_at, kind \
+                completed_at, queued_at, kind, quant, context_length \
          FROM download_queue \
          WHERE status IN ('queued', 'running', 'verifying') \
          ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1 ELSE 2 END, \
@@ -187,6 +203,8 @@ pub fn get_active_items(conn: &Connection) -> Result<Vec<DownloadQueueItem>> {
             completed_at: row.get(10)?,
             queued_at: row.get(11)?,
             kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -202,7 +220,7 @@ pub fn get_history_items(
     let mut stmt = conn.prepare(
         "SELECT id, job_id, repo_id, filename, display_name, status, \
                 bytes_downloaded, total_bytes, error_message, started_at, \
-                completed_at, queued_at, kind \
+                completed_at, queued_at, kind, quant, context_length \
          FROM download_queue \
          WHERE status IN ('completed', 'failed', 'cancelled') \
          ORDER BY completed_at DESC \
@@ -223,6 +241,8 @@ pub fn get_history_items(
             completed_at: row.get(10)?,
             queued_at: row.get(11)?,
             kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -257,7 +277,7 @@ pub fn get_running_item(conn: &Connection) -> Result<Option<DownloadQueueItem>> 
     let mut stmt = conn.prepare(
         "SELECT id, job_id, repo_id, filename, display_name, status, \
                 bytes_downloaded, total_bytes, error_message, started_at, \
-                completed_at, queued_at, kind \
+                completed_at, queued_at, kind, quant, context_length \
          FROM download_queue \
          WHERE status IN ('running', 'verifying') \
          LIMIT 1",
@@ -277,6 +297,8 @@ pub fn get_running_item(conn: &Connection) -> Result<Option<DownloadQueueItem>> 
             completed_at: row.get(10)?,
             queued_at: row.get(11)?,
             kind: row.get(12)?,
+            quant: row.get(13)?,
+            context_length: row.get(14)?,
         })
     })?;
     match rows.next() {
@@ -319,6 +341,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            Some(4096),
         )
         .unwrap();
         assert!(id > 0);
@@ -330,6 +354,8 @@ mod tests {
         assert_eq!(item.display_name, Some("Qwen3.6 35B".to_string()));
         assert_eq!(item.status, "queued");
         assert_eq!(item.kind, "model");
+        assert_eq!(item.quant, Some("Q4_K_M".to_string()));
+        assert_eq!(item.context_length, Some(4096));
     }
 
     #[test]
@@ -343,6 +369,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -374,13 +402,43 @@ mod tests {
         let conn = setup();
 
         // Insert items in various statuses
-        insert_queue_item(&conn, "pull-1", "repo/1", "file1.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-1",
+            "repo/1",
+            "file1.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-1", "queued", 0, None, None).unwrap();
 
-        insert_queue_item(&conn, "pull-2", "repo/2", "file2.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-2",
+            "repo/2",
+            "file2.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-2", "running", 500, Some(1000), None).unwrap();
 
-        insert_queue_item(&conn, "pull-3", "repo/3", "file3.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-3",
+            "repo/3",
+            "file3.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-3", "verifying", 1000, Some(1000), None).unwrap();
 
         let items = get_active_items(&conn).unwrap();
@@ -402,6 +460,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -426,6 +486,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -447,11 +509,34 @@ mod tests {
         let conn = setup();
 
         // Insert completed item first
-        insert_queue_item(&conn, "pull-1", "repo/1", "file1.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-1",
+            "repo/1",
+            "file1.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-1", "completed", 1000, Some(2000), None).unwrap();
 
+        // Small delay to ensure different completed_at timestamps
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
         // Insert failed item second
-        insert_queue_item(&conn, "pull-2", "repo/2", "file2.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-2",
+            "repo/2",
+            "file2.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(
             &conn,
             "pull-2",
@@ -474,17 +559,57 @@ mod tests {
         let conn = setup();
 
         // Insert items with various terminal statuses
-        insert_queue_item(&conn, "pull-1", "repo/1", "file1.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-1",
+            "repo/1",
+            "file1.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-1", "completed", 1000, Some(2000), None).unwrap();
 
-        insert_queue_item(&conn, "pull-2", "repo/2", "file2.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-2",
+            "repo/2",
+            "file2.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-2", "failed", 500, Some(1000), Some("error")).unwrap();
 
-        insert_queue_item(&conn, "pull-3", "repo/3", "file3.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-3",
+            "repo/3",
+            "file3.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
         update_queue_status(&conn, "pull-3", "cancelled", 0, None, None).unwrap();
 
         // Insert a non-terminal item — should not be counted
-        insert_queue_item(&conn, "pull-4", "repo/4", "file4.gguf", None, "model").unwrap();
+        insert_queue_item(
+            &conn,
+            "pull-4",
+            "repo/4",
+            "file4.gguf",
+            None,
+            "model",
+            None,
+            None,
+        )
+        .unwrap();
 
         let count = count_history_items(&conn).unwrap();
         assert_eq!(count, 3);
@@ -501,6 +626,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -533,6 +660,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -554,6 +683,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 
@@ -582,6 +713,8 @@ mod tests {
             "Qwen3.6-35B-A3B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            None,
         )
         .unwrap();
 

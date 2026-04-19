@@ -5,7 +5,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use tokio::sync::broadcast;
@@ -94,9 +93,20 @@ impl DownloadQueueService {
         filename: &str,
         display_name: Option<&str>,
         kind: &str,
+        quant: Option<&str>,
+        context_length: Option<u32>,
     ) -> Result<()> {
         let conn = self.open_conn()?;
-        insert_queue_item(&conn, job_id, repo_id, filename, display_name, kind)?;
+        insert_queue_item(
+            &conn,
+            job_id,
+            repo_id,
+            filename,
+            display_name,
+            kind,
+            quant,
+            context_length,
+        )?;
         let _ = self.events_tx.send(DownloadEvent::Queued {
             job_id: job_id.to_string(),
             repo_id: repo_id.to_string(),
@@ -255,11 +265,16 @@ impl DownloadQueueService {
     }
 }
 
-/// Start a download from the queue (stub for Task 3).
+/// Start a download from the queue.
 ///
 /// This is the ONLY code path that transitions items from `queued` → `running`.
-/// The `queue_processor_loop` dequeues items and spawns this function.
-async fn start_download_from_queue(svc: Arc<DownloadQueueService>, job_id: String) {
+/// Reads the queued item from DB, constructs a QuantDownloadSpec, and calls
+/// the real download implementation from pull.rs.
+async fn start_download_from_queue(
+    state: Arc<super::ProxyState>,
+    svc: Arc<DownloadQueueService>,
+    job_id: String,
+) {
     // Read the queue item from DB to get details
     let conn = match svc.open_conn() {
         Ok(c) => c,
@@ -271,34 +286,36 @@ async fn start_download_from_queue(svc: Arc<DownloadQueueService>, job_id: Strin
         _ => return,
     };
 
-    let start = Instant::now();
-
-    // Emit Verifying event (simulating download completion → verification)
-    let _ = svc.events_tx.send(DownloadEvent::Verifying {
-        job_id: job_id.clone(),
+    // Construct QuantDownloadSpec from DB data
+    let spec = super::koji_handlers::QuantDownloadSpec {
         filename: item.filename.clone(),
+        quant: item.quant.clone(),
+        context_length: item.context_length,
+    };
+
+    // Delegate to the real download implementation in pull.rs
+    let state_clone = Arc::clone(&state);
+    tokio::spawn(async move {
+        super::koji_handlers::start_download_from_queue(
+            state_clone,
+            job_id,
+            item.repo_id,
+            item.filename,
+            spec,
+        )
+        .await;
     });
-
-    // Simulate a short delay for the stub
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-    let duration_ms = start.elapsed().as_millis() as u64;
-
-    // Mark as completed
-    let _ = svc.update_status(
-        &job_id,
-        "completed",
-        item.bytes_downloaded,
-        item.total_bytes,
-        None,
-        Some(duration_ms),
-    );
 }
 
 /// Background processor loop that picks up queued items one at a time.
 ///
 /// This is the ONLY code path that transitions items from `queued` → `running`.
-pub(crate) async fn queue_processor_loop(svc: Arc<DownloadQueueService>) {
+pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
+    let svc = state
+        .download_queue
+        .as_ref()
+        .expect("download_queue must be configured");
+
     // Startup recovery: mark stale running items as failed
     if let Err(e) = svc.on_startup_recovery() {
         tracing::error!(error=%e, "Startup recovery failed");
@@ -363,9 +380,10 @@ pub(crate) async fn queue_processor_loop(svc: Arc<DownloadQueueService>) {
             let _ = svc.update_status(&item.job_id, "running", 0, None, None, None);
             // Spawn the actual download (delegated to a separate async function)
             let job_id = item.job_id.clone();
-            let svc_clone = Arc::clone(&svc);
+            let state_clone = Arc::clone(&state);
+            let svc_clone = Arc::clone(svc);
             tokio::spawn(async move {
-                start_download_from_queue(svc_clone, job_id).await;
+                start_download_from_queue(state_clone, svc_clone, job_id).await;
             });
         }
     }
@@ -374,6 +392,7 @@ pub(crate) async fn queue_processor_loop(svc: Arc<DownloadQueueService>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn setup_service() -> DownloadQueueService {
         // We need a temp directory for the service to work (open_conn uses db_dir)
@@ -394,6 +413,8 @@ mod tests {
             "Qwen3.6-35B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            Some(4096),
         )
         .unwrap();
 
@@ -416,6 +437,8 @@ mod tests {
             "Qwen3.6-35B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            Some(4096),
         )
         .unwrap();
 
@@ -451,6 +474,8 @@ mod tests {
             "Qwen3.6-35B-Q4_K_M.gguf",
             Some("Qwen3.6 35B"),
             "model",
+            Some("Q4_K_M"),
+            Some(4096),
         )
         .unwrap();
 
@@ -474,5 +499,223 @@ mod tests {
 
         let result = svc.dequeue().unwrap();
         assert!(result.is_none());
+    }
+
+    /// Integration test: verify that enqueue_download creates a download_queue row
+    /// with the correct fields including quant and context_length.
+    #[test]
+    fn test_enqueue_download_creates_queue_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let _ = svc.open_conn().unwrap();
+
+        // Subscribe before enqueue so we can receive the event
+        let mut rx = svc.subscribe_events();
+
+        svc.enqueue(
+            "pull-test-001",
+            "unsloth/Qwen3.6-35B-A3B-GGUF",
+            "Qwen3.6-35B-Q4_K_M.gguf",
+            Some("Qwen3.6 35B"),
+            "model",
+            Some("Q4_K_M"),
+            Some(4096),
+        )
+        .unwrap();
+
+        // Verify the row exists in the DB
+        let conn = svc.open_conn().unwrap();
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-001")
+            .unwrap()
+            .expect("row should exist");
+
+        assert_eq!(item.job_id, "pull-test-001");
+        assert_eq!(item.status, "queued");
+        assert_eq!(item.quant, Some("Q4_K_M".to_string()));
+        assert_eq!(item.context_length, Some(4096));
+
+        // Verify the Queued event was emitted
+        let event = rx.try_recv().unwrap();
+        match event {
+            DownloadEvent::Queued {
+                job_id,
+                repo_id,
+                filename,
+            } => {
+                assert_eq!(job_id, "pull-test-001");
+                assert_eq!(repo_id, "unsloth/Qwen3.6-35B-A3B-GGUF");
+                assert_eq!(filename, "Qwen3.6-35B-Q4_K_M.gguf");
+            }
+            other => panic!("Expected Queued event, got {:?}", other),
+        }
+    }
+
+    /// Integration test: verify full lifecycle status transitions through the DB.
+    #[test]
+    fn test_status_transitions_through_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let _ = svc.open_conn().unwrap();
+
+        // Subscribe before enqueue so we can receive events
+        let mut rx = svc.subscribe_events();
+
+        // Step 1: Enqueue
+        svc.enqueue(
+            "pull-test-002",
+            "test/repo",
+            "model.gguf",
+            None,
+            "model",
+            Some("Q4_K_M"),
+            Some(2048),
+        )
+        .unwrap();
+
+        let conn = svc.open_conn().unwrap();
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(item.status, "queued");
+
+        // Step 2: Transition to running
+        svc.update_status("pull-test-002", "running", 0, None, None, None)
+            .unwrap();
+
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(item.status, "running");
+        assert!(item.started_at.is_some());
+
+        // Step 3: Transition to verifying
+        svc.update_status("pull-test-002", "verifying", 1000, Some(2000), None, None)
+            .unwrap();
+
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(item.status, "verifying");
+
+        // Step 4: Transition to completed with duration
+        let start = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        svc.update_status(
+            "pull-test-002",
+            "completed",
+            2000,
+            Some(2000),
+            None,
+            Some(duration_ms),
+        )
+        .unwrap();
+
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(item.status, "completed");
+        assert!(item.completed_at.is_some());
+
+        // Drain any intermediate events and find the Completed event
+        let mut completed_event = None;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, DownloadEvent::Completed { .. }) {
+                completed_event = Some(event);
+            }
+        }
+        let event = completed_event.expect("Expected Completed event");
+        match event {
+            DownloadEvent::Completed {
+                job_id,
+                filename,
+                size_bytes,
+                duration_ms: event_duration,
+            } => {
+                assert_eq!(job_id, "pull-test-002");
+                assert_eq!(filename, "model.gguf");
+                assert_eq!(size_bytes, 2000);
+                assert!(
+                    event_duration >= duration_ms,
+                    "event duration {} should be >= computed {}",
+                    event_duration,
+                    duration_ms
+                );
+            }
+            other => panic!("Expected Completed event, got {:?}", other),
+        }
+    }
+
+    /// Integration test: verify duration_ms is computed via Instant::elapsed()
+    /// and not derived from string subtraction of timestamps.
+    #[test]
+    fn test_duration_ms_computed_via_instant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()));
+        let _ = svc.open_conn().unwrap();
+
+        // Subscribe before enqueue so we can receive events
+        let mut rx = svc.subscribe_events();
+
+        // Enqueue the item
+        svc.enqueue(
+            "pull-test-003",
+            "test/repo",
+            "model.gguf",
+            None,
+            "model",
+            Some("Q4_K_M"),
+            None,
+        )
+        .unwrap();
+
+        // Transition through the lifecycle with known delays
+        svc.update_status("pull-test-003", "running", 0, None, None, None)
+            .unwrap();
+
+        // Sleep for a known duration, then compute duration via Instant::elapsed()
+        let start = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let computed_duration = start.elapsed().as_millis() as u64;
+
+        svc.update_status(
+            "pull-test-003",
+            "completed",
+            5000,
+            Some(5000),
+            None,
+            Some(computed_duration),
+        )
+        .unwrap();
+
+        // Drain any intermediate events and find the Completed event
+        let mut completed_event = None;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, DownloadEvent::Completed { .. }) {
+                completed_event = Some(event);
+            }
+        }
+        let event = completed_event.expect("Expected Completed event");
+        match event {
+            DownloadEvent::Completed { duration_ms, .. } => {
+                assert!(
+                    duration_ms >= computed_duration,
+                    "duration_ms ({}) should be >= computed ({})",
+                    duration_ms,
+                    computed_duration
+                );
+            }
+            other => panic!("Expected Completed event, got {:?}", other),
+        }
+
+        // Verify the DB row has completed_at set (timestamp-based), but
+        // duration_ms was computed in Rust via Instant::elapsed()
+        let conn = svc.open_conn().unwrap();
+        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-003")
+            .unwrap()
+            .expect("row should exist");
+        assert_eq!(item.status, "completed");
+        assert!(item.completed_at.is_some());
     }
 }

@@ -41,6 +41,10 @@ pub struct PullJob {
     /// Set when status transitions to Completed or Failed; used for eviction.
     #[serde(skip)]
     pub completed_at: Option<Instant>,
+    /// Download duration in milliseconds. Set on completion, calculated via
+    /// `Instant::now().elapsed()`. Not serialized to SSE events.
+    #[serde(skip)]
+    pub duration_ms: Option<u64>,
 }
 
 impl Default for PullJob {
@@ -58,6 +62,7 @@ impl Default for PullJob {
             verified_ok: None,
             verify_error: None,
             completed_at: None,
+            duration_ms: None,
         }
     }
 }

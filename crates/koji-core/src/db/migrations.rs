@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 11;
+pub const LATEST_VERSION: i32 = 12;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -352,6 +352,15 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                     kind           TEXT NOT NULL DEFAULT 'model'
                 );
                 CREATE INDEX idx_dq_status ON download_queue(status);
+                "#,
+        ),
+        (
+            12,
+            r#"
+                -- Add quant and context_length to download_queue so the queue
+                -- processor can reconstruct a QuantDownloadSpec from the DB row.
+                ALTER TABLE download_queue ADD COLUMN quant TEXT;
+                ALTER TABLE download_queue ADD COLUMN context_length INTEGER;
                 "#,
         ),
     ];

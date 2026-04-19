@@ -44,10 +44,10 @@ impl ProxyState {
         // Spawn the queue processor background task if download queue is configured.
         // This must be called from within a tokio runtime context (which is always true
         // in practice since ProxyState::new is only called from async functions).
-        if let Some(ref dq) = download_queue {
-            let svc = dq.clone();
+        if let Some(ref _dq) = download_queue {
+            let state_clone = Arc::new(state.clone());
             tokio::spawn(async move {
-                queue_processor_loop(svc).await;
+                queue_processor_loop(state_clone).await;
             });
         }
 
