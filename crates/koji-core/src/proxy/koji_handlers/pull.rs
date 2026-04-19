@@ -225,10 +225,13 @@ pub async fn start_download_from_queue(
     }
 
     // Spawn a task that polls file size every 500ms to update bytes_downloaded
+    // and pushes progress updates to the DB queue for SSE streaming.
     let poll_jobs = Arc::clone(&pull_jobs_arc);
     let poll_job_id = job_id_clone.clone();
     let poll_dest = dest_path.clone();
+    let poll_download_queue = state_clone.download_queue.clone();
     let poll_handle = tokio::spawn(async move {
+        let mut last_progress_pct: u32 = 0;
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             // If the job is no longer running, stop polling
@@ -244,9 +247,30 @@ pub async fn start_download_from_queue(
             }
             // Read file size from disk
             if let Ok(meta) = tokio::fs::metadata(&poll_dest).await {
+                let bytes_downloaded = meta.len();
                 let mut jobs = poll_jobs.write().await;
                 if let Some(job) = jobs.get_mut(&poll_job_id) {
-                    job.bytes_downloaded = meta.len();
+                    job.bytes_downloaded = bytes_downloaded;
+                    // Push progress to DB queue for SSE streaming (throttled to 1% steps)
+                    if let Some(total) = job.total_bytes {
+                        if total > 0 {
+                            let pct = (bytes_downloaded as f64 / total as f64 * 100.0) as u32;
+                            if pct > last_progress_pct {
+                                last_progress_pct = pct;
+                                drop(jobs);
+                                if let Some(ref svc) = poll_download_queue {
+                                    let _ = svc.update_status(
+                                        &poll_job_id,
+                                        "running",
+                                        bytes_downloaded as i64,
+                                        Some(total as i64),
+                                        None,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
