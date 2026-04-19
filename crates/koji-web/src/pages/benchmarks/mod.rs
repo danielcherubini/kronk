@@ -484,7 +484,8 @@ pub fn Benchmarks() -> impl IntoView {
 }
 
 /// Connect to SSE for a given job_id to receive progress updates.
-/// Closes the EventSource when a terminal status is received.
+/// Uses EventSource but ignores events after terminal status to handle
+/// browser auto-reconnect (which replays head/tail logs).
 fn connect_to_sse(
     job_id: String,
     log_lines: RwSignal<Vec<String>>,
@@ -500,36 +501,31 @@ fn connect_to_sse(
             Err(_) => return,
         };
 
-        // Use Rc<RefCell> to share EventSource between closures.
-        use std::cell::RefCell;
+        // Flag to stop processing after terminal status.
+        // EventSource auto-reconnects, replaying head/tail — we ignore those.
         use std::rc::Rc;
-        let es_ref: Rc<RefCell<Option<web_sys::EventSource>>> = Rc::new(RefCell::new(Some(es)));
+        let got_terminal: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
 
-        // Clone Rc before moving into closures
-        let es_log_ref = es_ref.clone();
-        let es_status_ref = es_ref.clone();
-
-        // Handle log events — the listener is already on "log" event type,
-        // so just extract the "line" field from the JSON payload.
+        // Handle log events
+        let got_terminal_log = got_terminal.clone();
         let on_log =
             Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if got_terminal_log.get() {
+                    return; // Ignore replayed logs from reconnection
+                }
                 if let Some(data_str) = evt.data().as_string() {
                     if let Ok(event_json) = serde_json::from_str::<serde_json::Value>(&data_str) {
                         if let Some(line) = event_json.get("line").and_then(|l| l.as_str()) {
-                            log_lines.update(|lines| {
-                                lines.push(line.to_string());
-                            });
+                            log_lines.update(|lines| lines.push(line.to_string()));
                         }
                     }
                 }
             });
-        let _ = es_log_ref
-            .borrow()
-            .as_ref()
-            .map(|e| e.add_event_listener_with_callback("log", on_log.as_ref().unchecked_ref()));
+        let _ = es.add_event_listener_with_callback("log", on_log.as_ref().unchecked_ref());
         on_log.forget();
 
-        // Handle status events — close the connection on terminal states.
+        // Handle status events
+        let got_terminal_status = got_terminal.clone();
         let on_status =
             Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
                 if let Some(data_str) = evt.data().as_string() {
@@ -543,19 +539,15 @@ fn connect_to_sse(
                                 error_signal
                                     .set(Some("Benchmark failed. Check logs above.".to_string()));
                             }
-                            // Close the SSE connection to prevent reconnection loops
+                            // Mark terminal so log events from reconnections are ignored
                             if terminal {
-                                if let Some(es) = es_ref.borrow_mut().take() {
-                                    es.close();
-                                }
+                                got_terminal_status.set(true);
                             }
                         }
                     }
                 }
             });
-        let _ = es_status_ref.borrow().as_ref().map(|e| {
-            e.add_event_listener_with_callback("status", on_status.as_ref().unchecked_ref())
-        });
+        let _ = es.add_event_listener_with_callback("status", on_status.as_ref().unchecked_ref());
         on_status.forget();
     });
 }

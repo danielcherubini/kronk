@@ -359,7 +359,6 @@ pub async fn benchmark_events(
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            // Emit dropped marker
                             yield Ok(Event::default().event("log")
                                 .json_data(json!({ "line": format!("[{} lines dropped]", n)}))?);
                         }
