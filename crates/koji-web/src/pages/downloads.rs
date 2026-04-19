@@ -52,66 +52,81 @@ pub struct DownloadsHistoryResponse {
 }
 
 /// Shared reactive signals for downloads state (used by SSE handler in lib.rs).
-pub static ACTIVE_DOWNLOADS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
-    LazyLock::new(|| RwSignal::new(Vec::new()));
-pub static HISTORY_ITEMS: LazyLock<RwSignal<Vec<DownloadQueueItemDto>>> =
-    LazyLock::new(|| RwSignal::new(Vec::new()));
-pub static HISTORY_TOTAL: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
-pub static HISTORY_PAGE: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(0));
-pub static HISTORY_LIMIT: LazyLock<RwSignal<i64>> = LazyLock::new(|| RwSignal::new(50));
+///
+/// We use `ArcRwSignal` instead of `RwSignal` because these are global signals
+/// that must survive component lifecycle. `RwSignal` is arena-allocated and
+/// disposed when its reactive Owner cleans up (component unmounts), which would
+/// cause `.get()` to panic on subsequent visits. `ArcRwSignal` is reference-
+/// counted and lives as long as references exist.
+pub static ACTIVE_DOWNLOADS: LazyLock<ArcRwSignal<Vec<DownloadQueueItemDto>>> =
+    LazyLock::new(|| ArcRwSignal::new(Vec::new()));
+pub static HISTORY_ITEMS: LazyLock<ArcRwSignal<Vec<DownloadQueueItemDto>>> =
+    LazyLock::new(|| ArcRwSignal::new(Vec::new()));
+pub static HISTORY_TOTAL: LazyLock<ArcRwSignal<i64>> =
+    LazyLock::new(|| ArcRwSignal::new(0));
+pub static HISTORY_PAGE: LazyLock<ArcRwSignal<i64>> =
+    LazyLock::new(|| ArcRwSignal::new(0));
+pub static HISTORY_LIMIT: LazyLock<ArcRwSignal<i64>> =
+    LazyLock::new(|| ArcRwSignal::new(50));
 
 #[component]
 pub fn Downloads() -> impl IntoView {
     let active_tab = RwSignal::new("active".to_string()); // "active" | "history"
-    let history_page = RwSignal::new(0i64);
-    let history_limit = RwSignal::new(50i64);
 
-    // Sync local history signals with shared signals so the SSE handler
-    // knows which page to refresh on terminal events.
-    let _sync_page = Effect::new(move |_| {
-        HISTORY_PAGE.set(history_page.get());
-    });
-    let _sync_limit = Effect::new(move |_| {
-        HISTORY_LIMIT.set(history_limit.get());
-    });
+    // Get handles to the global signals. ArcRwSignal::clone() is cheap (just Arc bump).
+    let active_downloads = ACTIVE_DOWNLOADS.clone();
+    let history_items = HISTORY_ITEMS.clone();
+    let history_total = HISTORY_TOTAL.clone();
+    let history_page = HISTORY_PAGE.clone();
+    let history_limit = HISTORY_LIMIT.clone();
 
     // Initial fetch of active downloads
+    let active_downloads_init = active_downloads.clone();
     wasm_bindgen_futures::spawn_local(async move {
         if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active")
             .send()
             .await
         {
             if let Ok(data) = resp.json::<DownloadsActiveResponse>().await {
-                ACTIVE_DOWNLOADS.set(data.items);
+                active_downloads_init.set(data.items);
             }
         }
     });
 
     // Load history (initial + whenever page changes)
-    let load_history = move || {
-        let limit = history_limit.get();
-        let page = history_page.get();
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(resp) = gloo_net::http::Request::get(&format!(
-                "/api/downloads/history?limit={}&offset={}",
-                limit,
-                page * limit
-            ))
-            .send()
-            .await
-            {
-                if let Ok(data) = resp.json::<DownloadsHistoryResponse>().await {
-                    HISTORY_ITEMS.set(data.items);
-                    HISTORY_TOTAL.set(data.total);
+    let load_history = {
+        let items = history_items.clone();
+        let total = history_total.clone();
+        let limit = history_limit.clone();
+        let page = history_page.clone();
+        move || {
+            let limit_val: i64 = limit.get();
+            let page_val: i64 = page.get();
+            let items_c = items.clone();
+            let total_c = total.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(resp) = gloo_net::http::Request::get(&format!(
+                    "/api/downloads/history?limit={}&offset={}",
+                    limit_val,
+                    page_val * limit_val
+                ))
+                .send()
+                .await
+                {
+                    if let Ok(data) = resp.json::<DownloadsHistoryResponse>().await {
+                        items_c.set(data.items);
+                        total_c.set(data.total);
+                    }
                 }
-            }
-        });
+            });
+        }
     };
     // Load on mount
     load_history();
     // Re-load whenever page or limit changes
+    let load_history_effect = load_history.clone();
     Effect::new(move |_| {
-        load_history();
+        load_history_effect();
     });
 
     view! {
@@ -137,11 +152,13 @@ pub fn Downloads() -> impl IntoView {
             // Tab content — render only the active tab
             {move || {
                 let tab = active_tab.get();
+                let ad = active_downloads.clone();
+                let hi = history_items.clone();
                 if tab == "active" {
                     view! {
                         <div class="downloads-active">
                             {move || {
-                                let items = ACTIVE_DOWNLOADS.get();
+                                let items = ad.get();
                                 render_active_list(items)
                             }}
                         </div>
@@ -151,7 +168,7 @@ pub fn Downloads() -> impl IntoView {
                     view! {
                         <div class="downloads-history">
                             {move || {
-                                let items = HISTORY_ITEMS.get();
+                                let items = hi.get();
                                 render_history_list(items)
                             }}
                         </div>
@@ -159,20 +176,21 @@ pub fn Downloads() -> impl IntoView {
                     .into_any()
                 }
             }}
-            // Pagination controls (only relevant when history tab is active,
-            // but kept outside the conditional to avoid nested reactive closures)
+            // Pagination controls (outside the conditional to avoid nested
+            // reactive closure disposal issues)
             {move || {
-                let total = HISTORY_TOTAL.get();
-                let limit = history_limit.get();
-                let page = history_page.get();
+                let total: i64 = history_total.get();
+                let limit: i64 = history_limit.get();
+                let page: i64 = history_page.get();
                 if total > 0 {
                     let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
+                    let hp = history_page.clone();
                     view! {
                         <div class="pagination">
                             <button
                                 class="pagination__btn"
                                 disabled=page == 0
-                                on:click=move |_| history_page.update(|p| *p = p.saturating_sub(1))
+                                on:click=move |_| hp.update(|p| *p = p.saturating_sub(1))
                             >
                                 "← Prev"
                             </button>
@@ -182,7 +200,7 @@ pub fn Downloads() -> impl IntoView {
                             <button
                                 class="pagination__btn"
                                 disabled=page >= total_pages - 1
-                                on:click=move |_| history_page.update(|p| *p = p.saturating_add(1))
+                                on:click=move |_| hp.update(|p| *p = p.saturating_add(1))
                             >
                                 "Next →"
                             </button>
