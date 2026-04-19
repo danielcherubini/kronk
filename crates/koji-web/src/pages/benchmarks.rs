@@ -185,11 +185,11 @@ pub fn Benchmarks() -> impl IntoView {
     // Refresh trigger — increment to force a refetch
     let model_refresh = RwSignal::new(0u32);
 
-    // Fetch available models using LocalResource (works in both SSR and CSR).
-    // The /koji/v1/models endpoint returns { "models": [...] }, not a bare array.
-    let _models_resource = LocalResource::new(move || {
-        let _ = model_refresh.get(); // track the signal
-        async move {
+    // Fetch available models on mount. Uses Effect + spawn_local so it runs
+    // reliably after client-side hydration (spawn_local alone is a no-op in SSR).
+    Effect::new(move |_| {
+        let _ = model_refresh.get();
+        spawn_local(async move {
             if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/models").send().await {
                 if let Ok(root) = resp.json::<serde_json::Value>().await {
                     if let Some(models_arr) = root.get("models").and_then(|v| v.as_array()) {
@@ -199,7 +199,7 @@ pub fn Benchmarks() -> impl IntoView {
                     }
                 }
             }
-        }
+        });
     });
 
     // Fetch benchmark history on mount
