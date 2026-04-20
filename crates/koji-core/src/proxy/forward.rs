@@ -346,7 +346,11 @@ pub async fn forward_request(
                                         if ch == '\n' {
                                             let line = line_buf.clone();
                                             line_buf.clear();
-                                            process_sse_line(&line, model_name.as_deref(), &mut out);
+                                            process_sse_line(
+                                                &line,
+                                                model_name.as_deref(),
+                                                &mut out,
+                                            );
                                         }
                                     }
 
