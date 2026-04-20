@@ -41,6 +41,32 @@ pub struct CheckResponse {
     pub message: String,
 }
 
+/// Request body for POST /api/updates/apply/model/:id.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelUpdateRequest {
+    pub quants: Vec<String>, // Quant keys like "Q4_K_M", "Q8_0"
+}
+
+/// Response body for POST /api/updates/apply/model/:id.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelUpdateResponse {
+    pub job_ids: Vec<String>,
+    pub total: usize,
+}
+
+/// Internal helper for parsing per-quant detail objects from `details_json`.
+/// The frontend parses `details_json` directly; this struct exists so the
+/// API layer can extract quant-level data when needed (e.g. for logging).
+#[derive(Debug, Clone, Deserialize)]
+pub struct QuantDetailJson {
+    pub quant_name: Option<String>,
+    pub filename: String,
+    pub current_hash: Option<String>,
+    pub latest_hash: Option<String>,
+    pub update_available: bool,
+    pub status: String,
+}
+
 /// GET /api/updates - Returns cached results from DB
 pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
@@ -62,12 +88,26 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
             for r in records {
                 let details: Option<serde_json::Value> =
                     r.details_json.and_then(|j| serde_json::from_str(&j).ok());
+
                 // Extract repo_id from details JSON if present (for models)
                 let repo_id = details
                     .as_ref()
                     .and_then(|d| d.get("repo_id"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
+
+                // Parse per-quant details from details_json (internal use only;
+                // frontend parses details_json directly).
+                let _quants: Vec<QuantDetailJson> = details
+                    .as_ref()
+                    .and_then(|d| d.get("quants"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|q| serde_json::from_value(q.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 // For models, look up display_name from the model config table.
                 // item_id for models is the integer model ID as a string.
                 let display_name = if r.item_type == "model" {
@@ -417,10 +457,13 @@ pub async fn apply_backend_update(
     Json(serde_json::json!({ "job_id": job.id.to_string(), "kind": "update" })).into_response()
 }
 
-/// POST /api/updates/apply/model/:id - Trigger model re-pull (resolve model ID to repo_id, then trigger re-pull)
+/// POST /api/updates/apply/model/:id - Enqueue selected quants through the download queue.
+///
+/// Accepts `{ "quants": ["Q4_K_M", "Q8_0"] }` and returns immediately with job IDs.
 pub async fn apply_model_update(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    Json(req): Json<ModelUpdateRequest>,
 ) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -433,22 +476,33 @@ pub async fn apply_model_update(
         }
     };
 
+    // 1. Resolve model: get repo_id and model files for requested quant keys
+    let req_quants = req.quants.clone();
     let res_result = tokio::task::spawn_blocking({
         let config_dir = config_dir.clone();
-        move || -> anyhow::Result<(i64, String, std::path::PathBuf)> {
+        move || -> anyhow::Result<(String, Vec<(String, String)>)> {
             let open = koji_core::db::open(&config_dir)?;
             let model_record = koji_core::db::queries::get_model_config(&open.conn, id)?
                 .ok_or_else(|| anyhow::anyhow!("Model not found"))?;
             let repo_id = model_record.repo_id;
-            let model_id = model_record.id;
-            let cfg = koji_core::config::Config::load_from(&config_dir)?;
-            let models_dir = cfg.models_dir()?;
-            Ok((model_id, repo_id, models_dir))
+
+            // Get model files for this model
+            let model_files = koji_core::db::queries::get_model_files(&open.conn, id)?;
+
+            // Filter to only the requested quant keys (where quant column matches).
+            // Skip files with NULL/None quant — they won't match any requested key.
+            let files_to_update: Vec<(String, String)> = model_files
+                .into_iter()
+                .filter(|f| f.quant.as_ref().is_some_and(|q| req_quants.contains(q)))
+                .map(|f| (f.quant.clone().unwrap_or_default(), f.filename))
+                .collect();
+
+            Ok((repo_id, files_to_update))
         }
     })
     .await;
 
-    let (model_id, repo_id, models_dir) = match res_result {
+    let (repo_id, files_to_update) = match res_result {
         Ok(Ok(val)) => val,
         Ok(Err(e)) => {
             return (
@@ -460,81 +514,116 @@ pub async fn apply_model_update(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
+                Json(serde_json::json!({ "error": format!("Join error: {}", e) })),
             )
                 .into_response()
         }
     };
 
-    match koji_core::models::pull::list_gguf_files(&repo_id).await {
-        Ok(listing) => {
-            if let Some(gguf) = listing.files.first() {
-                let filename = gguf.filename.clone();
+    // 2. Validate: ensure all requested quants exist for this model
+    let valid_keys: std::collections::HashSet<&str> =
+        files_to_update.iter().map(|(k, _)| k.as_str()).collect();
+    let invalid_quants: Vec<String> = req
+        .quants
+        .iter()
+        .filter(|q| !valid_keys.contains(q.as_str()))
+        .cloned()
+        .collect();
 
-                let download_result = koji_core::models::pull::download_gguf_with_progress(
-                    &repo_id,
-                    &filename,
-                    &models_dir,
-                    None,
+    if !invalid_quants.is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({
+                "error": "Invalid quant keys",
+                "invalid_quants": invalid_quants
+            })),
+        )
+            .into_response();
+    }
+
+    // 3. Deduplicate within this request (avoid double-enqueue if same filename appears twice)
+    let mut seen_filenames = std::collections::HashSet::new();
+    let unique_files: Vec<(String, String)> = files_to_update
+        .into_iter()
+        .filter(|(_, fn_)| seen_filenames.insert(fn_.clone()))
+        .collect();
+
+    // 4. Pre-check for duplicate enqueues and enqueue each quant
+    let svc = match state.download_queue.as_ref() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "Download queue not configured" })),
+            )
+                .into_response()
+        }
+    };
+
+    // Phase 1: Preflight — check all items for duplicates before creating any jobs.
+    // This is read-only and returns early on the first conflict or error.
+    let conn = match svc.open_conn() {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Queue check failed: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    for (quant_key, filename) in &unique_files {
+        match koji_core::db::queries::get_active_item_by_repo_filename(&conn, &repo_id, filename) {
+            Ok(Some(existing)) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": format!("Download already in progress for quant '{}' ({})", quant_key, filename),
+                        "existing_job_id": existing.job_id
+                    })),
                 )
-                .await;
-
-                match download_result {
-                    Ok(result) => {
-                        let db_res = tokio::task::spawn_blocking({
-                            let config_dir = config_dir.clone();
-                            let repo_id = repo_id.clone();
-                            let commit_sha = listing.commit_sha.clone();
-                            move || -> anyhow::Result<()> {
-                                let open = koji_core::db::open(&config_dir)?;
-                                koji_core::db::queries::upsert_model_pull(
-                                    &open.conn,
-                                    model_id,
-                                    &repo_id,
-                                    &commit_sha,
-                                )?;
-                                Ok(())
-                            }
-                        })
-                        .await;
-
-                        match db_res {
-                            Ok(Ok(_)) => Json(serde_json::json!({
-                                "ok": true,
-                                "repo_id": repo_id,
-                                "commit_sha": listing.commit_sha,
-                                "path": result.path.to_string_lossy()
-                            })).into_response(),
-                            Ok(Err(e)) => (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({ "error": format!("DB update failed: {}", e) })),
-                            ).into_response(),
-                            Err(e) => (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({ "error": format!("Join error: {}", e) })),
-                            ).into_response(),
-                        }
-                    }
-                    Err(e) => (
-                        StatusCode::BAD_GATEWAY,
-                        Json(serde_json::json!({ "error": format!("Failed to download: {}", e) })),
-                    )
-                        .into_response(),
-                }
-            } else {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": "No GGUF files found in repository" })),
+                    .into_response();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("Queue check failed for '{}': {}", filename, e)
+                    })),
                 )
-                    .into_response()
+                    .into_response();
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": format!("Failed to fetch updates: {}", e) })),
-        )
-            .into_response(),
     }
+
+    // Phase 2: All preflight checks passed — generate job IDs and enqueue.
+    let mut job_ids = Vec::new();
+    for (quant_key, filename) in &unique_files {
+        let job_id = uuid::Uuid::new_v4().to_string();
+
+        if let Err(e) = svc.enqueue(
+            &job_id,
+            &repo_id,
+            filename,
+            Some(quant_key.as_str()),
+            "model",
+            Some(quant_key.as_str()),
+            None,
+        ) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+
+        job_ids.push(job_id);
+    }
+
+    let total = job_ids.len();
+    Json(ModelUpdateResponse { job_ids, total }).into_response()
 }
 
 #[cfg(test)]

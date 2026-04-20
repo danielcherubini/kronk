@@ -8,10 +8,75 @@ use crate::db::queries::{
     get_active_backend, get_all_model_configs, get_all_update_checks, get_model_pull,
     get_oldest_check_time,
 };
-use crate::models::{
-    pull,
-    update::{compare_files, FileStatus},
-};
+use crate::models::pull;
+use crate::models::pull::BlobInfo;
+use crate::models::update::FileStatus;
+
+/// Cache entry: (commit_sha, files, epoch_timestamp)
+type CacheEntry = (String, Vec<crate::models::pull::RemoteGguf>, i64);
+
+/// In-memory LRU cache for HuggingFace GGUF file listings.
+/// Reduces API calls by caching (commit_sha, files) per repo_id for 5 minutes.
+pub struct GgufListingCache {
+    cache: std::sync::Arc<tokio::sync::Mutex<lru::LruCache<String, CacheEntry>>>,
+}
+
+impl Clone for GgufListingCache {
+    fn clone(&self) -> Self {
+        Self {
+            cache: std::sync::Arc::clone(&self.cache),
+        }
+    }
+}
+
+impl GgufListingCache {
+    const TTL_SECS: i64 = 300; // 5 minutes
+    const CAPACITY: usize = 64;
+
+    pub fn new() -> Self {
+        Self {
+            cache: std::sync::Arc::new(tokio::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(Self::CAPACITY).unwrap(),
+            ))),
+        }
+    }
+
+    /// Get a cached entry if it exists and is fresh (within TTL).
+    pub async fn get(
+        &self,
+        repo_id: &str,
+    ) -> Option<(String, Vec<crate::models::pull::RemoteGguf>)> {
+        let now = chrono::Utc::now().timestamp();
+        let mut cache = self.cache.lock().await;
+        if let Some(entry) = cache.get(repo_id) {
+            let (sha, files, epoch) = entry;
+            if now - *epoch < Self::TTL_SECS {
+                return Some((sha.clone(), files.clone()));
+            }
+            // Stale — remove it so the next call fetches fresh data
+            cache.pop(repo_id);
+        }
+        None
+    }
+
+    /// Store a result in the cache with the current timestamp.
+    pub async fn insert(
+        &self,
+        repo_id: String,
+        commit_sha: String,
+        files: Vec<crate::models::pull::RemoteGguf>,
+    ) {
+        let now = chrono::Utc::now().timestamp();
+        let mut cache = self.cache.lock().await;
+        cache.put(repo_id, (commit_sha, files, now));
+    }
+}
+
+impl Default for GgufListingCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Shared state for the update checker. Uses Arc<Mutex<()>> as a binary semaphore
 /// to ensure that only one update check run occurs at any given time across the system.
@@ -20,6 +85,8 @@ use crate::models::{
 pub struct UpdateChecker {
     /// Mutex used as a synchronization primitive to prevent concurrent check runs.
     lock: Arc<Mutex<()>>,
+    /// In-memory LRU cache for remote GGUF listings.
+    gguf_listing_cache: GgufListingCache,
 }
 
 /// Results from an initial sync of backends and models to check for updates.
@@ -29,6 +96,7 @@ impl UpdateChecker {
     pub fn new() -> Self {
         Self {
             lock: Arc::new(Mutex::new(())),
+            gguf_listing_cache: GgufListingCache::new(),
         }
     }
 
@@ -230,24 +298,30 @@ impl UpdateChecker {
         };
 
         // Phase 2 — ASYNC: fetch remote state (conn not referenced after this point)
-        let remote_listing = match pull::list_gguf_files(repo_id).await {
-            Ok(l) => l,
-            Err(e) => {
-                self.save_check_result(
-                    config_dir,
-                    "model",
-                    &model_id.to_string(),
-                    Some(&pull_record.commit_sha),
-                    None,
-                    false,
-                    "error",
-                    Some(&e.to_string()),
-                    None,
-                )
-                .await?;
-                return Ok(());
+        // Check cache before making network call to list_gguf_files
+        let remote_listing = match self.gguf_listing_cache.get(repo_id).await {
+            Some((cached_sha, cached_files)) => {
+                tracing::debug!("GGUF listing cache hit for '{}'", repo_id);
+                // Use cached file list — no extra fetch needed; LFS hashes don't change for the same commit
+                crate::models::pull::RepoGgufListing {
+                    repo_id: repo_id.to_string(),
+                    commit_sha: cached_sha,
+                    files: cached_files,
+                }
             }
+            None => pull::list_gguf_files(repo_id).await?,
         };
+
+        // After successful fetch, store in cache (only if not already cached)
+        if self.gguf_listing_cache.get(repo_id).await.is_none() {
+            self.gguf_listing_cache
+                .insert(
+                    repo_id.to_string(),
+                    remote_listing.commit_sha.clone(),
+                    remote_listing.files.clone(),
+                )
+                .await;
+        }
 
         // Tier 1 — quick check: commit SHA match?
         if remote_listing.commit_sha == pull_record.commit_sha {
@@ -289,40 +363,85 @@ impl UpdateChecker {
             }
         };
 
-        // Phase 3 — PURE: compare local vs remote (testable, no I/O)
-        let file_updates = compare_files(&file_records, &remote_blobs);
+        // Phase 3 — PURE: per-quant comparison (testable, no I/O)
+        // Build a map of remote blobs by filename for quick lookup
+        let remote_map: std::collections::HashMap<&str, &BlobInfo> =
+            remote_blobs.iter().map(|(k, v)| (k.as_str(), v)).collect();
 
-        let has_unknown = file_updates
-            .iter()
-            .any(|f| matches!(f.status, FileStatus::Unknown));
+        // Track which local filenames we've seen for new-quant detection
+        let mut local_filenames: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut quants_array: Vec<serde_json::Value> = Vec::new();
+        let mut any_update_available = false;
 
-        let has_changes = file_updates
-            .iter()
-            .any(|f| matches!(f.status, FileStatus::Changed { .. } | FileStatus::NewRemote));
+        // Iterate each local file record and compare against remote
+        for local in &file_records {
+            local_filenames.insert(local.filename.as_str());
 
-        let (update_available, status, error_message) = if has_unknown {
-            (
-                false,
-                "verification_failed",
-                Some("No stored hashes — run `model update --refresh`"),
-            )
-        } else if has_changes {
-            (true, "update_available", None)
+            match remote_map.get(local.filename.as_str()) {
+                Some(remote) => {
+                    let current_hash = local.lfs_oid.clone();
+                    let latest_hash = remote.lfs_sha256.clone();
+
+                    let (update_available, status_val) = match (&current_hash, &latest_hash) {
+                        (Some(c), Some(l)) if c == l => (false, "up_to_date"),
+                        (Some(_), Some(_)) => (true, "update_available"),
+                        (None, _) => (false, "no_hash"),
+                        (Some(_), None) => (false, "removed_from_remote"),
+                    };
+
+                    if update_available {
+                        any_update_available = true;
+                    }
+
+                    quants_array.push(serde_json::json!({
+                        "quant_name": local.quant,
+                        "filename": local.filename,
+                        "current_hash": current_hash,
+                        "latest_hash": latest_hash,
+                        "update_available": update_available,
+                        "status": status_val,
+                    }));
+                }
+                None => {
+                    // File no longer exists on remote
+                    quants_array.push(serde_json::json!({
+                        "quant_name": local.quant,
+                        "filename": local.filename,
+                        "current_hash": local.lfs_oid.clone(),
+                        "latest_hash": null,
+                        "update_available": false,
+                        "status": "removed_from_remote",
+                    }));
+                }
+            }
+        }
+
+        // Check for new quants: remote files not in local records
+        for (filename, remote) in &remote_blobs {
+            if !local_filenames.contains(filename.as_str()) {
+                any_update_available = true;
+                quants_array.push(serde_json::json!({
+                    "quant_name": None::<String>,
+                    "filename": filename,
+                    "current_hash": null,
+                    "latest_hash": remote.lfs_sha256.clone(),
+                    "update_available": true,
+                    "status": "new_quant",
+                }));
+            }
+        }
+
+        // Determine overall status from quant-level results
+        let (update_available, status) = if any_update_available {
+            (true, "update_available")
         } else {
-            (false, "up_to_date", None)
+            (false, "up_to_date")
         };
 
         let details_json = serde_json::json!({
             "repo_id": remote_listing.repo_id,
             "commit_sha": remote_listing.commit_sha,
-            "file_count": file_updates.len(),
-            "files": file_updates.iter().map(|f| {
-                serde_json::json!({
-                    "filename": f.filename,
-                    "status": format!("{:?}", f.status),
-                    "quant": f.quant,
-                })
-            }).collect::<Vec<_>>(),
+            "quants": quants_array,
         })
         .to_string();
 
@@ -334,7 +453,7 @@ impl UpdateChecker {
             Some(&remote_listing.commit_sha),
             update_available,
             status,
-            error_message,
+            None,
             Some(&details_json),
         )
         .await
@@ -631,5 +750,23 @@ mod tests {
         // Both should be usable independently
         let _ = checker1;
         let _ = checker2;
+    }
+
+    // ── GgufListingCache tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_gguf_listing_cache_new() {
+        let cache = GgufListingCache::new();
+        // Just verify it constructs without panicking
+        let _ = cache;
+    }
+
+    #[test]
+    fn test_gguf_listing_cache_clone() {
+        let cache1 = GgufListingCache::new();
+        let cache2 = cache1.clone();
+        // Both should be usable independently
+        let _ = cache1;
+        let _ = cache2;
     }
 }

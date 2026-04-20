@@ -4,7 +4,7 @@
 //! All functions are synchronous (no async).
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// A row from the download_queue table.
 #[derive(Debug, Clone)]
@@ -313,6 +313,26 @@ pub fn mark_stale_running_as_queued(conn: &Connection) -> Result<()> {
         [],
     )?;
     Ok(())
+}
+
+/// Check if there's an active download (queued/running/verifying) for this repo_id + filename.
+pub fn get_active_item_by_repo_filename(
+    conn: &Connection,
+    repo_id: &str,
+    filename: &str,
+) -> Result<Option<DownloadQueueItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, repo_id, filename, display_name, status, \
+                bytes_downloaded, total_bytes, error_message, started_at, \
+                completed_at, queued_at, kind, quant, context_length \
+         FROM download_queue \
+         WHERE repo_id = ?1 AND filename = ?2 AND status IN ('queued', 'running', 'verifying') \
+         LIMIT 1",
+    )?;
+    let item = stmt
+        .query_row((repo_id, filename), map_queue_item)
+        .optional()?;
+    Ok(item)
 }
 
 #[cfg(test)]
