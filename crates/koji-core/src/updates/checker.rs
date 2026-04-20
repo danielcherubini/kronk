@@ -73,6 +73,12 @@ impl GgufListingCache {
     }
 }
 
+impl Default for GgufListingCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Shared state for the update checker. Uses Arc<Mutex<()>> as a binary semaphore
 /// to ensure that only one update check run occurs at any given time across the system.
 /// Locking this guard serializes checks without needing to protect specific shared data.
