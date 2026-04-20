@@ -247,9 +247,6 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
                     .or(c.model.default_context_length)
             })
         };
-        let context_length =
-            context_length.map(|ctx| ctx.saturating_mul(cfg.num_parallel.unwrap_or(1)));
-
         let modalities = cfg.modalities.as_ref().map(|m| {
             serde_json::json!({
                 "input": m.input,
