@@ -430,11 +430,7 @@ pub async fn handle_forward_get(
 
     // GET requests don't have a model field — forward to any available server
     let models = state.models.read().await;
-    let server_name = models
-        .keys()
-        .next()
-        .cloned()
-        .unwrap_or_else(|| String::new());
+    let server_name = models.keys().next().cloned().unwrap_or_else(String::new);
     drop(models);
 
     if server_name.is_empty() {
@@ -627,10 +623,9 @@ mod tests {
     // ── handle_forward_post tests ───────────────────────────────────────────
 
     fn create_forward_post_request(body: &[u8]) -> Request<Body> {
-        let req = Request::post("/v1/chat/completions")
+        Request::post("/v1/chat/completions")
             .body(Body::from(body.to_vec()))
-            .unwrap();
-        req
+            .unwrap()
     }
 
     #[tokio::test]
@@ -751,8 +746,7 @@ mod tests {
     // ── handle_forward_get tests ──────────────────────────────────────────────
 
     fn create_forward_get_request() -> Request<Body> {
-        let req = Request::get("/v1/models").body(Body::empty()).unwrap();
-        req
+        Request::get("/v1/models").body(Body::empty()).unwrap()
     }
 
     #[tokio::test]
