@@ -281,7 +281,7 @@ mod tests {
             Ok(Self {
                 addr,
                 _request_count: request_count,
-                success_after,
+                _success_after: success_after,
             })
         }
 
