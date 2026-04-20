@@ -669,7 +669,7 @@ log_level = "info"
 
         for entry_result in archive.entries().unwrap() {
             let mut entry = entry_result.unwrap();
-            let path = entry.path().unwrap().to_owned();
+            let path = entry.path().unwrap().into_owned();
             let path_str = path.to_string_lossy().to_string();
 
             if path_str == "manifest.json" {
@@ -708,7 +708,7 @@ log_level = "info"
             header.set_cksum();
 
             let mut reader = BufReader::new(file);
-            tar_builder.append(&mut header, &mut reader).unwrap();
+            tar_builder.append(&header, &mut reader).unwrap();
         }
 
         tar_builder.into_inner().unwrap().finish().unwrap();

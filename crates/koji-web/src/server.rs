@@ -367,41 +367,46 @@ pub async fn run_with_opts(
 /// - Releases job manager active slots (SSE channels close when jobs are dropped)
 async fn shutdown_signal(jobs: Option<Arc<JobManager>>) {
     // Wait for either SIGINT or SIGTERM
-    let sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
-    let sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+    #[cfg(unix)]
+    {
+        let sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
+        let sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
 
-    match (sig_int, sig_term) {
-        (Ok(mut int_signal), Ok(mut term_signal)) => {
-            // Use select! to wait for either signal
-            tokio::select! {
-                _ = int_signal.recv() => {
-                    tracing::info!("Received SIGINT, shutting down gracefully...");
-                }
-                _ = term_signal.recv() => {
-                    tracing::info!("Received SIGTERM, shutting down gracefully...");
+        match (sig_int, sig_term) {
+            (Ok(mut int_signal), Ok(mut term_signal)) => {
+                // Use select! to wait for either signal
+                tokio::select! {
+                    _ = int_signal.recv() => {
+                        tracing::info!("Received SIGINT, shutting down gracefully...");
+                    }
+                    _ = term_signal.recv() => {
+                        tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    }
                 }
             }
+            (Err(_), Ok(mut term_signal)) => {
+                tracing::warn!("Unix signals not available, waiting for SIGTERM");
+                let _ = term_signal.recv().await;
+                tracing::info!("Received SIGTERM, shutting down gracefully...");
+            }
+            (Ok(mut int_signal), Err(_)) => {
+                tracing::warn!("Unix signals not available, waiting for SIGINT");
+                let _ = int_signal.recv().await;
+                tracing::info!("Received SIGINT, shutting down gracefully...");
+            }
+            (Err(_), Err(_)) => {
+                tracing::warn!("Unix signals not available, using ctrl_c fallback");
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Received interrupt, shutting down gracefully...");
+            }
         }
-        (Err(_), Ok(mut term_signal)) => {
-            // Unix signal not available (maybe Windows or other platform)
-            tracing::warn!("Unix signals not available, waiting for SIGTERM");
-            let _ = term_signal.recv().await;
-            tracing::info!("Received SIGTERM, shutting down gracefully...");
-        }
-        (Ok(mut int_signal), Err(_)) => {
-            // Unix signal not available
-            tracing::warn!("Unix signals not available, waiting for SIGINT");
-            let _ = int_signal.recv().await;
-            tracing::info!("Received SIGINT, shutting down gracefully...");
-        }
-        (Err(_), Err(_)) => {
-            // Neither signal type is available
-            tracing::warn!("Unix signals not available, waiting for shutdown");
-            // On non-Unix platforms, we can't do graceful shutdown via signals,
-            // so just wait indefinitely (serve will handle Ctrl+C itself)
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("Received interrupt, shutting down gracefully...");
-        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, use ctrl_c for graceful shutdown
+        tracing::info!("Using Ctrl+C for graceful shutdown on this platform");
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("Received interrupt, shutting down gracefully...");
     }
 
     // Cleanup: kill all child processes for active jobs

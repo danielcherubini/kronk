@@ -16,8 +16,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 - **Total Plans**: 68
 - **Completed**: 66 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 1 📋
+- **In Progress**: 1 🚧
+- **Remaining**: 0 📋
 
 > **Note**: The Koji Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -130,7 +130,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Test Coverage Improvements](2026-04-18-core-test-coverage.md) | Add 98 unit tests across workspace — proxy, lifecycle, downloads, updates, API DTOs, CLI handlers | #63 `7180eb6` ✅ COMPLETED |
 | [Code Quality Improvements](2026-03-25-code-quality-improvements.md) | Dead code cleanup, unused imports, formatting | `a93e639`, `423ec0b` |
 | [Fix Download Progress Bar](2026-03-27-fix-download-progress-bar.md) | Content-Length parsing, finish_and_clear fixes | `bc35068`, `bd9ea75`, `f052bba` |
-| [Fix Review Bugs](2026-04-20-fix-review-bugs.md) | Fix 40+ bugs from comprehensive code review: security vulnerabilities, data integrity, reactivity bugs, concurrency issues | 📋 DRAFT |
+| [Fix Review Bugs](2026-04-20-fix-review-bugs.md) | Fix 40+ bugs from comprehensive code review: security vulnerabilities, data integrity, reactivity bugs, concurrency issues | #67 |
 
 ### Discovery & Integration
 
