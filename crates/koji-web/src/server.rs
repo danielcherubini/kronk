@@ -10,7 +10,7 @@ use axum::{
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
+use tower_http::{catch_panic::CatchPanicLayer, cors::CorsLayer};
 
 use crate::api;
 use crate::api::backends::{
@@ -23,7 +23,6 @@ use crate::api::benchmarks::{
     benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history, run_benchmark,
 };
 use crate::jobs::JobManager;
-
 #[allow(unused_imports)]
 use koji_core::proxy::download_queue::DownloadQueueService;
 
@@ -105,9 +104,16 @@ async fn proxy_koji(
 
     let url = format!("{}/koji/v1/{}", state.proxy_base_url, path.0);
     // Cap at 16 MiB — same as MAX_REQUEST_BODY_SIZE in koji-core — to prevent memory exhaustion.
-    let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    let body_bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {e}"),
+            )
+                .into_response();
+        }
+    };
 
     let mut req = state.client.request(method, &url);
     for (k, v) in &headers {
@@ -315,6 +321,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/*path",
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
         )
+        .layer(CatchPanicLayer::new())
         .with_state(state)
 }
 
@@ -344,11 +351,66 @@ pub async fn run_with_opts(
         upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         download_queue,
     });
+    let jobs_for_shutdown = state.jobs.clone();
     let app = build_router(state);
     tracing::info!("Koji web UI listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(jobs_for_shutdown))
+        .await?;
     Ok(())
+}
+
+/// Graceful shutdown signal handler.
+/// Listens for SIGINT/SIGTERM and triggers cleanup:
+/// - Kills all child processes
+/// - Releases job manager active slots (SSE channels close when jobs are dropped)
+async fn shutdown_signal(jobs: Option<Arc<JobManager>>) {
+    // Wait for either SIGINT or SIGTERM
+    let sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
+    let sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+
+    match (sig_int, sig_term) {
+        (Ok(mut int_signal), Ok(mut term_signal)) => {
+            // Use select! to wait for either signal
+            tokio::select! {
+                _ = int_signal.recv() => {
+                    tracing::info!("Received SIGINT, shutting down gracefully...");
+                }
+                _ = term_signal.recv() => {
+                    tracing::info!("Received SIGTERM, shutting down gracefully...");
+                }
+            }
+        }
+        (Err(_), Ok(mut term_signal)) => {
+            // Unix signal not available (maybe Windows or other platform)
+            tracing::warn!("Unix signals not available, waiting for SIGTERM");
+            let _ = term_signal.recv().await;
+            tracing::info!("Received SIGTERM, shutting down gracefully...");
+        }
+        (Ok(mut int_signal), Err(_)) => {
+            // Unix signal not available
+            tracing::warn!("Unix signals not available, waiting for SIGINT");
+            let _ = int_signal.recv().await;
+            tracing::info!("Received SIGINT, shutting down gracefully...");
+        }
+        (Err(_), Err(_)) => {
+            // Neither signal type is available
+            tracing::warn!("Unix signals not available, waiting for shutdown");
+            // On non-Unix platforms, we can't do graceful shutdown via signals,
+            // so just wait indefinitely (serve will handle Ctrl+C itself)
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received interrupt, shutting down gracefully...");
+        }
+    }
+
+    // Cleanup: kill all child processes for active jobs
+    if let Some(jobs) = jobs {
+        if let Some(active_job) = jobs.active().await {
+            tracing::info!("Killing children of active job {}...", active_job.id);
+            jobs.kill_children(&active_job).await;
+        }
+    }
 }
 
 /// Convenience wrapper with no logs_dir/config_path.

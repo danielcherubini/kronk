@@ -23,6 +23,23 @@ use leptos_router::{
 use std::sync::atomic::{AtomicU64, Ordering};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::JsValue;
+
+/// Log an error to the browser console (WASM-safe, no tracing dependency).
+fn log_error(msg: &str) {
+    web_sys::console::error_1(&JsValue::from_str(msg));
+}
+
+/// Log an info message to the browser console (WASM-safe).
+fn log_info(msg: &str) {
+    web_sys::console::log_1(&JsValue::from_str(msg));
+}
+
+/// Log a warning to the browser console (WASM-safe).
+fn log_warn(msg: &str) {
+    web_sys::console::warn_1(&JsValue::from_str(msg));
+}
+
 mod components;
 pub mod constants;
 mod pages;
@@ -58,9 +75,58 @@ fn should_process_progress_event() -> bool {
 pub fn App() -> impl IntoView {
     let toast_store = ToastStore::global();
 
-    // Open SSE connection on app mount to receive download events
-    let es =
-        web_sys::EventSource::new("/api/downloads/events").expect("Failed to create EventSource");
+    // Track SSE connectivity state for offline indicator.
+    // `true` = connected, `false` = offline/error.
+    let sse_connected = RwSignal::new(true);
+
+    // Open SSE connection on app mount to receive download events.
+    // Handle creation failure gracefully — show offline indicator and retry periodically.
+    let es_result = web_sys::EventSource::new("/api/downloads/events");
+    let es = match es_result {
+        Ok(es) => es,
+        Err(err) => {
+            sse_connected.set(false);
+            let err_msg = err
+                .as_string()
+                .unwrap_or_else(|| "unknown error".to_string());
+            log_error(&format!(
+                "Failed to create EventSource for download events: {err_msg}. Showing offline indicator."
+            ));
+            // Retry periodically in the background every 5 seconds.
+            let retry_url = "/api/downloads/events".to_string();
+            wasm_bindgen_futures::spawn_local(async move {
+                let mut attempt = 0u32;
+                loop {
+                    gloo_timers::future::TimeoutFuture::new(5_000).await;
+                    attempt += 1;
+                    match web_sys::EventSource::new(&retry_url) {
+                        Ok(_new_es) => {
+                            log_info(&format!(
+                                "EventSource reconnected successfully after {attempt} attempts"
+                            ));
+                            sse_connected.set(true);
+                            break;
+                        }
+                        Err(e) => {
+                            let e_msg =
+                                e.as_string().unwrap_or_else(|| "unknown error".to_string());
+                            log_warn(&format!(
+                                "EventSource reconnect attempt {attempt} failed: {e_msg}"
+                            ));
+                        }
+                    }
+                }
+            });
+            // Create a minimal stub EventSource so the rest of the app doesn't panic.
+            // We use about:blank which will immediately error, but that's acceptable
+            // since we won't attach meaningful listeners to it.
+            web_sys::EventSource::new("about:blank").unwrap_or_else(|_| {
+                // If even about:blank fails (extremely unlikely), create a raw stub.
+                // This is a last-resort fallback — the app UI continues rendering.
+                unsafe { std::mem::zeroed() }
+            })
+        }
+    };
 
     for event_name in [
         "Started",
@@ -189,6 +255,11 @@ pub fn App() -> impl IntoView {
         <Router>
             <components::sidebar::Sidebar />
             <main>
+                <Show when=move || !sse_connected.get()>
+                    <div style="background-color: #fef3c7; color: #92400e; padding: 8px 16px; text-align: center; font-size: 14px;">
+                        "⚠ Download events unavailable — checking connection..."
+                    </div>
+                </Show>
                 <Routes fallback=|| "Page not found">
                     <Route path=path!("/") view=pages::dashboard::Dashboard />
                     <Route path=path!("/models") view=pages::models::Models />

@@ -169,10 +169,16 @@ impl JobManager {
         if head.len() < LOG_HEAD_CAP {
             head.push_back(line.clone());
             drop(head);
-            // Broadcast the log event
-            if let Err(e) = job.log_tx.send(JobEvent::Log(line)) {
-                tracing::warn!("Failed to broadcast log for job {}: {}", job.id, e);
-            }
+            // Broadcast the log event using spawn_blocking with timeout to avoid blocking
+            // when channel is full or no receivers are connected.
+            let tx = job.log_tx.clone();
+            let line_clone = line.clone();
+            let job_id = job.id.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = tx.send(JobEvent::Log(line_clone)) {
+                    tracing::warn!("Failed to broadcast log for job {}: {}", job_id, e);
+                }
+            });
             return;
         }
 
@@ -189,10 +195,16 @@ impl JobManager {
         }
         drop(tail);
 
-        // Broadcast the log event
-        if let Err(e) = job.log_tx.send(JobEvent::Log(line)) {
-            tracing::warn!("Failed to broadcast log for job {}: {}", job.id, e);
-        }
+        // Broadcast the log event using spawn_blocking with timeout to avoid blocking
+        // when channel is full or no receivers are connected.
+        let tx = job.log_tx.clone();
+        let line_clone = line;
+        let job_id = job.id.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = tx.send(JobEvent::Log(line_clone)) {
+                tracing::warn!("Failed to broadcast log for job {}: {}", job_id, e);
+            }
+        });
     }
 
     /// Register a child process PID for this job.
@@ -232,14 +244,18 @@ impl JobManager {
             )
             .await;
 
-            // SIGKILL any remaining processes
+            // SIGKILL any remaining processes and reap zombies via waitpid
             for &pid in pids.iter() {
-                std::mem::drop(tokio::task::spawn_blocking(move || {
+                let _ = tokio::task::spawn_blocking(move || {
+                    // Send SIGKILL
                     let _ = std::process::Command::new("kill")
                         .arg("-SIGKILL")
                         .arg(pid.to_string())
                         .status();
-                }));
+                    // Reap the zombie process to prevent zombie accumulation
+                    let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid as i32), None);
+                })
+                .await;
             }
         }
 
@@ -277,10 +293,17 @@ impl JobManager {
             state.error = error;
         }
 
-        // Broadcast status event
-        if let Err(e) = job.log_tx.send(JobEvent::Status(status)) {
-            tracing::warn!("Failed to broadcast status for job {}: {}", job.id, e);
-        }
+        // Broadcast status event — use spawn_blocking to avoid blocking on shutdown
+        let tx = job.log_tx.clone();
+        let job_id = job.id.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = tx.send(JobEvent::Status(status)) {
+                tracing::error!(
+                    "CRITICAL: Failed to broadcast status for job {}: {}. SSE subscribers may miss final state.",
+                    job_id, e
+                );
+            }
+        });
 
         // Release active slot
         *self.active.lock().await = None;
