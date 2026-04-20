@@ -75,10 +75,14 @@ pub async fn job_events_sse(
 
     let mut rx = job.log_tx.subscribe();
 
-    // Snapshot + subscribe: take both under the same lock to avoid race
-    let (head, tail, dropped, status, _finished_at, error) = {
-        let (state, log_head, log_tail) =
-            tokio::join!(job.state.read(), job.log_head.read(), job.log_tail.read());
+    // Snapshot + subscribe: take everything under overlapping locks to avoid races.
+    let (head, tail, dropped, status, _finished_at, error, stored_result) = {
+        let (state, log_head, log_tail, bench_results) = tokio::join!(
+            job.state.read(),
+            job.log_head.read(),
+            job.log_tail.read(),
+            job.benchmark_results.read()
+        );
         (
             log_head.iter().cloned().collect::<Vec<_>>(),
             log_tail.iter().cloned().collect::<Vec<_>>(),
@@ -86,6 +90,7 @@ pub async fn job_events_sse(
             state.status,
             state.finished_at,
             state.error.clone(),
+            bench_results.clone(),
         )
     };
 
@@ -104,6 +109,12 @@ pub async fn job_events_sse(
         // Replay tail
         for line in tail {
             yield Ok(Event::default().event("log").json_data(json!({ "line": line}))?);
+        }
+
+        // Replay any stored job result (for benchmark jobs — late subscribers).
+        if let Some(ref results_json) = stored_result {
+            yield Ok(Event::default().event("result")
+                .json_data(json!({ "results": results_json}))?);
         }
 
         // Emit final status if terminal
@@ -132,6 +143,10 @@ pub async fn job_events_sse(
                             if s != crate::jobs::JobStatus::Running {
                                 return; // Close on terminal status
                             }
+                        }
+                        Ok(crate::jobs::JobEvent::Result(results_json)) => {
+                            yield Ok(Event::default().event("result")
+                                .json_data(json!({ "results": results_json}))?);
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             // Emit dropped marker

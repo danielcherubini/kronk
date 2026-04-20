@@ -1,50 +1,43 @@
 //! Utility functions for the benchmarks page.
 
-/// Format a Unix timestamp to "YYYY-MM-DD HH:MM" using js_sys (WASM-compatible).
+/// Format a Unix timestamp (seconds since epoch) as a local-time
+/// "YYYY-MM-DD HH:MM" string using `js_sys::Date`.
+///
+/// Previously this rebuilt the date manually with
+/// `Date::new_with_year_month_day`, which always yields midnight local — the
+/// hour/minute fields came out as `00:00` regardless of the input timestamp.
+/// We now construct the `Date` from the full ms-since-epoch so `getHours` /
+/// `getMinutes` reflect the actual moment the benchmark ran.
 pub fn format_timestamp(ts: i64) -> String {
-    // Compute day offset from Unix timestamp (seconds since epoch)
-    let secs = ts as u64;
-    let days_since_epoch = (secs / 60 / 60 / 24) as i64;
-
-    // Compute year, month, day from days since Unix epoch (1970-01-01)
-    let mut days = days_since_epoch;
-    let mut year: i64 = 1970;
-    loop {
-        let ydays = if is_leap_year(year) { 366i64 } else { 365i64 };
-        if days < ydays {
-            break;
-        }
-        days -= ydays;
-        year += 1;
-    }
-    let leap = is_leap_year(year);
-    let month_lengths: [i32; 12] = match leap {
-        true => [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
-        false => [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
-    };
-    let mut month_idx: i32 = 0;
-    for (i, &ml) in month_lengths.iter().enumerate() {
-        if days < ml as i64 {
-            month_idx = i as i32;
-            break;
-        }
-        days -= ml as i64;
-    }
-    let day = (days + 1) as i32;
-
-    // Verify with js_sys Date to handle timezone correctly
-    let date = js_sys::Date::new_with_year_month_day(year as u32, month_idx, day);
-    let month = date.get_month() + 1;
+    let ms = wasm_bindgen::JsValue::from_f64(ts as f64 * 1000.0);
+    let date = js_sys::Date::new(&ms);
     format!(
         "{}-{:02}-{:02} {:02}:{:02}",
         date.get_full_year(),
-        month,
+        date.get_month() + 1,
         date.get_date(),
         date.get_hours(),
         date.get_minutes(),
     )
 }
 
-fn is_leap_year(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+/// Format a Unix timestamp as a short relative "time ago" string (e.g. "5m
+/// ago", "2h ago", "3d ago"). Falls back to the absolute format for anything
+/// older than a week.
+pub fn format_relative(ts: i64) -> String {
+    let now_ms = js_sys::Date::now();
+    let then_ms = ts as f64 * 1000.0;
+    let delta_ms = (now_ms - then_ms).max(0.0);
+    let secs = (delta_ms / 1000.0) as i64;
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else if secs < 7 * 86_400 {
+        format!("{}d ago", secs / 86_400)
+    } else {
+        format_timestamp(ts)
+    }
 }

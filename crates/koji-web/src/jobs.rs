@@ -28,6 +28,8 @@ pub enum JobKind {
 pub enum JobEvent {
     Log(String),
     Status(JobStatus),
+    /// Structured result payload for the job (currently: benchmark results JSON).
+    Result(String),
 }
 
 pub struct JobState {

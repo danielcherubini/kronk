@@ -2032,6 +2032,73 @@ label {
   text-align: center;
 }
 
+.text-right {
+  text-align: right;
+}
+
+/* Benchmark results summary card — a flex-wrap row of label/value pairs
+ * that sits above the results table (model, quant, backend, GPU, VRAM,
+ * batch/µ-batch/KV/depth/flash-attn).
+ */
+.bench-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2rem;
+  padding: 0.75rem 1rem;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+}
+
+.bench-summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.bench-summary__label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bench-summary__value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+/* Benchmark page hint — small muted block of helper text at the top of
+ * a card (e.g. the preset group header).
+ */
+.bench-hint {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+/* Benchmark history rows — clickable to expand a per-run detail panel. */
+.bench-history__row {
+  cursor: pointer;
+}
+.bench-history__row:hover {
+  background-color: var(--bg-tertiary);
+}
+
+/* Expanded detail row sitting underneath a history row. The inner table
+ * inherits the page's .table styles but we pad it and tint the background
+ * so it reads as a secondary panel instead of another striped row. */
+.bench-history__detail > td {
+  padding: 0.5rem 0.75rem 0.75rem 0.5rem;
+  background-color: var(--bg-tertiary);
+}
+.bench-history__detail table {
+  margin-bottom: 0;
+}
+
 .my-3 {
   margin-top: 1rem;
   margin-bottom: 1rem;

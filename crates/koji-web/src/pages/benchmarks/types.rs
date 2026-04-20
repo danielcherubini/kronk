@@ -36,10 +36,20 @@ pub struct HistoryEntry {
     pub results: serde_json::Value,
 }
 
-/// Preset configurations for quick benchmark setup.
+/// Preset configurations — each one maps to a phase in the LLM inference
+/// tuning methodology (see `llm-inference-tuning-methodology.md`). The
+/// presets are ordered so running them top-to-bottom yields the
+/// "measure-one-variable-at-a-time" workflow the methodology advocates:
+///   1. Baseline — know your starting point.
+///   2. Batch sweep — find the PP `-ub` knee (often the biggest single win).
+///   3. KV quant @ depth — two presets (q8_0 / q4_0) so the user re-runs
+///      once with each. Matched pair only; mismatched K/V falls back to CPU
+///      attention and kills perf.
+///   4. Depth validation — lock in the winner, run at real target context.
 #[derive(Debug, Clone)]
 pub struct BenchmarkPreset {
     pub label: &'static str,
+    pub description: &'static str,
     pub pp_sizes: &'static [u32],
     pub tg_sizes: &'static [u32],
     pub runs: u32,
@@ -47,37 +57,90 @@ pub struct BenchmarkPreset {
     pub ngl_range: Option<&'static str>,
     #[allow(dead_code)]
     pub ctx_override: Option<u32>,
+    pub batch_sizes: &'static [u32],
+    pub ubatch_sizes: &'static [u32],
+    pub kv_cache_type: Option<&'static str>,
+    pub depth: &'static [u32],
+    pub flash_attn: Option<bool>,
 }
 
 impl BenchmarkPreset {
     pub fn all() -> Vec<Self> {
         vec![
             Self {
-                label: "Quick",
-                pp_sizes: &[512],
+                label: "1. Baseline",
+                description: "Known-good flags. Record PP and TG as the reference point.",
+                pp_sizes: &[2048],
                 tg_sizes: &[128],
                 runs: 3,
                 threads: None,
-                ngl_range: None,
+                ngl_range: Some("99"),
                 ctx_override: None,
+                batch_sizes: &[],
+                ubatch_sizes: &[],
+                kv_cache_type: None,
+                depth: &[],
+                flash_attn: Some(true),
             },
             Self {
-                label: "VRAM Sweet Spot",
-                pp_sizes: &[512],
+                label: "2. Batch sweep",
+                description: "Sweep -ub to find the PP knee. Pick the smallest -ub at the plateau.",
+                pp_sizes: &[2048],
                 tg_sizes: &[128],
                 runs: 3,
                 threads: None,
-                ngl_range: Some("0-99+1"),
-                ctx_override: Some(4096),
+                ngl_range: Some("99"),
+                ctx_override: None,
+                batch_sizes: &[4096],
+                ubatch_sizes: &[512, 1024, 2048, 4096],
+                kv_cache_type: None,
+                depth: &[],
+                flash_attn: Some(true),
             },
             Self {
-                label: "Thread Scaling",
-                pp_sizes: &[64],
-                tg_sizes: &[16],
+                label: "3a. KV quant (q8_0)",
+                description: "KV quant baseline at depth. Rerun with q4_0 next to compare.",
+                pp_sizes: &[0],
+                tg_sizes: &[128],
                 runs: 3,
-                threads: Some(vec![1, 2, 4, 8, 16, 32]),
-                ngl_range: None,
+                threads: None,
+                ngl_range: Some("99"),
                 ctx_override: None,
+                batch_sizes: &[4096],
+                ubatch_sizes: &[2048],
+                kv_cache_type: Some("q8_0"),
+                depth: &[0, 65536, 131072],
+                flash_attn: Some(true),
+            },
+            Self {
+                label: "3b. KV quant (q4_0)",
+                description: "Half-size KV cache. Usually ties q8_0 at d=0; pulls ahead at 128k+.",
+                pp_sizes: &[0],
+                tg_sizes: &[128],
+                runs: 3,
+                threads: None,
+                ngl_range: Some("99"),
+                ctx_override: None,
+                batch_sizes: &[4096],
+                ubatch_sizes: &[2048],
+                kv_cache_type: Some("q4_0"),
+                depth: &[0, 65536, 131072],
+                flash_attn: Some(true),
+            },
+            Self {
+                label: "4. Depth validation",
+                description: "Lock winning KV config; run at your real target depth. Edit -d.",
+                pp_sizes: &[0],
+                tg_sizes: &[128],
+                runs: 3,
+                threads: None,
+                ngl_range: Some("99"),
+                ctx_override: None,
+                batch_sizes: &[4096],
+                ubatch_sizes: &[2048],
+                kv_cache_type: Some("q8_0"),
+                depth: &[131072],
+                flash_attn: Some(true),
             },
         ]
     }

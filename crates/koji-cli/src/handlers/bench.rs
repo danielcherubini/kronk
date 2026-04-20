@@ -49,6 +49,7 @@ pub async fn cmd_bench(
         runs,
         warmup,
         ctx_override: ctx,
+        ..Default::default()
     };
 
     // Determine which servers to benchmark

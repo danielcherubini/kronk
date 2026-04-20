@@ -15,6 +15,11 @@ struct StatusPayload {
     status: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ResultPayload {
+    results: String,
+}
+
 /// JobLogPanel - subscribes to /api/backends/jobs/:id/events and streams logs.
 #[component]
 #[allow(dead_code)]
@@ -24,6 +29,12 @@ pub fn JobLogPanel(
     /// Called when user clicks Close
     #[prop(optional)]
     on_close: Option<Callback<()>>,
+    /// Called with the JSON string payload when a "result" SSE event arrives.
+    #[prop(optional)]
+    on_result: Option<Callback<String>>,
+    /// Called with the status string on each "status" SSE event.
+    #[prop(optional)]
+    on_status: Option<Callback<String>>,
 ) -> impl IntoView {
     let lines = RwSignal::new(Vec::<String>::new());
     let status = RwSignal::new(String::from("running"));
@@ -73,6 +84,16 @@ pub fn JobLogPanel(
                 }
             };
 
+            let mut result_stream = match es.subscribe("result") {
+                Ok(s) => s,
+                Err(e) => {
+                    connection_error
+                        .set(Some(format!("Failed to subscribe to result events: {e:?}")));
+                    es.close();
+                    return;
+                }
+            };
+
             loop {
                 // Cooperative cancellation: if the component has unmounted,
                 // break out so we can close the EventSource below.
@@ -82,36 +103,48 @@ pub fn JobLogPanel(
 
                 let next_log = log_stream.next();
                 let next_status = status_stream.next();
-                futures_util::pin_mut!(next_log, next_status);
+                let next_result = result_stream.next();
+                futures_util::pin_mut!(next_log, next_status, next_result);
 
-                match futures_util::future::select(next_log, next_status).await {
-                    futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
-                        let data = msg.data().as_string().unwrap_or_default();
-                        if let Ok(payload) = serde_json::from_str::<LogPayload>(&data) {
-                            lines.update(|v| {
-                                v.push(payload.line);
-                                // Keep last 1000 lines in UI
-                                if v.len() > 1000 {
-                                    let drop_count = v.len() - 1000;
-                                    v.drain(0..drop_count);
-                                }
-                            });
+                // Race three streams by selecting the first to resolve.
+                let first = futures_util::future::select(next_log, next_status);
+                match futures_util::future::select(first, next_result).await {
+                    futures_util::future::Either::Left((inner, _)) => match inner {
+                        futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
+                            let data = msg.data().as_string().unwrap_or_default();
+                            if let Ok(payload) = serde_json::from_str::<LogPayload>(&data) {
+                                lines.update(|v| {
+                                    v.push(payload.line);
+                                    if v.len() > 1000 {
+                                        let drop_count = v.len() - 1000;
+                                        v.drain(0..drop_count);
+                                    }
+                                });
+                            }
                         }
-                    }
+                        futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
+                            let data = msg.data().as_string().unwrap_or_default();
+                            if let Ok(payload) = serde_json::from_str::<StatusPayload>(&data) {
+                                status.set(payload.status.clone());
+                                if let Some(cb) = on_status {
+                                    cb.run(payload.status.clone());
+                                }
+                                if payload.status != "running" {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => break,
+                    },
                     futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
                         let data = msg.data().as_string().unwrap_or_default();
-                        if let Ok(payload) = serde_json::from_str::<StatusPayload>(&data) {
-                            status.set(payload.status.clone());
-                            if payload.status != "running" {
-                                // Terminal state - close the stream
-                                break;
+                        if let Ok(payload) = serde_json::from_str::<ResultPayload>(&data) {
+                            if let Some(cb) = on_result {
+                                cb.run(payload.results);
                             }
                         }
                     }
-                    _ => {
-                        // Stream ended
-                        break;
-                    }
+                    _ => break,
                 }
             }
             es.close();

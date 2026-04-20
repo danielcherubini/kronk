@@ -39,6 +39,16 @@ pub struct BenchmarkRunRequest {
     pub ngl_range: Option<String>,
     #[serde(default)]
     pub ctx_override: Option<u32>,
+    #[serde(default)]
+    pub batch_sizes: Vec<u32>,
+    #[serde(default)]
+    pub ubatch_sizes: Vec<u32>,
+    #[serde(default)]
+    pub kv_cache_type: Option<String>,
+    #[serde(default)]
+    pub depth: Vec<u32>,
+    #[serde(default)]
+    pub flash_attn: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,14 +158,20 @@ async fn run_benchmark_inner(
             let job = self.job.clone();
             let data = json.to_string();
             tracing::info!("BenchmarkProgressSink::result called, job_id={}", job.id);
+
+            // Broadcast over the shared job event channel so live SSE
+            // subscribers get the result immediately. Send synchronously —
+            // `broadcast::Sender::send` is non-blocking.
+            if let Err(e) = job.log_tx.send(JobEvent::Result(data.clone())) {
+                tracing::warn!("Failed to broadcast result for job {}: {}", job.id, e);
+            }
+
             tokio::spawn(async move {
-                // Store benchmark results in job state so they're available via API
-                if let Ok(mut results) = job.benchmark_results.try_write() {
-                    *results = Some(data);
-                    tracing::info!("Stored benchmark results in job state");
-                } else {
-                    tracing::warn!("Failed to acquire write lock on benchmark_results");
-                }
+                // Also store in job state so late subscribers can pick it
+                // up on replay and the REST endpoint can return it.
+                let mut results = job.benchmark_results.write().await;
+                *results = Some(data);
+                tracing::info!("Stored benchmark results in job state");
             });
         }
     }
@@ -174,6 +190,11 @@ async fn run_benchmark_inner(
         threads: req.threads.clone(),
         ngl_range: req.ngl_range.clone(),
         ctx_override: req.ctx_override,
+        batch_sizes: req.batch_sizes.clone(),
+        ubatch_sizes: req.ubatch_sizes.clone(),
+        kv_cache_type: req.kv_cache_type.clone(),
+        depth: req.depth.clone(),
+        flash_attn: req.flash_attn,
     };
 
     // Run benchmark
@@ -190,15 +211,31 @@ async fn run_benchmark_inner(
     let db_dir = koji_core::config::Config::config_dir()?;
     let koji_core::db::OpenResult { conn, .. } = koji_core::db::open(&db_dir)?;
 
-    // Get model display name from config
+    // Get model display name from config. The request carries the db_id as a
+    // string (e.g. "4") because that's what the model dropdown submits, so we
+    // resolve it to the config key first — otherwise `.get("4")` never hits.
     let model_configs = koji_core::db::load_model_configs(&conn)?;
-    let display_name = model_configs
-        .get(&req.model_id)
-        .and_then(|mc| mc.display_name.clone());
+    let resolved_key = if let Ok(db_id) = req.model_id.parse::<i64>() {
+        model_configs
+            .iter()
+            .find(|(_, mc)| mc.db_id == Some(db_id))
+            .map(|(key, _)| key.clone())
+            .unwrap_or_else(|| req.model_id.clone())
+    } else {
+        req.model_id.clone()
+    };
+    let display_name = model_configs.get(&resolved_key).and_then(|mc| {
+        mc.display_name
+            .clone()
+            .or_else(|| mc.api_name.clone())
+            .or_else(|| mc.model.clone())
+    });
 
-    // Serialize results to JSON string for storage
-    let results_json = serde_json::to_string(&report.summaries)
-        .context("Failed to serialize benchmark results")?;
+    // Serialize the full report for storage so history can reconstruct model
+    // metadata (backend, GPU, VRAM, load time, batch/ubatch/KV cache choices),
+    // not just the per-test summary rows.
+    let results_json =
+        serde_json::to_string(&report).context("Failed to serialize benchmark report")?;
     // Store results in job state so get_benchmark_result can return them
     {
         let mut bench_results = job.benchmark_results.write().await;
@@ -333,10 +370,14 @@ pub async fn benchmark_events(
 
     let mut rx = job.log_tx.subscribe();
 
-    // Snapshot + subscribe: take both under the same lock to avoid race
-    let (head, tail, dropped, status, _finished_at, error) = {
-        let (state, log_head, log_tail) =
-            tokio::join!(job.state.read(), job.log_head.read(), job.log_tail.read());
+    // Snapshot + subscribe: take everything under overlapping locks to avoid races.
+    let (head, tail, dropped, status, _finished_at, error, stored_result) = {
+        let (state, log_head, log_tail, bench_results) = tokio::join!(
+            job.state.read(),
+            job.log_head.read(),
+            job.log_tail.read(),
+            job.benchmark_results.read()
+        );
         (
             log_head.iter().cloned().collect::<Vec<_>>(),
             log_tail.iter().cloned().collect::<Vec<_>>(),
@@ -344,6 +385,7 @@ pub async fn benchmark_events(
             state.status,
             state.finished_at,
             state.error.clone(),
+            bench_results.clone(),
         )
     };
 
@@ -362,6 +404,12 @@ pub async fn benchmark_events(
         // Replay tail
         for line in tail {
             yield Ok(Event::default().event("log").json_data(json!({ "line": line}))?);
+        }
+
+        // Replay stored benchmark results (for late subscribers)
+        if let Some(ref results_json) = stored_result {
+            yield Ok(Event::default().event("result")
+                .json_data(json!({ "results": results_json}))?);
         }
 
         // Emit final status if terminal
@@ -390,6 +438,10 @@ pub async fn benchmark_events(
                             if s != JobStatus::Running {
                                 return; // Close on terminal status
                             }
+                        }
+                        Ok(JobEvent::Result(results_json)) => {
+                            yield Ok(Event::default().event("result")
+                                .json_data(json!({ "results": results_json}))?);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             yield Ok(Event::default().event("log")
@@ -451,6 +503,17 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
         .map(|e| {
             let pp_sizes: Vec<u32> = serde_json::from_str(&e.pp_sizes).unwrap_or_default();
             let tg_sizes: Vec<u32> = serde_json::from_str(&e.tg_sizes).unwrap_or_default();
+            // `results_json` may be either the full BenchReport (new rows) or a
+            // plain summaries array (legacy rows). Extract the summaries array
+            // so the frontend only has one shape to deal with.
+            let raw: serde_json::Value =
+                serde_json::from_str(&e.results).unwrap_or(serde_json::Value::Null);
+            let summaries = match raw.get("summaries") {
+                Some(v) if v.is_array() => v.clone(),
+                _ if raw.is_array() => raw,
+                _ => serde_json::Value::Array(vec![]),
+            };
+            let results_count = summaries.as_array().map(|a| a.len()).unwrap_or(0);
             BenchmarkHistoryEntry {
                 id: e.id,
                 created_at: e.created_at,
@@ -461,11 +524,9 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
                 pp_sizes,
                 tg_sizes,
                 runs: e.runs,
-                results_count: serde_json::from_str::<Vec<serde_json::Value>>(&e.results)
-                    .map(|v| v.len())
-                    .unwrap_or(0),
+                results_count,
                 status: e.status,
-                results: serde_json::from_str::<serde_json::Value>(&e.results).unwrap_or_default(),
+                results: summaries,
             }
         })
         .collect();

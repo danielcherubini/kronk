@@ -12,7 +12,7 @@ pub mod measure;
 pub mod runner;
 
 /// Configuration for benchmark runs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchConfig {
     /// Prompt token counts to test (default: [512])
     pub pp_sizes: Vec<u32>,
@@ -24,6 +24,22 @@ pub struct BenchConfig {
     pub warmup: u32,
     /// Optional context size override
     pub ctx_override: Option<u32>,
+    /// Logical batch size sweep (maps to llama-bench `-b`). Empty = use default.
+    #[serde(default)]
+    pub batch_sizes: Vec<u32>,
+    /// Physical micro-batch size sweep (maps to llama-bench `-ub`). Empty = default.
+    #[serde(default)]
+    pub ubatch_sizes: Vec<u32>,
+    /// KV cache type applied to both `-ctk` and `-ctv` (matched pair).
+    #[serde(default)]
+    pub kv_cache_type: Option<String>,
+    /// Depth sweep (maps to llama-bench `-d`). Pre-fills tokens into KV cache
+    /// before timing the measured test. Essential when evaluating KV-quant impact.
+    #[serde(default)]
+    pub depth: Vec<u32>,
+    /// Flash attention toggle (maps to `-fa`). None = llama-bench default.
+    #[serde(default)]
+    pub flash_attn: Option<bool>,
 }
 
 impl Default for BenchConfig {
@@ -34,6 +50,11 @@ impl Default for BenchConfig {
             runs: 3,
             warmup: 1,
             ctx_override: None,
+            batch_sizes: vec![],
+            ubatch_sizes: vec![],
+            kv_cache_type: None,
+            depth: vec![],
+            flash_attn: None,
         }
     }
 }
@@ -56,7 +77,12 @@ pub struct RequestMeasurement {
 }
 
 /// Summary statistics for a test configuration
-#[derive(Debug, Clone, serde::Serialize)]
+///
+/// The `config_*` fields capture per-run knobs pulled from llama-bench's
+/// JSON output. They're optional because llama-bench's old output (or our own
+/// in-process runner) may not surface them, and because we don't want to
+/// invalidate history rows written before these fields existed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BenchSummary {
     /// Test name (e.g., "pp512/tg128")
     pub test_name: String,
@@ -80,10 +106,34 @@ pub struct BenchSummary {
     pub total_mean: f64,
     /// Stddev of total latency
     pub total_stddev: f64,
+    /// Pre-filled depth (`-d`). None for old rows or non-llama-bench runs.
+    #[serde(default)]
+    pub n_depth: Option<u32>,
+    /// Logical batch (`-b`) for this specific run.
+    #[serde(default)]
+    pub n_batch: Option<u32>,
+    /// Physical micro-batch (`-ub`) for this specific run.
+    #[serde(default)]
+    pub n_ubatch: Option<u32>,
+    /// K cache quant for this run (e.g. "f16", "q8_0", "q4_0").
+    #[serde(default)]
+    pub type_k: Option<String>,
+    /// V cache quant for this run.
+    #[serde(default)]
+    pub type_v: Option<String>,
+    /// Flash attention on/off for this run.
+    #[serde(default)]
+    pub flash_attn: Option<bool>,
+    /// CPU thread count used for this run.
+    #[serde(default)]
+    pub n_threads: Option<u32>,
+    /// GPU layers loaded for this run.
+    #[serde(default)]
+    pub n_gpu_layers: Option<i32>,
 }
 
 /// Model metadata for display
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
     /// Server config name
     pub name: String,
@@ -102,7 +152,7 @@ pub struct ModelInfo {
 }
 
 /// Complete benchmark report
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchReport {
     /// Model metadata
     pub model_info: ModelInfo,
@@ -149,6 +199,14 @@ pub fn compute_summary(
             ttft_stddev: 0.0,
             total_mean: 0.0,
             total_stddev: 0.0,
+            n_depth: None,
+            n_batch: None,
+            n_ubatch: None,
+            type_k: None,
+            type_v: None,
+            flash_attn: None,
+            n_threads: None,
+            n_gpu_layers: None,
         };
     }
 
@@ -209,6 +267,14 @@ pub fn compute_summary(
         ttft_stddev,
         total_mean,
         total_stddev,
+        n_depth: None,
+        n_batch: None,
+        n_ubatch: None,
+        type_k: None,
+        type_v: None,
+        flash_attn: None,
+        n_threads: None,
+        n_gpu_layers: None,
     }
 }
 
