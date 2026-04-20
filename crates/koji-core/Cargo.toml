@@ -39,6 +39,7 @@ semver = "1"
 sha2 = "0.10"
 glob = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
+lru = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

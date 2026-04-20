@@ -13,6 +13,67 @@ use crate::models::{
     update::{compare_files, FileStatus},
 };
 
+/// In-memory LRU cache for HuggingFace GGUF file listings.
+/// Reduces API calls by caching (commit_sha, files) per repo_id for 5 minutes.
+pub struct GgufListingCache {
+    cache: std::sync::Arc<
+        tokio::sync::Mutex<
+            lru::LruCache<String, (String, Vec<crate::models::pull::RemoteGguf>, i64)>,
+        >,
+    >,
+}
+
+impl Clone for GgufListingCache {
+    fn clone(&self) -> Self {
+        Self {
+            cache: std::sync::Arc::clone(&self.cache),
+        }
+    }
+}
+
+impl GgufListingCache {
+    const TTL_SECS: i64 = 300; // 5 minutes
+    const CAPACITY: usize = 64;
+
+    pub fn new() -> Self {
+        Self {
+            cache: std::sync::Arc::new(tokio::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(Self::CAPACITY).unwrap(),
+            ))),
+        }
+    }
+
+    /// Get a cached entry if it exists and is fresh (within TTL).
+    pub async fn get(
+        &self,
+        repo_id: &str,
+    ) -> Option<(String, Vec<crate::models::pull::RemoteGguf>)> {
+        let now = chrono::Utc::now().timestamp();
+        let mut cache = self.cache.lock().await;
+        if let Some(entry) = cache.get(repo_id) {
+            let (sha, files, epoch) = entry;
+            if now - *epoch < Self::TTL_SECS {
+                return Some((sha.clone(), files.clone()));
+            }
+            // Stale — remove it so the next call fetches fresh data
+            cache.pop(repo_id);
+        }
+        None
+    }
+
+    /// Store a result in the cache with the current timestamp.
+    pub async fn insert(
+        &self,
+        repo_id: String,
+        commit_sha: String,
+        files: Vec<crate::models::pull::RemoteGguf>,
+    ) {
+        let now = chrono::Utc::now().timestamp();
+        let mut cache = self.cache.lock().await;
+        cache.put(repo_id, (commit_sha, files, now));
+    }
+}
+
 /// Shared state for the update checker. Uses Arc<Mutex<()>> as a binary semaphore
 /// to ensure that only one update check run occurs at any given time across the system.
 /// Locking this guard serializes checks without needing to protect specific shared data.
@@ -20,6 +81,8 @@ use crate::models::{
 pub struct UpdateChecker {
     /// Mutex used as a synchronization primitive to prevent concurrent check runs.
     lock: Arc<Mutex<()>>,
+    /// In-memory LRU cache for remote GGUF listings.
+    gguf_listing_cache: GgufListingCache,
 }
 
 /// Results from an initial sync of backends and models to check for updates.
@@ -29,6 +92,7 @@ impl UpdateChecker {
     pub fn new() -> Self {
         Self {
             lock: Arc::new(Mutex::new(())),
+            gguf_listing_cache: GgufListingCache::new(),
         }
     }
 
@@ -230,24 +294,31 @@ impl UpdateChecker {
         };
 
         // Phase 2 — ASYNC: fetch remote state (conn not referenced after this point)
-        let remote_listing = match pull::list_gguf_files(repo_id).await {
-            Ok(l) => l,
-            Err(e) => {
-                self.save_check_result(
-                    config_dir,
-                    "model",
-                    &model_id.to_string(),
-                    Some(&pull_record.commit_sha),
-                    None,
-                    false,
-                    "error",
-                    Some(&e.to_string()),
-                    None,
-                )
-                .await?;
-                return Ok(());
+        // Check cache before making network call to list_gguf_files
+        let remote_listing = match self.gguf_listing_cache.get(repo_id).await {
+            Some((cached_sha, cached_files)) => {
+                tracing::debug!("GGUF listing cache hit for '{}'", repo_id);
+                // Use cached file list — still need LFS hashes from fetch_blob_metadata
+                let _blobs = pull::fetch_blob_metadata(repo_id).await?;
+                crate::models::pull::RepoGgufListing {
+                    repo_id: repo_id.to_string(),
+                    commit_sha: cached_sha,
+                    files: cached_files,
+                }
             }
+            None => pull::list_gguf_files(repo_id).await?,
         };
+
+        // After successful fetch, store in cache (only if not already cached)
+        if self.gguf_listing_cache.get(repo_id).await.is_none() {
+            self.gguf_listing_cache
+                .insert(
+                    repo_id.to_string(),
+                    remote_listing.commit_sha.clone(),
+                    remote_listing.files.clone(),
+                )
+                .await;
+        }
 
         // Tier 1 — quick check: commit SHA match?
         if remote_listing.commit_sha == pull_record.commit_sha {
@@ -631,5 +702,23 @@ mod tests {
         // Both should be usable independently
         let _ = checker1;
         let _ = checker2;
+    }
+
+    // ── GgufListingCache tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_gguf_listing_cache_new() {
+        let cache = GgufListingCache::new();
+        // Just verify it constructs without panicking
+        let _ = cache;
+    }
+
+    #[test]
+    fn test_gguf_listing_cache_clone() {
+        let cache1 = GgufListingCache::new();
+        let cache2 = cache1.clone();
+        // Both should be usable independently
+        let _ = cache1;
+        let _ = cache2;
     }
 }
