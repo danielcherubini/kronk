@@ -15,6 +15,7 @@ pub fn SupervisorSection(
     let (health_check_interval_ms, set_health_check_interval_ms) = signal(String::new());
     let (health_check_timeout_ms, set_health_check_timeout_ms) = signal(String::new());
     let (health_check_retries, set_health_check_retries) = signal(u32::MAX.to_string());
+    let (error_msg, set_error_msg) = signal::<Option<String>>(None);
 
     // Populate form from initial config once at setup.
     Effect::new(move |_| {
@@ -29,11 +30,51 @@ pub fn SupervisorSection(
 
     let on_submit_clone = on_submit;
     let submit_handler = move |_| {
-        let max_restarts_val: u32 = max_restarts.get().parse().unwrap_or(0);
-        let restart_delay_ms_val: u64 = restart_delay_ms.get().parse().unwrap_or(0);
-        let health_check_interval_ms_val: u64 = health_check_interval_ms.get().parse().unwrap_or(0);
-        let health_check_timeout_ms_val: u64 = health_check_timeout_ms.get().parse().unwrap_or(0);
-        let health_check_retries_val: u32 = health_check_retries.get().parse().unwrap_or(0);
+        // Validate numeric fields before submission — reject empty or invalid values.
+        let max_restarts_val: u32 = match max_restarts.get().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                set_error_msg.set(Some("Max Restarts must be a valid number.".to_string()));
+                return;
+            }
+        };
+        let restart_delay_ms_val: u64 = match restart_delay_ms.get().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                set_error_msg.set(Some("Restart Delay must be a valid number.".to_string()));
+                return;
+            }
+        };
+        let health_check_interval_ms_val: u64 = match health_check_interval_ms.get().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                set_error_msg.set(Some(
+                    "Health Check Interval must be a valid number.".to_string(),
+                ));
+                return;
+            }
+        };
+        let health_check_timeout_ms_val: u64 = match health_check_timeout_ms.get().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                set_error_msg.set(Some(
+                    "Health Check Timeout must be a valid number.".to_string(),
+                ));
+                return;
+            }
+        };
+        let health_check_retries_val: u32 = match health_check_retries.get().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                set_error_msg.set(Some(
+                    "Health Check Retries must be a valid number.".to_string(),
+                ));
+                return;
+            }
+        };
+
+        // Clear any previous error before submitting.
+        set_error_msg.set(None);
 
         let cfg = SupervisorConfig {
             restart_policy: restart_policy.get(),
@@ -55,6 +96,10 @@ pub fn SupervisorSection(
                 e.prevent_default();
                 submit_handler(e);
             }>
+            {move || error_msg.get().map(|e| {
+                view! { <div class="alert alert-error">{e.to_string()}</div> }
+            })}
+
             <div class="bg-white rounded-lg shadow border border-gray-200 p-6 space-y-4">
                 {/* Restart Policy */}
                 <div>

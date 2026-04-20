@@ -40,16 +40,15 @@ pub fn migrate_models_to_db(conn: &Connection, config: &mut Config) -> anyhow::R
         migrated_count
     );
 
-    // 5. Import each model config into the DB, collecting all errors.
+    // 5. Collect all model configs first, validating each one.
+    // Do NOT save to DB until ALL are valid — prevents partial migration.
+    let mut all_configs: Vec<(String, crate::config::ModelConfig)> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
+
     for (key, val) in models_table {
         match val.clone().try_into() {
-            Ok(mc) => {
-                save_model_config(conn, key, &mc)?;
-            }
-            Err(e) => {
-                failed.push((key.to_string(), e.to_string()));
-            }
+            Ok(mc) => all_configs.push((key.to_string(), mc)),
+            Err(e) => failed.push((key.to_string(), e.to_string())),
         }
     }
 
@@ -63,6 +62,11 @@ pub fn migrate_models_to_db(conn: &Connection, config: &mut Config) -> anyhow::R
             failed.len(),
             errors.join("\n")
         );
+    }
+
+    // 5b. All configs are valid — now save them all to the DB.
+    for (key, mc) in all_configs {
+        save_model_config(conn, &key, &mc)?;
     }
 
     // 6. Save the current Config struct back to the file.

@@ -94,17 +94,54 @@ pub fn App() -> impl IntoView {
             ));
             // Retry periodically in the background every 5 seconds.
             let retry_url = "/api/downloads/events".to_string();
+            let toast_store_for_retry = toast_store.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let mut attempt = 0u32;
                 loop {
                     gloo_timers::future::TimeoutFuture::new(5_000).await;
                     attempt += 1;
                     match web_sys::EventSource::new(&retry_url) {
-                        Ok(_new_es) => {
+                        Ok(new_es) => {
                             log_info(&format!(
                                 "EventSource reconnected successfully after {attempt} attempts"
                             ));
                             sse_connected.set(true);
+
+                            // Attach event listeners to the newly created EventSource.
+                            for event_name in [
+                                "Started",
+                                "Progress",
+                                "Verifying",
+                                "Completed",
+                                "Failed",
+                                "Cancelled",
+                                "Queued",
+                            ] {
+                                let toast_store = toast_store_for_retry.clone();
+                                let handler =
+                                    Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+                                        if let Some(data) = event.data().as_string() {
+                                            if let Ok(event_json) =
+                                                serde_json::from_str::<DownloadEvent>(&data)
+                                            {
+                                                if let Some(toast) =
+                                                    ToastStore::from_download_event(&event_json)
+                                                {
+                                                    toast_store.add(toast);
+                                                }
+                                            }
+                                        }
+                                    })
+                                        as Box<dyn FnMut(_)>);
+                                new_es
+                                    .add_event_listener_with_callback(
+                                        event_name,
+                                        handler.as_ref().unchecked_ref(),
+                                    )
+                                    .unwrap();
+                                handler.forget();
+                            }
+
                             break;
                         }
                         Err(e) => {

@@ -772,16 +772,12 @@ async fn run_verification(
 /// Inner implementation of post-download setup, accepting an explicit config.
 /// Separated for testability — `setup_model_after_pull` delegates to this.
 pub(crate) async fn _setup_model_after_pull_with_config(
-    config: &crate::config::Config,
+    configs_dir: &std::path::Path,
     model_configs: &mut std::collections::HashMap<String, crate::config::ModelConfig>,
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
 ) -> Option<String> {
-    let configs_dir = match config.configs_dir() {
-        Ok(d) => d,
-        Err(_) => return None,
-    };
     let repo_slug = repo_id.replace('/', "--");
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
 
@@ -925,14 +921,14 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         }
 
         // Save card (best-effort — download is already marked Completed)
-        let _ = std::fs::create_dir_all(&configs_dir);
+        let _ = std::fs::create_dir_all(configs_dir);
         let _ = card.save(&card_path);
 
         return Some(model_key);
     }
 
     // For mmproj, still save the card.
-    let _ = std::fs::create_dir_all(&configs_dir);
+    let _ = std::fs::create_dir_all(configs_dir);
     let _ = card.save(&card_path);
 
     let key = match existing_key {
@@ -1012,11 +1008,23 @@ pub(crate) async fn setup_model_after_pull(
     dest_dir: &std::path::Path,
 ) -> Option<i64> {
     let _permit = state.config_write_semaphore.acquire().await.ok()?;
-    let config = state.config.read().await;
+    // Clone needed data from config before awaiting — don't hold the read guard
+    // across an awaited call to avoid blocking other writers/readers unnecessarily.
+    let configs_dir = match state.config.read().await.configs_dir() {
+        Ok(d) => d,
+        Err(_) => return None,
+    };
+    // Config read guard is dropped here automatically when it goes out of scope.
+
     let mut model_configs = state.model_configs.write().await;
-    let model_key =
-        _setup_model_after_pull_with_config(&config, &mut model_configs, repo_id, spec, dest_dir)
-            .await;
+    let model_key = _setup_model_after_pull_with_config(
+        &configs_dir,
+        &mut model_configs,
+        repo_id,
+        spec,
+        dest_dir,
+    )
+    .await;
 
     let mut saved_id: Option<i64> = None;
     if let Some(key) = model_key {

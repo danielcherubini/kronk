@@ -381,6 +381,9 @@ pub fn PullQuantWizard(
 
                                                         let mut delay_ms: u32 = INITIAL_DELAY_MS;
 
+                                                        let mut reconnect_attempts: u32 = 0;
+                                                        const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
                                                         loop {
                                                             if cancel.get_untracked() {
                                                                 break;
@@ -390,34 +393,64 @@ pub fn PullQuantWizard(
                                                             let mut es = match EventSource::new(&url) {
                                                                 Ok(es) => es,
                                                                 Err(e) => {
-                                                                    let msg = format!("{e:?}");
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        // Exhausted retries — mark as terminal failure
+                                                                        let msg = format!("{e:?}");
+                                                                        dj.update(|jobs| {
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to open SSE stream after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
+                                                                            }
+                                                                        });
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                    // Transient failure — show reconnecting status, keep retrying
+                                                                    let _msg = format!("{e:?}");
                                                                     dj.update(|jobs| {
                                                                         if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            j.status = "failed".to_string();
-                                                                            j.error = Some(format!("Failed to open SSE stream: {msg}"));
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
                                                                         }
                                                                     });
-                                                                    advance_if_all_terminal(&dj, &ws);
                                                                     delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                                                                     gloo_timers::future::TimeoutFuture::new(delay_ms).await;
                                                                     continue;
                                                                 }
                                                             };
 
+                                                            reconnect_attempts = 0;
                                                             delay_ms = INITIAL_DELAY_MS;
 
                                                             let mut progress_stream = match es.subscribe("progress") {
                                                                 Ok(s) => s,
                                                                 Err(e) => {
-                                                                    let msg = format!("{e:?}");
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        let msg = format!("{e:?}");
+                                                                        dj.update(|jobs| {
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to subscribe to progress events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
+                                                                            }
+                                                                        });
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                    let _msg = format!("{e:?}");
                                                                     dj.update(|jobs| {
                                                                         if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            j.status = "failed".to_string();
-                                                                            j.error = Some(format!("Failed to subscribe to progress events: {msg}"));
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
                                                                         }
                                                                     });
                                                                     es.close();
-                                                                    advance_if_all_terminal(&dj, &ws);
                                                                     delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                                                                     gloo_timers::future::TimeoutFuture::new(delay_ms).await;
                                                                     continue;
@@ -427,15 +460,29 @@ pub fn PullQuantWizard(
                                                             let mut done_stream = match es.subscribe("done") {
                                                                 Ok(s) => s,
                                                                 Err(e) => {
-                                                                    let msg = format!("{e:?}");
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        let msg = format!("{e:?}");
+                                                                        dj.update(|jobs| {
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to subscribe to done events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
+                                                                            }
+                                                                        });
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                    let _msg = format!("{e:?}");
                                                                     dj.update(|jobs| {
                                                                         if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            j.status = "failed".to_string();
-                                                                            j.error = Some(format!("Failed to subscribe to done events: {msg}"));
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
                                                                         }
                                                                     });
                                                                     es.close();
-                                                                    advance_if_all_terminal(&dj, &ws);
                                                                     delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                                                                     gloo_timers::future::TimeoutFuture::new(delay_ms).await;
                                                                     continue;

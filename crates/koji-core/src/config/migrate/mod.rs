@@ -57,6 +57,15 @@ fn recover_mmproj_selection(
             .or_else(|| arg.strip_prefix("--mmproj="))
             .map(|rest| rest.to_string());
 
+        // Handle the split form: "--mmproj" as a standalone token with path in next arg.
+        let path = path.or_else(|| {
+            if arg == "--mmproj" && idx + 1 < model_config.args.len() {
+                Some(model_config.args[idx + 1].clone())
+            } else {
+                None
+            }
+        });
+
         if let Some(path) = path {
             let path_clean = path.trim_matches(|c: char| c == '"' || c == '\'');
             let filename = path_clean

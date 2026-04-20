@@ -179,15 +179,10 @@ pub fn JobLogPanel(
                         _ => {
                             // Stream ended — attempt reconnection.
                             es.close();
+                            is_reconnecting = true;
                             break;
                         }
                     }
-                }
-
-                // After stream ends, wait with exponential backoff and reconnect.
-                if !cancelled.get_untracked() {
-                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                 }
             }
         });

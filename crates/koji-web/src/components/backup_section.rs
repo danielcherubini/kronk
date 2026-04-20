@@ -92,16 +92,12 @@ pub fn BackupSection() -> impl IntoView {
             }
         };
 
-        let _file = file; // consumed for potential future upload logic
-        set_uploading.set(true);
-        set_restore_preview.set(None);
-        set_selected_models.set(Vec::new());
-        set_error.set(None);
-
         // Note: File upload via FormData requires the fetch API with FormData.
         // gloo_net doesn't support multipart uploads directly.
         // For now, show a message that upload is not yet implemented.
         set_uploading.set(false);
+        set_restore_preview.set(None);
+        set_selected_models.set(Vec::new());
         set_error.set(Some("File upload not yet implemented in web UI. Use CLI instead.".to_string()));
     };
 

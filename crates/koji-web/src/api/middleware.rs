@@ -6,10 +6,24 @@ use axum::{
 };
 
 /// Check if the host header indicates a localhost address.
+/// Handles IPv6 bracketed format: `[::1]:3000`, `[0:0:0:0:0:0:0:1]`, etc.
 fn is_localhost(host: &str) -> bool {
-    // Extract host part before any port separator
-    let host_part = host.split(':').next().unwrap_or(host);
-    host_part == "localhost" || host_part == "127.0.0.1" || host_part == "::1"
+    // Strip brackets from IPv6 addresses and extract host part before port
+    let host_part = host.trim_matches('[').trim_matches(']');
+    let host_part = host_part.split(':').next().unwrap_or(host_part);
+    host_part == "localhost"
+        || host_part == "127.0.0.1"
+        || host_part == "::1"
+        || host_part == "0:0:0:0:0:0:0:1"
+}
+
+/// Determine whether the Secure cookie flag should be set.
+/// Returns true if we're confident a Secure cookie is appropriate (non-localhost, likely HTTPS).
+/// Returns false for localhost/loopback hosts. Defaults to false when the Host header
+/// is missing or unparseable — setting Secure without knowing the scheme would cause
+/// the browser to silently drop the cookie.
+fn should_set_secure(host_header: Option<&str>) -> bool {
+    matches!(host_header, Some(h) if !is_localhost(h))
 }
 
 /// CSRF token cookie name.
@@ -44,12 +58,11 @@ pub async fn enforce_same_origin(
         let token = generate_csrf_token();
 
         // Determine if Secure flag should be set (omit for localhost/loopback)
-        let is_secure = req
-            .headers()
-            .get(axum::http::header::HOST)
-            .and_then(|v| v.to_str().ok())
-            .map(|h| !is_localhost(h))
-            .unwrap_or(true);
+        let is_secure = should_set_secure(
+            req.headers()
+                .get(axum::http::header::HOST)
+                .and_then(|v| v.to_str().ok()),
+        );
 
         // Build cookie string — NO HttpOnly so JS can read it for CSRF double-submit.
         // Secure flag is conditional: only set on non-localhost hosts (HTTPS).

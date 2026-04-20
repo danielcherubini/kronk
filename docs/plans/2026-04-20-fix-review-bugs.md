@@ -2,7 +2,7 @@
 
 **Goal:** Fix all critical and major bugs identified across the 10-module code review of koji-cli, koji-core, and koji-web.
 
-**Architecture:** Group related fixes into 6 independent tasks ordered by severity and dependency. Each task is independently commitable with its own tests. No task depends on uncommitted work from a previous task.
+**Architecture:** Group related fixes into 6 independent tasks ordered by severity and dependency. Each task is independently committable with its own tests. No task depends on uncommitted work from a previous task.
 
 **Tech Stack:** Rust, Cargo workspace, SQLite (rusqlite), Axum, Leptos, Tokio, anyhow
 
@@ -330,7 +330,7 @@ The web server lacks graceful shutdown, the proxy handler silently swallows body
 
 ## Task Dependency Graph
 
-```
+```text
 Task 1 → (independent)
 Task 2 → (independent)
 Task 3 → (independent)

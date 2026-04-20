@@ -98,6 +98,7 @@ pub(super) async fn cmd_verify(config: &Config, model_filter: Option<String>) ->
     let mut total_ok: usize = 0;
     let mut total_unknown: usize = 0;
     let mut total_bad: usize = 0;
+    let mut hard_errors: Vec<String> = Vec::new();
 
     for model in &models {
         // Mirror cmd_rm: legacy/hand-edited cards may have an empty
@@ -125,6 +126,7 @@ pub(super) async fn cmd_verify(config: &Config, model_filter: Option<String>) ->
                 Err(e) => {
                     println!("  verify error: {}", e);
                     any_failed = true;
+                    hard_errors.push(format!("{}: {}", repo_id, e));
                     continue;
                 }
             },
@@ -174,11 +176,22 @@ pub(super) async fn cmd_verify(config: &Config, model_filter: Option<String>) ->
         total_files, total_ok, total_bad, total_unknown
     );
 
-    if any_failed {
-        Err(anyhow!("Verification failed: {} files failed", total_bad))
+    let error_msg = if !hard_errors.is_empty() && total_bad == 0 {
+        // Hard errors occurred but no file-level failures — report the hard errors.
+        anyhow!(
+            "Verification failed with errors: {}",
+            hard_errors.join("; ")
+        )
+    } else if any_failed {
+        let mut parts = vec![format!("{} files failed", total_bad)];
+        if !hard_errors.is_empty() {
+            parts.push(format!("({} hard error(s))", hard_errors.len()));
+        }
+        anyhow!("Verification failed: {}", parts.join(", "))
     } else {
-        Ok(())
-    }
+        return Ok(());
+    };
+    Err(error_msg)
 }
 
 pub(super) async fn cmd_verify_existing(
@@ -250,6 +263,7 @@ pub(super) async fn cmd_verify_existing(
     let mut total_unknown: usize = 0;
     let mut total_bad: usize = 0;
     let mut total_backfilled: usize = 0;
+    let mut hard_errors: Vec<String> = Vec::new();
 
     for repo_id in &repo_ids {
         let repo_id: &str = repo_id.as_str();
@@ -272,6 +286,7 @@ pub(super) async fn cmd_verify_existing(
             Err(e) => {
                 println!("  Error reading database: {}", e);
                 any_failed = true;
+                hard_errors.push(format!("{}: {}", repo_id, e));
                 continue;
             }
         };
@@ -308,6 +323,7 @@ pub(super) async fn cmd_verify_existing(
                             Err(e) => {
                                 println!("  Error reading database: {}", e);
                                 any_failed = true;
+                                hard_errors.push(format!("{}: {}", repo_id, e));
                                 continue;
                             }
                         };
@@ -346,6 +362,7 @@ pub(super) async fn cmd_verify_existing(
                 Err(e) => {
                     println!("  verify error: {}", e);
                     any_failed = true;
+                    hard_errors.push(format!("{}: {}", repo_id, e));
                     continue;
                 }
             },
@@ -425,11 +442,21 @@ pub(super) async fn cmd_verify_existing(
     println!("Summary: {}", summary_parts.join(", "));
     println!();
 
-    if any_failed {
-        Err(anyhow!("Verification failed: {} files failed", total_bad))
+    let error_msg = if !hard_errors.is_empty() && total_bad == 0 {
+        anyhow!(
+            "Verification failed with errors: {}",
+            hard_errors.join("; ")
+        )
+    } else if any_failed {
+        let mut parts = vec![format!("{} files failed", total_bad)];
+        if !hard_errors.is_empty() {
+            parts.push(format!("({} hard error(s))", hard_errors.len()));
+        }
+        anyhow!("Verification failed: {}", parts.join(", "))
     } else {
-        Ok(())
-    }
+        return Ok(());
+    };
+    Err(error_msg)
 }
 
 #[cfg(test)]
