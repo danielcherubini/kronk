@@ -474,8 +474,8 @@ pub fn Dashboard() -> impl IntoView {
                                                 <span class="model-row__meta">{quant_display}</span>
                                                 <span class="model-row__meta">{context_display}</span>
                                                 <span class="model-row__backend text-mono">{m.backend}</span>
-                                                <span class={badge_class}>{badge_label}</span>
                                                 <div class="model-row__actions">
+                                                    <span class={badge_class}>{badge_label}</span>
                                                     {if m.loaded {
                                                         view! {
                                                             <button

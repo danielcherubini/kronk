@@ -1584,7 +1584,7 @@ label {
 /* Ensure badges render at appropriate size on rows */
 .model-row .badge {
   font-size: 0.7rem;
-  padding: 0.15rem 0.5rem;
+  padding: 0.5rem 0.5rem;
   min-width: 65px;
   text-align: center;
   align-items: center;
@@ -1737,10 +1737,18 @@ label {
   color: var(--text-primary);
 }
 
-.toast--info { border-left: 3px solid var(--accent-blue); }
-.toast--success { border-left: 3px solid var(--accent-green); }
-.toast--warning { border-left: 3px solid var(--accent-yellow); }
-.toast--error { border-left: 3px solid var(--accent-red); }
+.toast--info {
+  border-left: 3px solid var(--accent-blue);
+}
+.toast--success {
+  border-left: 3px solid var(--accent-green);
+}
+.toast--warning {
+  border-left: 3px solid var(--accent-yellow);
+}
+.toast--error {
+  border-left: 3px solid var(--accent-red);
+}
 
 /* Downloads Page */
 .downloads-page {
