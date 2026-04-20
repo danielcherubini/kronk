@@ -62,9 +62,13 @@ pub fn strip_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
     result
 }
 
-/// Rewrite the `model` field in a JSON value.
-pub fn rewrite_json_model_name(mut json: JsonValue, model_name: &str) -> JsonValue {
-    json["model"] = JsonValue::String(model_name.to_string());
+/// Rewrite the `model` field in a JSON value. Only rewrites if model_name is provided and non-empty.
+pub fn rewrite_json_model_name(mut json: JsonValue, model_name: Option<&str>) -> JsonValue {
+    if let Some(name) = model_name {
+        if !name.is_empty() {
+            json["model"] = JsonValue::String(name.to_string());
+        }
+    }
     json
 }
 
@@ -86,13 +90,17 @@ pub fn build_forward_uri(backend_url: &str, parts: &Parts) -> Option<String> {
 }
 
 /// Process a complete SSE line, rewriting the `model` field in JSON data lines.
-fn process_sse_line(line: &str, model_name: &str, out: &mut String) {
+fn process_sse_line(line: &str, model_name: Option<&str>, out: &mut String) {
     if let Some(data_content) = line.strip_prefix("data: ") {
         let trimmed = data_content.trim_end();
         if trimmed == "[DONE]" {
             out.push_str(line);
         } else if let Ok(mut json_value) = serde_json::from_str::<JsonValue>(trimmed) {
-            json_value["model"] = JsonValue::String(model_name.to_string());
+            if let Some(name) = model_name {
+                if !name.is_empty() {
+                    json_value["model"] = JsonValue::String(name.to_string());
+                }
+            }
             out.push_str("data: ");
             out.push_str(
                 &serde_json::to_string(&json_value).unwrap_or_else(|_| trimmed.to_string()),
@@ -112,7 +120,7 @@ pub async fn forward_request(
     server_name: &str,
     parts: &Parts,
     body_bytes: &[u8],
-    model_name: &str,
+    model_name: Option<&str>,
 ) -> Response {
     state
         .metrics
@@ -320,7 +328,7 @@ pub async fn forward_request(
             let body = if is_streaming {
                 // Streaming response — rewrite the model name in each SSE chunk.
                 // Uses unfold to own the partial-line buffer across chunks (Send-safe).
-                let model_name = model_name.to_string();
+                let model_name: Option<String> = model_name.map(|s| s.to_string());
                 let byte_stream = response.bytes_stream();
                 let transformed_stream = futures_util::stream::unfold(
                     (byte_stream, String::new()),
@@ -338,7 +346,7 @@ pub async fn forward_request(
                                         if ch == '\n' {
                                             let line = line_buf.clone();
                                             line_buf.clear();
-                                            process_sse_line(&line, &model_name, &mut out);
+                                            process_sse_line(&line, model_name.as_deref(), &mut out);
                                         }
                                     }
 
@@ -563,7 +571,7 @@ mod tests {
     #[test]
     fn test_rewrite_json_model_name_replaces_existing() {
         let json = serde_json::json!({"model": "old-model", "choices": [{"message": {"content": "Hello"}}]});
-        let result = rewrite_json_model_name(json, "new-model");
+        let result = rewrite_json_model_name(json, Some("new-model"));
 
         assert_eq!(result["model"], "new-model");
         assert_eq!(result["choices"][0]["message"]["content"], "Hello");
@@ -572,7 +580,7 @@ mod tests {
     #[test]
     fn test_rewrite_json_model_name_adds_missing_field() {
         let json = serde_json::json!({"choices": [{"delta": {"content": "Hi"}}]});
-        let result = rewrite_json_model_name(json, "my-model");
+        let result = rewrite_json_model_name(json, Some("my-model"));
 
         assert_eq!(result["model"], "my-model");
         assert!(result["choices"].is_array());
@@ -588,7 +596,7 @@ mod tests {
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "Test"}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 20}
         });
-        let result = rewrite_json_model_name(json, "new-model");
+        let result = rewrite_json_model_name(json, Some("new-model"));
 
         assert_eq!(result["model"], "new-model");
         assert_eq!(result["id"], "chatcmpl-123");
@@ -598,18 +606,28 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_json_model_name_empty_model_name() {
+    fn test_rewrite_json_model_name_empty_string_ignored() {
         let json = serde_json::json!({"model": "old", "choices": []});
-        let result = rewrite_json_model_name(json, "");
+        let result = rewrite_json_model_name(json, Some(""));
 
-        assert_eq!(result["model"], "");
+        // Empty string should NOT rewrite the model field
+        assert_eq!(result["model"], "old");
+    }
+
+    #[test]
+    fn test_rewrite_json_model_name_none_skips_rewrite() {
+        let json = serde_json::json!({"model": "old", "choices": []});
+        let result = rewrite_json_model_name(json, None);
+
+        // None should NOT rewrite the model field
+        assert_eq!(result["model"], "old");
     }
 
     #[test]
     fn test_rewrite_json_model_name_long_model_name() {
         let json = serde_json::json!({"model": "m", "choices": []});
         let long_name = "unsloth/gemma-4-E2B-it-GGUF:q4_k_m";
-        let result = rewrite_json_model_name(json, long_name);
+        let result = rewrite_json_model_name(json, Some(long_name));
 
         assert_eq!(result["model"], long_name);
     }
@@ -653,7 +671,7 @@ mod tests {
         let mut out = String::new();
         process_sse_line(
             "data: {\"model\": \"backend-model\", \"choices\": []}",
-            "user-model",
+            Some("user-model"),
             &mut out,
         );
         // serde_json serializes without spaces by default
@@ -662,9 +680,22 @@ mod tests {
     }
 
     #[test]
+    fn test_process_sse_line_skips_rewrite_when_none() {
+        let mut out = String::new();
+        process_sse_line(
+            "data: {\"model\": \"backend-model\", \"choices\": []}",
+            None,
+            &mut out,
+        );
+        // Model should NOT be rewritten when model_name is None
+        assert!(out.contains("backend-model"), "output: {}", out);
+        assert!(!out.contains("user-model"), "output: {}", out);
+    }
+
+    #[test]
     fn test_process_sse_line_passes_done_unchanged() {
         let mut out = String::new();
-        process_sse_line("data: [DONE]", "any-model", &mut out);
+        process_sse_line("data: [DONE]", Some("any-model"), &mut out);
         // DONE is pushed as-is (no trailing newline added by this function)
         assert_eq!(out, "data: [DONE]");
     }
@@ -672,28 +703,28 @@ mod tests {
     #[test]
     fn test_process_sse_line_passes_comment_unchanged() {
         let mut out = String::new();
-        process_sse_line(": heartbeat", "any-model", &mut out);
+        process_sse_line(": heartbeat", Some("any-model"), &mut out);
         assert_eq!(out, ": heartbeat");
     }
 
     #[test]
     fn test_process_sse_line_passes_empty_line_unchanged() {
         let mut out = String::new();
-        process_sse_line("", "any-model", &mut out);
+        process_sse_line("", Some("any-model"), &mut out);
         assert_eq!(out, "");
     }
 
     #[test]
     fn test_process_sse_line_handles_invalid_json() {
         let mut out = String::new();
-        process_sse_line("data: not valid json {", "any-model", &mut out);
+        process_sse_line("data: not valid json {", Some("any-model"), &mut out);
         assert_eq!(out, "data: not valid json {");
     }
 
     #[test]
     fn test_process_sse_line_handles_non_data_lines() {
         let mut out = String::new();
-        process_sse_line("event: message", "any-model", &mut out);
+        process_sse_line("event: message", Some("any-model"), &mut out);
         assert_eq!(out, "event: message");
     }
 
@@ -703,7 +734,7 @@ mod tests {
         // Lines without trailing newline are not processed as complete SSE lines.
         let mut out = String::new();
         // First line with newline - should be processed
-        process_sse_line("data: {\"model\": \"a\"}\n", "user", &mut out);
+        process_sse_line("data: {\"model\": \"a\"}\n", Some("user"), &mut out);
         assert!(out.contains("user"), "output: {}", out);
     }
 
@@ -741,7 +772,7 @@ mod tests {
         });
         let original_bytes = serde_json::to_vec(&original).unwrap();
 
-        let rewritten = rewrite_json_model_name(original, long_model);
+        let rewritten = rewrite_json_model_name(original, Some(long_model));
         let rewritten_bytes = serde_json::to_vec(&rewritten).unwrap();
 
         assert_ne!(

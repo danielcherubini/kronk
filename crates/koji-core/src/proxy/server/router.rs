@@ -6,8 +6,9 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::proxy::handlers::{
-    handle_chat_completions, handle_fallback, handle_get_model, handle_health, handle_list_models,
-    handle_metrics, handle_reload_configs, handle_status, handle_stream_chat_completions,
+    handle_chat_completions, handle_fallback, handle_forward_get, handle_forward_post,
+    handle_get_model, handle_health, handle_list_models, handle_metrics, handle_reload_configs,
+    handle_status, handle_stream_chat_completions,
 };
 use crate::proxy::koji_handlers::{
     handle_hf_list_quants, handle_koji_get_model as handle_koji_get_model_fn,
@@ -62,6 +63,9 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
             get(handle_system_metrics_stream),
         )
         .route("/koji/v1/system/restart", post(handle_koji_system_restart))
+        // Wildcard forwarding for all other endpoints (llama.cpp API)
+        .route("/*path", post(handle_forward_post))
+        .route("/*path", get(handle_forward_get))
         .fallback(handle_fallback)
         .with_state(state)
         .layer(CorsLayer::permissive())
