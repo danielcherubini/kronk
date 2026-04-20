@@ -37,7 +37,7 @@ async fn test_setup_model_creates_card() {
 
     // Call the inner helper directly (avoids relying on system Config::load())
     let mut models = std::collections::HashMap::new();
-    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &spec, &dest_dir).await;
+    _setup_model_after_pull_with_config(&configs_dir, &mut models, repo_id, &spec, &dest_dir).await;
 
     // Assert the card file exists
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
@@ -84,6 +84,8 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
     let dest_dir = config_dir.join("models").join(repo_id);
     std::fs::create_dir_all(&dest_dir).unwrap();
 
+    let configs_dir = config_dir.join("configs");
+    std::fs::create_dir_all(&configs_dir).unwrap();
     let config = crate::config::Config {
         loaded_from: Some(config_dir.clone()),
         ..Default::default()
@@ -98,8 +100,14 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
     };
     std::fs::write(dest_dir.join(&parent_spec.filename), b"x").unwrap();
     let mut models = std::collections::HashMap::new();
-    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &parent_spec, &dest_dir)
-        .await;
+    _setup_model_after_pull_with_config(
+        &configs_dir,
+        &mut models,
+        repo_id,
+        &parent_spec,
+        &dest_dir,
+    )
+    .await;
 
     let key = repo_id.replace('/', "--").to_lowercase();
     assert!(models[&key].mmproj.is_none(), "mmproj should start unset");
@@ -111,9 +119,14 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
         context_length: None,
     };
     std::fs::write(dest_dir.join(&mmproj_spec.filename), b"x").unwrap();
-    let returned_key =
-        _setup_model_after_pull_with_config(&config, &mut models, repo_id, &mmproj_spec, &dest_dir)
-            .await;
+    let returned_key = _setup_model_after_pull_with_config(
+        &configs_dir,
+        &mut models,
+        repo_id,
+        &mmproj_spec,
+        &dest_dir,
+    )
+    .await;
 
     assert_eq!(
         returned_key.as_deref(),
@@ -140,7 +153,8 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
 async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
     let tmp = tempfile::tempdir().unwrap();
     let config_dir = tmp.path().to_path_buf();
-    std::fs::create_dir_all(config_dir.join("configs")).unwrap();
+    let configs_dir = config_dir.join("configs");
+    std::fs::create_dir_all(&configs_dir).unwrap();
     let repo_id = "bartowski/TestVisionEarly-GGUF";
     let dest_dir = config_dir.join("models").join(repo_id);
     std::fs::create_dir_all(&dest_dir).unwrap();
@@ -159,8 +173,14 @@ async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
     };
     std::fs::write(dest_dir.join(&mmproj_spec.filename), b"x").unwrap();
     let mut models = std::collections::HashMap::new();
-    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &mmproj_spec, &dest_dir)
-        .await;
+    _setup_model_after_pull_with_config(
+        &configs_dir,
+        &mut models,
+        repo_id,
+        &mmproj_spec,
+        &dest_dir,
+    )
+    .await;
 
     let key = repo_id.replace('/', "--").to_lowercase();
     let stub = &models[&key];
@@ -178,8 +198,14 @@ async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
         context_length: Some(4096),
     };
     std::fs::write(dest_dir.join(&parent_spec.filename), b"x").unwrap();
-    _setup_model_after_pull_with_config(&config, &mut models, repo_id, &parent_spec, &dest_dir)
-        .await;
+    _setup_model_after_pull_with_config(
+        &configs_dir,
+        &mut models,
+        repo_id,
+        &parent_spec,
+        &dest_dir,
+    )
+    .await;
 
     let promoted = &models[&key];
     assert_eq!(

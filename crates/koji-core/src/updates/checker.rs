@@ -309,19 +309,21 @@ impl UpdateChecker {
                     files: cached_files,
                 }
             }
-            None => pull::list_gguf_files(repo_id).await?,
+            None => {
+                let listing = pull::list_gguf_files(repo_id).await?;
+                // Only insert into cache on a fresh fetch (cache-miss path).
+                // Cache-hits should NOT rewrite the entry timestamp, which would
+                // keep stale listings alive indefinitely when checks happen frequently.
+                self.gguf_listing_cache
+                    .insert(
+                        repo_id.to_string(),
+                        listing.commit_sha.clone(),
+                        listing.files.clone(),
+                    )
+                    .await;
+                listing
+            }
         };
-
-        // After successful fetch, store in cache (only if not already cached)
-        if self.gguf_listing_cache.get(repo_id).await.is_none() {
-            self.gguf_listing_cache
-                .insert(
-                    repo_id.to_string(),
-                    remote_listing.commit_sha.clone(),
-                    remote_listing.files.clone(),
-                )
-                .await;
-        }
 
         // Tier 1 — quick check: commit SHA match?
         if remote_listing.commit_sha == pull_record.commit_sha {

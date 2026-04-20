@@ -148,6 +148,10 @@ pub struct ProxyState {
     pub in_flight_downloads: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
     pub metrics_tx: tokio::sync::broadcast::Sender<crate::gpu::MetricSample>,
     pub download_queue: Option<Arc<DownloadQueueService>>,
+    /// Semaphore controlling concurrent post-pull config writes.
+    /// Replaces the old global CONFIG_WRITE_LOCK to allow controlled
+    /// parallelism (default capacity=4) instead of full serialization.
+    pub config_write_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl ProxyState {

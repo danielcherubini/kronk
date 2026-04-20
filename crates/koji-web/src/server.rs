@@ -10,7 +10,7 @@ use axum::{
 use include_dir::{include_dir, Dir};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
+use tower_http::{catch_panic::CatchPanicLayer, cors::CorsLayer};
 
 use crate::api;
 use crate::api::backends::{
@@ -23,7 +23,6 @@ use crate::api::benchmarks::{
     benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history, run_benchmark,
 };
 use crate::jobs::JobManager;
-
 #[allow(unused_imports)]
 use koji_core::proxy::download_queue::DownloadQueueService;
 
@@ -90,6 +89,7 @@ async fn serve_static(path: Option<Path<String>>) -> Response {
 }
 
 /// Forward a request to the Koji proxy at `/koji/v1/<path>`.
+/// Only allows GET, POST, and PATCH methods; returns 405 for others.
 async fn proxy_koji(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -97,11 +97,23 @@ async fn proxy_koji(
     path: Path<String>,
     body: Body,
 ) -> Response {
+    // Whitelist allowed methods
+    if !matches!(method, Method::GET | Method::POST | Method::PATCH) {
+        return (StatusCode::METHOD_NOT_ALLOWED, "Method not allowed").into_response();
+    }
+
     let url = format!("{}/koji/v1/{}", state.proxy_base_url, path.0);
     // Cap at 16 MiB — same as MAX_REQUEST_BODY_SIZE in koji-core — to prevent memory exhaustion.
-    let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    let body_bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {e}"),
+            )
+                .into_response();
+        }
+    };
 
     let mut req = state.client.request(method, &url);
     for (k, v) in &headers {
@@ -155,12 +167,20 @@ async fn serve_index() -> Response {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    // Build sub-router for backends API with origin enforcement and dedicated CORS
+    // Build sub-router for backends API with CORS and origin enforcement.
+    // CorsLayer must be outermost (applied last) so it runs before same-origin check.
     let backend_routes = Router::new()
         .route("/api/system/capabilities", get(system_capabilities))
         .route("/api/backends", get(list_backends))
-        .route("/api/backends/install", post(install_backend))
-        .route("/api/backends/:name/update", post(update_backend))
+        // Install/update endpoints: 16MB body limit
+        .route(
+            "/api/backends/install",
+            post(install_backend).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/api/backends/:name/update",
+            post(update_backend).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/api/backends/:name", delete(remove_backend))
         .route(
             "/api/backends/:name/default-args",
@@ -199,7 +219,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/updates/apply/model/:id",
             post(api::updates::apply_model_update),
         )
-        .layer(middleware::from_fn(api::middleware::enforce_same_origin))
+        // CORS layer outermost (applied last) so it runs before same-origin enforcement
         .layer(
             CorsLayer::new()
                 .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
@@ -209,26 +229,51 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     axum::http::Method::DELETE,
                 ])
                 .allow_headers(tower_http::cors::Any),
-        );
+        )
+        .layer(middleware::from_fn(api::middleware::enforce_same_origin));
+
+    // 1MB body limit for all JSON API endpoints
+    let json_body_limit = axum::extract::DefaultBodyLimit::max(1024 * 1024);
 
     Router::new()
         .route("/api/logs", get(api::get_logs))
         .route("/api/backup", get(create_backup))
-        .route("/api/config", get(api::get_config).post(api::save_config))
+        .route(
+            "/api/config",
+            get(api::get_config)
+                .post(api::save_config)
+                .layer(json_body_limit),
+        )
         .route(
             "/api/config/structured",
-            get(api::get_structured_config).post(api::save_structured_config),
+            get(api::get_structured_config)
+                .post(api::save_structured_config)
+                .layer(json_body_limit),
         )
-        .route("/api/models", get(api::list_models).post(api::create_model))
+        .route(
+            "/api/models",
+            get(api::list_models)
+                .post(api::create_model)
+                .layer(json_body_limit),
+        )
         .route(
             "/api/models/:id",
             get(api::get_model)
                 .put(api::update_model)
                 .delete(api::delete_model),
         )
-        .route("/api/models/:id/rename", post(api::rename_model))
-        .route("/api/models/:id/refresh", post(api::refresh_model_metadata))
-        .route("/api/models/:id/verify", post(api::verify_model_files))
+        .route(
+            "/api/models/:id/rename",
+            post(api::rename_model).layer(json_body_limit),
+        )
+        .route(
+            "/api/models/:id/refresh",
+            post(api::refresh_model_metadata).layer(json_body_limit),
+        )
+        .route(
+            "/api/models/:id/verify",
+            post(api::verify_model_files).layer(json_body_limit),
+        )
         .route(
             "/api/models/:id/quants/:quant_key",
             delete(api::delete_quant),
@@ -244,7 +289,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/api/downloads/:job_id/cancel",
-            post(api::downloads::cancel_download),
+            post(api::downloads::cancel_download).layer(json_body_limit),
         )
         .route(
             "/api/downloads/events",
@@ -261,7 +306,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(api::self_update::update_events),
         )
         // Benchmark routes
-        .route("/api/benchmarks/run", post(run_benchmark))
+        .route(
+            "/api/benchmarks/run",
+            post(run_benchmark).layer(json_body_limit),
+        )
         .route("/api/benchmarks/jobs/:id", get(get_benchmark_result))
         .route("/api/benchmarks/jobs/:id/events", get(benchmark_events))
         .route("/api/benchmarks/history", get(list_benchmark_history))
@@ -273,6 +321,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/*path",
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
         )
+        .layer(CatchPanicLayer::new())
         .with_state(state)
 }
 
@@ -302,11 +351,71 @@ pub async fn run_with_opts(
         upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         download_queue,
     });
+    let jobs_for_shutdown = state.jobs.clone();
     let app = build_router(state);
     tracing::info!("Koji web UI listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(jobs_for_shutdown))
+        .await?;
     Ok(())
+}
+
+/// Graceful shutdown signal handler.
+/// Listens for SIGINT/SIGTERM and triggers cleanup:
+/// - Kills all child processes
+/// - Releases job manager active slots (SSE channels close when jobs are dropped)
+async fn shutdown_signal(jobs: Option<Arc<JobManager>>) {
+    // Wait for either SIGINT or SIGTERM
+    #[cfg(unix)]
+    {
+        let sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
+        let sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+
+        match (sig_int, sig_term) {
+            (Ok(mut int_signal), Ok(mut term_signal)) => {
+                // Use select! to wait for either signal
+                tokio::select! {
+                    _ = int_signal.recv() => {
+                        tracing::info!("Received SIGINT, shutting down gracefully...");
+                    }
+                    _ = term_signal.recv() => {
+                        tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    }
+                }
+            }
+            (Err(_), Ok(mut term_signal)) => {
+                tracing::warn!("Unix signals not available, waiting for SIGTERM");
+                let _ = term_signal.recv().await;
+                tracing::info!("Received SIGTERM, shutting down gracefully...");
+            }
+            (Ok(mut int_signal), Err(_)) => {
+                tracing::warn!("Unix signals not available, waiting for SIGINT");
+                let _ = int_signal.recv().await;
+                tracing::info!("Received SIGINT, shutting down gracefully...");
+            }
+            (Err(_), Err(_)) => {
+                tracing::warn!("Unix signals not available, using ctrl_c fallback");
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Received interrupt, shutting down gracefully...");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, use ctrl_c for graceful shutdown
+        tracing::info!("Using Ctrl+C for graceful shutdown on this platform");
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("Received interrupt, shutting down gracefully...");
+    }
+
+    // Cleanup: kill all child processes for active jobs
+    if let Some(jobs) = jobs {
+        if let Some(active_job) = jobs.active().await {
+            tracing::info!("Killing children of active job {}...", active_job.id);
+            jobs.kill_children(&active_job).await;
+        }
+    }
 }
 
 /// Convenience wrapper with no logs_dir/config_path.

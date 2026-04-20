@@ -1,25 +1,23 @@
 //! Backup & Restore section for the Config page.
 
-use gloo_net::http::Request;
 use leptos::prelude::*;
+
+use crate::utils::post_request;
 
 #[component]
 pub fn BackupSection() -> impl IntoView {
-    let (uploading, set_uploading) = create_signal(false);
-    let (restore_preview, set_restore_preview) = create_signal<Option<RestorePreviewData>>(None);
-    let (selected_models, set_selected_models) = create_signal(Vec::<String>::new());
-    let (restore_status, set_restore_status) = create_signal(None::<String>);
-    let (restoring, set_restoring) = create_signal(false);
-    let (error, set_error) = create_signal<Option<String>>(None);
+    let (uploading, set_uploading) = signal(false);
+    let (restore_preview, set_restore_preview) = signal::<Option<RestorePreviewData>>(None);
+    let (selected_models, set_selected_models) = signal(Vec::<String>::new());
+    let (restore_status, set_restore_status) = signal(None::<String>);
+    let (restoring, set_restoring) = signal(false);
+    let (error, set_error) = signal<Option<String>>(None);
 
     // Backup handler - downloads backup as file
     let backup_handler = move |_| {
         let set_error = set_error.clone();
-        let _ = spawn_local(async move {
-            match Request::get("/api/backup")
-                .send()
-                .await
-            {
+        spawn_local(async move {
+            match Request::get("/api/backup").send().await {
                 Ok(resp) => {
                     match resp.blob().await {
                         Ok(blob) => {
@@ -60,64 +58,106 @@ pub fn BackupSection() -> impl IntoView {
         });
     };
 
-    // Upload handler
+    // Upload handler — safe error handling for all DOM interactions.
     let upload_handler = move |ev: web_sys::Event| {
-        let target = ev.target().unwrap();
-        let input = target.dyn_ref::<web_sys::HtmlInputElement>().unwrap();
-        let files = input.files().unwrap();
+        let target = match ev.target() {
+            Some(t) => t,
+            None => return,
+        };
+        let input = match target.dyn_ref::<web_sys::HtmlInputElement>() {
+            Some(i) => i,
+            None => {
+                set_error.set(Some("Expected an HTMLInputElement".to_string()));
+                return;
+            }
+        };
+
+        let files = match input.files() {
+            Some(f) => f,
+            None => {
+                set_error.set(Some("File input has no files".to_string()));
+                return;
+            }
+        };
 
         if files.length() == 0 {
             return;
         }
 
-        let file = files.get(0).unwrap();
-        let set_uploading = set_uploading;
-        let set_restore_preview = set_restore_preview;
-        let set_selected_models = set_selected_models;
-        let set_error = set_error;
-
-        set_uploading.set(true);
-        set_error.set(None);
+        let file = match files.get(0) {
+            Some(f) => f,
+            None => {
+                set_error.set(Some("Failed to get first file".to_string()));
+                return;
+            }
+        };
 
         // Note: File upload via FormData requires the fetch API with FormData.
         // gloo_net doesn't support multipart uploads directly.
         // For now, show a message that upload is not yet implemented.
         set_uploading.set(false);
+        set_restore_preview.set(None);
+        set_selected_models.set(Vec::new());
         set_error.set(Some("File upload not yet implemented in web UI. Use CLI instead.".to_string()));
     };
 
-    // Restore handler
+    // Restore handler — safe error handling for signal reads and JSON building.
     let restore_handler = move |_| {
         let preview = restore_preview.get();
         let selected = selected_models.get();
-        
+
         if preview.is_none() {
             set_error.set(Some("Please upload a backup file first".to_string()));
             return;
         }
-        
-        let preview = preview.unwrap();
-        let set_restoring = set_restoring;
-        let set_restore_status = set_restore_status;
-        let set_error = set_error;
-        
-        set_restoring.set(true);
-        set_error.set(None);
 
-        let body = serde_json::json!({
+        let preview = match preview {
+            Some(p) => p,
+            None => return, // unreachable but satisfies the compiler
+        };
+
+        let body_json = serde_json::json!({
             "upload_id": preview.upload_id,
             "selected_models": selected,
             "skip_backends": false,
             "skip_models": false
         });
 
-        let _ = spawn_local(async move {
-            match Request::post("/api/restore")
-                .json(&body)
-                .unwrap()
-                .send()
-                .await
-            {
+        let json_str = match body_json.to_string() {
+            Ok(s) => s,
+            Err(e) => {
+                set_error.set(Some(format!("Failed to serialize restore request: {e}")));
+                return;
+            }
+        };
+
+        let set_restoring = set_restoring;
+        let set_restore_status = set_restore_status;
+        let set_error = set_error;
+
+        set_restoring.set(true);
+        set_error.set(None);
+
+        spawn_local(async move {
+            let body: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_restoring.set(false);
+                    set_error.set(Some(format!("Failed to serialize restore request: {e}")));
+                    return;
+                }
+            };
+
+            let build_result = match post_request("/api/restore").json(&body) {
+                Ok(r) => r,
+                Err(e) => {
+                    set_restoring.set(false);
+                    set_error.set(Some(format!("Failed to build request: {e}")));
+                    return;
+                }
+            };
+
+            match build_result.send().await {
                 Ok(resp) => {
                     match resp.json::<serde_json::Value>().await {
                         Ok(json) => {
@@ -218,7 +258,7 @@ pub fn BackupSection() -> impl IntoView {
                                             let repo_id = model.repo_id.clone();
                                             let set_selected = set_selected_models;
                                             let selected = selected_models;
-                                            
+
                                             view! {
                                                 <div class="flex items-center">
                                                     <input

@@ -4,7 +4,6 @@ use leptos::prelude::*;
 #[component]
 pub fn DownloadStep(
     download_jobs: Signal<Vec<JobProgress>>,
-    on_done: Callback<()>,
     on_close: Option<Callback<()>>,
     error_msg: RwSignal<Option<String>>,
 ) -> impl IntoView {
@@ -99,7 +98,6 @@ pub fn DownloadStep(
                     </div>
                 }.into_any())
             } else {
-                 on_done.run(());
                  Some(view! {
                      <div class="alert alert--success mt-3">
                          <span class="alert__icon">"✓"</span>

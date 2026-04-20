@@ -10,6 +10,14 @@ use super::resolve_model_id;
 use crate::api::{load_config_from_state, trigger_proxy_reload};
 use crate::server::AppState;
 
+/// Maximum lengths for ModelBody fields.
+const MAX_BACKEND: usize = 256;
+const MAX_MODEL: usize = 256;
+const MAX_QUANT: usize = 128;
+const MAX_MMPROJ: usize = 128;
+const MAX_API_NAME: usize = 128;
+const MAX_DISPLAY_NAME: usize = 256;
+
 /// Body for create/update model.
 #[derive(serde::Deserialize)]
 pub struct ModelBody {
@@ -129,6 +137,14 @@ pub async fn update_model(
 ) -> impl IntoResponse {
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
+        // Validate ModelBody fields
+        if let Err(e) = validate_model_body(&body) {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                serde_json::json!({"error": e}),
+            ));
+        }
+
         let (_cfg, config_dir) = load_config_from_state(&state)?;
 
         // Load existing from DB
@@ -215,7 +231,7 @@ pub async fn create_model(
 ) -> impl IntoResponse {
     let state_clone = state.clone();
     match tokio::task::spawn_blocking(move || {
-        let (_, config_dir) = load_config_from_state(&state)?;
+        // Validate repo_id: non-empty, max 256 chars, valid regex pattern
         let repo_id = body.repo_id.trim().to_string();
         if repo_id.is_empty() {
             return Err((
@@ -223,6 +239,25 @@ pub async fn create_model(
                 serde_json::json!({"error": "repo_id cannot be empty"}),
             ));
         }
+        if repo_id.len() > 256 {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                serde_json::json!({"error": "repo_id must be at most 256 characters"}),
+            ));
+        }
+        if !is_valid_repo_id(&repo_id) {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                serde_json::json!({"error": "repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}),
+            ));
+        }
+
+        // Validate ModelBody fields
+        if let Err(e) = validate_model_body(&body.model) {
+            return Err((StatusCode::UNPROCESSABLE_ENTITY, serde_json::json!({"error": e})));
+        }
+
+        let (_, config_dir) = load_config_from_state(&state)?;
 
         let open = koji_core::db::open(&config_dir).map_err(|e| {
             (
@@ -330,6 +365,18 @@ pub async fn rename_model(
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 serde_json::json!({"error": "New repo_id cannot be empty"}),
+            ));
+        }
+        if new_repo_id.len() > 256 {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                serde_json::json!({"error": "New repo_id must be at most 256 characters"}),
+            ));
+        }
+        if !is_valid_repo_id(&new_repo_id) {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                serde_json::json!({"error": "New repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}),
             ));
         }
 
@@ -514,7 +561,7 @@ pub async fn delete_model(
         let (cfg, config_dir) = load_config_from_state(&state)?;
 
         // Capture the removed model for cleanup
-        let open = koji_core::db::open(&config_dir).map_err(|e| {
+        let mut open = koji_core::db::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
@@ -536,7 +583,7 @@ pub async fn delete_model(
         let model_record = koji_core::db::queries::get_model_config(&open.conn, model_id)
             .map_err(|e| {
                 (
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                     serde_json::json!({"error": e.to_string()}),
                 )
             })?
@@ -548,7 +595,57 @@ pub async fn delete_model(
             })?;
         let _model_config = koji_core::config::ModelConfig::from_db_record(&model_record);
 
-        // File cleanup (mirrors CLI model rm logic)
+        // Step 1: Delete DB records within a transaction — all-or-nothing semantics.
+        // This ensures that if the transaction fails, no files are touched yet
+        // and the DB remains consistent.
+        {
+            let repo_id = model_record.repo_id.clone();
+
+            // Start transaction
+            let tx = match open.conn.transaction() {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::error!("Failed to start transaction for model deletion: {e}");
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        serde_json::json!({"error": "Failed to delete model records from database"}),
+                    ));
+                }
+            };
+
+            // Delete the model config record — CASCADE handles model_files and model_pulls.
+            tracing::debug!("Deleting model config for id={}", model_id);
+            if let Err(e) =
+                koji_core::db::queries::delete_model_config(&tx, model_id)
+            {
+                tracing::error!("Failed to delete model config: {e}");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": format!("Failed to delete model records from database: {e}")}),
+                ));
+            }
+
+            // Delete update check record (best-effort, non-fatal)
+            if let Err(e) =
+                koji_core::db::queries::delete_update_check(&tx, "model", &repo_id)
+            {
+                tracing::warn!("Failed to delete update check (non-fatal): {e}");
+            }
+
+            // Commit the transaction — after this point, DB is clean.
+            if let Err(e) = tx.commit() {
+                tracing::error!("Failed to commit transaction for model deletion: {e}");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": "Failed to delete model records from database"}),
+                ));
+            }
+        }
+
+        // Step 2: File cleanup (best-effort) — after successful DB commit.
+        // If file deletion fails, the DB is already clean; orphaned files are
+        // a benign cleanup issue. If it had succeeded before the DB commit,
+        // a failed transaction would leave files deleted but DB records intact.
         let repo_id = model_record.repo_id.clone();
         if !repo_id.is_empty() {
             // 1. Delete model directory: models_dir / repo_id
@@ -582,23 +679,7 @@ pub async fn delete_model(
                     let _ = std::fs::remove_file(&card_path);
                 }
             }
-            // 3. Delete DB records (best-effort)
-            koji_core::db::queries::delete_model_records(&open.conn, model_id).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    serde_json::json!({"error": e.to_string()}),
-                )
-            })?;
         }
-
-        // Delete the model config record and update check record
-        koji_core::db::queries::delete_model_config(&open.conn, model_id).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": e.to_string()}),
-            )
-        })?;
-        let _ = koji_core::db::queries::delete_update_check(&open.conn, "model", &repo_id);
 
         Ok(serde_json::json!({ "ok": true }))
     })
@@ -617,6 +698,65 @@ pub async fn delete_model(
         )
             .into_response(),
     }
+}
+
+// ── Validation helpers ──────────────────────────────────────────────────────
+
+/// Validate that a string is a valid repo_id: non-empty, only alphanumeric, dots, underscores, hyphens, slashes.
+fn is_valid_repo_id(input: &str) -> bool {
+    if input.is_empty() {
+        return false;
+    }
+    for ch in input.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' | '/' => continue,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Validate ModelBody field lengths. Returns an error message string if invalid.
+fn validate_model_body(body: &ModelBody) -> Result<(), String> {
+    if body.backend.is_empty() {
+        return Err("backend cannot be empty".to_string());
+    }
+    if body.backend.len() > MAX_BACKEND {
+        return Err(format!("backend must be at most {MAX_BACKEND} characters"));
+    }
+    if let Some(ref model) = body.model {
+        if model.is_empty() {
+            return Err("model cannot be empty".to_string());
+        }
+        if model.len() > MAX_MODEL {
+            return Err(format!("model must be at most {MAX_MODEL} characters"));
+        }
+    }
+    if let Some(ref quant) = body.quant {
+        if !quant.is_empty() && quant.len() > MAX_QUANT {
+            return Err(format!("quant must be at most {MAX_QUANT} characters"));
+        }
+    }
+    if let Some(ref mmproj) = body.mmproj {
+        if !mmproj.is_empty() && mmproj.len() > MAX_MMPROJ {
+            return Err(format!("mmproj must be at most {MAX_MMPROJ} characters"));
+        }
+    }
+    if let Some(ref api_name) = body.api_name {
+        if !api_name.is_empty() && api_name.len() > MAX_API_NAME {
+            return Err(format!(
+                "api_name must be at most {MAX_API_NAME} characters"
+            ));
+        }
+    }
+    if let Some(ref display_name) = body.display_name {
+        if !display_name.is_empty() && display_name.len() > MAX_DISPLAY_NAME {
+            return Err(format!(
+                "display_name must be at most {MAX_DISPLAY_NAME} characters"
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ use leptos::task::spawn_local;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::utils::post_request;
+
 // ─── WASM-safe JSON mirror types ──────────────────────────────────────────
 // These match the shape served by /api/config/structured and accepted by POST.
 
@@ -205,7 +207,7 @@ pub fn ConfigEditor() -> impl IntoView {
                     return;
                 }
             };
-            let res = gloo_net::http::Request::post("/api/config/structured")
+            let res = post_request("/api/config/structured")
                 .header("Content-Type", "application/json")
                 .body(body)
                 .expect("failed to build request")

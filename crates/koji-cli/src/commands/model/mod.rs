@@ -42,9 +42,21 @@ pub async fn run(config: &koji_core::config::Config, command: ModelCommands) -> 
             limit,
             pull,
         } => update::cmd_search(config, &query, &sort, limit, pull).await,
-        ModelCommands::Verify { model } => verify::cmd_verify(config, model).await,
+        ModelCommands::Verify { model } => match verify::cmd_verify(config, model).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        },
         ModelCommands::VerifyExisting { model, verbose } => {
-            verify::cmd_verify_existing(config, model, verbose).await
+            match verify::cmd_verify_existing(config, model, verbose).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         ModelCommands::Migrate => migrate::cmd_migrate(config),
     }

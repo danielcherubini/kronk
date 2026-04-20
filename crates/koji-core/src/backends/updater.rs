@@ -13,10 +13,10 @@ fn github_token() -> Option<String> {
 }
 
 #[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
+pub(super) struct GithubRelease {
+    pub(super) tag_name: String,
     #[allow(dead_code)]
-    prerelease: bool,
+    pub(super) prerelease: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,9 +24,21 @@ struct GithubCommit {
     sha: String,
 }
 
+/// Find the latest non-prerelease release from a list of GitHub releases.
+///
+/// Releases are expected to be sorted by creation date (newest first).
+/// Returns an error if no stable (non-prerelease) release is found.
+pub(super) fn find_latest_stable_release(releases: &[GithubRelease]) -> Result<String> {
+    let latest_stable = releases
+        .iter()
+        .find(|r| !r.prerelease)
+        .ok_or_else(|| anyhow!("No stable (non-prerelease) releases found"))?;
+    Ok(latest_stable.tag_name.clone())
+}
+
 /// Check the latest release version for a backend.
 ///
-/// For llama.cpp: uses /releases/latest (they have stable releases).
+/// For llama.cpp: uses /releases to filter out pre-release tags.
 /// For ik_llama: uses the latest commit on main, since ik_llama doesn't
 /// publish proper releases (only a single stale pre-release tag).
 pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
@@ -38,7 +50,10 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
 
     match backend {
         BackendType::LlamaCpp => {
-            let url = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+            // Use /releases endpoint to filter out pre-release tags.
+            // GitHub's /releases/latest may return a pre-release, which is
+            // not what we want for stable version checks.
+            let url = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=100";
             let mut request = client.get(url);
             if let Some(t) = token.as_deref() {
                 request = request.header("Authorization", format!("Bearer {}", t));
@@ -48,8 +63,8 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
                 .await
                 .with_context(|| format!("Failed to fetch from {}", url))?;
             check_rate_limit(&response)?;
-            let release: GithubRelease = response.json().await?;
-            Ok(release.tag_name)
+            let releases: Vec<GithubRelease> = response.json().await?;
+            find_latest_stable_release(&releases)
         }
         BackendType::IkLlama => {
             // ik_llama doesn't publish proper releases — their only release tag
@@ -121,8 +136,9 @@ pub async fn update_backend_with_progress(
     // Clone backend_type before install_backend moves options
     let backend_type = options.backend_type.clone();
 
-    // Install the new version with progress
-    let new_binary_path = install_backend_with_progress(options, progress).await?;
+    // Install the new version with progress, using the registry's shared client
+    let new_binary_path =
+        install_backend_with_progress(options, progress, Some(&registry.client)).await?;
 
     // Resolve "latest" to actual tag before storing in registry
     let resolved_version = if latest_version.to_lowercase() == "latest" {
@@ -263,5 +279,77 @@ mod tests {
     fn test_github_token_not_set() {
         std::env::remove_var("GITHUB_TOKEN");
         assert!(github_token().is_none());
+    }
+
+    // ── find_latest_stable_release tests ────────────────────────────────────
+
+    #[test]
+    fn test_find_latest_stable_release_skips_prereleases() {
+        let releases = vec![
+            GithubRelease {
+                tag_name: "v1.0.0-rc1".to_string(),
+                prerelease: true,
+            },
+            GithubRelease {
+                tag_name: "v1.0.0-beta2".to_string(),
+                prerelease: true,
+            },
+            GithubRelease {
+                tag_name: "v0.9.0".to_string(),
+                prerelease: false,
+            },
+        ];
+        let result = find_latest_stable_release(&releases).unwrap();
+        assert_eq!(result, "v0.9.0");
+    }
+
+    #[test]
+    fn test_find_latest_stable_release_no_prereleases() {
+        let releases = vec![
+            GithubRelease {
+                tag_name: "v1.0.0".to_string(),
+                prerelease: false,
+            },
+            GithubRelease {
+                tag_name: "v0.9.0".to_string(),
+                prerelease: false,
+            },
+        ];
+        let result = find_latest_stable_release(&releases).unwrap();
+        assert_eq!(result, "v1.0.0");
+    }
+
+    #[test]
+    fn test_find_latest_stable_release_all_prereleases() {
+        let releases = vec![
+            GithubRelease {
+                tag_name: "v2.0.0-alpha".to_string(),
+                prerelease: true,
+            },
+            GithubRelease {
+                tag_name: "v2.0.0-beta".to_string(),
+                prerelease: true,
+            },
+        ];
+        let result = find_latest_stable_release(&releases);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No stable"));
+    }
+
+    #[test]
+    fn test_find_latest_stable_release_empty_list() {
+        let releases: Vec<GithubRelease> = vec![];
+        let result = find_latest_stable_release(&releases);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_latest_stable_release_single_stable() {
+        let releases = vec![GithubRelease {
+            tag_name: "v1.0.0".to_string(),
+            prerelease: false,
+        }];
+        let result = find_latest_stable_release(&releases).unwrap();
+        assert_eq!(result, "v1.0.0");
     }
 }

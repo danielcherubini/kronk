@@ -15,6 +15,15 @@ pub async fn update_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Validate path param to prevent path traversal attacks
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid backend name: path separators or traversal sequences not allowed"})),
+        )
+            .into_response();
+    }
+
     let jobs = match &state.jobs {
         Some(j) => j,
         None => {
@@ -216,6 +225,86 @@ pub async fn update_backend(
         notices: vec![],
     })
     .into_response()
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    /// Path traversal in update_backend name should return 400.
+    #[tokio::test]
+    async fn test_update_backend_path_traversal_rejected() {
+        let state = Arc::new(crate::server::AppState {
+            jobs: None,
+            capabilities: None,
+            proxy_base_url: "http://127.0.0.1:11434".to_string(),
+            client: reqwest::Client::new(),
+            logs_dir: None,
+            config_path: None,
+            proxy_config: None,
+            binary_version: "0.0.0-test".to_string(),
+            update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+            update_checker: Arc::new(koji_core::updates::UpdateChecker::new()),
+            download_queue: None,
+        });
+
+        let router = crate::server::build_router(state);
+
+        // Valid CSRF token pair — cookie and header must match.
+        let csrf_token = "test-csrf-token-12345";
+        let cookie_header = format!("{}={}", "koji_csrf_token", csrf_token);
+
+        // Test with `\` in name — backslash won't be normalized by Axum.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/backends/foo\\bar/update")
+            .header(axum::http::header::COOKIE, cookie_header.as_str())
+            .header("X-CSRF-Token", csrf_token)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("request should complete");
+
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::BAD_REQUEST,
+            "update_backend should reject names containing '\\' with 400"
+        );
+
+        // Test with `..` in name — Axum normalizes `../` segments but not `..`
+        // embedded within a segment. The validation catches this.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/backends/foo..bar/update")
+            .header(axum::http::header::COOKIE, cookie_header.as_str())
+            .header("X-CSRF-Token", csrf_token)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("request should complete");
+
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::BAD_REQUEST,
+            "update_backend should reject names containing '..' with 400"
+        );
+    }
 }
 
 /// DELETE /api/backends/:name/versions/:version

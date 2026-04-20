@@ -14,6 +14,61 @@ pub async fn install_backend(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InstallRequest>,
 ) -> impl IntoResponse {
+    // Validate backend_type: non-empty and <= 64 chars
+    if req.backend_type.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "backend_type cannot be empty"})),
+        )
+            .into_response();
+    }
+    if req.backend_type.len() > 64 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "backend_type must be at most 64 characters"})),
+        )
+            .into_response();
+    }
+
+    // Validate version: if provided, must be non-empty and <= 128 chars
+    if let Some(ref version) = req.version {
+        if version.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "version cannot be empty"})),
+            )
+                .into_response();
+        }
+        if version.len() > 128 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "version must be at most 128 characters"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Validate gpu_type version fields: if present, must be non-empty and <= 32 chars
+    match &req.gpu_type {
+        GpuTypeDto::Cuda { version } | GpuTypeDto::Rocm { version } => {
+            if version.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "gpu type version cannot be empty"})),
+                )
+                    .into_response();
+            }
+            if version.len() > 32 {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "gpu type version must be at most 32 characters"})),
+                )
+                    .into_response();
+            }
+        }
+        _ => {}
+    }
+
     let jobs = match &state.jobs {
         Some(j) => j,
         None => {
@@ -238,6 +293,7 @@ pub async fn install_backend(
         let result = match koji_core::backends::installer::install_backend_with_progress(
             options,
             Some(adapter),
+            None, // No registry client available in background job
         )
         .await
         {

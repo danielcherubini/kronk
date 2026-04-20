@@ -13,9 +13,6 @@ pub fn max_concurrent_pulls() -> usize {
         .unwrap_or(8)
 }
 
-/// Global mutex serialising post-pull config writes to prevent concurrent-completion races.
-pub(super) static CONFIG_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// A single quantisation variant available for a HuggingFace GGUF repo.
 #[derive(Debug, Serialize)]
 pub struct QuantEntry {

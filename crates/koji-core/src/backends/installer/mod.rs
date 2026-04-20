@@ -9,6 +9,7 @@ pub use prebuilt::prepare_target_dir;
 pub use urls::get_prebuilt_url;
 
 use anyhow::Result;
+use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -41,9 +42,13 @@ fn emit(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>) {
 ///
 /// Clones `source` from `options` before matching so that `options` fields
 /// remain accessible inside each arm.
+///
+/// When `client` is `Some`, it is used for prebuilt downloads (enabling connection
+/// pooling across multiple downloads). When `None`, a new client is created per download.
 pub async fn install_backend_with_progress(
     options: InstallOptions,
     progress: Option<Arc<dyn ProgressSink>>,
+    client: Option<&Client>,
 ) -> Result<PathBuf> {
     let source = options.source.clone();
     match source {
@@ -67,7 +72,7 @@ pub async fn install_backend_with_progress(
             } else {
                 version
             };
-            prebuilt::install_prebuilt(&options, &resolved, progress.as_ref()).await
+            prebuilt::install_prebuilt(&options, &resolved, progress.as_ref(), client).await
         }
         BackendSource::SourceCode {
             version,
@@ -89,9 +94,9 @@ pub async fn install_backend_with_progress(
 /// Main entry point for installing a backend (no progress tracking).
 ///
 /// This is a thin wrapper around `install_backend_with_progress` that passes `None`
-/// for the progress sink, preserving the original CLI behavior.
+/// for the progress sink and client, preserving the original CLI behavior.
 pub async fn install_backend(options: InstallOptions) -> Result<PathBuf> {
-    install_backend_with_progress(options, None).await
+    install_backend_with_progress(options, None, None).await
 }
 
 #[cfg(test)]
@@ -158,7 +163,7 @@ mod tests {
         // provide sufficient coverage for the wrapper contract.
         fn _assert_types() {
             // install_backend takes InstallOptions -> Result<PathBuf>
-            // install_backend_with_progress takes (InstallOptions, Option<Arc<dyn ProgressSink>>) -> Result<PathBuf>
+            // install_backend_with_progress takes (InstallOptions, Option<Arc<dyn ProgressSink>>, Option<&Client>) -> Result<PathBuf>
             // These signatures must remain compatible.
             use crate::backends::installer::ProgressSink;
             use std::sync::Arc;
@@ -176,6 +181,7 @@ mod tests {
             // Both functions should accept these arguments
             // We can't call them without a real installer, but we can verify types compile
             let _sink: Option<Arc<dyn ProgressSink>> = None;
+            let _client: Option<&reqwest::Client> = None;
         }
         _assert_types();
     }

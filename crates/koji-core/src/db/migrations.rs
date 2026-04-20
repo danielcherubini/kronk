@@ -5,6 +5,31 @@
 
 use rusqlite::Connection;
 
+/// RAII guard that re-enables SQLite foreign keys on drop.
+///
+/// Used around migrations that temporarily disable FK enforcement
+/// (e.g., migration v9 which rebuilds `model_configs` via DROP + RENAME).
+/// Ensures `PRAGMA foreign_keys=ON` runs even if the migration panics or
+/// returns an error, preventing permanent FK disabling.
+pub struct FkGuard<'conn> {
+    conn: &'conn Connection,
+}
+
+impl<'conn> FkGuard<'conn> {
+    /// Disable foreign keys and return a guard that re-enables them on Drop.
+    pub fn disable(conn: &'conn Connection) -> anyhow::Result<Self> {
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        Ok(Self { conn })
+    }
+}
+
+impl Drop for FkGuard<'_> {
+    fn drop(&mut self) {
+        // Ignore errors — best effort to restore FK state.
+        let _ = self.conn.execute_batch("PRAGMA foreign_keys=ON;");
+    }
+}
+
 /// Migration entry: (version number, SQL statement)
 pub type Migration = (i32, &'static str);
 
@@ -410,18 +435,17 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
             // it is a no-op inside one. For rebuild-style migrations we need
             // FKs off so DROP TABLE on the parent does not cascade-delete
             // rows in referencing tables.
-            if fk_off {
-                conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
-            }
+            let _fk_guard = if fk_off {
+                Some(FkGuard::disable(conn)?)
+            } else {
+                None
+            };
             // Run each migration in its own transaction so a crash mid-migration
             // leaves the DB in a consistent state (user_version only updates on commit).
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(sql)?;
             tx.execute_batch(&format!("PRAGMA user_version = {version};"))?;
             tx.commit()?;
-            if fk_off {
-                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-            }
             tracing::debug!("Applied migration to version {}", version);
         }
     }
@@ -712,5 +736,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!(commit_sha, "def456");
+    }
+
+    /// Regression test for the FK toggle not restored on error path.
+    ///
+    /// Before the RAII guard fix, if a migration that required `foreign_keys=OFF`
+    /// failed mid-execution (e.g., invalid SQL), the subsequent
+    /// `PRAGMA foreign_keys=ON` would never run, permanently disabling FK
+    /// enforcement for the rest of the session.
+    ///
+    /// This test verifies that the `FkGuard` struct properly re-enables FKs
+    /// even when an error occurs inside its scope.
+    #[test]
+    fn test_fk_guard_restores_on_error() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Verify FKs start enabled.
+        let fk_before: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk_before, 1);
+
+        // Disable FKs via guard and trigger an error inside its scope.
+        let guard_result = FkGuard::disable(&conn).unwrap();
+
+        // Verify FKs are now off.
+        let fk_off: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk_off, 0);
+
+        // Simulate an error occurring inside the guard's scope by dropping it early.
+        drop(guard_result);
+
+        // FKs must be re-enabled after the guard is dropped (even without an explicit ON call).
+        let fk_after: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk_after, 1, "FKs must be re-enabled after FkGuard drops");
+    }
+
+    /// Test that FKs remain enabled when guard is not used (normal path).
+    #[test]
+    fn test_fk_guard_noop_when_not_used() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        let fk_before: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk_before, 1);
+
+        // Don't use the guard — FKs should stay enabled.
+        let _ = ();
+
+        let fk_after: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk_after, 1);
     }
 }

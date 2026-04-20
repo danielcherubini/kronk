@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use super::download::download_file;
+use reqwest::Client;
+
+use super::download::download_with_client;
 use super::extract::extract_archive;
 use super::urls::get_prebuilt_url;
 use super::InstallOptions;
@@ -62,6 +64,7 @@ pub async fn install_prebuilt(
     options: &InstallOptions,
     version: &str,
     progress: Option<&Arc<dyn ProgressSink>>,
+    client: Option<&Client>,
 ) -> Result<PathBuf> {
     emit(
         progress,
@@ -105,7 +108,7 @@ pub async fn install_prebuilt(
         .ok_or_else(|| anyhow!("Invalid download URL: {}", url))?;
     let archive_path = download_dir.path().join(archive_name);
 
-    if let Err(e) = download_file(&url, &archive_path, progress).await {
+    if let Err(e) = download_with_client(&url, &archive_path, progress, client).await {
         emit_error(progress, format!("Download failed: {}", e));
         return Err(e);
     }

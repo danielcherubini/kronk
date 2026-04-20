@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use crate::utils::post_request;
+
 use crate::components::pull_wizard::*;
 use futures_util::StreamExt;
 use gloo_net::eventsource::futures::EventSource;
@@ -51,78 +53,15 @@ pub fn PullQuantWizard(
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
 
-    // ── Reset Effect (only if is_open is Some) ──────────────────────────────
-    if let Some(is_open_sig) = is_open {
-        Effect::new(move |_| {
-            // Subscribe ONLY to is_open. Reading other signals tracked here
-            // would race with the on_complete Effect on the Done transition.
-            let open = is_open_sig.get();
-            if !open {
-                return;
-            }
-            let step = wizard_step.get_untracked();
-            if !matches!(step, WizardStep::RepoInput | WizardStep::Done) {
-                // Mid-flow session — preserve it across close/reopen.
-                return;
-            }
-            // Always reset session state when (re)opening at a terminal step.
-            selected_filenames.set(std::collections::HashSet::new());
-            selected_mmproj_filenames.set(std::collections::HashSet::new());
-            context_lengths.set(std::collections::HashMap::new());
-            download_jobs.set(Vec::new());
-            error_msg.set(None);
-            did_complete.set(false);
-            wizard_step.set(WizardStep::RepoInput);
-
-            let repo = initial_repo.get_untracked();
-            if repo.trim().is_empty() {
-                return; // No auto-fetch for empty repo — user will type one in.
-            }
-            repo_id.set(repo.clone());
-            wizard_step.set(WizardStep::LoadingQuants);
-
-            // Spawn the same fetch the Search button does today.
-            wasm_bindgen_futures::spawn_local(async move {
-                let url = format!("/koji/v1/hf/{}", repo);
-                match gloo_net::http::Request::get(&url).send().await {
-                    Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
-                        Ok(quants) => {
-                            if quants.is_empty() {
-                                error_msg.set(Some(
-                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
-                                ));
-                                wizard_step.set(WizardStep::RepoInput);
-                            } else {
-                                // Separate quants from mmprojs
-                                let mut model_quants: Vec<QuantEntry> = Vec::new();
-                                let mut mmprojs: Vec<QuantEntry> = Vec::new();
-                                for q in quants {
-                                    if q.kind == QuantKind::Mmproj {
-                                        mmprojs.push(q);
-                                    } else {
-                                        model_quants.push(q);
-                                    }
-                                }
-                                available_quants.set(model_quants);
-                                available_mmprojs.set(mmprojs);
-                                wizard_step.set(WizardStep::SelectQuants);
-                            }
-                        }
-                        Err(e) => {
-                            error_msg.set(Some(format!("Failed to parse response: {e}")));
-                            wizard_step.set(WizardStep::RepoInput);
-                        }
-                    },
-                    Err(e) => {
-                        error_msg.set(Some(format!("Request failed: {e}")));
-                        wizard_step.set(WizardStep::RepoInput);
-                    }
-                }
-            });
-        });
-    }
+    // ── Cancel flag: flipped on component unmount ───────────────────────────
+    let cancelled = RwSignal::new(false);
+    on_cleanup(move || {
+        cancelled.set(true);
+    });
 
     // ── on_complete Effect (only if on_complete is Some) ─────────────────────
+    // Watches download_jobs signal for terminal state transitions.
+    // Moved out of the view closure to avoid calling during render.
     if let Some(cb) = on_complete {
         Effect::new(move |_| {
             let step = wizard_step.get();
@@ -152,12 +91,6 @@ pub fn PullQuantWizard(
                         repo_id: repo.clone(),
                         filename: j.filename.clone(),
                         quant,
-                        // Always Some today — `bytes_downloaded` is u64, never None.
-                        // Wrapped in Option for forward-compat (e.g. if a future
-                        // backend revision that reports completion without a final byte count
-                        // can set this to `None` and the editor's merge logic
-                        // (`if cq.size_bytes.is_some() { ... }`) handles it correctly without
-                        // clobbering an existing value.
                         size_bytes: Some(j.bytes_downloaded),
                         context_length,
                     }
@@ -168,9 +101,95 @@ pub fn PullQuantWizard(
         });
     }
 
+    // ── Done-step transition Effect ─────────────────────────────────────────
+    // Watches download_jobs for terminal-state transitions and advances to
+    // WizardStep::Done. This replaces the on_done callback that was previously
+    // called inside a view closure.
+    Effect::new(move |_| {
+        let jobs = download_jobs.get();
+        if jobs.is_empty() {
+            return;
+        }
+        let all_terminal = jobs
+            .iter()
+            .all(|j| j.status == "completed" || j.status == "failed");
+        if !all_terminal {
+            return;
+        }
+        // Only transition if we're currently on the Downloading step.
+        let current_step = wizard_step.get();
+        if current_step == WizardStep::Downloading {
+            wizard_step.set(WizardStep::Done);
+        }
+    });
+
+    // ── Reset Effect (only if is_open is Some) ──────────────────────────────
+    if let Some(is_open_sig) = is_open {
+        Effect::new(move |_| {
+            let open = is_open_sig.get();
+            if !open {
+                return;
+            }
+            let step = wizard_step.get_untracked();
+            if !matches!(step, WizardStep::RepoInput | WizardStep::Done) {
+                return;
+            }
+            selected_filenames.set(std::collections::HashSet::new());
+            selected_mmproj_filenames.set(std::collections::HashSet::new());
+            context_lengths.set(std::collections::HashMap::new());
+            download_jobs.set(Vec::new());
+            error_msg.set(None);
+            did_complete.set(false);
+            wizard_step.set(WizardStep::RepoInput);
+
+            let repo = initial_repo.get_untracked();
+            if repo.trim().is_empty() {
+                return;
+            }
+            repo_id.set(repo.clone());
+            wizard_step.set(WizardStep::LoadingQuants);
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let url = format!("/koji/v1/hf/{}", repo);
+                match gloo_net::http::Request::get(&url).send().await {
+                    Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
+                        Ok(quants) => {
+                            if quants.is_empty() {
+                                error_msg.set(Some(
+                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
+                                ));
+                                wizard_step.set(WizardStep::RepoInput);
+                            } else {
+                                let mut model_quants: Vec<QuantEntry> = Vec::new();
+                                let mut mmprojs: Vec<QuantEntry> = Vec::new();
+                                for q in quants {
+                                    if q.kind == QuantKind::Mmproj {
+                                        mmprojs.push(q);
+                                    } else {
+                                        model_quants.push(q);
+                                    }
+                                }
+                                available_quants.set(model_quants);
+                                available_mmprojs.set(mmprojs);
+                                wizard_step.set(WizardStep::SelectQuants);
+                            }
+                        }
+                        Err(e) => {
+                            error_msg.set(Some(format!("Failed to parse response: {e}")));
+                            wizard_step.set(WizardStep::RepoInput);
+                        }
+                    },
+                    Err(e) => {
+                        error_msg.set(Some(format!("Request failed: {e}")));
+                        wizard_step.set(WizardStep::RepoInput);
+                    }
+                }
+            });
+        });
+    }
+
     // ── Step dispatch ───────────────────────────────────────────────────────
     view! {
-        // Wizard step indicator
         <div class="wizard-steps mb-3">
             {move || {
                 let step = wizard_step.get();
@@ -202,14 +221,12 @@ pub fn PullQuantWizard(
 
         <div class="card">
             {move || match wizard_step.get() {
-                // ── Step 1: Repo Input ────────────────────────────────────────
                 WizardStep::RepoInput => view! {
                     <RepoInput
                         repo_id=repo_id
                         error_msg=error_msg
                         on_close=on_close
                         on_search=Callback::new(move |rid| {
-                            // Clear any stale per-repo state from a previous search.
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
                             context_lengths.set(std::collections::HashMap::new());
@@ -218,36 +235,33 @@ pub fn PullQuantWizard(
                             wasm_bindgen_futures::spawn_local(async move {
                                 let url = format!("/koji/v1/hf/{}", rid);
                                 match gloo_net::http::Request::get(&url).send().await {
-                                    Ok(resp) => {
-                                        match resp.json::<Vec<QuantEntry>>().await {
-                                            Ok(quants) => {
-                                                if quants.is_empty() {
-                                                    error_msg.set(Some(
-                                                        "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
-                                                    ));
-                                                    wizard_step.set(WizardStep::RepoInput);
-                                                } else {
-                                                    // Separate quants from mmprojs
-                                                    let mut model_quants: Vec<QuantEntry> = Vec::new();
-                                                    let mut mmprojs: Vec<QuantEntry> = Vec::new();
-                                                    for q in quants {
-                                                        if q.kind == QuantKind::Mmproj {
-                                                            mmprojs.push(q);
-                                                        } else {
-                                                            model_quants.push(q);
-                                                        }
-                                                    }
-                                                    available_quants.set(model_quants);
-                                                    available_mmprojs.set(mmprojs);
-                                                    wizard_step.set(WizardStep::SelectQuants);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error_msg.set(Some(format!("Failed to parse response: {e}")));
+                                    Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
+                                        Ok(quants) => {
+                                            if quants.is_empty() {
+                                                error_msg.set(Some(
+                                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
+                                                ));
                                                 wizard_step.set(WizardStep::RepoInput);
+                                            } else {
+                                                let mut model_quants: Vec<QuantEntry> = Vec::new();
+                                                let mut mmprojs: Vec<QuantEntry> = Vec::new();
+                                                for q in quants {
+                                                    if q.kind == QuantKind::Mmproj {
+                                                        mmprojs.push(q);
+                                                    } else {
+                                                        model_quants.push(q);
+                                                    }
+                                                }
+                                                available_quants.set(model_quants);
+                                                available_mmprojs.set(mmprojs);
+                                                wizard_step.set(WizardStep::SelectQuants);
                                             }
                                         }
-                                    }
+                                        Err(e) => {
+                                            error_msg.set(Some(format!("Failed to parse response: {e}")));
+                                            wizard_step.set(WizardStep::RepoInput);
+                                        }
+                                    },
                                     Err(e) => {
                                         error_msg.set(Some(format!("Request failed: {e}")));
                                         wizard_step.set(WizardStep::RepoInput);
@@ -258,12 +272,10 @@ pub fn PullQuantWizard(
                     />
                 }.into_any(),
 
-                // ── Step 2: Loading ───────────────────────────────────────────
                 WizardStep::LoadingQuants => view! {
                     <LoadingStep />
                 }.into_any(),
 
-                // ── Step 3: Select Quants ─────────────────────────────────────
                 WizardStep::SelectQuants => view! {
                     <SelectionStep
                         repo_id=repo_id.into()
@@ -272,7 +284,6 @@ pub fn PullQuantWizard(
                         selected_filenames=selected_filenames
                         selected_mmproj_filenames=selected_mmproj_filenames
                         on_next=Callback::new(move |_| {
-                            // Pre-fill context_lengths with 32768 for each selected filename
                             let sel = selected_filenames.get();
                             let mut ctx = HashMap::new();
                             for fname in &sel {
@@ -287,7 +298,6 @@ pub fn PullQuantWizard(
                     />
                 }.into_any(),
 
-                // ── Step 4: Set Context ───────────────────────────────────────
                 WizardStep::SetContext => view! {
                     <ContextStep
                         selected_filenames=selected_filenames.into()
@@ -299,7 +309,6 @@ pub fn PullQuantWizard(
                             let quants_list = available_quants.get();
                             let ctx_map = context_lengths.get();
 
-                            // Build request payload
                             let mut quants: Vec<QuantRequest> = sel.iter()
                                 .filter_map(|fname| {
                                     let entry = quants_list.iter().find(|q| &q.filename == fname)?;
@@ -312,7 +321,6 @@ pub fn PullQuantWizard(
                                 })
                                 .collect();
 
-                            // Add selected mmprojs (no context length needed for mmprojs)
                             let available_mmprojs_list = available_mmprojs.get();
                             let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
                                 .get()
@@ -332,7 +340,7 @@ pub fn PullQuantWizard(
                             let body = PullRequest { repo_id: rid, quants };
 
                             wasm_bindgen_futures::spawn_local(async move {
-                                let build_result = gloo_net::http::Request::post("/koji/v1/pulls")
+                                let build_result = post_request("/koji/v1/pulls")
                                     .json(&body);
                                 let resp = match build_result {
                                     Ok(req) => req.send().await,
@@ -359,107 +367,180 @@ pub fn PullQuantWizard(
                                                 download_jobs.set(jobs);
                                                 wizard_step.set(WizardStep::Downloading);
 
-                                                // Open SSE stream for each job
+                                                // Open SSE stream for each job with per-job reconnection.
                                                 for entry in entries {
                                                     let job_id_str = entry.job_id.clone();
                                                     let dj = download_jobs;
                                                     let ws = wizard_step;
-                                                    wasm_bindgen_futures::spawn_local(async move {
-                                                        let url = format!("/koji/v1/pulls/{}/stream", job_id_str);
-                                                        let advance_if_done = |dj: RwSignal<Vec<JobProgress>>, ws: RwSignal<WizardStep>| {
-                                                            let jobs = dj.get();
-                                                            if !jobs.is_empty() && jobs.iter().all(|j| {
-                                                                j.status == "completed" || j.status == "failed"
-                                                            }) {
-                                                                ws.set(WizardStep::Done);
-                                                            }
-                                                        };
+                                                    let cancel = cancelled;
 
-                                                        let mut es = match EventSource::new(&url) {
-                                                            Ok(es) => es,
-                                                            Err(e) => {
-                                                                let msg = format!("{e:?}");
-                                                                dj.update(|jobs| {
-                                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                        j.status = "failed".to_string();
-                                                                        j.error = Some(format!("Failed to open SSE stream: {msg}"));
-                                                                    }
-                                                                });
-                                                                advance_if_done(dj, ws);
-                                                                return;
-                                                            }
-                                                        };
-                                                        let mut progress_stream = match es.subscribe("progress") {
-                                                            Ok(s) => s,
-                                                            Err(e) => {
-                                                                let msg = format!("{e:?}");
-                                                                dj.update(|jobs| {
-                                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                        j.status = "failed".to_string();
-                                                                        j.error = Some(format!("Failed to subscribe to progress events: {msg}"));
-                                                                    }
-                                                                });
-                                                                es.close();
-                                                                advance_if_done(dj, ws);
-                                                                return;
-                                                            }
-                                                        };
-                                                        let mut done_stream = match es.subscribe("done") {
-                                                            Ok(s) => s,
-                                                            Err(e) => {
-                                                                let msg = format!("{e:?}");
-                                                                dj.update(|jobs| {
-                                                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                        j.status = "failed".to_string();
-                                                                        j.error = Some(format!("Failed to subscribe to done events: {msg}"));
-                                                                    }
-                                                                });
-                                                                es.close();
-                                                                advance_if_done(dj, ws);
-                                                                return;
-                                                            }
-                                                        };
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        // Exponential backoff constants for reconnection.
+                                                        const INITIAL_DELAY_MS: u32 = 1_000;
+                                                        const MAX_DELAY_MS: u32 = 30_000;
+
+                                                        let mut delay_ms: u32 = INITIAL_DELAY_MS;
+
+                                                        let mut reconnect_attempts: u32 = 0;
+                                                        const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
                                                         loop {
-                                                            let next_progress = progress_stream.next();
-                                                            let next_done = done_stream.next();
-                                                            futures_util::pin_mut!(next_progress, next_done);
+                                                            if cancel.get_untracked() {
+                                                                break;
+                                                            }
 
-                                                            match futures_util::future::select(next_progress, next_done).await {
-                                                                futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
-                                                                    let data = msg.data().as_string().unwrap_or_default();
-                                                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                                            let url = format!("/koji/v1/pulls/{}/stream", job_id_str);
+                                                            let mut es = match EventSource::new(&url) {
+                                                                Ok(es) => es,
+                                                                Err(e) => {
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        // Exhausted retries — mark as terminal failure
+                                                                        let msg = format!("{e:?}");
                                                                         dj.update(|jobs| {
-                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
-                                                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                                                j.total_bytes = p.total_bytes;
-                                                                                j.status = p.status.clone();
-                                                                                j.error = p.error.clone();
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to open SSE stream after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
                                                                             }
                                                                         });
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
                                                                     }
+                                                                    // Transient failure — show reconnecting status, keep retrying
+                                                                    let _msg = format!("{e:?}");
+                                                                    dj.update(|jobs| {
+                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
+                                                                        }
+                                                                    });
+                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                                                                    continue;
                                                                 }
-                                                                futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
-                                                                    let data = msg.data().as_string().unwrap_or_default();
-                                                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                                            };
+
+                                                            reconnect_attempts = 0;
+                                                            delay_ms = INITIAL_DELAY_MS;
+
+                                                            let mut progress_stream = match es.subscribe("progress") {
+                                                                Ok(s) => s,
+                                                                Err(e) => {
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        let msg = format!("{e:?}");
                                                                         dj.update(|jobs| {
-                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
-                                                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                                                j.total_bytes = p.total_bytes;
-                                                                                j.status = p.status.clone();
-                                                                                j.error = p.error.clone();
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to subscribe to progress events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
                                                                             }
                                                                         });
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
                                                                     }
+                                                                    let _msg = format!("{e:?}");
+                                                                    dj.update(|jobs| {
+                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
+                                                                        }
+                                                                    });
                                                                     es.close();
-                                                                    advance_if_done(dj, ws);
-                                                                    break;
+                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                                                                    continue;
                                                                 }
-                                                                _ => {
+                                                            };
+
+                                                            let mut done_stream = match es.subscribe("done") {
+                                                                Ok(s) => s,
+                                                                Err(e) => {
+                                                                    reconnect_attempts += 1;
+                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                                                        let msg = format!("{e:?}");
+                                                                        dj.update(|jobs| {
+                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                                j.status = "failed".to_string();
+                                                                                j.error = Some(format!("Failed to subscribe to done events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
+                                                                            }
+                                                                        });
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                    let _msg = format!("{e:?}");
+                                                                    dj.update(|jobs| {
+                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                                                            if j.status != "completed" && j.status != "failed" {
+                                                                                j.status = "reconnecting".to_string();
+                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
+                                                                            }
+                                                                        }
+                                                                    });
                                                                     es.close();
-                                                                    advance_if_done(dj, ws);
-                                                                    break;
+                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                                                                    continue;
                                                                 }
+                                                            };
+
+                                                            loop {
+                                                                if cancel.get_untracked() {
+                                                                    es.close();
+                                                                    return;
+                                                                }
+
+                                                                let next_progress = progress_stream.next();
+                                                                let next_done = done_stream.next();
+                                                                futures_util::pin_mut!(next_progress, next_done);
+
+                                                                match futures_util::future::select(next_progress, next_done).await {
+                                                                    futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
+                                                                        let data = msg.data().as_string().unwrap_or_default();
+                                                                        if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                                                            dj.update(|jobs| {
+                                                                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
+                                                                                    j.bytes_downloaded = p.bytes_downloaded;
+                                                                                    j.total_bytes = p.total_bytes;
+                                                                                    j.status = p.status.clone();
+                                                                                    j.error = p.error.clone();
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                    futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
+                                                                        let data = msg.data().as_string().unwrap_or_default();
+                                                                        if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                                                            dj.update(|jobs| {
+                                                                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
+                                                                                    j.bytes_downloaded = p.bytes_downloaded;
+                                                                                    j.total_bytes = p.total_bytes;
+                                                                                    j.status = p.status.clone();
+                                                                                    j.error = p.error.clone();
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                    _ => {
+                                                                        es.close();
+                                                                        advance_if_all_terminal(&dj, &ws);
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            // Stream ended — reconnect with backoff.
+                                                            if !cancel.get_untracked() {
+                                                                gloo_timers::future::TimeoutFuture::new(delay_ms).await;
+                                                                delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                                                             }
                                                         }
                                                     });
@@ -482,17 +563,14 @@ pub fn PullQuantWizard(
                     />
                 }.into_any(),
 
-                // ── Step 5: Downloading ───────────────────────────────────────
                 WizardStep::Downloading => view! {
                     <DownloadStep
                         download_jobs=download_jobs.into()
-                        on_done=Callback::new(move |_| wizard_step.set(WizardStep::Done))
                         on_close=on_close
                         error_msg=error_msg
                     />
                 }.into_any(),
 
-                // ── Step 6: Done ──────────────────────────────────────────────
                 WizardStep::Done => view! {
                     <DoneStep
                         download_jobs=download_jobs.into()
@@ -501,5 +579,17 @@ pub fn PullQuantWizard(
                 }.into_any(),
             }}
         </div>
+    }
+}
+
+/// Helper: advance to Done step when all jobs are in a terminal state.
+fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<WizardStep>) {
+    let jobs = dj.get();
+    if !jobs.is_empty()
+        && jobs
+            .iter()
+            .all(|j| j.status == "completed" || j.status == "failed")
+    {
+        ws.set(WizardStep::Done);
     }
 }

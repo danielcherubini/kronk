@@ -421,4 +421,79 @@ mod tests {
         let jobs = state.pull_jobs.read().await;
         assert!(jobs.is_empty());
     }
+
+    /// Test that the config_write_semaphore allows controlled concurrency.
+    /// With capacity=4, up to 4 concurrent acquisitions should succeed immediately,
+    /// while a 5th task must wait or return None with try_acquire.
+    #[tokio::test]
+    async fn test_config_write_semaphore_allows_concurrent_acquisitions() {
+        use std::time::Duration;
+
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Verify the semaphore has capacity 4
+        assert_eq!(state.config_write_semaphore.available_permits(), 4);
+
+        // Acquire 4 permits concurrently — all should succeed quickly
+        let start = std::time::Instant::now();
+        let mut handles = vec![];
+        for i in 0..4 {
+            let sem = Arc::clone(&state.config_write_semaphore);
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("acquire should succeed");
+                // Hold the permit briefly to simulate work
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                (i, start.elapsed())
+            }));
+        }
+
+        // All 4 should complete within ~150ms (50ms work + some overhead)
+        let results: Vec<(usize, Duration)> = futures_util::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(results.len(), 4);
+
+        // Verify each completed within a reasonable time (all ran concurrently)
+        for (idx, elapsed) in &results {
+            assert!(
+                *elapsed < Duration::from_millis(200),
+                "Concurrent permit {} took {:?}, expected < 200ms",
+                idx,
+                elapsed
+            );
+        }
+
+        // Now verify that exceeding capacity blocks try_acquire.
+        // Acquire all 4 permits in the main task.
+        let mut held_permits = vec![];
+        for _ in 0..4 {
+            let p = state
+                .config_write_semaphore
+                .acquire()
+                .await
+                .expect("acquire should succeed");
+            held_permits.push(p);
+        }
+        assert_eq!(state.config_write_semaphore.available_permits(), 0);
+
+        // try_acquire should return Err when all permits are exhausted
+        assert!(
+            state.config_write_semaphore.try_acquire().is_err(),
+            "try_acquire should return Err when semaphore is full"
+        );
+
+        // Release one permit — now try_acquire should succeed
+        drop(held_permits.pop());
+        let permit = state
+            .config_write_semaphore
+            .try_acquire()
+            .expect("try_acquire should succeed after releasing a permit");
+
+        // Release the remaining permits and the acquired one
+        drop(held_permits);
+        drop(permit);
+    }
 }

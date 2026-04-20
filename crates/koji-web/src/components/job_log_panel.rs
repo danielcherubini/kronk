@@ -41,7 +41,6 @@ pub fn JobLogPanel(
 
     // Cancel flag: flipped on component unmount. The spawned async task checks
     // this each iteration and breaks out cleanly, closing the EventSource.
-    // RwSignal is Send+Sync so it satisfies on_cleanup's bounds.
     let cancelled = RwSignal::new(false);
     on_cleanup(move || {
         cancelled.set(true);
@@ -55,103 +54,142 @@ pub fn JobLogPanel(
         }
 
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/backends/jobs/{job_id}/events");
-            let mut es = match EventSource::new(&url) {
-                Ok(es) => es,
-                Err(e) => {
-                    connection_error.set(Some(format!("Failed to open SSE stream: {e:?}")));
-                    return;
-                }
-            };
+            // Exponential backoff for reconnection attempts.
+            const INITIAL_DELAY_MS: u32 = 1_000;
+            const MAX_DELAY_MS: u32 = 30_000;
 
-            let mut log_stream = match es.subscribe("log") {
-                Ok(s) => s,
-                Err(e) => {
-                    connection_error.set(Some(format!("Failed to subscribe to log events: {e:?}")));
-                    es.close();
-                    return;
-                }
-            };
-
-            let mut status_stream = match es.subscribe("status") {
-                Ok(s) => s,
-                Err(e) => {
-                    connection_error
-                        .set(Some(format!("Failed to subscribe to status events: {e:?}")));
-                    es.close();
-                    return;
-                }
-            };
-
-            let mut result_stream = match es.subscribe("result") {
-                Ok(s) => s,
-                Err(e) => {
-                    connection_error
-                        .set(Some(format!("Failed to subscribe to result events: {e:?}")));
-                    es.close();
-                    return;
-                }
-            };
+            let mut delay_ms: u32 = INITIAL_DELAY_MS;
+            let mut is_reconnecting = false;
 
             loop {
-                // Cooperative cancellation: if the component has unmounted,
-                // break out so we can close the EventSource below.
                 if cancelled.get_untracked() {
                     break;
                 }
 
-                let next_log = log_stream.next();
-                let next_status = status_stream.next();
-                let next_result = result_stream.next();
-                futures_util::pin_mut!(next_log, next_status, next_result);
+                // If we're reconnecting, show the reconnecting message and wait.
+                if is_reconnecting {
+                    connection_error.set(Some("Connection lost — retrying...".to_string()));
+                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
 
-                // Race three streams by selecting the first to resolve.
-                let first = futures_util::future::select(next_log, next_status);
-                match futures_util::future::select(first, next_result).await {
-                    futures_util::future::Either::Left((inner, _)) => match inner {
-                        futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
-                            let data = msg.data().as_string().unwrap_or_default();
-                            if let Ok(payload) = serde_json::from_str::<LogPayload>(&data) {
-                                lines.update(|v| {
-                                    v.push(payload.line);
-                                    if v.len() > 1000 {
-                                        let drop_count = v.len() - 1000;
-                                        v.drain(0..drop_count);
-                                    }
-                                });
+                    // Update delay for next attempt (exponential backoff).
+                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+                }
+
+                let url = format!("/api/backends/jobs/{job_id}/events");
+                let mut es = match EventSource::new(&url) {
+                    Ok(es) => es,
+                    Err(e) => {
+                        connection_error.set(Some(format!("Failed to open SSE stream: {e:?}")));
+                        is_reconnecting = true;
+                        continue;
+                    }
+                };
+
+                let mut log_stream = match es.subscribe("log") {
+                    Ok(s) => s,
+                    Err(e) => {
+                        connection_error
+                            .set(Some(format!("Failed to subscribe to log events: {e:?}")));
+                        es.close();
+                        is_reconnecting = true;
+                        continue;
+                    }
+                };
+
+                let mut status_stream = match es.subscribe("status") {
+                    Ok(s) => s,
+                    Err(e) => {
+                        connection_error
+                            .set(Some(format!("Failed to subscribe to status events: {e:?}")));
+                        es.close();
+                        is_reconnecting = true;
+                        continue;
+                    }
+                };
+
+                let mut result_stream = match es.subscribe("result") {
+                    Ok(s) => s,
+                    Err(e) => {
+                        connection_error
+                            .set(Some(format!("Failed to subscribe to result events: {e:?}")));
+                        es.close();
+                        is_reconnecting = true;
+                        continue;
+                    }
+                };
+
+                // Reset reconnecting state on successful connection.
+                is_reconnecting = false;
+                connection_error.set(None);
+                delay_ms = INITIAL_DELAY_MS;
+
+                loop {
+                    if cancelled.get_untracked() {
+                        es.close();
+                        return;
+                    }
+
+                    let next_log = log_stream.next();
+                    let next_status = status_stream.next();
+                    let next_result = result_stream.next();
+                    futures_util::pin_mut!(next_log, next_status, next_result);
+
+                    let first = futures_util::future::select(next_log, next_status);
+                    match futures_util::future::select(first, next_result).await {
+                        futures_util::future::Either::Left((inner, _)) => match inner {
+                            futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
+                                let data = msg.data().as_string().unwrap_or_default();
+                                if let Ok(payload) = serde_json::from_str::<LogPayload>(&data) {
+                                    lines.update(|v| {
+                                        v.push(payload.line);
+                                        if v.len() > 1000 {
+                                            let drop_count = v.len() - 1000;
+                                            v.drain(0..drop_count);
+                                        }
+                                    });
+                                }
                             }
-                        }
+                            futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
+                                let data = msg.data().as_string().unwrap_or_default();
+                                if let Ok(payload) = serde_json::from_str::<StatusPayload>(&data) {
+                                    status.set(payload.status.clone());
+                                    if let Some(cb) = on_status.as_ref() {
+                                        cb.run(payload.status.clone());
+                                    }
+                                    if payload.status != "running" {
+                                        es.close();
+                                        return;
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Stream ended — attempt reconnection.
+                                es.close();
+                                break;
+                            }
+                        },
                         futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
                             let data = msg.data().as_string().unwrap_or_default();
-                            if let Ok(payload) = serde_json::from_str::<StatusPayload>(&data) {
-                                status.set(payload.status.clone());
-                                if let Some(cb) = on_status {
-                                    cb.run(payload.status.clone());
-                                }
-                                if payload.status != "running" {
-                                    break;
+                            if let Ok(payload) = serde_json::from_str::<ResultPayload>(&data) {
+                                if let Some(cb) = on_result.as_ref() {
+                                    cb.run(payload.results);
                                 }
                             }
                         }
-                        _ => break,
-                    },
-                    futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
-                        let data = msg.data().as_string().unwrap_or_default();
-                        if let Ok(payload) = serde_json::from_str::<ResultPayload>(&data) {
-                            if let Some(cb) = on_result {
-                                cb.run(payload.results);
-                            }
+                        _ => {
+                            // Stream ended — attempt reconnection.
+                            es.close();
+                            is_reconnecting = true;
+                            break;
                         }
                     }
-                    _ => break,
                 }
             }
-            es.close();
         });
     });
 
     let on_close_handler = move |_| {
-        if let Some(cb) = on_close {
+        if let Some(cb) = &on_close {
             cb.run(());
         }
     };

@@ -46,6 +46,10 @@ pub enum BackendSource {
 
 pub struct BackendRegistry {
     conn: Connection,
+    /// Shared HTTP client for all backend downloads.
+    /// Using a single client enables connection pooling and is more
+    /// testable than creating clients per-request or using lazy_static.
+    pub client: reqwest::Client,
 }
 
 impl BackendRegistry {
@@ -54,6 +58,7 @@ impl BackendRegistry {
         let open_result = crate::db::open(config_dir)?;
         Ok(Self {
             conn: open_result.conn,
+            client: Self::make_client(),
         })
     }
 
@@ -62,7 +67,18 @@ impl BackendRegistry {
         let open_result = crate::db::open_in_memory()?;
         Ok(Self {
             conn: open_result.conn,
+            client: Self::make_client(),
         })
+    }
+
+    /// Create a shared reqwest::Client configured for backend downloads.
+    fn make_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .user_agent("koji-backend-manager")
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client for backend downloads")
     }
 
     /// Add a new backend installation, marking it as the active version.

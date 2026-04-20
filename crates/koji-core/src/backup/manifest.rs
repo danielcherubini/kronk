@@ -62,4 +62,20 @@ impl BackupManifest {
             backends: Vec::new(),
         }
     }
+
+    /// Validate that this manifest's version matches the expected backup format version.
+    ///
+    /// Returns `Ok(())` if the version is compatible, or an error describing
+    /// the mismatch. Call this after deserializing a manifest from an archive
+    /// to reject archives created by incompatible Koji versions.
+    pub fn validate_version(&self) -> anyhow::Result<()> {
+        if self.version != BACKUP_FORMAT_VERSION {
+            anyhow::bail!(
+                "Incompatible backup format version: expected {}, got {}",
+                BACKUP_FORMAT_VERSION,
+                self.version
+            );
+        }
+        Ok(())
+    }
 }
