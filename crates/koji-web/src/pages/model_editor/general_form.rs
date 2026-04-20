@@ -52,6 +52,10 @@ pub fn ModelEditorGeneralForm(
                     "field-port",
                     &f.port.map(|v| v.to_string()).unwrap_or_default(),
                 );
+                set_input_value(
+                    "field-num-parallel",
+                    &f.num_parallel.map(|v| v.to_string()).unwrap_or_default(),
+                );
                 last_init_id.set_value(Some(f.id.clone()));
             }
         }
@@ -146,6 +150,22 @@ pub fn ModelEditorGeneralForm(
                     });
                 })
                 reset_key=Signal::derive(move || form.get().map(|f| f.id.clone()).unwrap_or_default())
+            />
+
+            <label class="form-label" for="field-num-parallel">"Num parallel slots"</label>
+            <input
+                id="field-num-parallel"
+                class="form-input"
+                type="number"
+                min="1"
+                placeholder="1"
+                on:input=move |ev| {
+                    form.update(|f| {
+                        if let Some(form) = f {
+                            form.num_parallel = target_value(&ev).parse::<u32>().ok();
+                        }
+                    });
+                }
             />
 
             <label class="form-label" for="field-port">"Port override"</label>
