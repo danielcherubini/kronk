@@ -285,7 +285,9 @@ impl Config {
                 .iter()
                 .any(|e| matches!(crate::config::flag_name(e), Some("-c") | Some("--ctx-size")));
             if !already_has_c {
-                grouped.push(format!("-c {}", ctx));
+                let slots = server.num_parallel.unwrap_or(1);
+                let effective_ctx = ctx.saturating_mul(slots);
+                grouped.push(format!("-c {}", effective_ctx));
             }
         }
 
