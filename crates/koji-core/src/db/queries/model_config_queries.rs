@@ -82,6 +82,7 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
             selected_quant: row.get(5)?,
             selected_mmproj: row.get(6)?,
             context_length: row.get(7)?,
+            num_parallel: None, // not yet in migration; will be read after migration v14
             gpu_layers: row.get(8)?,
             port: row.get(9)?,
             args: row.get(10)?,
@@ -122,6 +123,7 @@ pub fn get_model_config_by_repo_id(
             selected_quant: row.get(5)?,
             selected_mmproj: row.get(6)?,
             context_length: row.get(7)?,
+            num_parallel: None, // not yet in migration; will be read after migration v14
             gpu_layers: row.get(8)?,
             port: row.get(9)?,
             args: row.get(10)?,
@@ -159,6 +161,7 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
             selected_quant: row.get(5)?,
             selected_mmproj: row.get(6)?,
             context_length: row.get(7)?,
+            num_parallel: None, // not yet in migration; will be read after migration v14
             gpu_layers: row.get(8)?,
             port: row.get(9)?,
             args: row.get(10)?,

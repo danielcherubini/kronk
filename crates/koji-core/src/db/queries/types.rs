@@ -11,6 +11,7 @@ pub struct ModelConfigRecord {
     pub selected_quant: Option<String>,
     pub selected_mmproj: Option<String>,
     pub context_length: Option<u32>,
+    pub num_parallel: Option<u32>,
     pub gpu_layers: Option<u32>,
     pub port: Option<u16>,
     pub args: Option<String>,       // raw JSON string

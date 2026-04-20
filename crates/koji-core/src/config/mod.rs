@@ -12,6 +12,7 @@ pub use args_helpers::{
 pub use migrate::cleanup_stale_mmproj_args;
 pub use rename_legacy::{migrate_legacy_data_dir, Migration};
 pub use types::{
-    BackendConfig, Config, General, HealthCheck, ModelConfig, ModelModalities, ProxyConfig,
-    QuantEntry, QuantKind, Supervisor, DEFAULT_PROXY_PORT, MAX_REQUEST_BODY_SIZE,
+    default_num_parallel, BackendConfig, Config, General, HealthCheck, ModelConfig,
+    ModelModalities, ProxyConfig, QuantEntry, QuantKind, Supervisor, DEFAULT_PROXY_PORT,
+    MAX_REQUEST_BODY_SIZE,
 };

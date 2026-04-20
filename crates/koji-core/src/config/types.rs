@@ -197,6 +197,10 @@ pub struct ModelConfig {
     /// Context length for this model
     #[serde(default)]
     pub context_length: Option<u32>,
+    /// Number of parallel contexts. Multiplies the effective context length.
+    /// Default is Some(1). None at runtime is treated as 1.
+    #[serde(default = "default_num_parallel")]
+    pub num_parallel: Option<u32>,
     /// DEPRECATED — kept for migration deserialization only.
     /// When present in an old config.toml, the migration reads this, resolves it to
     /// concrete SamplingParams, writes those into `sampling`, and clears this field.
@@ -240,6 +244,7 @@ impl ModelConfig {
             selected_quant: self.quant.clone(),
             selected_mmproj: self.mmproj.clone(),
             context_length: self.context_length,
+            num_parallel: self.num_parallel,
             gpu_layers: self.gpu_layers,
             port: self.port,
             args: serde_json::to_string(&self.args).ok(),
@@ -276,6 +281,7 @@ impl ModelConfig {
                 .or_else(|| Some(record.repo_id.clone())),
             port: record.port,
             context_length: record.context_length,
+            num_parallel: record.num_parallel,
             gpu_layers: record.gpu_layers,
             model: Some(record.repo_id.clone()),
             quant: record.selected_quant.clone(),
@@ -378,6 +384,10 @@ fn default_download_queue_poll_interval() -> u64 {
 
 fn default_enabled() -> bool {
     true
+}
+
+pub fn default_num_parallel() -> Option<u32> {
+    Some(1)
 }
 
 fn default_restart_policy() -> String {
@@ -522,6 +532,7 @@ log_level = "info"
             }),
             enabled: true,
             context_length: Some(4096),
+            num_parallel: Some(2),
             api_name: Some("my-model".to_string()),
             gpu_layers: Some(32),
             modalities: Some(ModelModalities {
@@ -545,6 +556,7 @@ log_level = "info"
         assert_eq!(round_trip.health_check, mc.health_check);
         assert_eq!(round_trip.enabled, mc.enabled);
         assert_eq!(round_trip.context_length, mc.context_length);
+        assert_eq!(round_trip.num_parallel, mc.num_parallel);
         assert_eq!(round_trip.api_name, mc.api_name);
         assert_eq!(round_trip.gpu_layers, mc.gpu_layers);
         assert_eq!(round_trip.modalities, mc.modalities);
