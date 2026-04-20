@@ -29,6 +29,8 @@ pub struct ModelBody {
     #[serde(default)]
     pub context_length: Option<u32>,
     #[serde(default)]
+    pub num_parallel: Option<u32>,
+    #[serde(default)]
     pub port: Option<u16>,
     #[serde(default)]
     pub api_name: Option<String>,
@@ -57,6 +59,7 @@ fn apply_model_body(
         health_check: None,
         enabled: true,
         context_length: None,
+        num_parallel: None,
         profile: None,
         api_name: None,
         gpu_layers: None,
@@ -78,6 +81,7 @@ fn apply_model_body(
         sampling,
         enabled: body.enabled.unwrap_or(base.enabled),
         context_length: body.context_length,
+        num_parallel: body.num_parallel,
         port: body.port,
         health_check: base.health_check,
         profile: None,
@@ -633,6 +637,7 @@ mod tests {
             sampling: None,
             enabled: Some(true),
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             display_name: None,
@@ -664,6 +669,7 @@ mod tests {
             health_check: None,
             enabled: true,
             context_length: None,
+            num_parallel: None,
             profile: None,
             api_name: None,
             gpu_layers: None,
@@ -808,6 +814,7 @@ mod tests {
             sampling: None,
             enabled: Some(false),
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: None,
@@ -831,6 +838,7 @@ mod tests {
             sampling: None,
             enabled: None, // Not specified
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: None,
@@ -855,6 +863,7 @@ mod tests {
             sampling: None,
             enabled: None,
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: Some("my-api-name".to_string()),
             gpu_layers: None,
@@ -878,6 +887,7 @@ mod tests {
             sampling: None,
             enabled: None,
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: Some(32),
@@ -901,6 +911,7 @@ mod tests {
             sampling: None,
             enabled: None,
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: None,
@@ -924,6 +935,7 @@ mod tests {
             sampling: None,
             enabled: None,
             context_length: Some(8192),
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: None,
@@ -934,6 +946,55 @@ mod tests {
 
         let result = apply_model_body(body, None);
         assert_eq!(result.context_length, Some(8192));
+    }
+
+    /// Verify that num_parallel flows from body through to ModelConfig.
+    #[test]
+    fn test_apply_model_body_num_parallel_passthrough() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            num_parallel: Some(4),
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.num_parallel, Some(4));
+    }
+
+    #[test]
+    fn test_apply_model_body_num_parallel_default() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            num_parallel: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.num_parallel, None);
     }
 
     #[test]
@@ -947,6 +1008,7 @@ mod tests {
             sampling: None,
             enabled: None,
             context_length: None,
+            num_parallel: None,
             port: None,
             api_name: None,
             gpu_layers: None,

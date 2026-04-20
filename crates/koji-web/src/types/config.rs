@@ -141,6 +141,9 @@ pub struct ModelConfig {
     /// Context length for this model
     #[serde(default)]
     pub context_length: Option<u32>,
+    /// Number of parallel slots for this model
+    #[serde(default)]
+    pub num_parallel: Option<u32>,
     /// DEPRECATED — kept for migration deserialization only.
     #[serde(default, skip_serializing)]
     pub profile: Option<String>,
@@ -480,6 +483,7 @@ impl From<CoreModelConfig> for ModelConfig {
             health_check: m.health_check.map(Into::into),
             enabled: m.enabled,
             context_length: m.context_length,
+            num_parallel: m.num_parallel,
             profile: None, // Skip serializing - deprecated field
             api_name: m.api_name,
             gpu_layers: m.gpu_layers,
@@ -505,6 +509,7 @@ impl From<ModelConfig> for CoreModelConfig {
             health_check: m.health_check.map(Into::into),
             enabled: m.enabled,
             context_length: m.context_length,
+            num_parallel: m.num_parallel,
             profile: None, // Skip serializing - deprecated field
             api_name: m.api_name,
             gpu_layers: m.gpu_layers,
