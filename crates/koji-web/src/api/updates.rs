@@ -560,28 +560,26 @@ pub async fn apply_model_update(
         }
     };
 
-    let mut job_ids = Vec::new();
-    for (quant_key, filename) in &unique_files {
-        // Pre-check: return 409 if already queued/running with same repo_id + filename.
-        let conn = match svc.open_conn() {
-            Ok(c) => c,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": format!("Queue check failed: {}", e)
-                    })),
-                )
-                    .into_response();
-            }
-        };
+    // Phase 1: Preflight — check all items for duplicates before creating any jobs.
+    // This is read-only and returns early on the first conflict or error.
+    let conn = match svc.open_conn() {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Queue check failed: {}", e) })),
+            )
+                .into_response();
+        }
+    };
 
+    for (quant_key, filename) in &unique_files {
         match koji_core::db::queries::get_active_item_by_repo_filename(&conn, &repo_id, filename) {
             Ok(Some(existing)) => {
                 return (
                     StatusCode::CONFLICT,
                     Json(serde_json::json!({
-                        "error": "Download already in progress for this quant",
+                        "error": format!("Download already in progress for quant '{}' ({})", quant_key, filename),
                         "existing_job_id": existing.job_id
                     })),
                 )
@@ -592,23 +590,27 @@ pub async fn apply_model_update(
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
-                        "error": format!("Queue check failed: {}", e)
+                        "error": format!("Queue check failed for '{}': {}", filename, e)
                     })),
                 )
                     .into_response();
             }
         }
+    }
 
+    // Phase 2: All preflight checks passed — generate job IDs and enqueue.
+    let mut job_ids = Vec::new();
+    for (quant_key, filename) in &unique_files {
         let job_id = uuid::Uuid::new_v4().to_string();
 
         if let Err(e) = svc.enqueue(
             &job_id,
             &repo_id,
             filename,
-            Some(quant_key.as_str()), // display_name = quant key
+            Some(quant_key.as_str()),
             "model",
             Some(quant_key.as_str()),
-            None, // context_length — not needed for update downloads
+            None,
         ) {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,

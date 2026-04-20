@@ -1,9 +1,6 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Detail tuple for quantization info: (quant_name, filename, current_hash, latest_hash, update_available)
-type QuantDetail<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a str>, bool);
-
 use crate::components::job_log_panel::JobLogPanel;
 use crate::components::self_update_section::SelfUpdateSection;
 
@@ -16,6 +13,9 @@ fn short_sha(hash: &Option<String>) -> String {
 
 /// Renders the expandable quant list for a model.
 /// Called from within the Updates component view; captures signals via params.
+/// Parsed quant detail from details_json: (quant_name, filename, current_hash, latest_hash, update_available)
+type QuantRow = (Option<String>, String, Option<String>, Option<String>, bool);
+
 fn render_quant_list(
     mid: String,
     quants: Vec<(String, Option<String>, Option<String>, bool)>,
@@ -53,7 +53,7 @@ fn render_quant_list(
                     <label class="quant-item" style="display:flex;align-items:center;gap:0.5rem;padding:0.25rem 0;">
                         <input
                             type="checkbox"
-                            prop:checked=is_selected()
+                            prop:checked=is_selected
                             disabled={!update_available}
                             on:change=move |e| {
                                 use wasm_bindgen::JsCast;
@@ -255,6 +255,7 @@ pub fn Updates() -> impl IntoView {
                 .unwrap_or_default();
 
             if selected_quants.is_empty() {
+                model_update_busy.set(None);
                 return;
             }
 
@@ -266,7 +267,11 @@ pub fn Updates() -> impl IntoView {
                 .await
             {
                 Ok(resp) if resp.ok() => {
-                    // Clear selections for this model, refresh list after delay
+                    // Clear selections for this model immediately
+                    model_selections.update(|map| {
+                        map.remove(&model_id);
+                    });
+                    // Refresh list after delay
                     wasm_bindgen_futures::spawn_local(async move {
                         gloo_timers::future::TimeoutFuture::new(2000).await;
                         if let Ok(r) = gloo_net::http::Request::get("/api/updates").send().await {
@@ -394,17 +399,18 @@ pub fn Updates() -> impl IntoView {
                                 .unwrap_or_else(|| m.item_id.clone());
 
                             // Parse quants from details_json (same pattern as get_updates in api/updates.rs)
-                            let quants_with_updates: Vec<QuantDetail<'_>> = m.details_json
+                            // Use Option<String> for quant_name to preserve entries where it's null (e.g., new remote files)
+                            let quants_with_updates: Vec<QuantRow> = m.details_json
                                 .as_ref()
                                 .and_then(|d| d.get("quants"))
                                 .and_then(|v| v.as_array())
                                 .map(|arr| {
                                     arr.iter()
                                         .filter_map(|q| {
-                                            let quant_name = q["quant_name"].as_str()?;
-                                            let filename = q["filename"].as_str()?;
-                                            let current_hash = q["current_hash"].as_str();
-                                            let latest_hash = q["latest_hash"].as_str();
+                                            let quant_name = q["quant_name"].as_str().map(String::from);
+                                            let filename = q["filename"].as_str()?.to_string();
+                                            let current_hash = q["current_hash"].as_str().map(String::from);
+                                            let latest_hash = q["latest_hash"].as_str().map(String::from);
                                             let update_available = q["update_available"].as_bool()?;
                                             Some((quant_name, filename, current_hash, latest_hash, update_available))
                                         })
@@ -415,10 +421,15 @@ pub fn Updates() -> impl IntoView {
                             // Clone model_id for use in nested closures (avoids FnOnce issue)
                             let mid_expand = model_id.clone();
 
-                            // Owned copy for the select-all callback (quants_with_updates has short-lived refs)
+                            // Owned copy for the select-all callback (use quant_name or fallback to filename)
                             let quants_for_select_owned: Vec<(String, bool)> = quants_with_updates
                                 .iter()
-                                .map(|(k, _, _, _, u)| (k.to_string(), *u))
+                                .map(|(qn, filename, _, _, u)| {
+                                    (
+                                        qn.clone().unwrap_or_else(|| filename.clone()),
+                                        *u,
+                                    )
+                                })
                                 .collect();
 
                             let has_updates = quants_with_updates.iter().any(|(_, _, _, _, u)| *u);
@@ -469,8 +480,13 @@ pub fn Updates() -> impl IntoView {
                                         let mid_sel = mid_expand.clone();
                                         let mid_select_all = mid_expand.clone();
                                         let quants_owned: Vec<(String, Option<String>, Option<String>, bool)> =
-                                            quants_with_updates.iter().map(|(qn, _, ch, lh, u)| {
-                                                (qn.to_string(), ch.map(String::from), lh.map(String::from), *u)
+                                            quants_with_updates.iter().map(|(qn, filename, ch, lh, u)| {
+                                                (
+                                                    qn.clone().unwrap_or_else(|| filename.clone()),
+                                                    ch.clone(),
+                                                    lh.clone(),
+                                                    *u,
+                                                )
                                             }).collect();
                                         let on_select_all_cb = move || {
                                             model_selections.update(|map| {

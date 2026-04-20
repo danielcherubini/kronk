@@ -385,7 +385,8 @@ impl UpdateChecker {
                     let (update_available, status_val) = match (&current_hash, &latest_hash) {
                         (Some(c), Some(l)) if c == l => (false, "up_to_date"),
                         (Some(_), Some(_)) => (true, "update_available"),
-                        _ => (false, "no_hash"),
+                        (None, _) => (false, "no_hash"),
+                        (Some(_), None) => (false, "removed_from_remote"),
                     };
 
                     if update_available {
