@@ -14,8 +14,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 65
-- **Completed**: 64 ✅
+- **Total Plans**: 66
+- **Completed**: 65 ✅
 - **In Progress**: 0 🚧
 - **Remaining**: 0 📋
 
@@ -78,6 +78,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Model Grid Separation](2026-04-07-model-grid-separation.md) | Split model grid into loaded and unloaded sections | `43b5678`, `405632b`, `329be36` |
 | [Quant File Deletion](2026-04-10-quant-file-deletion.md) | Delete GGUF files on quant removal, `koji model prune` command | #50 `a160eb3`, `f350293`, `f6461d1`, `78c3feb` |
 | [Preserve GGUF in Names](2026-03-27-preserve-gguf-in-names.md) | Preserve -GGUF suffix in model IDs and paths | `c102bd0`, `58ad0b4` |
+| [Updates Center Fix](2026-04-20-updates-center-fix.md) | Backend update progress (JobLogPanel), per-quant LFS hash checking, download queue integration, expandable quant UI with selection | #65
 | [Migrate Profiles to Model Cards Tests](2026-03-24-migrate_profiles_to_model_cards_tests.md) | Tests integrated into unified model config | `95c8e01` |
 | [Model Card Cleanup](2026-03-24-model-card-cleanup.md) | Part of unified model config | `95c8e01` |
 | [Remove Profiles.d](2026-03-24-remove-profiles-d.md) | Part of unified model config | `95c8e01` |
@@ -203,4 +204,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-19
+**Last Updated**: 2026-04-20
