@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::components::job_log_panel::JobLogPanel;
 use crate::components::self_update_section::SelfUpdateSection;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,6 +33,8 @@ pub fn Updates() -> impl IntoView {
     let checking = RwSignal::new(false);
     let last_checked = RwSignal::new(Option::<i64>::None);
     let error = RwSignal::new(Option::<String>::None);
+    let active_backend_job_id = RwSignal::new(Option::<String>::None);
+    let backend_update_busy = RwSignal::new(false);
 
     // Fetch on mount
     Effect::new(move |_| {
@@ -75,11 +78,40 @@ pub fn Updates() -> impl IntoView {
     };
 
     let on_update_backend = move |name: String| {
+        backend_update_busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let url = format!("/api/backends/{}/update", name);
-            let _ = gloo_net::http::Request::post(&url).send().await;
+            if let Ok(resp) = gloo_net::http::Request::post(&url).send().await {
+                if resp.ok() {
+                    if let Ok(data) = resp.json::<serde_json::Value>().await {
+                        if let Some(job_id) = data["job_id"].as_str() {
+                            active_backend_job_id.set(Some(job_id.to_string()));
+                        }
+                    }
+                } else {
+                    let text = resp.text().await.unwrap_or_default();
+                    error.set(Some(format!("Update failed: {}", text)));
+                }
+            }
         });
     };
+
+    let on_backend_job_close = Callback::new(move |_| {
+        active_backend_job_id.set(None);
+        backend_update_busy.set(false);
+        // Refresh the updates list after job completes
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(500).await;
+            if let Ok(resp) = gloo_net::http::Request::get("/api/updates").send().await {
+                if let Ok(data) = resp.json::<UpdatesListResponse>().await {
+                    let all_items: Vec<_> =
+                        data.backends.iter().chain(data.models.iter()).collect();
+                    last_checked.set(all_items.iter().map(|r| r.checked_at).max());
+                    updates.set(data);
+                }
+            }
+        });
+    });
 
     let on_refresh_model = move |id: String| {
         wasm_bindgen_futures::spawn_local(async move {
@@ -168,6 +200,13 @@ pub fn Updates() -> impl IntoView {
                     }}
                 </div>
             </section>
+
+            {/* Backend update progress panel */}
+            {move || active_backend_job_id.get().map(|job_id| {
+                view! {
+                    <JobLogPanel job_id=job_id on_close=on_backend_job_close />
+                }.into_any()
+            })}
 
             <section class="updates-section">
                 <h2 class="section__title">"Models"</h2>
