@@ -17,7 +17,7 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use tar::{Archive, Builder};
 
@@ -36,6 +36,57 @@ pub struct ExtractResult {
     pub card_paths: Vec<PathBuf>,
 }
 
+/// Streaming SHA-256 hasher that implements `Write`.
+///
+/// Pipes data through a `sha2::Sha256` hasher without buffering the full
+/// contents in memory. Used for streaming file hashing during backup creation
+/// and extraction integrity verification.
+pub struct StreamingHasher {
+    inner: Sha256,
+}
+
+impl Default for StreamingHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamingHasher {
+    /// Create a new streaming hasher.
+    pub fn new() -> Self {
+        Self {
+            inner: Sha256::new(),
+        }
+    }
+
+    /// Finalize the hash and return the digest as hex string.
+    pub fn finalize_hex(&mut self) -> String {
+        let hash = self.inner.clone().finalize();
+        format!("{:x}", hash)
+    }
+
+    /// Reset the hasher to its initial state for reuse.
+    pub fn reset(&mut self) {
+        self.inner = Sha256::new();
+    }
+
+    /// Update the hasher with raw bytes (for streaming extraction).
+    pub fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+}
+
+impl Write for StreamingHasher {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Create a backup archive containing config.toml, configs/*.toml, and koji.db.
 ///
 /// **SHA-256 Contract:** The returned manifest's `sha256` field covers all archive
@@ -46,15 +97,14 @@ pub fn create_backup(config_dir: &Path, output_path: &Path) -> Result<BackupMani
     }
 
     // Step 1: Compute SHA-256 by streaming files through hasher
-    let mut hasher = Sha256::new();
+    let mut hasher = StreamingHasher::new();
 
     let mut add_file_to_hasher = |path: &Path, description: &str| -> Result<()> {
-        let mut file = File::open(path)
+        let file = File::open(path)
             .with_context(|| format!("Failed to open {}: {}", description, path.display()))?;
-        let mut contents = Vec::new();
-        file.read_to_end(&mut contents)
-            .with_context(|| format!("Failed to read {}: {}", description, path.display()))?;
-        hasher.update(&contents);
+        let mut reader = BufReader::new(file);
+        std::io::copy(&mut reader, &mut hasher)
+            .with_context(|| format!("Failed to hash {}: {}", description, path.display()))?;
         Ok(())
     };
 
@@ -91,8 +141,7 @@ pub fn create_backup(config_dir: &Path, output_path: &Path) -> Result<BackupMani
     add_file_to_hasher(&temp_db_path, "koji.db")?;
 
     // Compute SHA-256
-    let hash = hasher.finalize();
-    let sha256_hex = format!("{:x}", hash);
+    let sha256_hex = hasher.finalize_hex();
 
     // Step 2: Build BackupManifest by querying the DB
     let conn = rusqlite::Connection::open(&db_path)
@@ -233,26 +282,32 @@ fn create_tar_gz_archive(
     Ok(())
 }
 
+/// Add a file to the tar archive by streaming it directly from disk.
+///
+/// Uses `BufReader` + `std::io::copy()` to stream data without loading
+/// the entire file into memory.
 fn add_file_to_archive(
     tar: &mut Builder<flate2::write::GzEncoder<File>>,
     path: &Path,
     name: &str,
 ) -> Result<()> {
-    let mut file =
+    let file =
         File::open(path).with_context(|| format!("Failed to open {}: {}", name, path.display()))?;
-    let mut contents = Vec::new();
-    file.read_to_end(&mut contents)
-        .with_context(|| format!("Failed to read {}: {}", name, path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("Failed to read metadata for {}: {}", name, path.display()))?;
 
     let mut header = tar::Header::new_gnu();
     header
         .set_path(name)
         .with_context(|| format!("Failed to set path for {}: {}", name, path.display()))?;
-    header.set_size(contents.len() as u64);
+    header.set_size(metadata.len());
     header.set_mode(0o644);
     header.set_mtime(chrono::Utc::now().timestamp() as u64);
     header.set_cksum();
-    tar.append(&header, contents.as_slice())
+
+    let mut reader = BufReader::new(file);
+    tar.append(&header, &mut reader)
         .with_context(|| format!("Failed to append {} to archive", name))?;
 
     Ok(())
@@ -284,6 +339,11 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
     let manifest =
         extract_manifest(archive_path).context("Failed to extract or parse manifest.json")?;
 
+    // Validate backup format version before proceeding.
+    manifest
+        .validate_version()
+        .context("Backup format version mismatch")?;
+
     fs::create_dir_all(target_dir).with_context(|| {
         format!(
             "Failed to create target directory: {}",
@@ -296,7 +356,7 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = Archive::new(decoder);
 
-    let mut hasher = Sha256::new();
+    let mut hasher = StreamingHasher::new();
     let mut extracted_config: Option<PathBuf> = None;
     let mut extracted_db: Option<PathBuf> = None;
     let mut extracted_cards: Vec<PathBuf> = Vec::new();
@@ -308,12 +368,6 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
         let needs_hashing = entry_name_owned != "manifest.json";
 
         if needs_hashing {
-            let mut contents = Vec::new();
-            entry
-                .read_to_end(&mut contents)
-                .with_context(|| format!("Failed to read entry: {}", entry_name_owned))?;
-            hasher.update(&contents);
-
             let dest_path = target_dir.join(entry_name_owned.trim_start_matches("/"));
 
             // Validate path to prevent traversal attacks
@@ -368,10 +422,25 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
                 }
             }
 
-            let mut file = File::create(&dest_path)
+            // Stream entry directly into both the hasher and the destination file
+            let mut output_file = File::create(&dest_path)
                 .with_context(|| format!("Failed to create file: {}", dest_path.display()))?;
-            file.write_all(&contents)
-                .with_context(|| format!("Failed to write file: {}", dest_path.display()))?;
+
+            // Read chunk by chunk, updating hasher and writing to file
+            const BUF_SIZE: usize = 64 * 1024; // 64KB buffer
+            let mut buf = [0u8; BUF_SIZE];
+            loop {
+                let n = entry.read(&mut buf).with_context(|| {
+                    format!("Failed to read archive entry: {}", entry_name_owned)
+                })?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+                output_file
+                    .write_all(&buf[..n])
+                    .with_context(|| format!("Failed to write file: {}", dest_path.display()))?;
+            }
 
             match entry_name_owned.as_str() {
                 "config.toml" => extracted_config = Some(dest_path),
@@ -387,8 +456,7 @@ pub fn extract_backup(archive_path: &Path, target_dir: &Path) -> Result<ExtractR
         }
     }
 
-    let computed_hash = hasher.finalize();
-    let computed_hex = format!("{:x}", computed_hash);
+    let computed_hex = hasher.finalize_hex();
     if computed_hex != manifest.sha256 {
         fs::remove_dir_all(target_dir).ok();
         anyhow::bail!(
@@ -517,5 +585,146 @@ enabled = true
             )
             .expect("get value");
         assert_eq!(value, "hello");
+    }
+
+    #[test]
+    fn test_streaming_hasher_basic() {
+        let mut hasher = StreamingHasher::new();
+        hasher.write_all(b"hello world").unwrap();
+        let hash = hasher.finalize_hex();
+        // Known SHA-256 of "hello world"
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+    }
+
+    #[test]
+    fn test_streaming_hasher_reset() {
+        let mut hasher = StreamingHasher::new();
+        hasher.write_all(b"hello").unwrap();
+        let hash1 = hasher.finalize_hex();
+
+        hasher.reset();
+        hasher.write_all(b"hello").unwrap();
+        let hash2 = hasher.finalize_hex();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_streaming_hasher_copy() {
+        use std::io::Cursor;
+
+        let data = b"the quick brown fox jumps over the lazy dog";
+        let mut hasher = StreamingHasher::new();
+        let mut cursor = Cursor::new(&data[..]);
+        std::io::copy(&mut cursor, &mut hasher).unwrap();
+        let hash = hasher.finalize_hex();
+
+        // Known SHA-256 of "the quick brown fox jumps over the lazy dog" (no trailing newline)
+        assert_eq!(
+            hash,
+            "05c6e08f1d9fdafa03147fcb8f82f124c76d2f70e3d989dc8aadb5e7d7450bec"
+        );
+    }
+
+    #[test]
+    fn test_backup_version_validation_rejects_incompatible() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = temp_dir.path().join("config");
+        let output_path = temp_dir.path().join("backup.tar.gz");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        fs::create_dir_all(config_dir.join("configs")).expect("create dirs");
+
+        // Write a minimal config
+        let config_content = r#"
+[general]
+log_level = "info"
+"#;
+        fs::write(config_dir.join("config.toml"), config_content).expect("write config");
+
+        // Create a minimal DB
+        let db_path = config_dir.join("koji.db");
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE model_pulls (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, commit_sha TEXT NOT NULL, pulled_at TEXT NOT NULL, UNIQUE(repo_id));
+             CREATE TABLE model_files (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, filename TEXT NOT NULL, quant TEXT, lfs_oid TEXT, size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL, last_verified_at TEXT, verified_ok INTEGER, verify_error TEXT, UNIQUE(repo_id, filename));
+             CREATE TABLE backend_installations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, backend_type TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, installed_at INTEGER NOT NULL, gpu_type TEXT, source TEXT, is_active INTEGER NOT NULL DEFAULT 0, UNIQUE(name, version));"
+        ).expect("create tables");
+
+        // Create a backup normally
+        let _result = create_backup(&config_dir, &output_path).expect("create backup");
+
+        // Now tamper with the manifest to use an incompatible version
+        let temp_archive = tempfile::NamedTempFile::new().expect("temp file");
+        let temp_archive_path = temp_archive.path();
+
+        // Extract the original archive, modify manifest, re-pack
+        let mut archive = Archive::new(flate2::read::GzDecoder::new(
+            File::open(&output_path).unwrap(),
+        ));
+        let modified_dir = tempfile::tempdir().expect("temp dir");
+
+        for entry_result in archive.entries().unwrap() {
+            let mut entry = entry_result.unwrap();
+            let path = entry.path().unwrap().to_owned();
+            let path_str = path.to_string_lossy().to_string();
+
+            if path_str == "manifest.json" {
+                // Read and modify manifest
+                let mut contents = String::new();
+                entry.read_to_string(&mut contents).unwrap();
+                let mut manifest: serde_json::Value = serde_json::from_str(&contents).unwrap();
+                manifest["version"] = serde_json::json!(99);
+                let modified_json = serde_json::to_string_pretty(&manifest).unwrap();
+
+                // Write modified manifest to temp dir
+                let manifest_path = modified_dir.path().join("manifest.json");
+                fs::write(&manifest_path, &modified_json).unwrap();
+            } else {
+                entry.unpack(modified_dir.path().join(&path)).unwrap();
+            }
+        }
+
+        // Re-pack as tar.gz with tampered manifest
+        let packed_file = File::create(temp_archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(packed_file, flate2::Compression::default());
+        let mut tar_builder = Builder::new(encoder);
+
+        for entry in fs::read_dir(modified_dir.path()).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+
+            let file = File::open(&path).unwrap();
+            let metadata = file.metadata().unwrap();
+            let mut header = tar::Header::new_gnu();
+            header.set_path(&name).unwrap();
+            header.set_size(metadata.len());
+            header.set_mode(0o644);
+            header.set_mtime(chrono::Utc::now().timestamp() as u64);
+            header.set_cksum();
+
+            let mut reader = BufReader::new(file);
+            tar_builder.append(&mut header, &mut reader).unwrap();
+        }
+
+        tar_builder.into_inner().unwrap().finish().unwrap();
+
+        // Extracting should fail due to version mismatch
+        let result = extract_backup(temp_archive_path, &extract_dir);
+        assert!(
+            result.is_err(),
+            "extract_backup should reject incompatible backup version"
+        );
+        let err_chain = format!("{}", result.unwrap_err());
+        assert!(
+            err_chain.contains("Incompatible backup format version")
+                || err_chain.contains("version mismatch"),
+            "error message should mention version mismatch: {}",
+            err_chain
+        );
     }
 }
