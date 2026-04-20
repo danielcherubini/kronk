@@ -265,10 +265,6 @@ pub fn Benchmarks() -> impl IntoView {
             .collect()
     };
 
-    // Depth has the same shape as sizes; kept as its own helper so the call
-    // sites read cleanly.
-    let parse_depth = parse_sizes;
-
     let parse_threads = move |s: &str| -> Option<Vec<u32>> {
         if s.trim().to_lowercase() == "auto" || s.trim().is_empty() {
             None
@@ -337,7 +333,7 @@ pub fn Benchmarks() -> impl IntoView {
         let ubatch_sizes = parse_sizes(&ubatch_sizes_str.get());
         let kv = kv_cache_type.get();
         let kv_payload: Option<String> = if kv == "default" { None } else { Some(kv) };
-        let depth = parse_depth(&depth_str.get());
+        let depth = parse_sizes(&depth_str.get());
         let fa_payload: Option<bool> = Some(flash_attn.get());
 
         // Clear any previous results and mark the job as running.

@@ -236,11 +236,6 @@ async fn run_benchmark_inner(
     // not just the per-test summary rows.
     let results_json =
         serde_json::to_string(&report).context("Failed to serialize benchmark report")?;
-    // Store results in job state so get_benchmark_result can return them
-    {
-        let mut bench_results = job.benchmark_results.write().await;
-        *bench_results = Some(results_json.clone());
-    }
     let pp_sizes_json =
         serde_json::to_string(&req.pp_sizes).context("Failed to serialize pp_sizes")?;
     let tg_sizes_json =
@@ -506,8 +501,10 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
             // `results_json` may be either the full BenchReport (new rows) or a
             // plain summaries array (legacy rows). Extract the summaries array
             // so the frontend only has one shape to deal with.
-            let raw: serde_json::Value =
-                serde_json::from_str(&e.results).unwrap_or(serde_json::Value::Null);
+            let raw: serde_json::Value = serde_json::from_str(&e.results).unwrap_or_else(|err| {
+                tracing::warn!("Failed to parse results for benchmark id={}: {}", e.id, err);
+                serde_json::Value::Null
+            });
             let summaries = match raw.get("summaries") {
                 Some(v) if v.is_array() => v.clone(),
                 _ if raw.is_array() => raw,

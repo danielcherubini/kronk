@@ -22,7 +22,6 @@ struct ResultPayload {
 
 /// JobLogPanel - subscribes to /api/backends/jobs/:id/events and streams logs.
 #[component]
-#[allow(dead_code)]
 pub fn JobLogPanel(
     /// The job id whose logs we should display
     job_id: String,

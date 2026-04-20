@@ -62,9 +62,9 @@ pub fn find_llama_bench(backend_path: &std::path::Path) -> Result<PathBuf> {
 
 /// Detect GPU type from backend binary path.
 ///
-/// Matches substrings first (cheap, no GPU probing), then falls back to a live
-/// VRAM query which currently only recognises CUDA. Anything unknown reports
-/// as "CPU".
+/// Matches substrings first (cheap, no GPU probing). Anything unknown reports
+/// as "CPU" — we avoid live VRAM probing because it can misidentify the backend
+/// (e.g. a ROCm build running on a system that also has a CUDA card).
 pub(super) fn detect_gpu_type(backend_path: &std::path::Path) -> String {
     let path_lower = backend_path.to_string_lossy().to_lowercase();
     if path_lower.contains("vulkan") {
@@ -75,8 +75,6 @@ pub(super) fn detect_gpu_type(backend_path: &std::path::Path) -> String {
         "ROCm".to_string()
     } else if path_lower.contains("metal") {
         "Metal".to_string()
-    } else if crate::gpu::query_vram().is_some() {
-        "CUDA".to_string()
     } else {
         "CPU".to_string()
     }

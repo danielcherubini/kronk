@@ -8,6 +8,9 @@
 /// hour/minute fields came out as `00:00` regardless of the input timestamp.
 /// We now construct the `Date` from the full ms-since-epoch so `getHours` /
 /// `getMinutes` reflect the actual moment the benchmark ran.
+///
+/// Note: `js_sys::Date::get_month()` returns 0-indexed months (0=Jan), hence
+/// the `+1` adjustment below.
 pub fn format_timestamp(ts: i64) -> String {
     let ms = wasm_bindgen::JsValue::from_f64(ts as f64 * 1000.0);
     let date = js_sys::Date::new(&ms);

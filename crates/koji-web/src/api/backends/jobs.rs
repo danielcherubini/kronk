@@ -1,5 +1,5 @@
 use async_stream::stream;
-use axum::response::sse::{Event, KeepAlive};
+use axum::response::sse::Event;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -162,5 +162,7 @@ pub async fn job_events_sse(
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    // No keep-alive: the stream ends naturally when the job completes,
+    // and clients close EventSource on terminal status to prevent reconnection loops.
+    Ok(Sse::new(stream))
 }

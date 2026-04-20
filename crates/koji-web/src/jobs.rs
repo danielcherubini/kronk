@@ -53,8 +53,15 @@ pub struct Job {
     pub child_pids: RwLock<Vec<u32>>,
 }
 
+/// Maximum number of log lines to retain in the head buffer (oldest 100 lines).
+/// These are always replayed on SSE reconnect so users can see what happened
+/// before they connected.
 pub const LOG_HEAD_CAP: usize = 100;
+/// Maximum number of recent log lines retained after the head is full.
+/// Combined with `LOG_HEAD_CAP`, up to 500 most-recent lines are available.
 pub const LOG_TAIL_CAP: usize = 400;
+/// Broadcast channel capacity for live log delivery. Prevents backpressure
+/// when many SSE subscribers connect simultaneously.
 pub const LOG_BROADCAST_CAP: usize = 1024;
 pub const RETAINED_FINISHED_JOBS: usize = 8;
 
@@ -197,14 +204,61 @@ impl JobManager {
     }
 
     /// Kill all child processes for a job.
+    ///
+    /// Unix: sends SIGTERM to each PID, then SIGKILL after 2 seconds if still alive.
+    /// Windows: uses `taskkill /F /PID` to forcefully terminate each process.
     pub async fn kill_children(&self, job: &Job) {
         let pids = job.child_pids.read().await;
-        for &pid in pids.iter() {
-            // TODO: Implement process killing using platform-specific APIs
-            // Unix: use nix::unistd::kill or std::os::unix::process::CommandExt
-            // Windows: use winapi or taskkill
-            tracing::warn!("Would kill child process {} (not yet implemented)", pid);
+        if pids.is_empty() {
+            return;
         }
+
+        #[cfg(unix)]
+        {
+            let mut sigterm_futures = Vec::new();
+            for &pid in pids.iter() {
+                sigterm_futures.push(tokio::task::spawn_blocking(move || {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-SIGTERM")
+                        .arg(pid.to_string())
+                        .status();
+                }));
+            }
+
+            // Wait for SIGTERM to take effect, then SIGKILL any survivors
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                futures_util::future::join_all(sigterm_futures),
+            )
+            .await;
+
+            // SIGKILL any remaining processes
+            for &pid in pids.iter() {
+                std::mem::drop(tokio::task::spawn_blocking(move || {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-SIGKILL")
+                        .arg(pid.to_string())
+                        .status();
+                }));
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let mut futures = Vec::new();
+            for &pid in pids.iter() {
+                futures.push(tokio::task::spawn_blocking(move || {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .creation_flags(0x00000008) // CREATE_NO_WINDOW
+                        .status();
+                }));
+            }
+            let _ = futures_util::future::join_all(futures).await;
+        }
+
+        tracing::info!("Killed {} child process(es) for job {}", pids.len(), job.id);
     }
 
     /// Mark the job terminal, broadcast the status event, release the active slot,
