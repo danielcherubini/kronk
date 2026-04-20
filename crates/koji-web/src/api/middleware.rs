@@ -5,6 +5,13 @@ use axum::{
     response::Response,
 };
 
+/// Check if the host header indicates a localhost address.
+fn is_localhost(host: &str) -> bool {
+    // Extract host part before any port separator
+    let host_part = host.split(':').next().unwrap_or(host);
+    host_part == "localhost" || host_part == "127.0.0.1" || host_part == "::1"
+}
+
 /// CSRF token cookie name.
 const CSRF_COOKIE_NAME: &str = "koji_csrf_token";
 /// CSRF token header name expected on state-changing requests.
@@ -36,10 +43,20 @@ pub async fn enforce_same_origin(
     ) {
         let token = generate_csrf_token();
 
-        // Set SameSite=Lax cookie
+        // Determine if Secure flag should be set (omit for localhost/loopback)
+        let is_secure = req
+            .headers()
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(|h| !is_localhost(h))
+            .unwrap_or(true);
+
+        // Build cookie string — NO HttpOnly so JS can read it for CSRF double-submit.
+        // Secure flag is conditional: only set on non-localhost hosts (HTTPS).
+        let secure_attr = if is_secure { "; Secure" } else { "" };
         let set_cookie = format!(
-            "{}={}; Path=/; SameSite=Lax; HttpOnly; Secure",
-            CSRF_COOKIE_NAME, token
+            "{}={}; Path=/; SameSite=Lax{}",
+            CSRF_COOKIE_NAME, token, secure_attr
         );
 
         let mut response = next.run(req).await;

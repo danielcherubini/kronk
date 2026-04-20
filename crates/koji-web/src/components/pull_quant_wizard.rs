@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use crate::utils::post_request;
+
 use crate::components::pull_wizard::*;
 use futures_util::StreamExt;
 use gloo_net::eventsource::futures::EventSource;
@@ -338,7 +340,7 @@ pub fn PullQuantWizard(
                             let body = PullRequest { repo_id: rid, quants };
 
                             wasm_bindgen_futures::spawn_local(async move {
-                                let build_result = gloo_net::http::Request::post("/koji/v1/pulls")
+                                let build_result = post_request("/koji/v1/pulls")
                                     .json(&body);
                                 let resp = match build_result {
                                     Ok(req) => req.send().await,

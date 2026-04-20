@@ -1,7 +1,8 @@
 //! Backup & Restore section for the Config page.
 
-use gloo_net::http::Request;
 use leptos::prelude::*;
+
+use crate::utils::post_request;
 
 #[component]
 pub fn BackupSection() -> impl IntoView {
@@ -151,7 +152,7 @@ pub fn BackupSection() -> impl IntoView {
                 }
             };
 
-            let build_result = match Request::post("/api/restore").json(&body) {
+            let build_result = match post_request("/api/restore").json(&body) {
                 Ok(r) => r,
                 Err(e) => {
                     set_restoring.set(false);
