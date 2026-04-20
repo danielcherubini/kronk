@@ -18,9 +18,6 @@ const MAX_MMPROJ: usize = 128;
 const MAX_API_NAME: usize = 128;
 const MAX_DISPLAY_NAME: usize = 256;
 
-/// Regex pattern for valid repo_id: alphanumeric, dots, underscores, hyphens, slashes.
-const REPO_ID_PATTERN: &str = r"^[a-zA-Z0-9._/-]+$";
-
 /// Body for create/update model.
 #[derive(serde::Deserialize)]
 pub struct ModelBody {
@@ -248,7 +245,7 @@ pub async fn create_model(
                 serde_json::json!({"error": "repo_id must be at most 256 characters"}),
             ));
         }
-        if !regex_matches(&repo_id, REPO_ID_PATTERN) {
+        if !is_valid_repo_id(&repo_id) {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 serde_json::json!({"error": "repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}),
@@ -376,7 +373,7 @@ pub async fn rename_model(
                 serde_json::json!({"error": "New repo_id must be at most 256 characters"}),
             ));
         }
-        if !regex_matches(&new_repo_id, REPO_ID_PATTERN) {
+        if !is_valid_repo_id(&new_repo_id) {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 serde_json::json!({"error": "New repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}),
@@ -705,9 +702,8 @@ pub async fn delete_model(
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 
-/// Simple regex match without requiring the `regex` crate.
-fn regex_matches(input: &str, _pattern: &str) -> bool {
-    // repo_id pattern: ^[a-zA-Z0-9._/-]+$
+/// Validate that a string is a valid repo_id: non-empty, only alphanumeric, dots, underscores, hyphens, slashes.
+fn is_valid_repo_id(input: &str) -> bool {
     if input.is_empty() {
         return false;
     }
