@@ -435,58 +435,54 @@ pub fn Benchmarks() -> impl IntoView {
 
         // Benchmark results
         {move || {
-            if let Some(results_val) = benchmark_results.get().clone() {
-                // benchmark_results is a JSON string (array of summaries)
-                let summaries: Vec<_> = if let Some(s) = results_val.as_str() {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
-                        if let Some(arr) = parsed.as_array() {
-                            arr.iter().map(|s| {
-                                let test_name = s.get("test_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let prompt_tokens = s.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let gen_tokens = s.get("gen_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let pp_mean = s.get("pp_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                let tg_mean = s.get("tg_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                (test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)
-                            }).collect()
+            let results_val = benchmark_results.get();
+            if let Some(results_str) = results_val.as_ref().and_then(|v| v.as_str()) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(results_str) {
+                    if let Some(arr) = parsed.as_array() {
+                        let summaries: Vec<_> = arr.iter().map(|s| {
+                            let test_name = s.get("test_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let prompt_tokens = s.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let gen_tokens = s.get("gen_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let pp_mean = s.get("pp_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let tg_mean = s.get("tg_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            (test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)
+                        }).collect();
+                        if !summaries.is_empty() {
+                            view! {
+                                <section class="card mt-3">
+                                    <h3>"Benchmark Results"</h3>
+                                    <table class="table table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>"Test"</th>
+                                                <th>"Prompt Tokens"</th>
+                                                <th>"Gen Tokens"</th>
+                                                <th>"PP (tok/s)"</th>
+                                                <th>"TG (tok/s)"</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {summaries.into_iter().map(|(test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)| {
+                                                view! {
+                                                    <tr>
+                                                        <td>{test_name}</td>
+                                                        <td class="text-mono">{prompt_tokens}</td>
+                                                        <td class="text-mono">{gen_tokens}</td>
+                                                        <td class="text-mono">{if pp_mean > 0.01 { format!("{:.1}", pp_mean) } else { "—".to_string() }}</td>
+                                                        <td class="text-mono">{if tg_mean > 0.01 { format!("{:.1}", tg_mean) } else { "—".to_string() }}</td>
+                                                    </tr>
+                                                }.into_any()
+                                            }).collect::<Vec<_>>()}
+                                        </tbody>
+                                    </table>
+                                </section>
+                            }.into_any()
                         } else {
-                            vec![]
+                            view! { <div></div> }.into_any()
                         }
                     } else {
-                        vec![]
+                        view! { <div></div> }.into_any()
                     }
-                } else {
-                    vec![]
-                };
-                if !summaries.is_empty() {
-                    view! {
-                        <section class="card mt-3">
-                            <h3>"Benchmark Results"</h3>
-                            <table class="table table-striped">
-                                <thead>
-                                    <tr>
-                                        <th>"Test"</th>
-                                        <th>"Prompt Tokens"</th>
-                                        <th>"Gen Tokens"</th>
-                                        <th>"PP (tok/s)"</th>
-                                        <th>"TG (tok/s)"</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {summaries.into_iter().map(|(test_name, prompt_tokens, gen_tokens, pp_mean, tg_mean)| {
-                                        view! {
-                                            <tr>
-                                                <td>{test_name}</td>
-                                                <td class="text-mono">{prompt_tokens}</td>
-                                                <td class="text-mono">{gen_tokens}</td>
-                                                <td class="text-mono">{if pp_mean > 0.01 { format!("{:.1}", pp_mean) } else { "—".to_string() }}</td>
-                                                <td class="text-mono">{if tg_mean > 0.01 { format!("{:.1}", tg_mean) } else { "—".to_string() }}</td>
-                                            </tr>
-                                        }.into_any()
-                                    }).collect::<Vec<_>>()}
-                                </tbody>
-                            </table>
-                        </section>
-                    }.into_any()
                 } else {
                     view! { <div></div> }.into_any()
                 }
@@ -528,7 +524,24 @@ pub fn Benchmarks() -> impl IntoView {
                                             <td>{entry.quant.unwrap_or_else(|| "—".to_string())}</td>
                                             <td class="text-mono">{entry.pp_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")}</td>
                                             <td class="text-mono">{entry.tg_sizes.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")}</td>
-                                            <td>{entry.results_count}</td>
+                                            <td>
+                                                {if entry.results_count > 0 {
+                                                    // Try to extract PP and TG speeds from results
+                                                    let pp_row = entry.results.get("pp512")
+                                                        .and_then(|v| v.get("pp_mean"))
+                                                        .and_then(|v| v.as_f64())
+                                                        .map(|v| format!("{v:.0}"))
+                                                        .unwrap_or_else(|| "—".to_string());
+                                                    let tg_row = entry.results.get("tg128")
+                                                        .and_then(|v| v.get("tg_mean"))
+                                                        .and_then(|v| v.as_f64())
+                                                        .map(|v| format!("{v:.0}"))
+                                                        .unwrap_or_else(|| "—".to_string());
+                                                    format!("PP {pp_row} TG {tg_row}")
+                                                } else {
+                                                    "—".to_string()
+                                                }}
+                                            </td>
                                             <td><span class={badge_class}>{entry.status}</span></td>
                                         </tr>
                                     }.into_any()

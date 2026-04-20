@@ -33,6 +33,7 @@ pub struct HistoryEntry {
     pub runs: u32,
     pub results_count: usize,
     pub status: String,
+    pub results: serde_json::Value,
 }
 
 /// Preset configurations for quick benchmark setup.

@@ -59,6 +59,7 @@ pub struct BenchmarkHistoryEntry {
     pub runs: u32,
     pub results_count: usize,
     pub status: String,
+    pub results: serde_json::Value,
 }
 
 // ── Handler: Submit benchmark job ─────────────────────────────────────
@@ -464,6 +465,7 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
                     .map(|v| v.len())
                     .unwrap_or(0),
                 status: e.status,
+                results: serde_json::from_str::<serde_json::Value>(&e.results).unwrap_or_default(),
             }
         })
         .collect();
