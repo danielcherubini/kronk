@@ -9,7 +9,7 @@ use rusqlite::Connection;
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 13;
+pub const LATEST_VERSION: i32 = 14;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -390,6 +390,12 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 );
                 CREATE INDEX IF NOT EXISTS idx_benchmarks_model_id ON benchmarks(model_id);
                 CREATE INDEX IF NOT EXISTS idx_benchmarks_created_at ON benchmarks(created_at DESC);
+            "#,
+        ),
+        (
+            14,
+            r#"
+                ALTER TABLE model_configs ADD COLUMN num_parallel INTEGER DEFAULT 1 CHECK(num_parallel >= 1);
             "#,
         ),
     ];
