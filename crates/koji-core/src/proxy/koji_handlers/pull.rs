@@ -10,6 +10,7 @@ use axum::{
 use futures_util::stream;
 use reqwest::StatusCode;
 
+use crate::config::default_num_parallel;
 use crate::models::repo_path;
 use crate::proxy::download_queue::DownloadQueueService;
 
@@ -892,6 +893,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                     quant: Some(quant_key.clone()),
                     mmproj: None,
                     context_length: spec.context_length,
+                    num_parallel: default_num_parallel(),
                     enabled: true,
                     args: vec![],
                     sampling: None,
@@ -953,6 +955,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                     quant: None,
                     mmproj: None,
                     context_length: None,
+                    num_parallel: default_num_parallel(),
                     enabled: false,
                     args: vec![],
                     sampling: None,

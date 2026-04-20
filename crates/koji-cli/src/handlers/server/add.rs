@@ -153,6 +153,7 @@ pub async fn cmd_server_add(
         quants: std::collections::BTreeMap::new(),
         modalities: None,
         display_name: None,
+        num_parallel: None,
         db_id: None,
     };
 

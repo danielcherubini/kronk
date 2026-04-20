@@ -502,4 +502,78 @@ mod tests {
 
         assert_eq!(json.get("id").unwrap().as_str(), Some("config-key-2"));
     }
+
+    /// Verifies that the opencode list models API multiplies context_length by num_parallel.
+    #[tokio::test]
+    async fn test_opencode_list_models_context_length_multiplied_by_num_parallel() {
+        use crate::proxy::koji_handlers::handle_opencode_list_models;
+
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Populate model_configs with explicit context_length and num_parallel.
+        // Model A: context=8192, num_parallel=3 → effective=24576
+        // Model B: context=4096, num_parallel=None (defaults to 1) → effective=4096
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "model-a".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    model: Some("test/model-a".to_string()),
+                    enabled: true,
+                    context_length: Some(8192),
+                    num_parallel: Some(3),
+                    ..Default::default()
+                },
+            );
+            mc.insert(
+                "model-b".to_string(),
+                ModelConfig {
+                    backend: "llama.cpp".to_string(),
+                    model: Some("test/model-b".to_string()),
+                    enabled: true,
+                    context_length: Some(4096),
+                    // num_parallel not set → defaults to 1
+                    ..Default::default()
+                },
+            );
+        }
+
+        let state = State(state_arc);
+
+        let response = handle_opencode_list_models(state).await;
+        let models = response.0.get("models").unwrap().as_array().unwrap();
+        assert_eq!(models.len(), 2);
+
+        // Find model-a and verify context_length is multiplied
+        let model_a = models
+            .iter()
+            .find(|m| m.get("id").unwrap().as_str() == Some("test/model-a"))
+            .expect("model-a should be present");
+        assert_eq!(
+            model_a["context_length"].as_u64(),
+            Some(24576),
+            "context_length should be 8192 * 3 = 24576, got {}",
+            model_a["context_length"]
+        );
+        assert_eq!(
+            model_a["limit"]["context"].as_u64(),
+            Some(24576),
+            "limit.context should also be 24576, got {}",
+            model_a["limit"]["context"]
+        );
+
+        // Find model-b and verify context_length is unchanged (num_parallel=1)
+        let model_b = models
+            .iter()
+            .find(|m| m.get("id").unwrap().as_str() == Some("test/model-b"))
+            .expect("model-b should be present");
+        assert_eq!(
+            model_b["context_length"].as_u64(),
+            Some(4096),
+            "context_length should be 4096 * 1 = 4096, got {}",
+            model_b["context_length"]
+        );
+    }
 }

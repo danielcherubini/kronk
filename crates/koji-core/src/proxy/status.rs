@@ -200,6 +200,7 @@ mod tests {
             health_check: None,
             enabled: true,
             context_length: None,
+            num_parallel: Some(1),
             profile: None,
             api_name: None,
             gpu_layers: None,

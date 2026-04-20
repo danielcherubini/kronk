@@ -101,6 +101,7 @@ fn model_entry_json(
         "sampling": m.sampling,
         "enabled": record.enabled,
         "context_length": record.context_length,
+        "num_parallel": record.num_parallel,
         "port": record.port,
         "api_name": record.api_name,
         "display_name": record.display_name,

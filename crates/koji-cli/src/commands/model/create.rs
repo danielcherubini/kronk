@@ -73,6 +73,7 @@ pub(super) async fn cmd_create(
         quants: std::collections::BTreeMap::new(),
         modalities: None,
         display_name: None,
+        num_parallel: None,
         db_id: None,
     };
 
