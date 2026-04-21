@@ -12,6 +12,7 @@ struct ModelEntry {
     model: Option<String>,
     quant: Option<String>,
     enabled: bool,
+    #[serde(default)]
     loaded: bool,
     #[serde(default)]
     api_name: Option<String>,

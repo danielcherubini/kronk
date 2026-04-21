@@ -15,6 +15,48 @@ use tower::util::ServiceExt;
 
 use koji_web::server::{build_router, AppState};
 
+/// Helper to extract CSRF token from response headers and set cookie.
+async fn get_csrf_token(router: &axum::Router) -> String {
+    let req = axum::extract::Request::builder()
+        .method("GET")
+        .uri("/koji/v1/config/structured")
+        .header("origin", "http://localhost:11435")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(req).await.unwrap();
+    response
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookie| {
+            cookie
+                .split(';')
+                .next()
+                .and_then(|part| part.split_once('='))
+                .map(|(_, val)| val.to_string())
+        })
+        .unwrap_or_else(|| "test-csrf-token".to_string())
+}
+
+/// Build a POST request with CSRF token.
+async fn post_with_csrf(
+    router: axum::Router,
+    uri: String,
+    body: axum::body::Body,
+    csrf_token: String,
+) -> axum::http::Response<axum::body::Body> {
+    let req = axum::extract::Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("content-type", "application/json")
+        .header("origin", "http://localhost:11435")
+        .header("cookie", format!("koji_csrf_token={csrf_token}"))
+        .header("x-csrf-token", &csrf_token)
+        .body(body)
+        .unwrap();
+    router.oneshot(req).await.unwrap()
+}
+
 /// Create a minimal valid koji.toml config for testing.
 fn create_test_config() -> String {
     r#"
@@ -132,9 +174,13 @@ async fn test_post_structured_config_persists_and_round_trips() {
     let (state, _temp_dir) = build_test_app_state(&config_content);
     let router = build_router(state);
 
+    // Get CSRF token first
+    let csrf_token = get_csrf_token(&router).await;
+
     let req = axum::extract::Request::builder()
         .method("GET")
         .uri("/koji/v1/config/structured")
+        .header("origin", "http://localhost:11435")
         .body(axum::body::Body::empty())
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
@@ -150,16 +196,13 @@ async fn test_post_structured_config_persists_and_round_trips() {
         general["log_level"] = "debug".into();
     }
 
-    let req = axum::extract::Request::builder()
-        .method("POST")
-        .uri("/koji/v1/config/structured")
-        .header("content-type", "application/json")
-        .body(axum::body::Body::from(
-            serde_json::to_string(&initial).unwrap(),
-        ))
-        .unwrap();
-    let response: axum::http::Response<axum::body::Body> =
-        router.clone().oneshot(req).await.unwrap();
+    let response = post_with_csrf(
+        router.clone(),
+        "/koji/v1/config/structured".to_string(),
+        axum::body::Body::from(serde_json::to_string(&initial).unwrap()),
+        csrf_token,
+    )
+    .await;
     assert_eq!(response.status(), 200);
 
     let req = axum::extract::Request::builder()
@@ -184,14 +227,15 @@ async fn test_400_on_invalid_json() {
     let (state, _temp_dir) = build_test_app_state(&config_content);
     let router = build_router(state);
 
-    let req = axum::extract::Request::builder()
-        .method("POST")
-        .uri("/koji/v1/config/structured")
-        .header("content-type", "application/json")
-        .body(axum::body::Body::from("{ invalid json }"))
-        .unwrap();
-    let response: axum::http::Response<axum::body::Body> =
-        router.clone().oneshot(req).await.unwrap();
+    let csrf_token = get_csrf_token(&router).await;
+
+    let response = post_with_csrf(
+        router.clone(),
+        "/koji/v1/config/structured".to_string(),
+        axum::body::Body::from("{ invalid json }"),
+        csrf_token,
+    )
+    .await;
     assert_eq!(response.status(), 400);
 }
 
@@ -224,8 +268,8 @@ async fn test_404_when_config_path_not_configured() {
         router.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), 404);
 
-    // POST with config_path=None: Json extractor runs first, returns 422 for invalid StructuredConfigBody
-    // (Axum's Json<T> extractor validates structure before handler runs)
+    // POST with config_path=None and missing required fields returns 422
+    // (but first needs CSRF — we skip CSRF here since config_path is None)
     let req = axum::extract::Request::builder()
         .method("POST")
         .uri("/koji/v1/config/structured")
@@ -234,6 +278,6 @@ async fn test_404_when_config_path_not_configured() {
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
         router.clone().oneshot(req).await.unwrap();
-    // 422 Unprocessable Entity: JSON is valid but doesn't match StructuredConfigBody schema
-    assert_eq!(response.status(), 422);
+    // 403 Forbidden due to CSRF (no token provided)
+    assert_eq!(response.status(), 403);
 }

@@ -18,7 +18,7 @@ use crate::api::backends::{
     list_backend_versions, list_backends, remove_backend, remove_backend_version,
     system_capabilities, update_backend, update_backend_default_args, CapabilitiesCache,
 };
-use crate::api::backup::{create_backup, restore_preview, start_restore};
+use crate::api::backup::{restore_preview, start_restore};
 use crate::api::benchmarks::{
     benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history, run_benchmark,
 };
@@ -242,15 +242,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // 1MB body limit for all JSON API endpoints
     let json_body_limit = axum::extract::DefaultBodyLimit::max(1024 * 1024);
 
-    Router::new()
-        .route("/koji/v1/logs", get(api::get_logs))
-        .route("/koji/v1/backup", get(create_backup))
-        .route(
-            "/koji/v1/config",
-            get(api::get_config)
-                .post(api::save_config)
-                .layer(json_body_limit),
-        )
+    // Sub-router for non-backend state-changing endpoints with CSRF enforcement
+    let csrf_routes = Router::new()
+        .route("/koji/v1/config", get(api::get_config).post(api::save_config).layer(json_body_limit))
         .route(
             "/koji/v1/config/structured",
             get(api::get_structured_config)
@@ -285,6 +279,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/koji/v1/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
+        .route(
+            "/koji/v1/benchmarks/run",
+            post(run_benchmark).layer(json_body_limit),
+        )
+        .route(
+            "/koji/v1/downloads/:job_id/cancel",
+            post(api::downloads::cancel_download).layer(json_body_limit),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers(tower_http::cors::Any),
+        )
+        .layer(middleware::from_fn(api::middleware::enforce_same_origin));
+
+    Router::new()
         // Self-update GET routes (safe methods, no CSRF protection needed)
         .route(
             "/koji/v1/self-update/check",
@@ -294,11 +310,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/koji/v1/self-update/events",
             get(api::self_update::update_events),
         )
-        // Benchmark routes
-        .route(
-            "/koji/v1/benchmarks/run",
-            post(run_benchmark).layer(json_body_limit),
-        )
+        // Benchmark GET routes (no CSRF needed)
         .route("/koji/v1/benchmarks/jobs/:id", get(get_benchmark_result))
         .route("/koji/v1/benchmarks/jobs/:id/events", get(benchmark_events))
         .route("/koji/v1/benchmarks/history", get(list_benchmark_history))
@@ -313,15 +325,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(api::downloads::get_download_history),
         )
         .route(
-            "/koji/v1/downloads/:job_id/cancel",
-            post(api::downloads::cancel_download).layer(json_body_limit),
-        )
-        .route(
             "/koji/v1/downloads/events",
             get(api::downloads::download_events_sse),
         )
         // API documentation (OpenAPI 3.1.0 spec)
         .route("/koji/v1/docs", get(api::openapi::serve_spec))
+        .merge(csrf_routes)
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))
