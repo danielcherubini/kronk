@@ -24,13 +24,14 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use espeak_rs::text_to_phonemes;
 use ndarray::{ArrayBase, IxDyn, OwnedRepr};
 use ndarray_npy::NpzReader;
 use ort::{
-    ep, session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
+    ep,
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
     value::{Tensor, Value},
 };
 
@@ -81,6 +82,31 @@ pub struct TtsEngine {
     voices: HashMap<String, Vec<f32>>,
     vocab: HashMap<char, i64>,
     fallback_mode: bool,
+}
+
+/// Global ort environment initializer — called once before any sessions.
+static ORT_INIT: OnceLock<bool> = OnceLock::new();
+
+fn init_ort_environment() -> bool {
+    *ORT_INIT.get_or_init(|| {
+        // Try ROCm first, fall back to CPU if unavailable
+        let rocm = ep::ROCm::default();
+        debug_log!("🎮 Initializing ort with ROCm GPU execution provider");
+        match ort::init()
+            .with_name("kokoro-tts")
+            .with_execution_providers([rocm.build()])
+            .commit()
+        {
+            true => {
+                debug_log!("✅ ROCm initialized successfully");
+                true
+            }
+            false => {
+                debug_log!("⚠️  ROCm init failed, falling back to CPU");
+                false
+            }
+        }
+    })
 }
 
 impl TtsEngine {
@@ -161,14 +187,12 @@ impl TtsEngine {
             }
         }
 
+        // Initialize ort environment (once globally) with ROCm GPU if available
+        init_ort_environment();
+
         // Load ONNX model
         let model_bytes =
             std::fs::read(model_path).map_err(|e| format!("Failed to read model file: {}", e))?;
-        // Initialize ort environment with ROCm GPU acceleration if available
-        let _ = ort::init()
-            .with_name("kokoro-tts")
-            .with_execution_providers([ep::ROCm::default().build()])
-            .commit();
 
         let session = Session::builder()
             .map_err(|e| format!("Failed to create session builder: {}", e))?
