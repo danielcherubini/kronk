@@ -40,7 +40,9 @@ sha2 = "0.10"
 glob = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 lru = "0.12"
-koji-tts = { path = "../koji-tts" }
+koji-tts = { path = "../koji-tts", default-features = false, features = ["kokoro"] }
+base64 = "0.22"
+futures = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

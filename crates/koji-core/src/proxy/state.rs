@@ -41,6 +41,7 @@ impl ProxyState {
             metrics_tx,
             download_queue: download_queue.clone(),
             config_write_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
+            tts_engine: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
         // Spawn the queue processor background task if download queue is configured.

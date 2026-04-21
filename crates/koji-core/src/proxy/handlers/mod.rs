@@ -1,3 +1,5 @@
+pub mod tts;
+
 use crate::config::MAX_REQUEST_BODY_SIZE;
 use crate::proxy::ProxyState;
 use anyhow::Context;
