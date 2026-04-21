@@ -1,4 +1,8 @@
-.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows coverage dev
+.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows coverage dev run
+
+# Build and run koji (frontend + backend)
+run: build
+	cargo run --release
 
 # Run Leptos frontend dev server with hot reload on http://localhost:8080
 dev: wasm-target
