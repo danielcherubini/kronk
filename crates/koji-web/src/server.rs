@@ -235,7 +235,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     axum::http::Method::POST,
                     axum::http::Method::DELETE,
                 ])
-                .allow_headers(tower_http::cors::Any),
+                .allow_headers(tower_http::cors::Any)
+                // Expose X-CSRF-Token so JS can read it from GET responses
+                .expose_headers(["X-CSRF-Token"]),
         )
         .layer(middleware::from_fn(api::middleware::enforce_same_origin));
 
@@ -301,7 +303,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     axum::http::Method::PUT,
                     axum::http::Method::DELETE,
                 ])
-                .allow_headers(tower_http::cors::Any),
+                .allow_headers(tower_http::cors::Any)
+                // Expose X-CSRF-Token so JS can read it from GET responses
+                .expose_headers(["X-CSRF-Token"]),
         )
         .layer(middleware::from_fn(api::middleware::enforce_same_origin));
 
