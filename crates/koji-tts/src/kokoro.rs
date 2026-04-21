@@ -8,7 +8,7 @@ use std::pin::Pin;
 use anyhow::{anyhow, Result};
 use futures_core::Stream;
 
-use crate::config::{AudioChunk, AudioFormat, TtsRequest, VoiceInfo};
+use crate::config::{AudioChunk, TtsRequest, VoiceInfo};
 use crate::TtsEngine;
 
 /// A loaded Kokoro TTS engine.
