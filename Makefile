@@ -2,7 +2,7 @@
 
 # Build and run koji (frontend + backend)
 run: build
-	cargo run --release --bin koji serve
+	cargo run --release --bin koji service-run --proxy
 
 # Run Leptos frontend dev server with hot reload on http://localhost:8080
 dev: wasm-target
