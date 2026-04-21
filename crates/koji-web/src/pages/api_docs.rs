@@ -1,5 +1,4 @@
-use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::JsValue;
 
 use leptos::prelude::*;
 
@@ -8,50 +7,24 @@ use leptos::prelude::*;
 pub fn ApiDocs() -> impl IntoView {
     let loading = RwSignal::new(true);
     let error = RwSignal::new(Option::<String>::None);
+    let initialized = RwSignal::new(false);
 
-    // Inject <redoc> tag FIRST, then load the script so it finds the element.
+    // Inject <redoc> tag into container. Only runs once thanks to the initialized guard.
     Effect::new(move |_| {
+        if initialized.get() {
+            return;
+        }
+        initialized.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
-                    // Step 1: Inject <redoc> tag into container so it exists before script loads.
                     if let Some(container) = doc.get_element_by_id("api-docs-redoc-container") {
                         container.set_inner_html(
                             r#"<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc>"#,
                         );
                     } else {
                         error.set(Some("Failed to find API docs container".to_string()));
-                        loading.set(false);
-                        return;
                     }
-
-                    // Step 2: Load Redoc script — it will find our <redoc> tag and initialize.
-                    let script = match doc.create_element("script") {
-                        Ok(s) => s,
-                        Err(_) => {
-                            error.set(Some("Failed to create script element".to_string()));
-                            loading.set(false);
-                            return;
-                        }
-                    };
-                    script
-                        .set_attribute(
-                            "src",
-                            "https://cdn.redoc.ly/redoc/v2.1.3/bundles/redoc.standalone.js",
-                        )
-                        .unwrap();
-
-                    let err_cb = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-                        wasm_bindgen_futures::spawn_local(async move {
-                            error.set(Some("Failed to load Redoc from CDN".to_string()));
-                        });
-                    }) as Box<dyn FnMut(_)>);
-                    script
-                        .add_event_listener_with_callback("error", err_cb.as_ref().unchecked_ref())
-                        .unwrap();
-                    err_cb.forget();
-
-                    let _ = doc.body().unwrap().append_child(&script);
                 } else {
                     error.set(Some("No document available".to_string()));
                 }
