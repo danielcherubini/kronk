@@ -228,17 +228,44 @@ impl ProxyState {
             return Ok(None);
         }
 
-        let mut models = self.models.write().await;
-        if models.len() < max as usize {
+        // Collect all Ready server names while holding the write lock.
+        let models = self.models.write().await;
+        let ready_servers: Vec<String> = models
+            .iter()
+            .filter(|(_, s)| matches!(s, ModelState::Ready { .. }))
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Release the write lock before reading model_configs (avoids deadlock).
+        drop(models);
+
+        // Only count LLM (non-TTS) models against the limit.
+        let model_configs = self.model_configs.read().await;
+        let llm_count = ready_servers
+            .iter()
+            .filter(|server_name| {
+                model_configs
+                    .get(server_name.as_str())
+                    .map_or(true, |mc| !mc.backend.starts_with("tts_"))
+            })
+            .count();
+
+        if llm_count < max as usize {
             return Ok(None);
         }
 
-        // Find LRU Ready model (skip Starting, Failed, Unloading)
-        let lru_name = models
+        // Find LRU Ready model among LLM (non-TTS) models only.
+        let mut models = self.models.write().await;
+        let lru_name = ready_servers
             .iter()
-            .filter(|(_, s)| matches!(s, ModelState::Ready { .. }))
+            .filter(|server_name| {
+                model_configs
+                    .get(server_name.as_str())
+                    .map_or(true, |mc| !mc.backend.starts_with("tts_"))
+            })
+            .filter_map(|server_name| models.get(server_name).map(|s| (server_name, s)))
             .min_by_key(|(_, s)| s.last_accessed())
-            .map(|(name, _)| name.clone());
+            .map(|(name, _)| name.to_string());
 
         // Atomically transition Ready → Unloading
         if let Some(ref name) = lru_name {

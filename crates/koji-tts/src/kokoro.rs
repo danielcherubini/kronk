@@ -12,7 +12,7 @@ use crate::config::{AudioChunk, TtsRequest, VoiceInfo};
 use crate::TtsEngine;
 
 /// A loaded Kokoro TTS engine.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KokoroEngine {
     /// The underlying kokoro-micro model handle.
     /// Note: kokoro-micro's API may differ — adapt accordingly.

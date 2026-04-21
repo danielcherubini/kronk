@@ -43,7 +43,7 @@ pub enum EngineKind {
 }
 
 /// A loaded TTS engine (either Kokoro or Piper).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Engine {
     Kokoro(kokoro::KokoroEngine),
     Piper(piper::PiperEngine),

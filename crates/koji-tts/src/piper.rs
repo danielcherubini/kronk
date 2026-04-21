@@ -12,7 +12,7 @@ use crate::config::{AudioChunk, TtsRequest, VoiceInfo};
 use crate::TtsEngine;
 
 /// A loaded Piper TTS engine.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PiperEngine {
     /// The ONNX model path for reference.
     #[allow(dead_code)]

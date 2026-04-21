@@ -2,6 +2,7 @@
 //!
 //! Implements OpenAI-compatible `/v1/audio/*` endpoints for speech synthesis.
 
+use crate::backends::BackendRegistry;
 use crate::proxy::ProxyState;
 use axum::{
     extract::State,
@@ -218,9 +219,77 @@ fn content_type_for_format(format: &str) -> &'static str {
     }
 }
 
+/// Load or switch the TTS engine based on the requested model/engine name.
+///
+/// If the correct engine is already loaded, returns it without changes.
+/// Otherwise, loads the new engine from the backend registry (replacing any existing TTS engine).
+pub async fn load_or_get_engine(
+    state: &ProxyState,
+    engine_name: &str,
+) -> anyhow::Result<koji_tts::Engine> {
+    use anyhow::{anyhow, Context};
+
+    // Determine which kind of engine to load
+    let kind = match engine_name.to_lowercase().as_str() {
+        "kokoro" | "tts_kokoro" => koji_tts::EngineKind::Kokoro,
+        "piper" | "tts_piper" => koji_tts::EngineKind::Piper,
+        _ => koji_tts::EngineKind::Kokoro, // default to kokoro
+    };
+
+    // Check if the correct engine is already loaded
+    {
+        let current = state.tts_engine.read().await;
+        if let Some(ref eng) = *current {
+            if koji_tts::engine_matches_kind(eng, &kind) {
+                return Ok(eng.clone());
+            }
+        }
+    }
+
+    // Need to load/switch — find installed backend from registry
+    let base_dir =
+        crate::config::Config::base_dir().with_context(|| "Failed to get config directory")?;
+    let db_path = base_dir.join("koji.db");
+    let registry =
+        BackendRegistry::open(&db_path).with_context(|| "Failed to open backend registry")?;
+
+    let backend_name = match kind {
+        koji_tts::EngineKind::Kokoro => "tts_kokoro",
+        koji_tts::EngineKind::Piper => "tts_piper",
+    };
+
+    let backend = registry
+        .get(backend_name)
+        .with_context(|| format!("Failed to query backend '{}'", backend_name))?
+        .ok_or_else(|| {
+            anyhow!(
+                "TTS backend '{}' not installed. Run: koji backend add tts_{}",
+                backend_name,
+                match kind {
+                    koji_tts::EngineKind::Kokoro => "kokoro",
+                    koji_tts::EngineKind::Piper => "piper",
+                }
+            )
+        })?;
+
+    // Load the engine from the installed model files
+    let engine = koji_tts::load_engine(kind, &backend.path)
+        .await
+        .with_context(|| format!("Failed to load {} engine", backend_name))?;
+
+    // Replace in state (replaces previous TTS engine if any — singleton behavior)
+    {
+        let mut current = state.tts_engine.write().await;
+        *current = Some(engine.clone());
+    }
+
+    Ok(engine)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::BackendRegistry;
     use crate::config::Config;
     use crate::proxy::ProxyState;
     use axum::{http::StatusCode, response::IntoResponse};
@@ -234,6 +303,7 @@ mod tests {
     async fn test_audio_voices_returns_404_when_not_loaded() {
         let state = Arc::new(create_test_state());
         let response = handle_audio_voices(State(state)).await;
+        let response: axum::http::Response<axum::body::Body> = response.into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
