@@ -5,25 +5,24 @@ use axum::{
     response::Response,
 };
 
-/// Check if the host header indicates a localhost address.
-/// Handles IPv6 bracketed format: `[::1]:3000`, `[0:0:0:0:0:0:0:1]`, etc.
-fn is_localhost(host: &str) -> bool {
-    // Strip brackets from IPv6 addresses and extract host part before port
-    let host_part = host.trim_matches('[').trim_matches(']');
-    let host_part = host_part.split(':').next().unwrap_or(host_part);
-    host_part == "localhost"
-        || host_part == "127.0.0.1"
-        || host_part == "::1"
-        || host_part == "0:0:0:0:0:0:0:1"
-}
-
 /// Determine whether the Secure cookie flag should be set.
-/// Returns true if we're confident a Secure cookie is appropriate (non-localhost, likely HTTPS).
-/// Returns false for localhost/loopback hosts. Defaults to false when the Host header
-/// is missing or unparseable — setting Secure without knowing the scheme would cause
-/// the browser to silently drop the cookie.
-fn should_set_secure(host_header: Option<&str>) -> bool {
-    matches!(host_header, Some(h) if !is_localhost(h))
+/// Only sets Secure when we can confirm HTTPS — either via X-Forwarded-Proto header
+/// (when behind a TLS-terminating proxy) or when the host is explicitly known to use HTTPS.
+/// Defaults to false for all other cases: setting Secure without confirming HTTPS causes
+/// the browser to silently drop the cookie on HTTP connections, breaking CSRF protection.
+fn should_set_secure(headers: &axum::http::HeaderMap) -> bool {
+    // Check X-Forwarded-Proto first (set by reverse proxies like nginx, Caddy)
+    if let Some(forwarded_proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+    {
+        return forwarded_proto.starts_with("https");
+    }
+
+    // No proxy header — we can't confirm HTTPS, so don't set Secure.
+    // This avoids the common issue where non-localhost hosts get a Secure cookie
+    // that browsers refuse to send over plain HTTP.
+    false
 }
 
 /// CSRF token cookie name.
@@ -57,12 +56,8 @@ pub async fn enforce_same_origin(
     ) {
         let token = generate_csrf_token();
 
-        // Determine if Secure flag should be set (omit for localhost/loopback)
-        let is_secure = should_set_secure(
-            req.headers()
-                .get(axum::http::header::HOST)
-                .and_then(|v| v.to_str().ok()),
-        );
+        // Determine if Secure flag should be set (only when HTTPS confirmed via X-Forwarded-Proto)
+        let is_secure = should_set_secure(req.headers());
 
         // Build cookie string — NO HttpOnly so JS can read it for CSRF double-submit.
         // Secure flag is conditional: only set on non-localhost hosts (HTTPS).
