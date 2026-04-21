@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use super::types::*;
 use crate::server::AppState;
 
-/// GET /api/backends/jobs/:id
+/// GET /koji/v1/backends/jobs/:id
 #[allow(dead_code)]
 pub async fn get_job(
     State(state): State<Arc<AppState>>,
@@ -61,7 +61,7 @@ pub async fn get_job(
     }))
 }
 
-/// GET /api/backends/jobs/:id/events
+/// GET /koji/v1/backends/jobs/:id/events
 #[allow(dead_code)]
 pub async fn job_events_sse(
     State(state): State<Arc<AppState>>,

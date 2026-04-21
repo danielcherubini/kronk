@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 
-/// GET /api/system/capabilities
+/// GET /koji/v1/system/capabilities
 pub async fn system_capabilities(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let cache = match &state.capabilities {
         Some(c) => c,

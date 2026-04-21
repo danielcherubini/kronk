@@ -26,7 +26,7 @@ pub fn Logs() -> impl IntoView {
 
     let logs = LocalResource::new(move || async move {
         let _ = refresh.get(); // track the signal
-        let resp = gloo_net::http::Request::get("/api/logs")
+        let resp = gloo_net::http::Request::get("/koji/v1/logs")
             .send()
             .await
             .ok()?;

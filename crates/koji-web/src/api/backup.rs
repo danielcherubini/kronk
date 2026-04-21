@@ -63,7 +63,7 @@ pub struct BackendEntry {
     pub source: String,
 }
 
-/// GET /api/backup - Create backup and return as file download
+/// GET /koji/v1/backup - Create backup and return as file download
 pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config_dir = match &state.config_path {
         Some(p) => p.parent().unwrap_or(p.as_path()),

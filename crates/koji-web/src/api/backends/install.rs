@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::types::*;
 use crate::server::AppState;
 
-/// POST /api/backends/install
+/// POST /koji/v1/backends/install
 pub async fn install_backend(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InstallRequest>,
@@ -351,7 +351,7 @@ pub async fn install_backend(
     .into_response()
 }
 
-/// DELETE /api/backends/:name
+/// DELETE /koji/v1/backends/:name
 pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,

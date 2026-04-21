@@ -17,7 +17,7 @@ pub fn BackupSection() -> impl IntoView {
     let backup_handler = move |_| {
         let set_error = set_error.clone();
         spawn_local(async move {
-            match Request::get("/api/backup").send().await {
+            match Request::get("/koji/v1/backup").send().await {
                 Ok(resp) => {
                     match resp.blob().await {
                         Ok(blob) => {

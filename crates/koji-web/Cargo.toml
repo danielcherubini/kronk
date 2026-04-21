@@ -1,6 +1,6 @@
 [package]
 name = "koji-web"
-version = "1.44.1"
+version = "1.44.2"
 edition.workspace = true
 
 [lib]
@@ -19,6 +19,8 @@ futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url = "2.5"
+utoipa = { version = "5", features = ["axum_extras"], optional = true }
+utoipa-gen = { version = "5", optional = true }
 # Backend-only deps (not needed for WASM, gated behind the `ssr` feature)
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
@@ -46,7 +48,7 @@ ssr = [
   "dep:axum", "dep:tokio", "dep:async-stream", "dep:anyhow", "dep:include_dir",
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
   "dep:koji-core", "dep:toml", "dep:tower-http", "dep:thiserror",
-  "dep:rusqlite", "dep:nix",
+  "dep:rusqlite", "dep:nix", "dep:utoipa", "dep:utoipa-gen",
 ]
 
 [[test]]

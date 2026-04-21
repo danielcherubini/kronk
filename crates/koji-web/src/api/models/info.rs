@@ -122,7 +122,7 @@ fn model_entry_json(
     val
 }
 
-/// GET /api/models — list all model configs plus available backends.
+/// GET /koji/v1/models — list all model configs plus available backends.
 pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let state = state.clone();
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
@@ -189,7 +189,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
     }
 }
 
-/// GET /api/models/:id — get a single model config.
+/// GET /koji/v1/models/:id — get a single model config.
 /// Accepts integer id or config_key (double-dash format) for compatibility.
 pub async fn get_model(
     State(state): State<Arc<AppState>>,

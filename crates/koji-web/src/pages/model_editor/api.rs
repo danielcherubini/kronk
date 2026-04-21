@@ -6,7 +6,7 @@ use crate::utils::{post_request, put_request};
 
 pub async fn fetch_model(id: String) -> Option<ModelDetail> {
     if id == "new" {
-        let resp = gloo_net::http::Request::get("/api/models")
+        let resp = gloo_net::http::Request::get("/koji/v1/models")
             .send()
             .await
             .ok()?;
@@ -34,7 +34,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
         });
     }
     let encoded_id = urlencoding::encode(&id);
-    let resp = gloo_net::http::Request::get(&format!("/api/models/{}", encoded_id))
+    let resp = gloo_net::http::Request::get(&format!("/koji/v1/models/{}", encoded_id))
         .send()
         .await;
     match resp {
@@ -127,9 +127,9 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
 
     let encoded_id = urlencoding::encode(&form.id);
     let (url, is_post) = if is_new {
-        ("/api/models".to_string(), true)
+        ("/koji/v1/models".to_string(), true)
     } else {
-        (format!("/api/models/{}", encoded_id), false)
+        (format!("/koji/v1/models/{}", encoded_id), false)
     };
 
     let req = if is_post {
@@ -156,7 +156,7 @@ pub async fn save_model(args: Vec<String>, form: ModelForm, is_new: bool) -> Res
 pub async fn rename_model(old_id: &str, new_id: &str) -> Result<(), String> {
     let body = serde_json::json!({ "new_id": new_id });
     let encoded_id = urlencoding::encode(old_id);
-    let resp = post_request(&format!("/api/models/{}/rename", encoded_id))
+    let resp = post_request(&format!("/koji/v1/models/{}/rename", encoded_id))
         .json(&body)
         .map_err(|e| e.to_string())?
         .send()
@@ -173,7 +173,7 @@ pub async fn rename_model(old_id: &str, new_id: &str) -> Result<(), String> {
 
 pub async fn delete_model_api(id: String) -> Result<(), String> {
     let encoded_id = urlencoding::encode(&id);
-    let resp = gloo_net::http::Request::delete(&format!("/api/models/{}", encoded_id))
+    let resp = gloo_net::http::Request::delete(&format!("/koji/v1/models/{}", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -189,7 +189,7 @@ pub async fn delete_quant_api(id: String, quant_key: String) -> Result<(), Strin
     let encoded_id = urlencoding::encode(&id);
     let encoded_key = urlencoding::encode(&quant_key);
     let resp = gloo_net::http::Request::delete(&format!(
-        "/api/models/{}/quants/{}",
+        "/koji/v1/models/{}/quants/{}",
         encoded_id, encoded_key
     ))
     .send()
@@ -207,7 +207,7 @@ pub async fn refresh_model_api(id: String) -> Result<RefreshResponse, String> {
     // Percent-encode the id for safe path interpolation; model ids may
     // contain `/`, spaces, or other reserved characters.
     let encoded_id = urlencoding::encode(&id);
-    let resp = post_request(&format!("/api/models/{}/refresh", encoded_id))
+    let resp = post_request(&format!("/koji/v1/models/{}/refresh", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -222,7 +222,7 @@ pub async fn refresh_model_api(id: String) -> Result<RefreshResponse, String> {
 
 pub async fn verify_model_api(id: String) -> Result<VerifyResponse, String> {
     let encoded_id = urlencoding::encode(&id);
-    let resp = post_request(&format!("/api/models/{}/verify", encoded_id))
+    let resp = post_request(&format!("/koji/v1/models/{}/verify", encoded_id))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -237,7 +237,7 @@ pub async fn verify_model_api(id: String) -> Result<VerifyResponse, String> {
 
 pub async fn fetch_sampling_templates(
 ) -> Option<std::collections::HashMap<String, serde_json::Value>> {
-    let resp = gloo_net::http::Request::get("/api/models")
+    let resp = gloo_net::http::Request::get("/koji/v1/models")
         .send()
         .await
         .ok()?;

@@ -46,12 +46,12 @@ mod tests {
         );
     }
 
-    /// GET /api/config returns 404 when config_path is None (not configured).
+    /// GET /koji/v1/config returns 404 when config_path is None (not configured).
     #[tokio::test]
     async fn test_api_config_returns_404_when_unconfigured() {
         let (client, addr) = start_test_server().await;
         let resp = client
-            .get(format!("http://{}/api/config", addr))
+            .get(format!("http://{}/koji/v1/config", addr))
             .send()
             .await
             .unwrap();
@@ -63,12 +63,12 @@ mod tests {
         );
     }
 
-    /// GET /api/logs returns 404 when logs_dir is None (not configured).
+    /// GET /koji/v1/logs returns 404 when logs_dir is None (not configured).
     #[tokio::test]
     async fn test_api_logs_returns_404_when_unconfigured() {
         let (client, addr) = start_test_server().await;
         let resp = client
-            .get(format!("http://{}/api/logs", addr))
+            .get(format!("http://{}/koji/v1/logs", addr))
             .send()
             .await
             .unwrap();
@@ -80,12 +80,12 @@ mod tests {
         );
     }
 
-    /// POST /api/config returns 404 when config_path is None (checked before TOML validation).
+    /// POST /koji/v1/config returns 404 when config_path is None (checked before TOML validation).
     #[tokio::test]
     async fn test_api_config_save_returns_404_when_unconfigured() {
         let (client, addr) = start_test_server().await;
         let resp = client
-            .post(format!("http://{}/api/config", addr))
+            .post(format!("http://{}/koji/v1/config", addr))
             .json(&serde_json::json!({ "content": "not valid toml [[[[" }))
             .send()
             .await
@@ -149,9 +149,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let client = reqwest::Client::new();
 
-        // ── POST /api/models — create ─────────────────────────────────────────────
+        // ── POST /koji/v1/models — create ─────────────────────────────────────────────
         let resp = client
-            .post(format!("http://{}/api/models", addr))
+            .post(format!("http://{}/koji/v1/models", addr))
             .json(&serde_json::json!({
                 "repo_id": "test-model",
                 "backend": "llama_cpp",
@@ -164,14 +164,14 @@ mod tests {
         assert_eq!(
             resp.status().as_u16(),
             201,
-            "POST /api/models should return 201 Created"
+            "POST /koji/v1/models should return 201 Created"
         );
 
-        // Verify 'test-model' was created via GET /api/models.
+        // Verify 'test-model' was created via GET /koji/v1/models.
         // Extract its auto-assigned integer id for subsequent requests.
         let model_id: i64 = {
             let resp = client
-                .get(format!("http://{}/api/models", addr))
+                .get(format!("http://{}/koji/v1/models", addr))
                 .send()
                 .await
                 .unwrap();
@@ -183,7 +183,7 @@ mod tests {
                 .find(|m| m["repo_id"].as_str() == Some("test-model"));
             assert!(
                 model.is_some(),
-                "proxy config should contain 'test-model' after POST /api/models"
+                "proxy config should contain 'test-model' after POST /koji/v1/models"
             );
             let model = model.unwrap();
             assert_eq!(
@@ -194,9 +194,9 @@ mod tests {
             model["id"].as_i64().unwrap()
         };
 
-        // ── PUT /api/models/:id — update ──────────────────────────────────────────
+        // ── PUT /koji/v1/models/:id — update ──────────────────────────────────────────
         let resp = client
-            .put(format!("http://{}/api/models/{}", addr, model_id))
+            .put(format!("http://{}/koji/v1/models/{}", addr, model_id))
             .json(&serde_json::json!({
                 "backend": "ik_llama",
                 "args": [],
@@ -208,13 +208,13 @@ mod tests {
         assert_eq!(
             resp.status().as_u16(),
             200,
-            "PUT /api/models/:id should return 200"
+            "PUT /koji/v1/models/:id should return 200"
         );
 
-        // Verify 'test-model' was updated via GET /api/models.
+        // Verify 'test-model' was updated via GET /koji/v1/models.
         {
             let resp = client
-                .get(format!("http://{}/api/models", addr))
+                .get(format!("http://{}/koji/v1/models", addr))
                 .send()
                 .await
                 .unwrap();
@@ -238,22 +238,22 @@ mod tests {
             );
         }
 
-        // ── DELETE /api/models/:id ────────────────────────────────────────────────
+        // ── DELETE /koji/v1/models/:id ────────────────────────────────────────────────
         let resp = client
-            .delete(format!("http://{}/api/models/{}", addr, model_id))
+            .delete(format!("http://{}/koji/v1/models/{}", addr, model_id))
             .send()
             .await
             .unwrap();
         assert_eq!(
             resp.status().as_u16(),
             200,
-            "DELETE /api/models/:id should return 200"
+            "DELETE /koji/v1/models/:id should return 200"
         );
 
-        // Verify 'test-model' was removed via GET /api/models.
+        // Verify 'test-model' was removed via GET /koji/v1/models.
         {
             let resp = client
-                .get(format!("http://{}/api/models", addr))
+                .get(format!("http://{}/koji/v1/models", addr))
                 .send()
                 .await
                 .unwrap();
@@ -269,10 +269,10 @@ mod tests {
             );
         }
 
-        // ── POST /api/models — create hot-reload-model ────────────────────────────
+        // ── POST /koji/v1/models — create hot-reload-model ────────────────────────────
         // Models are stored in SQLite, so create via the API directly.
         let resp = client
-            .post(format!("http://{}/api/models", addr))
+            .post(format!("http://{}/koji/v1/models", addr))
             .json(&serde_json::json!({
                 "repo_id": "hot-reload-model",
                 "backend": "llama_cpp",
@@ -285,13 +285,13 @@ mod tests {
         assert_eq!(
             resp.status().as_u16(),
             201,
-            "POST /api/models should return 201 for hot-reload-model"
+            "POST /koji/v1/models should return 201 for hot-reload-model"
         );
 
-        // Verify 'hot-reload-model' was created via GET /api/models.
+        // Verify 'hot-reload-model' was created via GET /koji/v1/models.
         {
             let resp = client
-                .get(format!("http://{}/api/models", addr))
+                .get(format!("http://{}/koji/v1/models", addr))
                 .send()
                 .await
                 .unwrap();
@@ -303,7 +303,7 @@ mod tests {
                 .any(|m| m["repo_id"].as_str() == Some("hot-reload-model"));
             assert!(
                 found,
-                "proxy config should contain 'hot-reload-model' after POST /api/models"
+                "proxy config should contain 'hot-reload-model' after POST /koji/v1/models"
             );
         }
 

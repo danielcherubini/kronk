@@ -148,7 +148,7 @@
 //!
 //! **Steps:**
 //! 1. Open browser dev tools (Network tab)
-//! 2. Try to POST to /api/backends/install with Origin: http://evil.example
+//! 2. Try to POST to /koji/v1/backends/install with Origin: http://evil.example
 //! 3. Observe:
 //!    - Request is rejected with 403 Forbidden
 //! 4. Verify:

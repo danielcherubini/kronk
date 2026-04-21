@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::types::*;
 use crate::server::AppState;
 
-/// POST /api/backends/:name/update
+/// POST /koji/v1/backends/:name/update
 pub async fn update_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -265,7 +265,7 @@ mod tests {
         // Test with `\` in name — backslash won't be normalized by Axum.
         let req = Request::builder()
             .method("POST")
-            .uri("/api/backends/foo\\bar/update")
+            .uri("/koji/v1/backends/foo\\bar/update")
             .header(axum::http::header::COOKIE, cookie_header.as_str())
             .header("X-CSRF-Token", csrf_token)
             .body(Body::empty())
@@ -287,7 +287,7 @@ mod tests {
         // embedded within a segment. The validation catches this.
         let req = Request::builder()
             .method("POST")
-            .uri("/api/backends/foo..bar/update")
+            .uri("/koji/v1/backends/foo..bar/update")
             .header(axum::http::header::COOKIE, cookie_header.as_str())
             .header("X-CSRF-Token", csrf_token)
             .body(Body::empty())
@@ -307,7 +307,7 @@ mod tests {
     }
 }
 
-/// DELETE /api/backends/:name/versions/:version
+/// DELETE /koji/v1/backends/:name/versions/:version
 pub async fn remove_backend_version(
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
@@ -474,7 +474,7 @@ pub async fn remove_backend_version(
     Json(DeleteResponse { removed: true }).into_response()
 }
 
-/// POST /api/backends/:name/activate
+/// POST /koji/v1/backends/:name/activate
 pub async fn activate_backend_version(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -551,7 +551,7 @@ pub async fn activate_backend_version(
     }
 }
 
-/// POST /api/backends/:name/default-args
+/// POST /koji/v1/backends/:name/default-args
 /// Update default_args for a backend in config.toml
 #[derive(Deserialize)]
 pub struct UpdateDefaultArgsRequest {

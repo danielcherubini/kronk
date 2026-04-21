@@ -170,34 +170,40 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // Build sub-router for backends API with CORS and origin enforcement.
     // CorsLayer must be outermost (applied last) so it runs before same-origin check.
     let backend_routes = Router::new()
-        .route("/api/system/capabilities", get(system_capabilities))
-        .route("/api/backends", get(list_backends))
+        .route("/koji/v1/system/capabilities", get(system_capabilities))
+        .route("/koji/v1/backends", get(list_backends))
         // Install/update endpoints: 16MB body limit
         .route(
-            "/api/backends/install",
+            "/koji/v1/backends/install",
             post(install_backend).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route(
-            "/api/backends/:name/update",
+            "/koji/v1/backends/:name/update",
             post(update_backend).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
-        .route("/api/backends/:name", delete(remove_backend))
+        .route("/koji/v1/backends/:name", delete(remove_backend))
         .route(
-            "/api/backends/:name/default-args",
+            "/koji/v1/backends/:name/default-args",
             post(update_backend_default_args),
         )
         .route(
-            "/api/backends/:name/versions/:version",
+            "/koji/v1/backends/:name/versions/:version",
             delete(remove_backend_version),
         )
-        .route("/api/backends/check-updates", post(check_backend_updates))
-        .route("/api/backends/:name/versions", get(list_backend_versions))
         .route(
-            "/api/backends/:name/activate",
+            "/koji/v1/backends/check-updates",
+            post(check_backend_updates),
+        )
+        .route(
+            "/koji/v1/backends/:name/versions",
+            get(list_backend_versions),
+        )
+        .route(
+            "/koji/v1/backends/:name/activate",
             post(activate_backend_version),
         )
-        .route("/api/backends/jobs/:id", get(get_job))
-        .route("/api/backends/jobs/:id/events", get(job_events_sse))
+        .route("/koji/v1/backends/jobs/:id", get(get_job))
+        .route("/koji/v1/backends/jobs/:id/events", get(job_events_sse))
         // Restore routes (CSRF-protected)
         .route("/koji/v1/restore/preview", post(restore_preview))
         .route("/koji/v1/restore", post(start_restore))
@@ -237,46 +243,46 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let json_body_limit = axum::extract::DefaultBodyLimit::max(1024 * 1024);
 
     Router::new()
-        .route("/api/logs", get(api::get_logs))
-        .route("/api/backup", get(create_backup))
+        .route("/koji/v1/logs", get(api::get_logs))
+        .route("/koji/v1/backup", get(create_backup))
         .route(
-            "/api/config",
+            "/koji/v1/config",
             get(api::get_config)
                 .post(api::save_config)
                 .layer(json_body_limit),
         )
         .route(
-            "/api/config/structured",
+            "/koji/v1/config/structured",
             get(api::get_structured_config)
                 .post(api::save_structured_config)
                 .layer(json_body_limit),
         )
         .route(
-            "/api/models",
+            "/koji/v1/models",
             get(api::list_models)
                 .post(api::create_model)
                 .layer(json_body_limit),
         )
         .route(
-            "/api/models/:id",
+            "/koji/v1/models/:id",
             get(api::get_model)
                 .put(api::update_model)
                 .delete(api::delete_model),
         )
         .route(
-            "/api/models/:id/rename",
+            "/koji/v1/models/:id/rename",
             post(api::rename_model).layer(json_body_limit),
         )
         .route(
-            "/api/models/:id/refresh",
+            "/koji/v1/models/:id/refresh",
             post(api::refresh_model_metadata).layer(json_body_limit),
         )
         .route(
-            "/api/models/:id/verify",
+            "/koji/v1/models/:id/verify",
             post(api::verify_model_files).layer(json_body_limit),
         )
         .route(
-            "/api/models/:id/quants/:quant_key",
+            "/koji/v1/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
         // Self-update GET routes (safe methods, no CSRF protection needed)
@@ -290,13 +296,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         // Benchmark routes
         .route(
-            "/api/benchmarks/run",
+            "/koji/v1/benchmarks/run",
             post(run_benchmark).layer(json_body_limit),
         )
-        .route("/api/benchmarks/jobs/:id", get(get_benchmark_result))
-        .route("/api/benchmarks/jobs/:id/events", get(benchmark_events))
-        .route("/api/benchmarks/history", get(list_benchmark_history))
-        .route("/api/benchmarks/history/:id", delete(delete_benchmark))
+        .route("/koji/v1/benchmarks/jobs/:id", get(get_benchmark_result))
+        .route("/koji/v1/benchmarks/jobs/:id/events", get(benchmark_events))
+        .route("/koji/v1/benchmarks/history", get(list_benchmark_history))
+        .route("/koji/v1/benchmarks/history/:id", delete(delete_benchmark))
         // Downloads Center routes
         .route(
             "/koji/v1/downloads/active",
@@ -314,6 +320,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/koji/v1/downloads/events",
             get(api::downloads::download_events_sse),
         )
+        // API documentation (OpenAPI 3.1.0 spec)
+        .route("/koji/v1/docs", get(api::openapi::serve_spec))
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))

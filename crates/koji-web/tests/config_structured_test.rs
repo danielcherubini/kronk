@@ -1,4 +1,4 @@
-//! Integration tests for GET/POST /api/config/structured endpoints.
+//! Integration tests for GET/POST /koji/v1/config/structured endpoints.
 //!
 //! These tests verify:
 //! - GET returns valid JSON Config
@@ -6,7 +6,7 @@
 //! - loaded_from is restored from proxy config
 //! - All ModelConfig/Supervisor/BackendConfig/ProxyConfig fields preserved
 //! - Standalone mode works (no proxy_config)
-//! - Equivalence with /api/config (TOML) endpoint
+//! - Equivalence with /koji/v1/config (TOML) endpoint
 
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -107,7 +107,7 @@ async fn test_get_structured_config_returns_valid_json() {
 
     let req = axum::extract::Request::builder()
         .method("GET")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .body(axum::body::Body::empty())
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
@@ -134,7 +134,7 @@ async fn test_post_structured_config_persists_and_round_trips() {
 
     let req = axum::extract::Request::builder()
         .method("GET")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .body(axum::body::Body::empty())
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
@@ -152,7 +152,7 @@ async fn test_post_structured_config_persists_and_round_trips() {
 
     let req = axum::extract::Request::builder()
         .method("POST")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .header("content-type", "application/json")
         .body(axum::body::Body::from(
             serde_json::to_string(&initial).unwrap(),
@@ -164,7 +164,7 @@ async fn test_post_structured_config_persists_and_round_trips() {
 
     let req = axum::extract::Request::builder()
         .method("GET")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .body(axum::body::Body::empty())
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
@@ -186,7 +186,7 @@ async fn test_400_on_invalid_json() {
 
     let req = axum::extract::Request::builder()
         .method("POST")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .header("content-type", "application/json")
         .body(axum::body::Body::from("{ invalid json }"))
         .unwrap();
@@ -217,7 +217,7 @@ async fn test_404_when_config_path_not_configured() {
 
     let req = axum::extract::Request::builder()
         .method("GET")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .body(axum::body::Body::empty())
         .unwrap();
     let response: axum::http::Response<axum::body::Body> =
@@ -228,7 +228,7 @@ async fn test_404_when_config_path_not_configured() {
     // (Axum's Json<T> extractor validates structure before handler runs)
     let req = axum::extract::Request::builder()
         .method("POST")
-        .uri("/api/config/structured")
+        .uri("/koji/v1/config/structured")
         .header("content-type", "application/json")
         .body(axum::body::Body::from("{}"))
         .unwrap();

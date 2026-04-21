@@ -129,7 +129,7 @@ fn apply_model_body(
     }
 }
 
-/// PUT /api/models/:id — update an existing model.
+/// PUT /koji/v1/models/:id — update an existing model.
 pub async fn update_model(
     State(state): State<Arc<AppState>>,
     Path(id_str): Path<String>,
@@ -216,7 +216,7 @@ pub async fn update_model(
     }
 }
 
-/// POST /api/models — create a new model.
+/// POST /koji/v1/models — create a new model.
 /// The body contains `repo_id` (HuggingFace repo name). Returns the auto-generated integer id.
 #[derive(serde::Deserialize)]
 pub struct CreateModelBody {
@@ -314,7 +314,7 @@ pub struct RenameBody {
     pub new_repo_id: String,
 }
 
-/// POST /api/models/:id/rename — rename a model config entry.
+/// POST /koji/v1/models/:id/rename — rename a model config entry.
 pub async fn rename_model(
     State(state): State<Arc<AppState>>,
     Path(id_str): Path<String>,
@@ -436,7 +436,7 @@ pub async fn rename_model(
     }
 }
 
-/// DELETE /api/models/:id/quants/:quant_key — delete a single quant's file
+/// DELETE /koji/v1/models/:id/quants/:quant_key — delete a single quant's file
 /// and remove it from the config.
 pub async fn delete_quant(
     State(state): State<Arc<AppState>>,
@@ -551,7 +551,7 @@ pub async fn delete_quant(
     }
 }
 
-/// DELETE /api/models/:id — delete a model.
+/// DELETE /koji/v1/models/:id — delete a model.
 pub async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(id_str): Path<String>,

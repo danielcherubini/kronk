@@ -248,7 +248,7 @@ pub struct BackendVersionDto {
     pub is_active: bool,
 }
 
-/// Response for GET /api/backends/:name/versions.
+/// Response for GET /koji/v1/backends/:name/versions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct BackendVersionsResponse {
@@ -256,14 +256,14 @@ pub struct BackendVersionsResponse {
     pub active_version: Option<String>,
 }
 
-/// Request body for POST /api/backends/:name/activate.
+/// Request body for POST /koji/v1/backends/:name/activate.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivateRequest {
     pub version: String,
 }
 
-/// Response for POST /api/backends/:name/activate.
+/// Response for POST /koji/v1/backends/:name/activate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivateResponse {

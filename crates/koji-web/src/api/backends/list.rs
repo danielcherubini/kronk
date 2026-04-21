@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::types::*;
 use crate::server::AppState;
 
-/// GET /api/backends
+/// GET /koji/v1/backends
 pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // active_job is only available when job manager is configured
     let active_job = if let Some(jobs) = &state.jobs {
@@ -215,7 +215,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
     .into_response()
 }
 
-/// POST /api/backends/check-updates
+/// POST /koji/v1/backends/check-updates
 pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let jobs = match &state.jobs {
         Some(j) => j,
@@ -444,7 +444,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
     .into_response()
 }
 
-/// GET /api/backends/:name/versions
+/// GET /koji/v1/backends/:name/versions
 pub async fn list_backend_versions(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,

@@ -2,7 +2,7 @@ use gloo_net::http::Request;
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::utils::self_update::stream_update_events;
+use crate::utils::{post_request, self_update::stream_update_events};
 
 /// Self-update section component for the /updates page.
 ///
@@ -70,7 +70,7 @@ pub fn SelfUpdateSection() -> impl IntoView {
 
         spawn_local(async move {
             // Step 1: POST to trigger the update
-            match Request::post("/koji/v1/self-update/update").send().await {
+            match post_request("/koji/v1/self-update/update").send().await {
                 Ok(resp) if resp.ok() => {
                     // Step 2: Open SSE to stream progress
                     stream_update_events(

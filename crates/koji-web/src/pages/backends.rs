@@ -39,7 +39,10 @@ pub fn Backends() -> impl IntoView {
     Effect::new(move |_| {
         let _ = refresh_tick.get();
         wasm_bindgen_futures::spawn_local(async move {
-            match gloo_net::http::Request::get("/api/backends").send().await {
+            match gloo_net::http::Request::get("/koji/v1/backends")
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     if let Ok(list) = resp.json::<BackendListResponse>().await {
                         backends_list.set(list);
@@ -56,7 +59,7 @@ pub fn Backends() -> impl IntoView {
             return;
         }
         wasm_bindgen_futures::spawn_local(async move {
-            match gloo_net::http::Request::get("/api/system/capabilities")
+            match gloo_net::http::Request::get("/koji/v1/system/capabilities")
                 .send()
                 .await
             {
@@ -79,7 +82,7 @@ pub fn Backends() -> impl IntoView {
     let on_update_click = Callback::new(move |backend_type: String| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/backends/{backend_type}/update");
+            let url = format!("/koji/v1/backends/{backend_type}/update");
             match gloo_net::http::Request::post(&url).send().await {
                 Ok(resp) => {
                     if resp.ok() {
@@ -99,7 +102,7 @@ pub fn Backends() -> impl IntoView {
     let on_check_updates_click = Callback::new(move |_backend_type: String| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            match gloo_net::http::Request::post("/api/backends/check-updates")
+            match gloo_net::http::Request::post("/koji/v1/backends/check-updates")
                 .send()
                 .await
             {
@@ -121,7 +124,7 @@ pub fn Backends() -> impl IntoView {
     let on_delete_click = Callback::new(move |backend_type: String| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/backends/{backend_type}");
+            let url = format!("/koji/v1/backends/{backend_type}");
             match gloo_net::http::Request::delete(&url).send().await {
                 Ok(resp) => {
                     if resp.ok() {
@@ -140,13 +143,14 @@ pub fn Backends() -> impl IntoView {
         install_modal_for.set(None);
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let request = match gloo_net::http::Request::post("/api/backends/install").json(&req) {
-                Ok(r) => r,
-                Err(e) => {
-                    action_error.set(Some(format!("Failed to encode install request: {e}")));
-                    return;
-                }
-            };
+            let request =
+                match gloo_net::http::Request::post("/koji/v1/backends/install").json(&req) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        action_error.set(Some(format!("Failed to encode install request: {e}")));
+                        return;
+                    }
+                };
             match request.send().await {
                 Ok(resp) => {
                     if resp.ok() {
@@ -183,7 +187,7 @@ pub fn Backends() -> impl IntoView {
     let on_activate_click = Callback::new(move |(backend_type, version): (String, String)| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/backends/{}/activate", backend_type);
+            let url = format!("/koji/v1/backends/{}/activate", backend_type);
             let body = serde_json::json!({ "version": version });
             match gloo_net::http::Request::post(&url)
                 .json(&body)
@@ -207,7 +211,7 @@ pub fn Backends() -> impl IntoView {
         Callback::new(move |(backend_type, version): (String, String)| {
             action_error.set(None);
             wasm_bindgen_futures::spawn_local(async move {
-                let url = format!("/api/backends/{}/versions/{}", backend_type, version);
+                let url = format!("/koji/v1/backends/{}/versions/{}", backend_type, version);
                 match gloo_net::http::Request::delete(&url).send().await {
                     Ok(resp) if resp.ok() => {
                         refresh_tick.update(|n| *n += 1);
@@ -238,7 +242,7 @@ pub fn Backends() -> impl IntoView {
                 let args_str = edits.get(&bt).cloned().unwrap_or_default();
                 let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
                 let body = serde_json::json!({ "default_args": parts });
-                let url = format!("/api/backends/{}/default-args", bt);
+                let url = format!("/koji/v1/backends/{}/default-args", bt);
                 let res = gloo_net::http::Request::post(&url)
                     .json(&body)
                     .unwrap()

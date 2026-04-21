@@ -20,7 +20,7 @@ struct ResultPayload {
     results: String,
 }
 
-/// JobLogPanel - subscribes to /api/backends/jobs/:id/events and streams logs.
+/// JobLogPanel - subscribes to /koji/v1/backends/jobs/:id/events and streams logs.
 #[component]
 pub fn JobLogPanel(
     /// The job id whose logs we should display
@@ -75,7 +75,7 @@ pub fn JobLogPanel(
                     delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
                 }
 
-                let url = format!("/api/backends/jobs/{job_id}/events");
+                let url = format!("/koji/v1/backends/jobs/{job_id}/events");
                 let mut es = match EventSource::new(&url) {
                     Ok(es) => es,
                     Err(e) => {

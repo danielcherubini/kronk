@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::job_log_panel::JobLogPanel;
 use crate::components::self_update_section::SelfUpdateSection;
+use crate::utils::post_request;
 
 fn short_sha(hash: &Option<String>) -> String {
     match hash {
@@ -179,10 +180,7 @@ pub fn Updates() -> impl IntoView {
         checking.set(true);
         error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            match gloo_net::http::Request::post("/koji/v1/updates/check")
-                .send()
-                .await
-            {
+            match post_request("/koji/v1/updates/check").send().await {
                 Ok(resp) if resp.ok() => {
                     // Refresh list after a delay
                     gloo_timers::future::TimeoutFuture::new(2000).await;
@@ -204,8 +202,8 @@ pub fn Updates() -> impl IntoView {
     let on_update_backend = move |name: String| {
         backend_update_busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/backends/{}/update", name);
-            if let Ok(resp) = gloo_net::http::Request::post(&url).send().await {
+            let url = format!("/koji/v1/backends/{}/update", name);
+            if let Ok(resp) = post_request(&url).send().await {
                 if resp.ok() {
                     if let Ok(data) = resp.json::<serde_json::Value>().await {
                         if let Some(job_id) = data["job_id"].as_str() {
@@ -242,7 +240,7 @@ pub fn Updates() -> impl IntoView {
 
     let _on_refresh_model = move |id: String| {
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/api/models/{}/refresh", id);
+            let url = format!("/koji/v1/models/{}/refresh", id);
             let _ = gloo_net::http::Request::post(&url).send().await;
         });
     };
@@ -269,7 +267,7 @@ pub fn Updates() -> impl IntoView {
             }
 
             let url = format!("/koji/v1/updates/apply/model/{}", model_id);
-            match gloo_net::http::Request::post(&url)
+            match post_request(&url)
                 .json(&serde_json::json!({ "quants": selected_quants }))
                 .unwrap()
                 .send()
@@ -378,7 +376,7 @@ pub fn Updates() -> impl IntoView {
                                                 let id = b.item_id.clone();
                                                 wasm_bindgen_futures::spawn_local(async move {
                                                     let url = format!("/koji/v1/updates/check/backend/{}", id);
-                                                    let _ = gloo_net::http::Request::post(&url).send().await;
+                                                    let _ = post_request(&url).send().await;
                                                 });
                                             }>
                                             "Refresh"
@@ -531,7 +529,7 @@ pub fn Updates() -> impl IntoView {
                                                     on:click=move |_| wasm_bindgen_futures::spawn_local({
                                                         let url_id = id.clone();
                                                         async move {
-                                                            let url = format!("/api/models/{}/refresh", url_id);
+                                                            let url = format!("/koji/v1/models/{}/refresh", url_id);
                                                             let _ = gloo_net::http::Request::post(&url).send().await;
                                                         }
                                                     })>

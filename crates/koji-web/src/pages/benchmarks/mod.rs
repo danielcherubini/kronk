@@ -213,7 +213,10 @@ pub fn Benchmarks() -> impl IntoView {
     // Fetch available backends for llama-bench selection.
     {
         spawn_local(async move {
-            if let Ok(resp) = gloo_net::http::Request::get("/api/backends").send().await {
+            if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/backends")
+                .send()
+                .await
+            {
                 if let Ok(root) = resp.json::<serde_json::Value>().await {
                     if let Some(backends_arr) = root.get("backends").and_then(|v| v.as_array()) {
                         let backend_list: Vec<(String, String)> = backends_arr
@@ -242,7 +245,7 @@ pub fn Benchmarks() -> impl IntoView {
     Effect::new(move |_| {
         let _ = history_refresh.get();
         spawn_local(async move {
-            if let Ok(resp) = gloo_net::http::Request::get("/api/benchmarks/history")
+            if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/benchmarks/history")
                 .send()
                 .await
             {
@@ -365,7 +368,7 @@ pub fn Benchmarks() -> impl IntoView {
             });
 
             let submitted = async {
-                let builder = gloo_net::http::Request::post("/api/benchmarks/run")
+                let builder = gloo_net::http::Request::post("/koji/v1/benchmarks/run")
                     .header("Content-Type", "application/json")
                     .body(body.to_string())
                     .ok()?;

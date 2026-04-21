@@ -9,6 +9,7 @@ pub mod benchmarks;
 pub mod downloads;
 pub mod middleware;
 pub mod models;
+pub mod openapi;
 pub mod self_update;
 pub mod updates;
 

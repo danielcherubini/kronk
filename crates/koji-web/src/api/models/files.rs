@@ -27,7 +27,7 @@ fn file_record_json(rec: &koji_core::db::queries::ModelFileRecord) -> serde_json
 
 // ── Refresh / Verify ──────────────────────────────────────────────────────────
 
-/// POST /api/models/:id/refresh — re-query HuggingFace for the current commit
+/// POST /koji/v1/models/:id/refresh — re-query HuggingFace for the current commit
 /// SHA and per-file LFS hashes / sizes, and write them into the local DB.
 ///
 /// Structured to keep `rusqlite::Connection` off `.await` points:
@@ -169,7 +169,7 @@ pub async fn refresh_model_metadata(
     }
 }
 
-/// POST /api/models/:id/verify — recompute SHA-256 for every tracked file of
+/// POST /koji/v1/models/:id/verify — recompute SHA-256 for every tracked file of
 /// this model and compare against the stored LFS hash, persisting the result.
 ///
 /// Sequential, CPU-bound, potentially multi-minute for large GGUFs. Runs on

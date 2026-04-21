@@ -96,7 +96,7 @@ pub fn Models() -> impl IntoView {
             check_all_status.set(None);
             // Fetch the list directly from the backend that exposes `id`s with
             // DB metadata so we iterate over the same set the editor operates on.
-            let resp = match gloo_net::http::Request::get("/api/models").send().await {
+            let resp = match gloo_net::http::Request::get("/koji/v1/models").send().await {
                 Ok(r) => r,
                 Err(e) => {
                     check_all_status.set(Some((false, format!("Failed to list models: {}", e))));
@@ -143,7 +143,7 @@ pub fn Models() -> impl IntoView {
                 // Percent-encode the id so values containing `/`, spaces or
                 // other reserved characters route correctly to the backend.
                 let encoded_id = urlencoding::encode(&id);
-                let url = format!("/api/models/{}/refresh", encoded_id);
+                let url = format!("/koji/v1/models/{}/refresh", encoded_id);
                 match gloo_net::http::Request::post(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
                     Ok(r) => {

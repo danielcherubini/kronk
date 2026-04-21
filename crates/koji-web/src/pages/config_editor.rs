@@ -180,7 +180,7 @@ pub fn ConfigEditor() -> impl IntoView {
         spawn_local(async move {
             loading.set(true);
             error.set(None);
-            match gloo_net::http::Request::get("/api/config/structured")
+            match gloo_net::http::Request::get("/koji/v1/config/structured")
                 .send()
                 .await
             {
@@ -207,7 +207,7 @@ pub fn ConfigEditor() -> impl IntoView {
                     return;
                 }
             };
-            let res = post_request("/api/config/structured")
+            let res = post_request("/koji/v1/config/structured")
                 .header("Content-Type", "application/json")
                 .body(body)
                 .expect("failed to build request")
