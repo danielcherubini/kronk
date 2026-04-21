@@ -18,6 +18,8 @@ pub mod service;
 pub use flags::extract_koji_flags;
 pub use handlers::server::{cmd_server_add, cmd_server_edit};
 
+use crate::commands::tts::TtsArgs;
+
 use anyhow::Result;
 use clap::Parser;
 use cli::{Args, Commands};
@@ -91,6 +93,7 @@ pub async fn main() -> Result<()> {
         Commands::Backend { command } => {
             commands::backend::run(&config, crate::commands::backend::BackendArgs { command }).await
         }
+        Commands::Tts { command } => commands::tts::run(TtsArgs { command }).await,
         Commands::Bench {
             name,
             all,

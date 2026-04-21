@@ -3,6 +3,7 @@
 //! This module contains all clap-derived types for the koji CLI.
 
 use crate::commands::backend::BackendSubcommand;
+use crate::commands::tts::TtsSubcommand;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -88,6 +89,11 @@ pub enum Commands {
     Backend {
         #[command(subcommand)]
         command: BackendSubcommand,
+    },
+    /// Text-to-speech — synthesize speech, list voices
+    Tts {
+        #[command(subcommand)]
+        command: TtsSubcommand,
     },
     /// Benchmark model inference performance
     Bench {

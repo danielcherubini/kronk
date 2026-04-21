@@ -6,8 +6,9 @@ pub(crate) use parse::{parse_backend_type, parse_gpu_type};
 use anyhow::{anyhow, Result};
 use clap::{Args, Subcommand};
 use koji_core::backends::{
-    backends_dir, check_latest_version, check_updates, install_backend, safe_remove_installation,
-    update_backend, BackendInfo, BackendRegistry, BackendSource, BackendType, InstallOptions,
+    backends_dir, check_latest_version, check_updates, install_backend, install_tts_kokoro,
+    install_tts_piper, safe_remove_installation, update_backend, BackendInfo, BackendRegistry,
+    BackendSource, BackendType, InstallOptions, NullSink,
 };
 use koji_core::config::Config;
 use koji_core::db::queries::get_backend_by_version;
@@ -23,9 +24,9 @@ pub struct BackendArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum BackendSubcommand {
-    /// Install a new backend
+    /// Install a new backend (LLM or TTS)
     Install {
-        /// Backend type: llama_cpp or ik_llama
+        /// Backend type: llama_cpp, ik_llama, tts_kokoro, or tts_piper
         #[arg(value_name = "TYPE")]
         backend_type: String,
 
@@ -274,6 +275,10 @@ async fn cmd_install(
             true
         }
         _ if force_build => true,
+        BackendType::TtsKokoro | BackendType::TtsPiper => {
+            // TTS backends are handled separately above; this is unreachable.
+            false
+        }
         _ => {
             let choice = inquire::Select::new(
                 "Installation method:",
@@ -292,16 +297,40 @@ async fn cmd_install(
 
     let target_dir = backends_dir()?.join(&backend_name);
 
-    // Build install options
+    // Handle TTS backends with dedicated installers (no GPU selection needed)
+    if matches!(backend_type, BackendType::TtsKokoro | BackendType::TtsPiper) {
+        let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+
+        match backend_type {
+            BackendType::TtsKokoro => {
+                install_tts_kokoro(&mut registry, Box::new(NullSink)).await?;
+            }
+            BackendType::TtsPiper => {
+                install_tts_piper(&mut registry, Box::new(NullSink)).await?;
+            }
+            _ => unreachable!(),
+        }
+
+        println!(
+            "\n{} TTS backend installed successfully!",
+            match backend_type {
+                BackendType::TtsKokoro => "Kokoro",
+                BackendType::TtsPiper => "Piper",
+                _ => unreachable!(),
+            }
+        );
+        println!("  Name:    {}", backend_name);
+        return Ok(());
+    }
+
     let git_url = match backend_type {
         BackendType::LlamaCpp => "https://github.com/ggml-org/llama.cpp.git",
         BackendType::IkLlama => "https://github.com/ikawrakow/ik_llama.cpp.git",
-        BackendType::TtsKokoro | BackendType::TtsPiper => {
-            anyhow::bail!("TTS backends cannot be installed via this command");
-        }
         BackendType::Custom => {
             anyhow::bail!("Custom backends cannot be installed via this command");
         }
+        // TTS variants handled earlier with dedicated installers
+        BackendType::TtsKokoro | BackendType::TtsPiper => unreachable!(),
     };
 
     let source = if use_source {
