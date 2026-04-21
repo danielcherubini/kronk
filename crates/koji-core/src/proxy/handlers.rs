@@ -75,6 +75,7 @@ pub async fn handle_chat_completions(
     let server_name = match state.get_available_server_for_model(model_name).await {
         Some(name) => name,
         None => {
+            let _ = state.evict_lru_if_needed().await;
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
                 Ok(s) => s,
@@ -149,6 +150,7 @@ pub async fn handle_stream_chat_completions(
     let server_name = match state.get_available_server_for_model(model_name).await {
         Some(name) => name,
         None => {
+            let _ = state.evict_lru_if_needed().await;
             let model_card = state.get_model_card(model_name).await;
             match state.load_model(model_name, model_card.as_ref()).await {
                 Ok(s) => s,
@@ -367,6 +369,7 @@ pub async fn handle_forward_post(
         match state.get_available_server_for_model(model).await {
             Some(name) => name,
             None => {
+                let _ = state.evict_lru_if_needed().await;
                 let card = state.get_model_card(model).await;
                 match state.load_model(model, card.as_ref()).await {
                     Ok(s) => s,

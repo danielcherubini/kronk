@@ -151,6 +151,7 @@ pub async fn handle_koji_load_model(
     Path(model_id): Path<String>,
 ) -> Response {
     let model_id = resolve_model_id(&state, &model_id).await;
+    let _ = state.evict_lru_if_needed().await;
     match state.load_model(&model_id, None).await {
         Ok(server_name) => {
             let model_state = state.get_model_state(&server_name).await;

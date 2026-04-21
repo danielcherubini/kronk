@@ -84,6 +84,12 @@ pub struct ProxyConfig {
     /// Default is 2, minimum is 1.
     #[serde(default = "default_download_queue_poll_interval")]
     pub download_queue_poll_interval_secs: u64,
+    /// Maximum number of models that can be loaded simultaneously.
+    /// When a new model is requested and the limit is reached, the
+    /// least-recently-used (LRU) model is automatically unloaded first.
+    /// Set to 0 for unlimited (disabled). Default: 1.
+    #[serde(default = "default_max_loaded_models")]
+    pub max_loaded_models: u32,
 }
 
 impl Default for ProxyConfig {
@@ -97,6 +103,7 @@ impl Default for ProxyConfig {
             circuit_breaker_cooldown_seconds: default_circuit_breaker_cooldown(),
             metrics_retention_secs: default_metrics_retention(),
             download_queue_poll_interval_secs: default_download_queue_poll_interval(),
+            max_loaded_models: default_max_loaded_models(),
         }
     }
 }
@@ -382,6 +389,10 @@ fn default_download_queue_poll_interval() -> u64 {
     2
 }
 
+fn default_max_loaded_models() -> u32 {
+    1
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -508,6 +519,37 @@ log_level = "info"
         )
         .unwrap();
         assert_eq!(config.general.update_check_interval, 12);
+    }
+
+    /// Test that the default `max_loaded_models` equals 1 (single-model mode).
+    #[test]
+    fn test_proxy_config_default_max_loaded_models() {
+        let config = ProxyConfig::default();
+        assert_eq!(config.max_loaded_models, 1);
+    }
+
+    /// Test that deserializing `max_loaded_models = 0` sets unlimited.
+    #[test]
+    fn test_proxy_config_max_loaded_models_zero() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+max_loaded_models = 0
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.max_loaded_models, 0);
+    }
+
+    /// Test that omitting `max_loaded_models` uses the default of 1.
+    #[test]
+    fn test_proxy_config_max_loaded_models_omitted() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+host = "0.0.0.0"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.max_loaded_models, 1);
     }
 
     /// Test that a ModelConfig survives a round-trip through the DB record.
