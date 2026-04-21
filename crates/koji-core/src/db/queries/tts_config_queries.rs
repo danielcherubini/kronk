@@ -94,3 +94,277 @@ pub fn delete_tts_config(conn: &Connection, engine: &str) -> Result<()> {
     conn.execute("DELETE FROM tts_configs WHERE engine = ?1", [engine])?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        // Create the tts_configs table
+        conn.execute_batch(
+            r#"
+            CREATE TABLE tts_configs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                engine       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                default_voice TEXT,
+                speed        REAL   NOT NULL DEFAULT 1.0,
+                format       TEXT   NOT NULL DEFAULT 'mp3',
+                enabled      INTEGER NOT NULL DEFAULT 1,
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            "#,
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Test that upsert_tts_config creates a new record and returns its id.
+    #[test]
+    fn test_upsert_creates_new_record() {
+        let conn = setup_test_db();
+        let record = TtsConfigRecord {
+            id: 0,
+            engine: "kokoro".to_string(),
+            default_voice: Some("af_sky".to_string()),
+            speed: 1.2,
+            format: "mp3".to_string(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        let id = upsert_tts_config(&conn, &record).unwrap();
+        assert_eq!(id, 1);
+    }
+
+    /// Test that get_tts_config returns the correct record.
+    #[test]
+    fn test_get_tts_config_returns_record() {
+        let conn = setup_test_db();
+        let record = TtsConfigRecord {
+            id: 0,
+            engine: "piper".to_string(),
+            default_voice: Some("en_US-lessac-medium".to_string()),
+            speed: 1.5,
+            format: "wav".to_string(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        upsert_tts_config(&conn, &record).unwrap();
+
+        let found = get_tts_config(&conn, "piper").unwrap().unwrap();
+        assert_eq!(found.engine, "piper");
+        assert_eq!(found.speed, 1.5);
+        assert_eq!(found.format, "wav");
+    }
+
+    /// Test that get_tts_config returns None for unknown engine.
+    #[test]
+    fn test_get_tts_config_returns_none_for_unknown() {
+        let conn = setup_test_db();
+        let result = get_tts_config(&conn, "unknown_engine").unwrap();
+        assert!(result.is_none());
+    }
+
+    /// Test that engine lookup is case-insensitive (COLLATE NOCASE).
+    #[test]
+    fn test_case_insensitive_engine_lookup() {
+        let conn = setup_test_db();
+        let record = TtsConfigRecord {
+            id: 0,
+            engine: "Kokoro".to_string(), // Capital K
+            default_voice: None,
+            speed: 1.0,
+            format: "mp3".to_string(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        upsert_tts_config(&conn, &record).unwrap();
+
+        // Lookup with lowercase should find it
+        let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
+        assert_eq!(found.engine, "Kokoro");
+
+        // Lookup with mixed case should also find it
+        let found2 = get_tts_config(&conn, "KOKORO").unwrap().unwrap();
+        assert_eq!(found2.engine, "Kokoro");
+    }
+
+    /// Test that upsert updates an existing record.
+    #[test]
+    fn test_upsert_updates_existing_record() {
+        let conn = setup_test_db();
+
+        // Insert initial config
+        let record1 = TtsConfigRecord {
+            id: 0,
+            engine: "kokoro".to_string(),
+            default_voice: Some("af_sky".to_string()),
+            speed: 1.0,
+            format: "mp3".to_string(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let id1 = upsert_tts_config(&conn, &record1).unwrap();
+
+        // Update the config
+        let record2 = TtsConfigRecord {
+            id: 0,
+            engine: "kokoro".to_string(),
+            default_voice: Some("af_bella".to_string()),
+            speed: 1.5,
+            format: "wav".to_string(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let id2 = upsert_tts_config(&conn, &record2).unwrap();
+
+        // Same id returned (not a new record)
+        assert_eq!(id1, id2);
+
+        // Verify the update took effect
+        let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
+        assert_eq!(found.default_voice, Some("af_bella".to_string()));
+        assert_eq!(found.speed, 1.5);
+    }
+
+    /// Test that get_all_tts_configs returns all records.
+    #[test]
+    fn test_get_all_returns_multiple_records() {
+        let conn = setup_test_db();
+
+        upsert_tts_config(
+            &conn,
+            &TtsConfigRecord {
+                id: 0,
+                engine: "kokoro".into(),
+                default_voice: None,
+                speed: 1.0,
+                format: "mp3".into(),
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        upsert_tts_config(
+            &conn,
+            &TtsConfigRecord {
+                id: 0,
+                engine: "piper".into(),
+                default_voice: None,
+                speed: 1.2,
+                format: "wav".into(),
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        let configs = get_all_tts_configs(&conn).unwrap();
+        assert_eq!(configs.len(), 2);
+    }
+
+    /// Test that delete_tts_config removes a record.
+    #[test]
+    fn test_delete_tts_config() {
+        let conn = setup_test_db();
+
+        upsert_tts_config(
+            &conn,
+            &TtsConfigRecord {
+                id: 0,
+                engine: "kokoro".into(),
+                default_voice: None,
+                speed: 1.0,
+                format: "mp3".into(),
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        delete_tts_config(&conn, "kokoro").unwrap();
+
+        let result = get_tts_config(&conn, "kokoro").unwrap();
+        assert!(result.is_none());
+    }
+
+    /// Test that deleting a non-existent engine does not error.
+    #[test]
+    fn test_delete_nonexistent_engine() {
+        let conn = setup_test_db();
+        // Should not panic or error
+        let result = delete_tts_config(&conn, "nonexistent");
+        assert!(result.is_ok());
+    }
+
+    /// Test that enabled field is correctly stored as boolean.
+    #[test]
+    fn test_enabled_boolean_storage() {
+        let conn = setup_test_db();
+
+        // Insert with enabled=false (0)
+        upsert_tts_config(
+            &conn,
+            &TtsConfigRecord {
+                id: 0,
+                engine: "kokoro".into(),
+                default_voice: None,
+                speed: 1.0,
+                format: "mp3".into(),
+                enabled: false,
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
+        assert!(!found.enabled);
+    }
+
+    /// Test that timestamps are stored as passed (upsert_tts_config passes
+    /// the record's timestamps directly, so empty strings remain empty).
+    #[test]
+    fn test_timestamps_stored_as_passed() {
+        let conn = setup_test_db();
+
+        upsert_tts_config(
+            &conn,
+            &TtsConfigRecord {
+                id: 0,
+                engine: "kokoro".into(),
+                default_voice: None,
+                speed: 1.0,
+                format: "mp3".into(),
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            },
+        )
+        .unwrap();
+
+        let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
+        // The upsert function passes the record's timestamps directly,
+        // so empty strings are stored as-is.
+        assert!(
+            found.created_at.is_empty(),
+            "created_at should be stored as passed (empty)"
+        );
+        assert!(
+            found.updated_at.is_empty(),
+            "updated_at should be stored as passed (empty)"
+        );
+    }
+}

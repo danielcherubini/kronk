@@ -321,4 +321,34 @@ mod tests {
     fn test_content_type_for_format_ogg() {
         assert_eq!(content_type_for_format("ogg"), "audio/ogg");
     }
+
+    /// Test that audio_speech returns 404 when no engine is loaded.
+    #[tokio::test]
+    async fn test_audio_speech_returns_404_when_not_loaded() {
+        let state = Arc::new(create_test_state());
+        let req = AudioRequest {
+            model: "kokoro".to_string(),
+            input: "Hello world".to_string(),
+            voice: None,
+            response_format: "mp3".to_string(),
+            stream: false,
+        };
+        let response = handle_audio_speech(State(state), Json(req)).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Test that content_type_for_format handles edge cases.
+    #[test]
+    fn test_content_type_edge_cases() {
+        // Case insensitive
+        assert_eq!(content_type_for_format("MP3"), "audio/mpeg");
+        assert_eq!(content_type_for_format("WAV"), "audio/wav");
+        assert_eq!(content_type_for_format("OGG"), "audio/ogg");
+    }
+
+    /// Test that default_response_format returns mp3.
+    #[test]
+    fn test_default_response_format() {
+        assert_eq!(default_response_format(), "mp3");
+    }
 }

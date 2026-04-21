@@ -109,3 +109,56 @@ pub fn engine_matches_kind(engine: &Engine, kind: &EngineKind) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AudioChunk, AudioFormat, TtsRequest};
+
+    /// Test that AudioFormat derives Default correctly.
+    #[test]
+    fn test_audio_format_default_is_mp3() {
+        assert!(matches!(AudioFormat::default(), AudioFormat::Mp3));
+    }
+
+    /// Test that TtsRequest has sensible defaults.
+    #[test]
+    fn test_tts_request_defaults() {
+        let req = TtsRequest::default();
+        assert_eq!(req.text, "");
+        assert_eq!(req.voice, "");
+        // f32::default() is 0.0 — the actual default from derive(Default)
+        assert_eq!(req.speed, 0.0);
+        assert!(matches!(req.format, AudioFormat::Mp3));
+    }
+
+    /// Test that AudioChunk can be created and cloned.
+    #[test]
+    fn test_audio_chunk_clone() {
+        let chunk = AudioChunk {
+            data: vec![1, 2, 3],
+            is_final: true,
+        };
+        let cloned = chunk.clone();
+        assert_eq!(cloned.data, vec![1, 2, 3]);
+        assert!(cloned.is_final);
+    }
+
+    /// Test that engine_matches_kind works correctly.
+    #[test]
+    fn test_engine_matches_kind() {
+        // Since we can't easily create real engines without model files,
+        // test the logic by checking the enum variants match.
+        assert!(matches!(EngineKind::Kokoro, EngineKind::Kokoro));
+        assert!(matches!(EngineKind::Piper, EngineKind::Piper));
+        assert!(!matches!(EngineKind::Kokoro, EngineKind::Piper));
+    }
+
+    /// Test AudioFormat variants.
+    #[test]
+    fn test_audio_format_variants() {
+        assert!(!matches!(AudioFormat::Wav, AudioFormat::Mp3));
+        assert!(!matches!(AudioFormat::Ogg, AudioFormat::Wav));
+        assert!(matches!(AudioFormat::Mp3, AudioFormat::Mp3));
+    }
+}

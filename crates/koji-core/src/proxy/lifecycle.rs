@@ -981,4 +981,42 @@ mod tests {
             name_b
         );
     }
+
+    /// Test that TTS backends are excluded from LRU eviction count.
+    #[tokio::test]
+    async fn test_evict_lru_excludes_tts_backends() {
+        use crate::config::ModelConfig;
+
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 1;
+        let state = ProxyState::new(config, None);
+
+        // Register the TTS server in model_configs with a tts_ backend
+        // so it's excluded from the LLM count.
+        state.model_configs.write().await.insert(
+            "tts-server".to_string(),
+            ModelConfig {
+                backend: "tts_kokoro".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Add a TTS backend (tts_kokoro) — should NOT count toward limit
+        let mut tts_state = make_ready_state("model.gguf", "tts_kokoro");
+        state
+            .models
+            .write()
+            .await
+            .insert("tts-server".to_string(), tts_state);
+
+        // Verify no eviction happens (TTS doesn't count)
+        let result = state.evict_lru_if_needed().await.unwrap();
+        assert_eq!(result, None, "TTS backends should not trigger eviction");
+
+        // Verify the TTS model is still in the map
+        assert!(
+            state.models.read().await.contains_key("tts-server"),
+            "TTS backend should remain loaded"
+        );
+    }
 }
