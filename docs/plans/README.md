@@ -15,7 +15,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 71
-- **Completed**: 70 ✅
+- **Completed**: 71 ✅
 - **In Progress**: 0 🚧
 - **Remaining**: 0 📋
 
@@ -63,7 +63,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 | [Backends Install/Update UI](2026-04-08-backends-install-update-ui-spec.md) | Install, update, and check-updates for backends from web UI | #43 `f500c27`, `89f71ed`, `32ae3f6`, `9a70c1e` |
 | [Fix Backend Default Args](2026-04-10-fix-backend-default-args-spec.md) | Fix default_args display bug and add page-level save button | #49 `aefe2fe`, `29b26fc`, `6bee43d` |
 | [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | `e862ab6`, `69d492a`, `c99304a`, `7698a11` ✅ COMPLETED |
-| [Backend Version Cards](2026-04-17-backend-version-cards.md) | Multiple backend versions with visual cards, activate/switch, version-specific remove | #61
+| [Backend Version Cards](2026-04-17-backend-version-cards.md) | Multiple backend versions with visual cards, activate/switch, version-specific remove | #61 |
+| [TTS Backend Support](2026-04-21-tts-backend.md) | Add Kokoro and Piper TTS engines with OpenAI-compatible `/v1/audio/*` endpoints, SQLite config, CLI commands, web UI integration | #70 `26c6a9d`, `79ea29b`, `38b072c`, `4738059`, `e1f63e7`, `88de610`, `3bb5c42`, `8c0c91c`, `f0277eb`, `cd7acfc`, `2e4c7c6`, `8ebfaa6` ✅ COMPLETED |
 
 ### Model Management
 
@@ -205,4 +206,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-20
+**Last Updated**: 2026-04-21
