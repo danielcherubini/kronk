@@ -305,7 +305,6 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/config") view=pages::config_editor::ConfigEditor />
                     <Route path=path!("/updates") view=pages::updates::Updates />
                     <Route path=path!("/downloads") view=pages::downloads::Downloads />
-                    <Route path=path!("/api-docs") view=pages::api_docs::ApiDocs />
                 </Routes>
             </main>
             <components::toast::ToastContainer store=toast_store />
