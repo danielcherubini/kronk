@@ -315,6 +315,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/koji/v1/self-update/events",
             get(api::self_update::update_events),
         )
+        // Logs endpoint (returns 404 when logs_dir not configured)
+        .route("/koji/v1/logs", get(api::get_logs))
         // Benchmark GET routes (no CSRF needed)
         .route("/koji/v1/benchmarks/jobs/:id", get(get_benchmark_result))
         .route("/koji/v1/benchmarks/jobs/:id/events", get(benchmark_events))
