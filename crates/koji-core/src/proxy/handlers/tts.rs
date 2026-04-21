@@ -81,16 +81,33 @@ pub async fn handle_audio_speech(
     State(state): State<Arc<ProxyState>>,
     Json(req): Json<AudioRequest>,
 ) -> Response {
-    let tts_engine = state.tts_engine.read().await;
-    let eng = match tts_engine.as_ref() {
-        Some(e) => e,
-        None => {
+    let eng = match load_or_get_engine(&state, &req.model).await {
+        Ok(e) => e,
+        Err(e) => {
+            // Treat "not installed", config errors, and registry errors as 404
+            // (TTS not set up). Any other error (model loading failure) returns 500.
+            let err_msg = e.to_string();
+            if err_msg.contains("not installed")
+                || err_msg.contains("config directory")
+                || err_msg.contains("backend registry")
+            {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": err_msg,
+                            "type": "NotFoundError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
             return (
-                StatusCode::NOT_FOUND,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": {
-                        "message": "TTS engine not installed. Install a TTS backend first.",
-                        "type": "NotFoundError"
+                        "message": format!("Failed to load TTS engine: {}", e),
+                        "type": "ServerError"
                     }
                 })),
             )
@@ -142,16 +159,33 @@ pub async fn handle_audio_stream(
     State(state): State<Arc<ProxyState>>,
     Json(req): Json<AudioRequest>,
 ) -> Response {
-    let tts_engine = state.tts_engine.read().await;
-    let eng = match tts_engine.as_ref() {
-        Some(e) => e,
-        None => {
+    let eng = match load_or_get_engine(&state, &req.model).await {
+        Ok(e) => e,
+        Err(e) => {
+            // Treat "not installed", config errors, and registry errors as 404
+            // (TTS not set up). Any other error (model loading failure) returns 500.
+            let err_msg = e.to_string();
+            if err_msg.contains("not installed")
+                || err_msg.contains("config directory")
+                || err_msg.contains("backend registry")
+            {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": err_msg,
+                            "type": "NotFoundError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
             return (
-                StatusCode::NOT_FOUND,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": {
-                        "message": "TTS engine not installed. Install a TTS backend first.",
-                        "type": "NotFoundError"
+                        "message": format!("Failed to load TTS engine: {}", e),
+                        "type": "ServerError"
                     }
                 })),
             )
@@ -289,7 +323,6 @@ pub async fn load_or_get_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::BackendRegistry;
     use crate::config::Config;
     use crate::proxy::ProxyState;
     use axum::{http::StatusCode, response::IntoResponse};
