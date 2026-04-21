@@ -1,5 +1,3 @@
-use wasm_bindgen::JsValue;
-
 use leptos::prelude::*;
 
 /// API Documentation page using Redoc (OpenAPI 3.1.0 viewer).
@@ -7,20 +5,17 @@ use leptos::prelude::*;
 pub fn ApiDocs() -> impl IntoView {
     let loading = RwSignal::new(true);
     let error = RwSignal::new(Option::<String>::None);
-    let initialized = RwSignal::new(false);
 
-    // Inject <redoc> tag into container. Only runs once thanks to the initialized guard.
+    // Inject <redoc> tag + script into container.
+    // HTML is parsed top-to-bottom: browser creates <redoc> element first,
+    // then loads/executes the <script>, which finds the already-existing element.
     Effect::new(move |_| {
-        if initialized.get() {
-            return;
-        }
-        initialized.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
                     if let Some(container) = doc.get_element_by_id("api-docs-redoc-container") {
                         container.set_inner_html(
-                            r#"<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc>"#,
+                            r#"<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc><script src="https://cdn.redoc.ly/redoc/v2.1.3/bundles/redoc.standalone.js"></script>"#,
                         );
                     } else {
                         error.set(Some("Failed to find API docs container".to_string()));
