@@ -22,6 +22,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Install system dependencies (libclang for TTS native deps)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       # Cache only dependency sources (no index, no debug artifacts).
       # Registry index is ~200 MB of plain-text git repos that re-downloads fast.
       # Debug target dirs are ephemeral and waste cache space — release key auto-evicts old caches.
