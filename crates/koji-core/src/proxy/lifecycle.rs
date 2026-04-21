@@ -213,6 +213,71 @@ impl ProxyState {
         Ok(server_name)
     }
 
+    /// Evict the least-recently-used Ready model if the proxy is at capacity.
+    ///
+    /// This method atomically transitions a Ready model to Unloading (holding
+    /// the write lock for only microseconds), then releases the lock before
+    /// calling `unload_model()` (which can take up to 5 seconds). This design
+    /// prevents both lock contention and race conditions.
+    pub async fn evict_lru_if_needed(&self) -> Result<Option<String>> {
+        let config = self.config.read().await;
+        let max = config.proxy.max_loaded_models;
+
+        // 0 = unlimited (feature disabled)
+        if max == 0 {
+            return Ok(None);
+        }
+
+        let mut models = self.models.write().await;
+        if models.len() < max as usize {
+            return Ok(None);
+        }
+
+        // Find LRU Ready model (skip Starting, Failed, Unloading)
+        let lru_name = models
+            .iter()
+            .filter(|(_, s)| matches!(s, ModelState::Ready { .. }))
+            .min_by_key(|(_, s)| s.last_accessed())
+            .map(|(name, _)| name.clone());
+
+        // Atomically transition Ready → Unloading
+        if let Some(ref name) = lru_name {
+            if let Some(state) = models.get_mut(name) {
+                if let ModelState::Ready {
+                    model_name,
+                    backend,
+                    backend_pid,
+                    backend_url,
+                    last_accessed,
+                    consecutive_failures,
+                    failure_timestamp,
+                    ..
+                } = std::mem::take(state)
+                {
+                    *state = ModelState::Unloading {
+                        model_name,
+                        backend,
+                        backend_pid,
+                        backend_url,
+                        last_accessed,
+                        consecutive_failures,
+                        failure_timestamp,
+                    };
+                }
+            }
+        }
+
+        drop(models); // Release lock BEFORE calling unload_model (can take 5s)
+
+        if let Some(name) = lru_name {
+            self.unload_model(&name).await?;
+            Ok(Some(name))
+        } else {
+            // All models are non-Ready (Starting/Failed/Unloading) — can't evict
+            Ok(None)
+        }
+    }
+
     /// Unload a server by stopping its backend process.
     pub async fn unload_model(&self, server_name: &str) -> Result<()> {
         debug!("Unloading server: {}", server_name);
@@ -222,7 +287,10 @@ impl ProxyState {
             .await
             .with_context(|| format!("Server '{}' not loaded", server_name))?;
 
-        if !state.is_ready() {
+        if !matches!(
+            state,
+            ModelState::Ready { .. } | ModelState::Unloading { .. }
+        ) {
             return Err(anyhow::anyhow!(
                 "Server '{}' is not ready (state: {:?})",
                 server_name,
@@ -230,10 +298,19 @@ impl ProxyState {
             ));
         }
 
-        let backend_name = state.backend().to_string();
-        let pid = state
-            .backend_pid()
-            .with_context(|| format!("No backend PID for server: {}", server_name))?;
+        let (backend_name, pid) = match &state {
+            ModelState::Ready {
+                backend,
+                backend_pid,
+                ..
+            }
+            | ModelState::Unloading {
+                backend,
+                backend_pid,
+                ..
+            } => (backend.clone(), *backend_pid),
+            _ => unreachable!("already checked above"),
+        };
 
         info!(
             "Stopping backend '{}' for server '{}'",
@@ -296,9 +373,12 @@ impl ProxyState {
         let timeout = Duration::from_secs(idle_timeout_secs);
         let models = self.models.read().await;
         for (server_name, state) in models.iter() {
-            // Skip servers that are still starting — they haven't had a
-            // chance to become ready yet so there is nothing to unload.
-            if matches!(state, ModelState::Starting { .. }) {
+            // Skip servers that are still starting or unloading — they haven't
+            // had a chance to become ready yet / already being unloaded.
+            if matches!(
+                state,
+                ModelState::Starting { .. } | ModelState::Unloading { .. }
+            ) {
                 continue;
             }
 
@@ -668,5 +748,203 @@ mod tests {
     fn test_unloading_variant_match() {
         let unloading = make_unloading_state("m", "llama-cpp");
         assert!(matches!(unloading, ModelState::Unloading { .. }));
+    }
+
+    /// Test that evict_lru_if_needed returns Ok(None) when max_loaded_models is 0 (unlimited).
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_zero_is_unlimited() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 0;
+        let state = ProxyState::new(config, None);
+
+        // Add a Ready model to ensure we're not returning None due to empty map
+        state.models.write().await.insert(
+            "server1".to_string(),
+            make_ready_state("model.gguf", "llama-cpp"),
+        );
+
+        let result = state.evict_lru_if_needed().await;
+        assert!(
+            result.is_ok(),
+            "evict_lru_if_needed should succeed with unlimited config"
+        );
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "Should return None when max_loaded_models is 0"
+        );
+    }
+
+    /// Test that evict_lru_if_needed returns Ok(None) when model count is below the limit.
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_under_limit_no_eviction() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 2;
+        let state = ProxyState::new(config, None);
+
+        // Add 1 Ready model (below limit of 2)
+        state.models.write().await.insert(
+            "server1".to_string(),
+            make_ready_state("model.gguf", "llama-cpp"),
+        );
+
+        let result = state.evict_lru_if_needed().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None, "Should return None when under limit");
+
+        // Verify model count is unchanged
+        assert_eq!(
+            state.models.read().await.len(),
+            1,
+            "Model count should be unchanged"
+        );
+    }
+
+    /// Test that evict_lru_if_needed evicts the LRU Ready model when at capacity.
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_at_limit_evicts_lru() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 1;
+        let state = ProxyState::new(config, None);
+
+        // Add a Ready model with last_accessed set in the past
+        let mut ready_state = make_ready_state("model.gguf", "llama-cpp");
+        if let ModelState::Ready { last_accessed, .. } = &mut ready_state {
+            *last_accessed = Instant::now() - Duration::from_secs(300);
+        }
+        state
+            .models
+            .write()
+            .await
+            .insert("server1".to_string(), ready_state);
+
+        let result = state.evict_lru_if_needed().await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            Some("server1".to_string()),
+            "Should evict the only Ready model when at capacity"
+        );
+
+        // Verify model was removed from the map
+        assert!(
+            !state.models.read().await.contains_key("server1"),
+            "Evicted model should be removed from the map"
+        );
+    }
+
+    /// Test that evict_lru_if_needed skips Starting models.
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_skips_starting_models() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 1;
+        let state = ProxyState::new(config, None);
+
+        // Add a Starting model (not Ready)
+        state.models.write().await.insert(
+            "server1".to_string(),
+            make_starting_state("model.gguf", "llama-cpp"),
+        );
+
+        let result = state.evict_lru_if_needed().await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "Should return None when no Ready models are available"
+        );
+
+        // Verify Starting model remains in the map
+        assert!(
+            state.models.read().await.contains_key("server1"),
+            "Starting model should remain in the map"
+        );
+    }
+
+    /// Test that evict_lru_if_needed skips Failed models.
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_skips_failed_models() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 1;
+        let state = ProxyState::new(config, None);
+
+        // Add a Failed model
+        state
+            .models
+            .write()
+            .await
+            .insert("server1".to_string(), make_failed_state());
+
+        let result = state.evict_lru_if_needed().await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "Should return None when no Ready models are available"
+        );
+    }
+
+    /// Test that concurrent evict calls don't double-evict the same model.
+    /// With max_loaded_models=1 and 2 Ready models, both calls see len>=max
+    /// and each transitions a different Ready→Unloading atomically.
+    #[tokio::test]
+    async fn test_evict_lru_if_needed_concurrent_no_double_eviction() {
+        let mut config = Config::default();
+        config.proxy.max_loaded_models = 1;
+        let state = ProxyState::new(config, None);
+
+        // Add 2 Ready models with different last_accessed times
+        let mut ready1 = make_ready_state("model1.gguf", "llama-cpp");
+        if let ModelState::Ready { last_accessed, .. } = &mut ready1 {
+            *last_accessed = Instant::now() - Duration::from_secs(600); // older
+        }
+        state
+            .models
+            .write()
+            .await
+            .insert("server1".to_string(), ready1);
+
+        let mut ready2 = make_ready_state("model2.gguf", "llama-cpp");
+        if let ModelState::Ready { last_accessed, .. } = &mut ready2 {
+            *last_accessed = Instant::now() - Duration::from_secs(100); // newer
+        }
+        state
+            .models
+            .write()
+            .await
+            .insert("server2".to_string(), ready2);
+
+        // Run two evict calls concurrently
+        let state_a = state.clone();
+        let state_b = state.clone();
+        let handle_a = tokio::spawn(async move { state_a.evict_lru_if_needed().await });
+        let handle_b = tokio::spawn(async move { state_b.evict_lru_if_needed().await });
+
+        let result_a = handle_a.await.unwrap();
+        let result_b = handle_b.await.unwrap();
+
+        // Both calls should succeed (each evicts a different Ready model)
+        assert!(result_a.is_ok());
+        assert!(result_b.is_ok());
+
+        // Each call returns a different server name — no double-eviction
+        let name_a = result_a.unwrap().unwrap();
+        let name_b = result_b.unwrap().unwrap();
+        assert_ne!(
+            name_a, name_b,
+            "Concurrent calls must evict different models (no double-eviction)"
+        );
+
+        // Both models should be removed from the map
+        assert!(
+            !state.models.read().await.contains_key(&name_a),
+            "Evicted model '{}' should be removed",
+            name_a
+        );
+        assert!(
+            !state.models.read().await.contains_key(&name_b),
+            "Evicted model '{}' should be removed",
+            name_b
+        );
     }
 }
