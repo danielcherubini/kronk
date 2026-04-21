@@ -130,7 +130,7 @@ pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoRespo
     }
 }
 
-/// POST /api/restore/preview - Upload archive and return manifest preview
+/// POST /koji/v1/restore/preview - Upload archive and return manifest preview
 pub async fn restore_preview(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -236,7 +236,7 @@ pub async fn restore_preview(
     }
 }
 
-/// POST /api/restore - Start restore job
+/// POST /koji/v1/restore - Start restore job
 pub async fn start_restore(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RestoreRequest>,

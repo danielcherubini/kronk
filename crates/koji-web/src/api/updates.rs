@@ -41,13 +41,13 @@ pub struct CheckResponse {
     pub message: String,
 }
 
-/// Request body for POST /api/updates/apply/model/:id.
+/// Request body for POST /koji/v1/updates/apply/model/:id.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelUpdateRequest {
     pub quants: Vec<String>, // Quant keys like "Q4_K_M", "Q8_0"
 }
 
-/// Response body for POST /api/updates/apply/model/:id.
+/// Response body for POST /koji/v1/updates/apply/model/:id.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelUpdateResponse {
     pub job_ids: Vec<String>,
@@ -67,7 +67,7 @@ pub struct QuantDetailJson {
     pub status: String,
 }
 
-/// GET /api/updates - Returns cached results from DB
+/// GET /koji/v1/updates - Returns cached results from DB
 pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -154,7 +154,7 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
     }
 }
 
-/// POST /api/updates/check - Trigger full re-check
+/// POST /koji/v1/updates/check - Trigger full re-check
 pub async fn trigger_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -182,7 +182,7 @@ pub async fn trigger_check(State(state): State<Arc<AppState>>) -> impl IntoRespo
     .into_response()
 }
 
-/// POST /api/updates/check/:item_type/:item_id - Check single item
+/// POST /koji/v1/updates/check/:item_type/:item_id - Check single item
 pub async fn check_single(
     State(state): State<Arc<AppState>>,
     Path((item_type, item_id)): Path<(String, String)>,
@@ -274,7 +274,7 @@ pub async fn check_single(
     }
 }
 
-/// POST /api/updates/apply/backend/:name - Trigger backend update
+/// POST /koji/v1/updates/apply/backend/:name - Trigger backend update
 pub async fn apply_backend_update(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -457,7 +457,7 @@ pub async fn apply_backend_update(
     Json(serde_json::json!({ "job_id": job.id.to_string(), "kind": "update" })).into_response()
 }
 
-/// POST /api/updates/apply/model/:id - Enqueue selected quants through the download queue.
+/// POST /koji/v1/updates/apply/model/:id - Enqueue selected quants through the download queue.
 ///
 /// Accepts `{ "quants": ["Q4_K_M", "Q8_0"] }` and returns immediately with job IDs.
 pub async fn apply_model_update(

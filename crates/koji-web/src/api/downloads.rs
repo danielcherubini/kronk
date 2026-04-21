@@ -92,7 +92,7 @@ fn default_offset() -> i64 {
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-/// GET /api/downloads/active
+/// GET /koji/v1/downloads/active
 pub async fn get_active_downloads(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DownloadsActiveResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -115,7 +115,7 @@ pub async fn get_active_downloads(
     Ok(Json(DownloadsActiveResponse { items: dto_items }))
 }
 
-/// GET /api/downloads/history?limit=50&offset=0
+/// GET /koji/v1/downloads/history?limit=50&offset=0
 pub async fn get_download_history(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<HistoryQuery>,
@@ -151,7 +151,7 @@ pub async fn get_download_history(
     }))
 }
 
-/// POST /api/downloads/:job_id/cancel
+/// POST /koji/v1/downloads/:job_id/cancel
 pub async fn cancel_download(
     State(state): State<Arc<AppState>>,
     Path(job_id): axum::extract::Path<String>,
@@ -178,7 +178,7 @@ pub async fn cancel_download(
     }
 }
 
-/// GET /api/downloads/events — SSE stream of download lifecycle events.
+/// GET /koji/v1/downloads/events — SSE stream of download lifecycle events.
 pub async fn download_events_sse(
     State(state): State<Arc<AppState>>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, StatusCode> {

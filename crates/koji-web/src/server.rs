@@ -199,26 +199,27 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/backends/jobs/:id", get(get_job))
         .route("/api/backends/jobs/:id/events", get(job_events_sse))
         // Restore routes (CSRF-protected)
-        .route("/api/restore/preview", post(restore_preview))
-        .route("/api/restore", post(start_restore))
+        .route("/koji/v1/restore/preview", post(restore_preview))
+        .route("/koji/v1/restore", post(start_restore))
         // Self-update POST is inside backend_routes for CSRF protection
         .route(
-            "/api/self-update/update",
+            "/koji/v1/self-update/update",
             post(api::self_update::trigger_update),
         )
-        .route("/api/updates/check", post(api::updates::trigger_check))
+        .route("/koji/v1/updates/check", post(api::updates::trigger_check))
         .route(
-            "/api/updates/check/:item_type/:item_id",
+            "/koji/v1/updates/check/:item_type/:item_id",
             post(api::updates::check_single),
         )
         .route(
-            "/api/updates/apply/backend/:name",
+            "/koji/v1/updates/apply/backend/:name",
             post(api::updates::apply_backend_update),
         )
         .route(
-            "/api/updates/apply/model/:id",
+            "/koji/v1/updates/apply/model/:id",
             post(api::updates::apply_model_update),
         )
+        .route("/koji/v1/updates", get(api::updates::get_updates))
         // CORS layer outermost (applied last) so it runs before same-origin enforcement
         .layer(
             CorsLayer::new()
@@ -278,31 +279,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/models/:id/quants/:quant_key",
             delete(api::delete_quant),
         )
-        // Downloads Center routes
-        .route(
-            "/api/downloads/active",
-            get(api::downloads::get_active_downloads),
-        )
-        .route(
-            "/api/downloads/history",
-            get(api::downloads::get_download_history),
-        )
-        .route(
-            "/api/downloads/:job_id/cancel",
-            post(api::downloads::cancel_download).layer(json_body_limit),
-        )
-        .route(
-            "/api/downloads/events",
-            get(api::downloads::download_events_sse),
-        )
-        .route("/api/updates", get(api::updates::get_updates))
         // Self-update GET routes (safe methods, no CSRF protection needed)
         .route(
-            "/api/self-update/check",
+            "/koji/v1/self-update/check",
             get(api::self_update::check_update),
         )
         .route(
-            "/api/self-update/events",
+            "/koji/v1/self-update/events",
             get(api::self_update::update_events),
         )
         // Benchmark routes
@@ -314,6 +297,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/benchmarks/jobs/:id/events", get(benchmark_events))
         .route("/api/benchmarks/history", get(list_benchmark_history))
         .route("/api/benchmarks/history/:id", delete(delete_benchmark))
+        // Downloads Center routes
+        .route(
+            "/koji/v1/downloads/active",
+            get(api::downloads::get_active_downloads),
+        )
+        .route(
+            "/koji/v1/downloads/history",
+            get(api::downloads::get_download_history),
+        )
+        .route(
+            "/koji/v1/downloads/:job_id/cancel",
+            post(api::downloads::cancel_download).layer(json_body_limit),
+        )
+        .route(
+            "/koji/v1/downloads/events",
+            get(api::downloads::download_events_sse),
+        )
         .merge(backend_routes)
         .route("/koji/v1/*path", any(proxy_koji))
         .route("/", get(serve_index))

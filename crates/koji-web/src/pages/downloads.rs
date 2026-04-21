@@ -78,7 +78,7 @@ pub fn Downloads() -> impl IntoView {
     // Initial fetch of active downloads
     let active_downloads_init = active_downloads.clone();
     wasm_bindgen_futures::spawn_local(async move {
-        if let Ok(resp) = gloo_net::http::Request::get("/api/downloads/active")
+        if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/downloads/active")
             .send()
             .await
         {
@@ -101,7 +101,7 @@ pub fn Downloads() -> impl IntoView {
             let total_c = total.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Ok(resp) = gloo_net::http::Request::get(&format!(
-                    "/api/downloads/history?limit={}&offset={}",
+                    "/koji/v1/downloads/history?limit={}&offset={}",
                     limit_val,
                     page_val * limit_val
                 ))
@@ -324,11 +324,11 @@ fn render_history_item(item: DownloadQueueItemDto) -> impl IntoView {
 }
 
 pub async fn cancel_download(job_id: &str) {
-    let url = format!("/api/downloads/{}/cancel", job_id);
+    let url = format!("/koji/v1/downloads/{}/cancel", job_id);
     if let Ok(resp) = gloo_net::http::Request::post(&url).send().await {
         if resp.status() >= 200 && resp.status() < 300 {
             // Refresh active list
-            if let Ok(resp2) = gloo_net::http::Request::get("/api/downloads/active")
+            if let Ok(resp2) = gloo_net::http::Request::get("/koji/v1/downloads/active")
                 .send()
                 .await
             {
