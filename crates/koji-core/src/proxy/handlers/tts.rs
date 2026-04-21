@@ -31,10 +31,17 @@ pub struct AudioRequest {
     /// Whether to stream the output.
     #[serde(default)]
     pub stream: bool,
+    /// Speech speed (0.5 = half speed, 2.0 = double speed). Defaults to 1.0.
+    #[serde(default = "default_speed")]
+    pub speed: f32,
 }
 
 fn default_response_format() -> String {
     "mp3".to_string()
+}
+
+fn default_speed() -> f32 {
+    1.0
 }
 
 /// Response for voice listing.
@@ -126,7 +133,7 @@ pub async fn handle_audio_speech(
     let tts_req = koji_tts::config::TtsRequest {
         text: req.input,
         voice,
-        speed: 1.0,
+        speed: req.speed.clamp(0.5, 2.0),
         format,
     };
 
@@ -204,7 +211,7 @@ pub async fn handle_audio_stream(
     let tts_req = koji_tts::config::TtsRequest {
         text: req.input,
         voice,
-        speed: 1.0,
+        speed: req.speed.clamp(0.5, 2.0),
         format,
     };
 
@@ -365,6 +372,7 @@ mod tests {
             voice: None,
             response_format: "mp3".to_string(),
             stream: false,
+            speed: 1.0,
         };
         let response = handle_audio_speech(State(state), Json(req)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -383,5 +391,11 @@ mod tests {
     #[test]
     fn test_default_response_format() {
         assert_eq!(default_response_format(), "mp3");
+    }
+
+    /// Test that default_speed returns 1.0.
+    #[test]
+    fn test_default_speed() {
+        assert_eq!(default_speed(), 1.0);
     }
 }
