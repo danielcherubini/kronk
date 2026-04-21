@@ -68,6 +68,11 @@ pub fn ApiDocs() -> impl IntoView {
                         loading.set(false);
                         return;
                     }
+                    if !loaded {
+                        error.set(Some("Failed to load Redoc library from CDN".to_string()));
+                        loading.set(false);
+                        return;
+                    }
 
                     // Get Redoc after script loads.
                     let _redoc_js = js_sys::Reflect::get(
