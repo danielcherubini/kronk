@@ -162,6 +162,9 @@ impl ProxyState {
                 ModelState::Ready { last_accessed, .. } => {
                     *last_accessed = Instant::now();
                 }
+                ModelState::Unloading { last_accessed, .. } => {
+                    *last_accessed = Instant::now();
+                }
                 ModelState::Failed { .. } => {}
             }
         }

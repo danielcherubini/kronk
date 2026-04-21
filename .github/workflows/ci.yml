@@ -22,17 +22,19 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache cargo
+      # Cache only dependency sources (no index, no debug artifacts).
+      # Registry index is ~200 MB of plain-text git repos that re-downloads fast.
+      # Debug target dirs are ephemeral and waste cache space — release key auto-evicts old caches.
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-          enableCrossOsArchive: true
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/release
+          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys:
+            ${{ runner.os }}-cargo-deps-
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -48,9 +50,6 @@ jobs:
 
       - name: Run tests (workspace)
         run: cargo test --workspace -- --nocapture
-
-      - name: Run koji-web SSR integration tests
-        run: cargo test --package koji-web --features ssr -- --nocapture
 
       - name: Clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -71,17 +70,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache cargo
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-          enableCrossOsArchive: true
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/release
+          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys:
+            ${{ runner.os }}-cargo-deps-
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown

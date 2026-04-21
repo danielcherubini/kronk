@@ -32,18 +32,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache cargo
+      # Release builds — cache only dependency sources + release target.
+      # No index (fast to download), no debug artifacts.
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/release
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
+          restore-keys:
             ${{ runner.os }}-cargo-release-
-            ${{ runner.os }}-cargo-
-          enableCrossOsArchive: true
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -96,18 +96,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache cargo
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/release
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
+          restore-keys:
             ${{ runner.os }}-cargo-release-
-            ${{ runner.os }}-cargo-
-          enableCrossOsArchive: true
 
       - name: Add wasm32 target
         run: rustup target add wasm32-unknown-unknown
@@ -196,7 +194,7 @@ jobs:
 
             ### Linux (Fedora/RHEL)
             ```bash
-            sudo rpm -i koji-${{ needs.version.outputs.version_num }}-1.x86_64.rpm
+            rpm -i koji-${{ needs.version.outputs.version_num }}-1.x86_64.rpm
             ```
 
             ## After install

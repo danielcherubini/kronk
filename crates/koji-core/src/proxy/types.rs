@@ -33,6 +33,26 @@ pub enum ModelState {
         backend: String,
         error: String,
     },
+    /// Backend is in the process of being unloaded (holding lock during SIGTERM)
+    Unloading {
+        model_name: String,
+        backend: String,
+        backend_pid: u32,
+        backend_url: String,
+        last_accessed: Instant,
+        consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
+        failure_timestamp: Option<std::time::SystemTime>,
+    },
+}
+
+impl Default for ModelState {
+    fn default() -> Self {
+        Self::Failed {
+            model_name: String::new(),
+            backend: String::new(),
+            error: String::new(),
+        }
+    }
 }
 
 impl ModelState {
@@ -41,6 +61,7 @@ impl ModelState {
             ModelState::Starting { model_name, .. } => model_name,
             ModelState::Ready { model_name, .. } => model_name,
             ModelState::Failed { model_name, .. } => model_name,
+            ModelState::Unloading { model_name, .. } => model_name,
         }
     }
 
@@ -49,6 +70,7 @@ impl ModelState {
             ModelState::Starting { backend, .. } => backend,
             ModelState::Ready { backend, .. } => backend,
             ModelState::Failed { backend, .. } => backend,
+            ModelState::Unloading { backend, .. } => backend,
         }
     }
 
@@ -59,6 +81,7 @@ impl ModelState {
     pub fn backend_url(&self) -> Option<&str> {
         match self {
             ModelState::Ready { backend_url, .. } => Some(backend_url),
+            ModelState::Unloading { .. } => None,
             _ => None,
         }
     }
@@ -66,6 +89,7 @@ impl ModelState {
     pub fn backend_pid(&self) -> Option<u32> {
         match self {
             ModelState::Ready { backend_pid, .. } => Some(*backend_pid),
+            ModelState::Unloading { backend_pid, .. } => Some(*backend_pid),
             _ => None,
         }
     }
@@ -81,12 +105,17 @@ impl ModelState {
                 ..
             } => Some(consecutive_failures),
             ModelState::Failed { .. } => None,
+            ModelState::Unloading {
+                consecutive_failures,
+                ..
+            } => Some(consecutive_failures),
         }
     }
 
     pub fn load_time(&self) -> Option<std::time::SystemTime> {
         match self {
             ModelState::Ready { load_time, .. } => Some(*load_time),
+            ModelState::Unloading { .. } => None,
             _ => None,
         }
     }
@@ -96,6 +125,7 @@ impl ModelState {
             ModelState::Ready { last_accessed, .. } => Some(*last_accessed),
             ModelState::Starting { last_accessed, .. } => Some(*last_accessed),
             ModelState::Failed { .. } => None,
+            ModelState::Unloading { last_accessed, .. } => Some(*last_accessed),
         }
     }
 
@@ -103,6 +133,7 @@ impl ModelState {
     pub fn can_reload(&self, cooldown_seconds: u64) -> bool {
         match self {
             ModelState::Failed { .. } => false,
+            ModelState::Unloading { .. } => false,
             ModelState::Starting {
                 failure_timestamp, ..
             }
