@@ -16,12 +16,67 @@ pub fn ApiDocs() -> impl IntoView {
             gloo_timers::future::TimeoutFuture::new(100).await;
 
             if let Some(window) = web_sys::window() {
-                // Get the Redoc constructor from window.
+                // Check if Redoc is already loaded (e.g. from a previous navigation).
                 let redoc_js = js_sys::Reflect::get(
                     &wasm_bindgen::JsValue::from(&*window),
                     &wasm_bindgen::JsValue::from_str("Redoc"),
                 )
                 .ok();
+
+                // If Redoc isn't loaded yet, load the script first.
+                if redoc_js.as_ref().is_none_or(|r| r.is_undefined()) {
+                    let script = match window
+                        .document()
+                        .and_then(|d| d.create_element("script").ok())
+                    {
+                        Some(s) => s,
+                        None => {
+                            error.set(Some("Failed to create script element".to_string()));
+                            loading.set(false);
+                            return;
+                        }
+                    };
+                    script
+                        .set_attribute(
+                            "src",
+                            "https://cdn.redoc.ly/redoc/v2.1.3/bundles/redoc.standalone.js",
+                        )
+                        .unwrap();
+
+                    // Wait for the script to load using a timeout fallback.
+                    let mut loaded = false;
+                    {
+                        use wasm_bindgen::closure::Closure;
+                        let loaded_ref = &mut loaded;
+                        let load_cb = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+                            *loaded_ref = true;
+                        })
+                            as Box<dyn FnMut(_)>);
+                        script
+                            .add_event_listener_with_callback(
+                                "load",
+                                load_cb.as_ref().unchecked_ref(),
+                            )
+                            .unwrap();
+                        load_cb.forget();
+                    }
+
+                    // Wait up to 10 seconds for the script to load.
+                    gloo_timers::future::TimeoutFuture::new(10_000).await;
+                    if !loaded {
+                        error.set(Some("Failed to load Redoc library from CDN".to_string()));
+                        loading.set(false);
+                        return;
+                    }
+
+                    // Get Redoc after script loads.
+                    let _redoc_js = js_sys::Reflect::get(
+                        &wasm_bindgen::JsValue::from(&*window),
+                        &wasm_bindgen::JsValue::from_str("Redoc"),
+                    )
+                    .ok();
+                }
+
                 let redoc = match redoc_js {
                     Some(r) if !r.is_undefined() => r,
                     _ => {
