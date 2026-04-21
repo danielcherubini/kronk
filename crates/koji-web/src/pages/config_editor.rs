@@ -3,7 +3,7 @@ use leptos::task::spawn_local;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::utils::post_request;
+use crate::utils::{extract_and_store_csrf_token, post_request};
 
 // ─── WASM-safe JSON mirror types ──────────────────────────────────────────
 // These match the shape served by /api/config/structured and accepted by POST.
@@ -184,10 +184,14 @@ pub fn ConfigEditor() -> impl IntoView {
                 .send()
                 .await
             {
-                Ok(resp) => match resp.json::<Config>().await {
-                    Ok(cfg) => config.set(Some(cfg)),
-                    Err(e) => error.set(Some(format!("Failed to parse config: {}", e))),
-                },
+                Ok(resp) => {
+                    // Store CSRF token from response header (fallback when cookie unavailable)
+                    extract_and_store_csrf_token(&resp);
+                    match resp.json::<Config>().await {
+                        Ok(cfg) => config.set(Some(cfg)),
+                        Err(e) => error.set(Some(format!("Failed to parse config: {}", e))),
+                    }
+                }
                 Err(e) => error.set(Some(format!("Failed to fetch config: {}", e))),
             }
             loading.set(false);

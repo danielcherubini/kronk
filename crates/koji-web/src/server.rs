@@ -244,7 +244,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Sub-router for non-backend state-changing endpoints with CSRF enforcement
     let csrf_routes = Router::new()
-        .route("/koji/v1/config", get(api::get_config).post(api::save_config).layer(json_body_limit))
+        .route(
+            "/koji/v1/config",
+            get(api::get_config)
+                .post(api::save_config)
+                .layer(json_body_limit),
+        )
         .route(
             "/koji/v1/config/structured",
             get(api::get_structured_config)

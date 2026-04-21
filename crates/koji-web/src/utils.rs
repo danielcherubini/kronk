@@ -1,10 +1,13 @@
 pub mod self_update;
 
-use gloo_net::http::{Request, RequestBuilder};
+use gloo_net::http::{Request, RequestBuilder, Response};
 use wasm_bindgen::JsValue;
 
 /// CSRF token cookie name — must match server-side constant.
 const CSRF_COOKIE_NAME: &str = "koji_csrf_token";
+
+/// Key for storing CSRF token in sessionStorage (fallback when cookie is unavailable).
+const CSRF_STORAGE_KEY: &str = "_koji_csrf_token";
 
 /// Read the CSRF token from document.cookie using js_sys Reflect.
 pub fn get_csrf_cookie() -> Option<String> {
@@ -23,10 +26,37 @@ pub fn get_csrf_cookie() -> Option<String> {
     None
 }
 
+/// Read the CSRF token from localStorage (fallback when cookie is unavailable).
+pub fn get_csrf_stored() -> Option<String> {
+    let storage = web_sys::window()?.local_storage().ok()??;
+    storage.get_item(CSRF_STORAGE_KEY).ok().flatten()
+}
+
+/// Store a CSRF token in localStorage for fallback use.
+pub fn store_csrf_token(token: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(CSRF_STORAGE_KEY, token);
+    }
+}
+
+/// Get the CSRF token, trying cookie first then sessionStorage fallback.
+pub fn get_csrf_token() -> Option<String> {
+    get_csrf_cookie().or_else(get_csrf_stored)
+}
+
+/// Extract and store the CSRF token from a GET response header.
+/// The middleware sets `X-CSRF-Token` on all responses (GET, POST, etc.).
+pub fn extract_and_store_csrf_token(resp: &Response) {
+    if let Some(token) = resp.headers().get("X-CSRF-Token") {
+        let token_str = token.as_str();
+        store_csrf_token(token_str);
+    }
+}
+
 /// Build a POST request with X-CSRF-Token header injected.
 pub fn post_request(url: &str) -> RequestBuilder {
     let mut builder = Request::post(url);
-    if let Some(token) = get_csrf_cookie() {
+    if let Some(token) = get_csrf_token() {
         builder = builder.header("X-CSRF-Token", &token);
     }
     builder
@@ -35,7 +65,7 @@ pub fn post_request(url: &str) -> RequestBuilder {
 /// Build a PUT request with X-CSRF-Token header injected.
 pub fn put_request(url: &str) -> RequestBuilder {
     let mut builder = Request::put(url);
-    if let Some(token) = get_csrf_cookie() {
+    if let Some(token) = get_csrf_token() {
         builder = builder.header("X-CSRF-Token", &token);
     }
     builder

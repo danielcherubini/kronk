@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::components::backend_card::{BackendCard, BackendCardDto};
 use crate::components::install_modal::{CapabilitiesDto, InstallModal, InstallRequest};
 use crate::components::job_log_panel::JobLogPanel;
+use crate::utils::{extract_and_store_csrf_token, post_request};
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct BackendListResponse {
@@ -44,6 +45,8 @@ pub fn Backends() -> impl IntoView {
                 .await
             {
                 Ok(resp) => {
+                    // Store CSRF token from response header (fallback when cookie unavailable)
+                    extract_and_store_csrf_token(&resp);
                     if let Ok(list) = resp.json::<BackendListResponse>().await {
                         backends_list.set(list);
                     }
@@ -83,7 +86,7 @@ pub fn Backends() -> impl IntoView {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
             let url = format!("/koji/v1/backends/{backend_type}/update");
-            match gloo_net::http::Request::post(&url).send().await {
+            match post_request(&url).send().await {
                 Ok(resp) => {
                     if resp.ok() {
                         if let Ok(r) = resp.json::<InstallResponse>().await {
@@ -102,10 +105,7 @@ pub fn Backends() -> impl IntoView {
     let on_check_updates_click = Callback::new(move |_backend_type: String| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            match gloo_net::http::Request::post("/koji/v1/backends/check-updates")
-                .send()
-                .await
-            {
+            match post_request("/koji/v1/backends/check-updates").send().await {
                 Ok(resp) => {
                     if resp.ok() {
                         if let Ok(list) = resp.json::<BackendListResponse>().await {
@@ -143,14 +143,13 @@ pub fn Backends() -> impl IntoView {
         install_modal_for.set(None);
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let request =
-                match gloo_net::http::Request::post("/koji/v1/backends/install").json(&req) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        action_error.set(Some(format!("Failed to encode install request: {e}")));
-                        return;
-                    }
-                };
+            let request = match post_request("/koji/v1/backends/install").json(&req) {
+                Ok(r) => r,
+                Err(e) => {
+                    action_error.set(Some(format!("Failed to encode install request: {e}")));
+                    return;
+                }
+            };
             match request.send().await {
                 Ok(resp) => {
                     if resp.ok() {
@@ -189,12 +188,7 @@ pub fn Backends() -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             let url = format!("/koji/v1/backends/{}/activate", backend_type);
             let body = serde_json::json!({ "version": version });
-            match gloo_net::http::Request::post(&url)
-                .json(&body)
-                .unwrap()
-                .send()
-                .await
-            {
+            match post_request(&url).json(&body).unwrap().send().await {
                 Ok(resp) if resp.ok() => {
                     refresh_tick.update(|n| *n += 1);
                 }
@@ -243,11 +237,7 @@ pub fn Backends() -> impl IntoView {
                 let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
                 let body = serde_json::json!({ "default_args": parts });
                 let url = format!("/koji/v1/backends/{}/default-args", bt);
-                let res = gloo_net::http::Request::post(&url)
-                    .json(&body)
-                    .unwrap()
-                    .send()
-                    .await;
+                let res = post_request(&url).json(&body).unwrap().send().await;
                 match res {
                     Ok(response) if response.ok() => {}
                     Ok(response) => {

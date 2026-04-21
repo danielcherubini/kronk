@@ -51,6 +51,7 @@ mod tests {
     }
 
     /// Helper to make a POST request with CSRF token.
+    #[allow(dead_code)]
     async fn post_with_csrf(
         client: &reqwest::Client,
         url: &str,

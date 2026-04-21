@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::job_log_panel::JobLogPanel;
 use crate::components::self_update_section::SelfUpdateSection;
-use crate::utils::post_request;
+use crate::utils::{extract_and_store_csrf_token, post_request};
 
 fn short_sha(hash: &Option<String>) -> String {
     match hash {
@@ -163,6 +163,8 @@ pub fn Updates() -> impl IntoView {
                 .await
             {
                 Ok(resp) if resp.ok() => {
+                    // Store CSRF token from response header (fallback when cookie unavailable)
+                    extract_and_store_csrf_token(&resp);
                     if let Ok(data) = resp.json::<UpdatesListResponse>().await {
                         updates.set(data.clone());
                         // Get last checked time from any record
