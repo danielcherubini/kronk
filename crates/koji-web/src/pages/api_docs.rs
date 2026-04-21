@@ -1,5 +1,3 @@
-use wasm_bindgen::JsCast;
-
 use leptos::prelude::*;
 
 /// API Documentation page using Redoc (OpenAPI 3.1.0 viewer).
@@ -11,123 +9,44 @@ pub fn ApiDocs() -> impl IntoView {
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(window) = web_sys::window() {
-                // Get the Redoc constructor from window.
-                let redoc_js = js_sys::Reflect::get(
-                    &wasm_bindgen::JsValue::from(&*window),
-                    &wasm_bindgen::JsValue::from_str("Redoc"),
-                )
-                .ok();
-                let redoc = match redoc_js {
-                    Some(r) if !r.is_undefined() => r,
-                    _ => {
-                        error.set(Some(
-                            "Failed to load Redoc library. Is the CDN available?".to_string(),
-                        ));
-                        loading.set(false);
-                        return;
-                    }
-                };
+                if let Some(doc) = window.document() {
+                    // Step 1: Inject <redoc> tag into container.
+                    if let Some(container) = doc.get_element_by_id("api-docs-redoc-container") {
+                        container.set_inner_html(
+                            r#"<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc>"#,
+                        );
 
-                // Get the document body and find our container.
-                let doc = match window.document() {
-                    Some(d) => d,
-                    None => {
-                        error.set(Some("No document available".to_string()));
-                        loading.set(false);
-                        return;
-                    }
-                };
+                        // Step 2: Create and append the script element AFTER the <redoc> tag exists.
+                        // This ensures Redoc finds the element when it scans the DOM.
+                        let script = match doc.create_element("script") {
+                            Ok(s) => s,
+                            Err(_) => {
+                                error.set(Some("Failed to create script".to_string()));
+                                loading.set(false);
+                                return;
+                            }
+                        };
+                        script
+                            .set_attribute(
+                                "src",
+                                "https://cdn.redoc.ly/redoc/v2.1.3/bundles/redoc.standalone.js",
+                            )
+                            .unwrap();
 
-                let container = match doc.get_element_by_id("api-docs-redoc-container") {
-                    Some(el) => el,
-                    None => {
-                        error.set(Some("Failed to find API docs container".to_string()));
-                        loading.set(false);
-                        return;
-                    }
-                };
-
-                // Create a <div> inside the container for Redoc to render into.
-                let redoc_div = match doc.create_element("div") {
-                    Ok(el) => el,
-                    Err(_) => {
-                        error.set(Some("Failed to create element".to_string()));
-                        loading.set(false);
-                        return;
-                    }
-                };
-
-                // Build the config object using js_sys::Object.
-                let config = js_sys::Object::new();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("specUrl"),
-                    &wasm_bindgen::JsValue::from_str("/koji/v1/docs"),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("hideHostname"),
-                    &wasm_bindgen::JsValue::from_bool(true),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("disableSearch"),
-                    &wasm_bindgen::JsValue::from_bool(true),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("onlyRequiredInSamples"),
-                    &wasm_bindgen::JsValue::from_bool(false),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("pathInMiddlePanel"),
-                    &wasm_bindgen::JsValue::from_bool(true),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &config,
-                    &wasm_bindgen::JsValue::from_str("hideDownloadButton"),
-                    &wasm_bindgen::JsValue::from_bool(true),
-                )
-                .unwrap();
-
-                // Append the div to our container.
-                let _ = container.append_child(&redoc_div);
-
-                // Get Redoc.init function.
-                let init_fn =
-                    match js_sys::Reflect::get(&redoc, &wasm_bindgen::JsValue::from_str("init"))
-                        .ok()
-                        .and_then(|v| v.dyn_into::<js_sys::Function>().ok())
-                    {
-                        Some(f) => f,
-                        None => {
-                            error.set(Some("Redoc.init function not found".to_string()));
-                            loading.set(false);
-                            return;
+                        // Append to body so the script executes after DOM parsing is complete.
+                        if let Some(body) = doc.body() {
+                            let _ = body.append_child(&script);
                         }
-                    };
-
-                // Call Redoc.init(div, config). This renders asynchronously.
-                match init_fn.call2(&redoc, &redoc_div, &config) {
-                    Ok(_) => {
-                        // Redoc.render is async — wait a moment for it to finish rendering.
-                        gloo_timers::future::TimeoutFuture::new(1000).await;
-                        loading.set(false);
+                    } else {
+                        error.set(Some("Failed to find API docs container".to_string()));
                     }
-                    Err(e) => {
-                        error.set(Some(format!("Redoc init failed: {e:?}")));
-                        loading.set(false);
-                    }
+                } else {
+                    error.set(Some("No document available".to_string()));
                 }
             } else {
                 error.set(Some("No window available".to_string()));
             }
+            loading.set(false);
         });
     });
 
