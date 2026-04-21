@@ -33,9 +33,10 @@ pub const VOICE_IDS: &[&str] = &[
     "bm_scout",
 ];
 
-/// Download the Kokoro 82M ONNX model from HuggingFace.
+/// Download the Kokoro 82M PyTorch model from HuggingFace.
+/// The kokoro-micro Rust library handles ONNX conversion at runtime.
 pub async fn download_kokoro_model(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    let url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-82m_v0.0.onnx";
+    let url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth";
     let base_dir = crate::backends::backends_dir()?;
     let dest = model_file(&base_dir);
 
@@ -59,11 +60,10 @@ pub async fn download_kokoro_voices(progress: &Arc<dyn ProgressSink>) -> Result<
     let voices_path = voices_dir(&base_dir);
     std::fs::create_dir_all(&voices_path).with_context(|| "Failed to create voices directory")?;
 
-    // Voice files are available at:
-    // https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{voice_id}.onnx
+    // Voice files are .pt (PyTorch) format — kokoro-micro handles them at runtime.
     for voice_id in VOICE_IDS {
         let url = format!(
-            "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{}.onnx",
+            "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{}.pt",
             voice_id
         );
         let dest = voice_file(&base_dir, voice_id);

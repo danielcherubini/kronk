@@ -26,6 +26,12 @@ pub async fn download_piper_model(progress: &Arc<dyn ProgressSink>) -> Result<()
     );
     let onnx_dest = model_file(&base_dir);
 
+    // Piper config is named {voice_id}.onnx.json, not .json
+    let json_url = format!(
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/{}/{}.onnx.json",
+        voice_path, DEFAULT_VOICE_ID
+    );
+
     if let Some(parent) = onnx_dest.parent() {
         std::fs::create_dir_all(parent).with_context(|| "Failed to create piper directory")?;
     }
@@ -37,10 +43,6 @@ pub async fn download_piper_model(progress: &Arc<dyn ProgressSink>) -> Result<()
     progress.log(&format!("Piper model saved to: {}", onnx_dest.display()));
 
     // Download the JSON config (contains voice settings)
-    let json_url = format!(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/{}/{}.json",
-        voice_path, DEFAULT_VOICE_ID
-    );
     let json_dest = config_file(&base_dir);
 
     crate::backends::installer::download_with_client(&json_url, &json_dest, Some(progress), None)
