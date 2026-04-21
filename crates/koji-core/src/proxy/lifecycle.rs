@@ -885,15 +885,15 @@ mod tests {
     }
 
     /// Test that concurrent evict calls don't double-evict the same model.
-    /// With max_loaded_models=1 and 2 Ready models, both calls see len>=max
-    /// and each transitions a different Ready→Unloading atomically.
+    /// With max_loaded_models=1 and 3 models (2 Ready + 1 Starting), each call
+    /// finds a different Ready model since the Starting model is skipped.
     #[tokio::test]
     async fn test_evict_lru_if_needed_concurrent_no_double_eviction() {
         let mut config = Config::default();
         config.proxy.max_loaded_models = 1;
         let state = ProxyState::new(config, None);
 
-        // Add 2 Ready models with different last_accessed times
+        // Add 2 Ready models with different last_accessed times (LRU + newer)
         let mut ready1 = make_ready_state("model1.gguf", "llama-cpp");
         if let ModelState::Ready { last_accessed, .. } = &mut ready1 {
             *last_accessed = Instant::now() - Duration::from_secs(600); // older
@@ -913,6 +913,13 @@ mod tests {
             .write()
             .await
             .insert("server2".to_string(), ready2);
+
+        // Add 1 Starting model — it should be skipped by eviction, ensuring
+        // both concurrent calls have a Ready model to evict.
+        state.models.write().await.insert(
+            "server3".to_string(),
+            make_starting_state("model3.gguf", "llama-cpp"),
+        );
 
         // Run two evict calls concurrently
         let state_a = state.clone();
@@ -935,7 +942,7 @@ mod tests {
             "Concurrent calls must evict different models (no double-eviction)"
         );
 
-        // Both models should be removed from the map
+        // Both evicted models should be removed from the map
         assert!(
             !state.models.read().await.contains_key(&name_a),
             "Evicted model '{}' should be removed",
