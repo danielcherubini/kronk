@@ -224,8 +224,14 @@ pub fn ApiDocs() -> impl IntoView {
                         }
                     };
 
-                // Call Redoc.init(div, config).
-                match init_fn.call2(&redoc, &redoc_div, &config) {
+                // Redoc.init(specUrl, options, element)
+                // specUrl first, then options/theme, then the DOM element.
+                match init_fn.call3(
+                    &redoc,
+                    &wasm_bindgen::JsValue::from_str("/koji/v1/docs"),
+                    &config,
+                    &redoc_div,
+                ) {
                     Ok(_) => {
                         gloo_timers::future::TimeoutFuture::new(1500).await;
                         loading.set(false);
