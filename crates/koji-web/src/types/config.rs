@@ -803,6 +803,7 @@ mod tests {
             circuit_breaker_cooldown_seconds: 300,
             metrics_retention_secs: 86400,
             download_queue_poll_interval_secs: 2,
+            max_loaded_models: 1,
         };
 
         let json = serde_json::to_string(&proxy).unwrap();
