@@ -1,3 +1,7 @@
+#![allow(clippy::useless_conversion)]
+
+use wasm_bindgen::JsCast;
+
 use leptos::prelude::*;
 
 /// API Documentation page using Redoc (OpenAPI 3.1.0 viewer).
@@ -12,78 +16,246 @@ pub fn ApiDocs() -> impl IntoView {
             gloo_timers::future::TimeoutFuture::new(100).await;
 
             if let Some(window) = web_sys::window() {
-                if let Some(doc) = window.document() {
-                    // Step 1: Inject <redoc> tag into container.
-                    if let Some(container) = doc.get_element_by_id("api-docs-redoc-container") {
-                        // Inject <redoc> + dark theme CSS overrides + script.
-                        let css = r#"<style>
-.redoc-wrap { background: #0d1117 !important; color: #e6edf3 !important; }
-.redoc-section__title, .redoc-model__title { color: #e6edf3 !important; border-color: #21262d !important; }
-.redoc-sidebar { background: #0d1117 !important; border-right-color: #21262d !important; }
-.redoc-menu__link, .redoc-markdown p, .redoc-markdown li, .redoc-markdown td, .redoc-markdown th { color: #8b949e !important; }
-.redoc-markdown h1, .redoc-markdown h2, .redoc-markdown h3, .redoc-markdown h4 { color: #e6edf3 !important; }
-.redoc-section__children { border-color: #21262d !important; }
-.redoc-operation__summary { background: transparent !important; }
-.redoc-model { background: #161b22 !important; border-color: #21262d !important; color: #8b949e !important; }
-.redoc-model--title { background: #21262d !important; color: #e6edf3 !important; }
-.redoc-op-tags { border-color: #21262d !important; }
-.redoc-tag__section .redoc-section:first-child { padding-top: 0 !important; }
-.badge { background: #21262d !important; color: #8b949e !important; }
-.badge--get { background: #3fb950 !important; }
-.badge--post { background: #58a6ff !important; }
-.badge--put { background: #bc8cff !important; }
-.badge--delete { background: #f85149 !important; }
-.badge--patch { background: #39d2c0 !important; }
-.redoc-op-tag__title { color: #e6edf3 !important; }
-.redoc-nav__item.is-active .redoc-nav__link, .redoc-menu__link--active { color: #58a6ff !important; }
-.redoc-nav__item:hover .redoc-nav__link, .redoc-menu__link:hover { color: #e6edf3 !important; }
-.redoc-sidebar::-webkit-scrollbar { width: 6px; }
-.redoc-sidebar::-webkit-scrollbar-track { background: #0d1117; }
-.redoc-sidebar::-webkit-scrollbar-thumb { background: #21262d; border-radius: 3px; }
-.redoc-op-http-methods, .redoc-op-url { color: #e6edf3 !important; }
-.redoc-parameter__name { color: #e6edf3 !important; }
-.redoc-parameter__description { color: #8b949e !important; }
-.redoc-parameter__required { color: #f85149 !important; }
-.redoc-parameter__type { color: #39d2c0 !important; }
-.redoc-op-servers, .redoc-op-security { border-color: #21262d !important; }
-code, pre { background: #161b22 !important; color: #e6edf3 !important; border-color: #21262d !important; }
-pre code { color: #e6edf3 !important; }
-.redoc-json-preview { background: #0d1117 !important; color: #8b949e !important; }
-</style>
-<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc>"#;
-                        container.set_inner_html(css);
-
-                        // Step 2: Create and append the script element AFTER the <redoc> tag exists.
-                        // This ensures Redoc finds the element when it scans the DOM.
-                        let script = match doc.create_element("script") {
-                            Ok(s) => s,
-                            Err(_) => {
-                                error.set(Some("Failed to create script".to_string()));
-                                loading.set(false);
-                                return;
-                            }
-                        };
-                        script
-                            .set_attribute(
-                                "src",
-                                "https://cdn.redoc.ly/redoc/v2.1.3/bundles/redoc.standalone.js",
-                            )
-                            .unwrap();
-
-                        // Append to body so the script executes after DOM parsing is complete.
-                        if let Some(body) = doc.body() {
-                            let _ = body.append_child(&script);
-                        }
-                    } else {
-                        error.set(Some("Failed to find API docs container".to_string()));
+                // Get the Redoc constructor from window.
+                let redoc_js = js_sys::Reflect::get(
+                    &wasm_bindgen::JsValue::from(&*window),
+                    &wasm_bindgen::JsValue::from_str("Redoc"),
+                )
+                .ok();
+                let redoc = match redoc_js {
+                    Some(r) if !r.is_undefined() => r,
+                    _ => {
+                        error.set(Some(
+                            "Failed to load Redoc library. Is the CDN available?".to_string(),
+                        ));
+                        loading.set(false);
+                        return;
                     }
-                } else {
-                    error.set(Some("No document available".to_string()));
+                };
+
+                // Get the document body and find our container.
+                let doc = match window.document() {
+                    Some(d) => d,
+                    None => {
+                        error.set(Some("No document available".to_string()));
+                        loading.set(false);
+                        return;
+                    }
+                };
+
+                let container = match doc.get_element_by_id("api-docs-redoc-container") {
+                    Some(el) => el,
+                    None => {
+                        error.set(Some("Failed to find API docs container".to_string()));
+                        loading.set(false);
+                        return;
+                    }
+                };
+
+                // Create a <div> inside the container for Redoc to render into.
+                let redoc_div = match doc.create_element("div") {
+                    Ok(el) => el,
+                    Err(_) => {
+                        error.set(Some("Failed to create element".to_string()));
+                        loading.set(false);
+                        return;
+                    }
+                };
+
+                // Build the config object with dark theme matching the app.
+                let config = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("specUrl"),
+                    &wasm_bindgen::JsValue::from_str("/koji/v1/docs"),
+                )
+                .unwrap();
+
+                // Theme config — native Redoc theming (not CSS overrides).
+                let theme = js_sys::Object::new();
+
+                // Colors
+                let colors = js_sys::Object::new();
+                let primary_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&primary_colors, &"main".into(), &"#58a6ff".into());
+                let _ = js_sys::Reflect::set(&colors, &"primary".into(), &primary_colors);
+
+                let success_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&success_colors, &"main".into(), &"#3fb950".into());
+                let _ = js_sys::Reflect::set(&colors, &"success".into(), &success_colors);
+
+                let warning_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&warning_colors, &"main".into(), &"#d29922".into());
+                let _ = js_sys::Reflect::set(&colors, &"warning".into(), &warning_colors);
+
+                let error_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&error_colors, &"main".into(), &"#f85149".into());
+                let _ = js_sys::Reflect::set(&colors, &"error".into(), &error_colors);
+
+                // HTTP method colors
+                let http_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&http_colors, &"main".into(), &"#d29922".into());
+                let _ = js_sys::Reflect::set(&colors, &"http".into(), &http_colors);
+
+                let get_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&get_colors, &"main".into(), &"#3fb950".into());
+                let _ = js_sys::Reflect::set(&colors, &"get".into(), &get_colors);
+
+                let post_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&post_colors, &"main".into(), &"#58a6ff".into());
+                let _ = js_sys::Reflect::set(&colors, &"post".into(), &post_colors);
+
+                let put_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&put_colors, &"main".into(), &"#bc8cff".into());
+                let _ = js_sys::Reflect::set(&colors, &"put".into(), &put_colors);
+
+                let delete_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&delete_colors, &"main".into(), &"#f85149".into());
+                let _ = js_sys::Reflect::set(&colors, &"delete".into(), &delete_colors);
+
+                let patch_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&patch_colors, &"main".into(), &"#39d2c0".into());
+                let _ = js_sys::Reflect::set(&colors, &"patch".into(), &patch_colors);
+
+                // Background colors
+                let bg_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&bg_colors, &"light".into(), &"#0d1117".into());
+                let _ =
+                    js_sys::Reflect::set(&bg_colors, &"light-secondary".into(), &"#161b22".into());
+                let _ =
+                    js_sys::Reflect::set(&bg_colors, &"light-tertiary".into(), &"#21262d".into());
+                let _ = js_sys::Reflect::set(&bg_colors, &"dark".into(), &"#0d1117".into());
+                let _ =
+                    js_sys::Reflect::set(&bg_colors, &"dark-secondary".into(), &"#161b22".into());
+                let _ =
+                    js_sys::Reflect::set(&bg_colors, &"dark-tertiary".into(), &"#21262d".into());
+                let _ = js_sys::Reflect::set(&colors, &"background".into(), &bg_colors);
+
+                // Text colors
+                let text_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&text_colors, &"light".into(), &"#e6edf3".into());
+                let _ = js_sys::Reflect::set(
+                    &text_colors,
+                    &"light-secondary".into(),
+                    &"#8b949e".into(),
+                );
+                let _ = js_sys::Reflect::set(&text_colors, &"dark".into(), &"#e6edf3".into());
+                let _ =
+                    js_sys::Reflect::set(&text_colors, &"dark-secondary".into(), &"#8b949e".into());
+                let _ = js_sys::Reflect::set(&colors, &"text".into(), &text_colors);
+
+                // Borders
+                let border_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&border_colors, &"light".into(), &"#21262d".into());
+                let _ = js_sys::Reflect::set(&border_colors, &"dark".into(), &"#21262d".into());
+                let _ = js_sys::Reflect::set(&colors, &"border".into(), &border_colors);
+
+                // Sidebar colors
+                let sidebar_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&sidebar_colors, &"light".into(), &"#0d1117".into());
+                let _ = js_sys::Reflect::set(&sidebar_colors, &"dark".into(), &"#0d1117".into());
+                let _ = js_sys::Reflect::set(&colors, &"sidebar".into(), &sidebar_colors);
+
+                // Code colors
+                let code_colors = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&code_colors, &"light".into(), &"#e6edf3".into());
+                let _ = js_sys::Reflect::set(&code_colors, &"dark".into(), &"#e6edf3".into());
+                let _ = js_sys::Reflect::set(&colors, &"code".into(), &code_colors);
+
+                // Apply colors to theme
+                let _ = js_sys::Reflect::set(&theme, &"colors".into(), &colors);
+
+                // Typography
+                let typography = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &typography,
+                    &wasm_bindgen::JsValue::from_str("fontFamily"),
+                    &"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif".into(),
+                );
+                let _ = js_sys::Reflect::set(&typography, &"fontSize".into(), &"14px".into());
+                let _ = js_sys::Reflect::set(&theme, &"typography".into(), &typography);
+
+                // Apply theme to config
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("theme").into(),
+                    &theme,
+                );
+
+                // Other options
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("hideHostname"),
+                    &wasm_bindgen::JsValue::from_bool(true),
+                )
+                .unwrap();
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("disableSearch"),
+                    &wasm_bindgen::JsValue::from_bool(true),
+                )
+                .unwrap();
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("onlyRequiredInSamples"),
+                    &wasm_bindgen::JsValue::from_bool(false),
+                )
+                .unwrap();
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("pathInMiddlePanel"),
+                    &wasm_bindgen::JsValue::from_bool(true),
+                )
+                .unwrap();
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("hideDownloadButton"),
+                    &wasm_bindgen::JsValue::from_bool(true),
+                )
+                .unwrap();
+                let expand = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&expand, &"200".into(), &"open".into());
+                let _ = js_sys::Reflect::set(&expand, &"4xx".into(), &"close".into());
+                let _ = js_sys::Reflect::set(&expand, &"5xx".into(), &"close".into());
+                let _ = js_sys::Reflect::set(
+                    &config,
+                    &wasm_bindgen::JsValue::from_str("expandResponses"),
+                    &expand,
+                )
+                .unwrap();
+
+                // Append the div to our container.
+                let _ = container.append_child(&redoc_div);
+
+                // Get Redoc.init function.
+                let init_fn =
+                    match js_sys::Reflect::get(&redoc, &wasm_bindgen::JsValue::from_str("init"))
+                        .ok()
+                        .and_then(|v| v.dyn_into::<js_sys::Function>().ok())
+                    {
+                        Some(f) => f,
+                        None => {
+                            error.set(Some("Redoc.init function not found".to_string()));
+                            loading.set(false);
+                            return;
+                        }
+                    };
+
+                // Call Redoc.init(div, config).
+                match init_fn.call2(&redoc, &redoc_div, &config) {
+                    Ok(_) => {
+                        // Redoc.render is async — wait for it to finish.
+                        gloo_timers::future::TimeoutFuture::new(1500).await;
+                        loading.set(false);
+                    }
+                    Err(e) => {
+                        error.set(Some(format!("Redoc init failed: {e:?}")));
+                        loading.set(false);
+                    }
                 }
             } else {
                 error.set(Some("No window available".to_string()));
             }
-            loading.set(false);
         });
     });
 
