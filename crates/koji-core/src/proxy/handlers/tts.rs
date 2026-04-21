@@ -56,6 +56,14 @@ pub struct VoiceResponse {
 
 /// GET /v1/audio/voices - List available voices.
 pub async fn handle_audio_voices(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    // Try to lazy-load the default TTS engine (Kokoro) if not already loaded
+    let tts_engine = state.tts_engine.read().await;
+    if tts_engine.is_none() {
+        drop(tts_engine);
+        // Attempt to load Kokoro as default — this is safe, non-blocking
+        let _ = load_or_get_engine(&state, "kokoro").await;
+    }
+
     let tts_engine = state.tts_engine.read().await;
     if let Some(ref eng) = *tts_engine {
         let voices: Vec<VoiceResponse> = eng
