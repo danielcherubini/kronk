@@ -14,8 +14,8 @@ This directory contains implementation plans for the Koji project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 70
-- **Completed**: 69 ✅
+- **Total Plans**: 71
+- **Completed**: 70 ✅
 - **In Progress**: 0 🚧
 - **Remaining**: 0 📋
 
@@ -138,6 +138,7 @@ This directory contains implementation plans for the Koji project. Each plan doc
 |------|-------------|---------------------|
 | [OpenCode Koji Plugin](2026-04-12-opencode-koji-plugin.md) | Auto-discover models via /v1/models, provide modalities and config | `f4530d6`, `dbf1e51`, `b1260e4` |
 | [Proxy API Endpoints](2026-04-20-proxy-api-endpoints.md) | Add all missing llama.cpp-compatible API endpoints using wildcard forwarding | #68 `3e1d180` ✅ COMPLETED |
+| [Max Loaded Models with LRU Eviction](2026-04-21-max-loaded-models.md) | Add `max_loaded_models` config field (default=1) that automatically evicts the least-recently-used model when capacity is reached | #69 ✅ COMPLETED |
 
 ---
 
