@@ -23,7 +23,7 @@ pub async fn stream_update_events(
     current_version: RwSignal<String>,
     latest_version: RwSignal<String>,
 ) {
-    let mut es = match EventSource::new("/api/self-update/events") {
+    let mut es = match EventSource::new("/koji/v1/self-update/events") {
         Ok(es) => es,
         Err(e) => {
             update_status.set(format!("Failed to open event stream: {:?}", e));
@@ -112,7 +112,7 @@ pub async fn stream_update_events(
     }
 }
 
-/// Poll `/api/self-update/check` every 2 seconds until the server
+/// Poll `/koji/v1/self-update/check` every 2 seconds until the server
 /// responds with a new version, or give up after 5 attempts.
 pub async fn poll_for_restart(
     update_status: RwSignal<String>,
@@ -133,7 +133,7 @@ pub async fn poll_for_restart(
             max_attempts
         ));
 
-        if let Ok(resp) = gloo_net::http::Request::get("/api/self-update/check")
+        if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/self-update/check")
             .send()
             .await
         {

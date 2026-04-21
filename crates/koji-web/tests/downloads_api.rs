@@ -42,15 +42,15 @@ fn build_download_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route(
-            "/api/downloads/active",
+            "/koji/v1/downloads/active",
             get(koji_web::api::downloads::get_active_downloads),
         )
         .route(
-            "/api/downloads/history",
+            "/koji/v1/downloads/history",
             get(koji_web::api::downloads::get_download_history),
         )
         .route(
-            "/api/downloads/:job_id/cancel",
+            "/koji/v1/downloads/:job_id/cancel",
             post(koji_web::api::downloads::cancel_download),
         )
         .with_state(state)
@@ -157,7 +157,7 @@ async fn test_get_active_downloads_returns_correct_dtos() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/active")
+                .uri("/koji/v1/downloads/active")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -210,7 +210,7 @@ async fn test_get_download_history_with_pagination() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/history")
+                .uri("/koji/v1/downloads/history")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -234,7 +234,7 @@ async fn test_get_download_history_with_pagination() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/history?limit=1&offset=0")
+                .uri("/koji/v1/downloads/history?limit=1&offset=0")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -258,7 +258,7 @@ async fn test_get_download_history_with_pagination() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/history?limit=1&offset=1")
+                .uri("/koji/v1/downloads/history?limit=1&offset=1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -292,7 +292,7 @@ async fn test_cancel_download_succeeds_for_queued_item() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/job-active-1/cancel")
+                .uri("/koji/v1/downloads/job-active-1/cancel")
                 .method("POST")
                 .body(Body::empty())
                 .unwrap(),
@@ -324,7 +324,7 @@ async fn test_cancel_download_returns_error_for_completed_item() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/job-history-1/cancel")
+                .uri("/koji/v1/downloads/job-history-1/cancel")
                 .method("POST")
                 .body(Body::empty())
                 .unwrap(),
@@ -358,7 +358,7 @@ async fn test_cancel_nonexistent_item_returns_error() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/api/downloads/nonexistent-job/cancel")
+                .uri("/koji/v1/downloads/nonexistent-job/cancel")
                 .method("POST")
                 .body(Body::empty())
                 .unwrap(),

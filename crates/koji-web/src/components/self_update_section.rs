@@ -21,7 +21,7 @@ pub fn SelfUpdateSection() -> impl IntoView {
     // Initial check for updates on mount
     let check_for_updates = move || {
         spawn_local(async move {
-            match Request::get("/api/self-update/check").send().await {
+            match Request::get("/koji/v1/self-update/check").send().await {
                 Ok(resp) if resp.ok() => {
                     if let Ok(data) = resp.json::<serde_json::Value>().await {
                         if let Some(v) = data["current_version"].as_str() {
@@ -70,7 +70,7 @@ pub fn SelfUpdateSection() -> impl IntoView {
 
         spawn_local(async move {
             // Step 1: POST to trigger the update
-            match Request::post("/api/self-update/update").send().await {
+            match Request::post("/koji/v1/self-update/update").send().await {
                 Ok(resp) if resp.ok() => {
                     // Step 2: Open SSE to stream progress
                     stream_update_events(

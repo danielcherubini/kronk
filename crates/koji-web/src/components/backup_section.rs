@@ -148,7 +148,7 @@ pub fn BackupSection() -> impl IntoView {
                 }
             };
 
-            let build_result = match post_request("/api/restore").json(&body) {
+            let build_result = match post_request("/koji/v1/restore").json(&body) {
                 Ok(r) => r,
                 Err(e) => {
                     set_restoring.set(false);

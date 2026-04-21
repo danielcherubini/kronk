@@ -1,9 +1,9 @@
 //! Self-update API endpoints for the Koji web UI.
 //!
 //! Provides three endpoints:
-//! - `GET /api/self-update/check` — check if a new version is available
-//! - `POST /api/self-update/update` — trigger the update (CSRF-protected)
-//! - `GET /api/self-update/events` — SSE stream of update progress
+//! - `GET /koji/v1/self-update/check` — check if a new version is available
+//! - `POST /koji/v1/self-update/update` — trigger the update (CSRF-protected)
+//! - `GET /koji/v1/self-update/events` — SSE stream of update progress
 
 use axum::{
     extract::State,
@@ -22,7 +22,7 @@ use tokio::sync::broadcast;
 
 use crate::server::AppState;
 
-/// Response for `GET /api/self-update/check`.
+/// Response for `GET /koji/v1/self-update/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckResponse {
     pub update_available: bool,
@@ -32,7 +32,7 @@ pub struct UpdateCheckResponse {
     pub published_at: String,
 }
 
-/// Response for `POST /api/self-update/update`.
+/// Response for `POST /koji/v1/self-update/update`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTriggerResponse {
     pub ok: bool,
@@ -68,7 +68,7 @@ pub async fn check_update(
 /// `enforce_same_origin` middleware for CSRF protection.
 ///
 /// The update runs asynchronously. Progress is streamed via
-/// `GET /api/self-update/events` (SSE).
+/// `GET /koji/v1/self-update/events` (SSE).
 pub async fn trigger_update(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<UpdateTriggerResponse>, (StatusCode, Json<serde_json::Value>)> {

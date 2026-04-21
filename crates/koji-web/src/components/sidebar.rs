@@ -11,7 +11,10 @@ pub fn Sidebar() -> impl IntoView {
     // Check for backend/model updates on mount (separate from self-update)
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok(resp) = gloo_net::http::Request::get("/api/updates").send().await {
+            if let Ok(resp) = gloo_net::http::Request::get("/koji/v1/updates")
+                .send()
+                .await
+            {
                 if let Ok(data) = resp.json::<serde_json::Value>().await {
                     let has_updates = data
                         .get("backends")

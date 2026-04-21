@@ -81,7 +81,7 @@ pub fn App() -> impl IntoView {
 
     // Open SSE connection on app mount to receive download events.
     // Handle creation failure gracefully — show offline indicator and retry periodically.
-    let es_result = web_sys::EventSource::new("/api/downloads/events");
+    let es_result = web_sys::EventSource::new("/koji/v1/downloads/events");
     let es: Option<web_sys::EventSource> = match es_result {
         Ok(es) => Some(es),
         Err(err) => {
@@ -93,7 +93,7 @@ pub fn App() -> impl IntoView {
                 "Failed to create EventSource for download events: {err_msg}. Showing offline indicator."
             ));
             // Retry periodically in the background every 5 seconds.
-            let retry_url = "/api/downloads/events".to_string();
+            let retry_url = "/koji/v1/downloads/events".to_string();
             let toast_store_for_retry = toast_store.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let mut attempt = 0u32;
@@ -226,7 +226,7 @@ pub fn App() -> impl IntoView {
                             let job_id = event_json.job_id.clone();
                             wasm_bindgen_futures::spawn_local(async move {
                                 if let Ok(resp) =
-                                    gloo_net::http::Request::get("/api/downloads/active")
+                                    gloo_net::http::Request::get("/koji/v1/downloads/active")
                                         .send()
                                         .await
                                 {
@@ -256,7 +256,7 @@ pub fn App() -> impl IntoView {
                                 * pages::downloads::HISTORY_LIMIT.get();
                             wasm_bindgen_futures::spawn_local(async move {
                                 if let Ok(resp) = gloo_net::http::Request::get(&format!(
-                                    "/api/downloads/history?limit={}&offset={}",
+                                    "/koji/v1/downloads/history?limit={}&offset={}",
                                     limit, offset
                                 ))
                                 .send()
