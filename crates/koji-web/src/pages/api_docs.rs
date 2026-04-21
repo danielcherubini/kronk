@@ -8,6 +8,9 @@ pub fn ApiDocs() -> impl IntoView {
 
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
+            // Wait for Leptos to render the DOM first.
+            gloo_timers::future::TimeoutFuture::new(100).await;
+
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
                     // Step 1: Inject <redoc> tag into container.
