@@ -6,12 +6,13 @@ pub fn ApiDocs() -> impl IntoView {
     let loading = RwSignal::new(true);
     let error = RwSignal::new(Option::<String>::None);
 
-    // Initialize Redoc on mount by injecting a <redoc> web component into the container.
+    // Inject the <redoc> web component into the container.
+    // Redoc is loaded in index.html before Leptos mounts, so the custom element
+    // is already registered — dynamically adding the tag auto-upgrades it.
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
             if let Some(window) = web_sys::window() {
                 if let Some(doc) = window.document() {
-                    // Find our placeholder div by ID and replace its content with <redoc>.
                     if let Some(container) = doc.get_element_by_id("api-docs-redoc-container") {
                         container.set_inner_html(
                             r#"<redoc spec-url="/koji/v1/docs" hide-hostname disable-search only-required-in-samples="false" path-in-middle-panel hide-download-button></redoc>"#,
