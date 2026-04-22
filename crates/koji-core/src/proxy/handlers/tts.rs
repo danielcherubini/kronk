@@ -171,7 +171,9 @@ pub async fn handle_audio_models(State(state): State<Arc<ProxyState>>) -> impl I
                 || err_msg.contains("config directory")
                 || err_msg.contains("backend registry")
             {
-                // No backend installed — return static list with ready=false
+                // No backend installed — return static list.
+                // NOTE: This only lists kokoro. When other TTS engines are supported,
+                // this should be expanded or removed in favor of the backend's model list.
                 let models = vec![serde_json::json!({
                     "id": "kokoro",
                     "object": "model",
