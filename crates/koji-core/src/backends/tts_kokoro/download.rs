@@ -248,7 +248,7 @@ async fn install_dependencies(
         // Install PyTorch ROCm first, then install the package without
         // torch extras so it doesn't override our ROCm build.
         progress.log("Detected ROCm — installing PyTorch ROCm...");
-        let status = tokio::process::Command::new(python_bin)
+        let output = tokio::process::Command::new(python_bin)
             .args([
                 "-m",
                 "pip",
@@ -258,14 +258,15 @@ async fn install_dependencies(
                 "https://download.pytorch.org/whl/rocm6.4",
             ])
             .current_dir(install_path)
-            .status()
+            .output()
             .await
             .with_context(|| "Failed to install PyTorch ROCm")?;
 
-        if !status.success() {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow!(
-                "Failed to install PyTorch with ROCm support. \
-                 Check that your ROCm installation is compatible."
+                "Failed to install PyTorch with ROCm support.\nStderr:\n{}",
+                stderr.trim()
             ));
         }
     }
@@ -296,15 +297,19 @@ async fn install_dependencies(
         }
     );
     progress.log(&msg);
-    let status = tokio::process::Command::new(python_bin)
+    let output = tokio::process::Command::new(python_bin)
         .args(["-m", "pip", "install", "-e", &format!(".{extra}")])
         .current_dir(install_path)
-        .status()
+        .output()
         .await
         .with_context(|| "Failed to install Kokoro-FastAPI dependencies")?;
 
-    if !status.success() {
-        return Err(anyhow!("Failed to install Kokoro-FastAPI dependencies."));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "Failed to install Kokoro-FastAPI dependencies.\nStderr:\n{}",
+            stderr.trim()
+        ));
     }
 
     progress.log("Dependencies installed successfully.");
@@ -327,20 +332,21 @@ async fn download_model(
         .join("download_model.py");
 
     progress.log("Downloading Kokoro model files via download_model.py...");
-    let status = tokio::process::Command::new(python_bin)
+    let output = tokio::process::Command::new(python_bin)
         .args([
             &download_script.to_string_lossy(),
             "--output",
             &model_dir.to_string_lossy(),
         ])
-        .status()
+        .output()
         .await
-        .with_context(|| "Failed to spawn download_model.py")?;
+        .with_context(|| "Failed to run download_model.py")?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow!(
-            "download_model.py exited with non-zero status. \
-             Model files may be incomplete."
+            "download_model.py exited with non-zero status.\nStderr:\n{}\nModel files may be incomplete.",
+            stderr.trim()
         ));
     }
 
