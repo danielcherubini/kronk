@@ -183,8 +183,6 @@ pub struct ProxyState {
     /// Replaces the old global CONFIG_WRITE_LOCK to allow controlled
     /// parallelism (default capacity=4) instead of full serialization.
     pub config_write_semaphore: Arc<tokio::sync::Semaphore>,
-    /// Loaded TTS engine, if any.
-    pub tts_engine: Arc<tokio::sync::RwLock<Option<koji_tts::Engine>>>,
 }
 
 impl ProxyState {

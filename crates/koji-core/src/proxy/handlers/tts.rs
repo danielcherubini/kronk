@@ -1,24 +1,24 @@
 //! TTS (Text-to-Speech) API handlers.
 //!
 //! Implements OpenAI-compatible `/v1/audio/*` endpoints for speech synthesis.
+//! The TTS backend runs as a subprocess (Kokoro-FastAPI uvicorn server).
 
-use crate::backends::BackendRegistry;
 use crate::proxy::ProxyState;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
+    Json,
 };
 use base64::Engine;
 use futures::StreamExt;
-use koji_tts::TtsEngine;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Request body for speech synthesis.
 #[derive(Debug, Deserialize)]
 pub struct AudioRequest {
-    /// Model/engine name (e.g., "kokoro", "piper").
+    /// Model/engine name (e.g., "kokoro", "tts_kokoro").
     pub model: String,
     /// Text to synthesize.
     pub input: String,
@@ -54,90 +54,81 @@ pub struct VoiceResponse {
     pub gender: Option<String>,
 }
 
-/// GET /v1/audio/voices - List available voices.
-pub async fn handle_audio_voices(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    // Try to lazy-load the default TTS engine (Kokoro) if not already loaded
-    let tts_engine = state.tts_engine.read().await;
-    if tts_engine.is_none() {
-        drop(tts_engine);
-        // Attempt to load Kokoro as default — this is safe, non-blocking
-        let _ = load_or_get_engine(&state, "kokoro").await;
+/// Ensure a TTS backend is loaded and return its server URL.
+async fn ensure_tts_server(
+    state: &ProxyState,
+    model_name: &str,
+) -> anyhow::Result<String> {
+    // Check if already loaded
+    if let Some(server) = state.get_tts_server(model_name).await {
+        return Ok(format!("http://{}", server));
     }
 
-    let tts_engine = state.tts_engine.read().await;
-    if let Some(ref eng) = *tts_engine {
-        let voices: Vec<VoiceResponse> = eng
-            .voices()
-            .into_iter()
-            .map(|v| VoiceResponse {
-                id: v.id,
-                name: v.name,
-                language: v.language,
-                gender: v.gender,
-            })
-            .collect();
-        Json(serde_json::json!({"data": voices})).into_response()
-    } else {
-        (
+    // Not loaded — try to load it
+    let backend_name = match model_name.to_lowercase().as_str() {
+        "kokoro" | "tts_kokoro" => "tts_kokoro",
+        _ => "tts_kokoro", // default to kokoro
+    };
+
+    state.load_tts_backend(backend_name).await?;
+
+    // After loading, get the server URL from models map
+    let models = state.models.read().await;
+    if let Some(state) = models.get(backend_name) {
+        return Ok(state.backend_url().map(|u| u.to_string()).unwrap_or_default());
+    }
+
+    anyhow::bail!("TTS backend '{}' loaded but URL not found", backend_name);
+}
+
+/// GET /v1/audio/voices - List available voices.
+pub async fn handle_audio_voices(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    // Try to lazy-load the default TTS backend (Kokoro) if not already loaded
+    let _ = ensure_tts_server(&state, "kokoro").await;
+
+    // Get the server URL and forward to the backend
+    match state.get_tts_server("tts_kokoro").await {
+        Some(server) => {
+            let url = format!("http://{}/v1/audio/voices", server);
+            match state.client.get(&url).send().await {
+                Ok(response) => {
+                    let body = response.text().await.unwrap_or_default();
+                    Json(serde_json::from_str::<serde_json::Value>(&body).unwrap_or_else(|_| serde_json::json!({"data": []}))).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("Failed to reach TTS backend: {}", e),
+                            "type": "ServerError"
+                        }
+                    })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": {
-                    "message": "TTS engine not installed. Install a TTS backend first.",
+                    "message": "TTS backend not installed. Install a TTS backend first.",
                     "type": "NotFoundError"
                 }
             })),
         )
-            .into_response()
+            .into_response(),
     }
 }
 
 /// GET /v1/audio/models - List available audio models.
 pub async fn handle_audio_models(State(_state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    // Check if any TTS engine is installed in the registry
-    let base_dir = match crate::config::Config::base_dir() {
-        Ok(d) => d,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"object":"list","data":[]})),
-            )
-                .into_response();
-        }
-    };
-    let registry = match BackendRegistry::open(&base_dir) {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"object":"list","data":[]})),
-            )
-                .into_response();
-        }
-    };
-
-    let mut models: Vec<serde_json::Value> = Vec::new();
-
-    // Check if Kokoro is installed
-    if registry.get("tts_kokoro").ok().flatten().is_some() {
-        models.push(serde_json::json!({
-            "id": "kokoro",
-            "object": "model",
-            "created": 0,
-            "owned_by": "kokoro",
-            "ready": true
-        }));
-    }
-
-    // Check if Piper is installed
-    if registry.get("tts_piper").ok().flatten().is_some() {
-        models.push(serde_json::json!({
-            "id": "piper",
-            "object": "model",
-            "created": 0,
-            "owned_by": "piper",
-            "ready": true
-        }));
-    }
+    let models = vec![serde_json::json!({
+        "id": "kokoro",
+        "object": "model",
+        "created": 0,
+        "owned_by": "kokoro",
+        "ready": true
+    })];
 
     Json(serde_json::json!({"object": "list", "data": models})).into_response()
 }
@@ -147,11 +138,9 @@ pub async fn handle_audio_speech(
     State(state): State<Arc<ProxyState>>,
     Json(req): Json<AudioRequest>,
 ) -> Response {
-    let eng = match load_or_get_engine(&state, &req.model).await {
-        Ok(e) => e,
+    let server_url = match ensure_tts_server(&state, &req.model).await {
+        Ok(url) => url,
         Err(e) => {
-            // Treat "not installed", config errors, and registry errors as 404
-            // (TTS not set up). Any other error (model loading failure) returns 500.
             let err_msg = e.to_string();
             if err_msg.contains("not installed")
                 || err_msg.contains("config directory")
@@ -172,7 +161,7 @@ pub async fn handle_audio_speech(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": {
-                        "message": format!("Failed to load TTS engine: {}", e),
+                        "message": format!("Failed to load TTS backend: {}", e),
                         "type": "ServerError"
                     }
                 })),
@@ -181,37 +170,39 @@ pub async fn handle_audio_speech(
         }
     };
 
+    // Build the request body for Kokoro-FastAPI (OpenAI-compatible format)
     let voice = req.voice.unwrap_or_default();
-
-    let format = match req.response_format.to_lowercase().as_str() {
-        "wav" => koji_tts::config::AudioFormat::Wav,
-        "ogg" => koji_tts::config::AudioFormat::Ogg,
-        _ => koji_tts::config::AudioFormat::Mp3,
+    let model_name = if req.model.to_lowercase() == "kokoro" || req.model.to_lowercase() == "tts_kokoro" {
+        "kokoro"
+    } else {
+        &req.model
     };
 
-    let tts_req = koji_tts::config::TtsRequest {
-        text: req.input,
-        voice,
-        speed: req.speed.clamp(0.5, 2.0),
-        format,
-    };
+    let speech_req = serde_json::json!({
+        "model": model_name,
+        "input": req.input,
+        "voice": voice,
+        "response_format": req.response_format.to_lowercase(),
+        "speed": req.speed.clamp(0.5, 2.0),
+    });
 
-    match eng.synthesize(&tts_req).await {
-        Ok(audio) => Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                "Content-Type",
-                content_type_for_format(&req.response_format),
-            )
-            .body(axum::body::Body::from(audio))
-            .unwrap_or_else(|_| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
-            }),
+    let url = format!("{}/v1/audio/speech", server_url);
+    match state.client.post(&url).json(&speech_req).send().await {
+        Ok(response) => {
+            let status = response.status();
+            let content_type = content_type_for_format(&req.response_format);
+            let bytes = response.bytes().await.unwrap_or_default();
+            Response::builder()
+                .status(status)
+                .header("Content-Type", content_type)
+                .body(axum::body::Body::from(bytes))
+                .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response())
+        }
         Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({
                 "error": {
-                    "message": format!("Synthesis failed: {}", e),
+                    "message": format!("Failed to reach TTS backend: {}", e),
                     "type": "ServerError"
                 }
             })),
@@ -225,11 +216,9 @@ pub async fn handle_audio_stream(
     State(state): State<Arc<ProxyState>>,
     Json(req): Json<AudioRequest>,
 ) -> Response {
-    let eng = match load_or_get_engine(&state, &req.model).await {
-        Ok(e) => e,
+    let server_url = match ensure_tts_server(&state, &req.model).await {
+        Ok(url) => url,
         Err(e) => {
-            // Treat "not installed", config errors, and registry errors as 404
-            // (TTS not set up). Any other error (model loading failure) returns 500.
             let err_msg = e.to_string();
             if err_msg.contains("not installed")
                 || err_msg.contains("config directory")
@@ -250,7 +239,7 @@ pub async fn handle_audio_stream(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": {
-                        "message": format!("Failed to load TTS engine: {}", e),
+                        "message": format!("Failed to load TTS backend: {}", e),
                         "type": "ServerError"
                     }
                 })),
@@ -260,49 +249,50 @@ pub async fn handle_audio_stream(
     };
 
     let voice = req.voice.unwrap_or_default();
-
-    let format = match req.response_format.to_lowercase().as_str() {
-        "wav" => koji_tts::config::AudioFormat::Wav,
-        "ogg" => koji_tts::config::AudioFormat::Ogg,
-        _ => koji_tts::config::AudioFormat::Mp3,
+    let model_name = if req.model.to_lowercase() == "kokoro" || req.model.to_lowercase() == "tts_kokoro" {
+        "kokoro"
+    } else {
+        &req.model
     };
 
-    let tts_req = koji_tts::config::TtsRequest {
-        text: req.input,
-        voice,
-        speed: req.speed.clamp(0.5, 2.0),
-        format,
-    };
+    let speech_req = serde_json::json!({
+        "model": model_name,
+        "input": req.input,
+        "voice": voice,
+        "response_format": req.response_format.to_lowercase(),
+        "speed": req.speed.clamp(0.5, 2.0),
+        "stream": true,
+    });
 
-    match eng.synthesize_stream(&tts_req).await {
-        Ok(stream) => {
+    let url = format!("{}/v1/audio/speech", server_url);
+    match state.client.post(&url).json(&speech_req).send().await {
+        Ok(response) => {
             use axum::response::sse::Event;
             use axum::response::{IntoResponse, Sse};
-            let sse_stream = stream.map(|chunk_result| match chunk_result {
-                Ok(chunk) => {
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(&chunk.data);
-                    if chunk.is_final {
-                        Ok::<axum::response::sse::Event, anyhow::Error>(
-                            Event::default().event("audio").data(encoded).event("end"),
+
+            let stream = response.bytes_stream().map(move |chunk_result| {
+                match chunk_result {
+                    Ok(chunk) => {
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(&chunk);
+                        // Simple framing: each SSE event contains one audio chunk
+                        Ok::<Event, anyhow::Error>(
+                            Event::default().event("audio").data(encoded),
                         )
-                    } else {
-                        Ok(Event::default().event("audio").data(encoded))
                     }
-                }
-                Err(e) => {
-                    let encoded =
-                        base64::engine::general_purpose::STANDARD.encode(e.to_string().as_bytes());
-                    Ok(Event::default().event("error").data(encoded))
+                    Err(e) => {
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(e.to_string().as_bytes());
+                        Ok(Event::default().event("error").data(encoded))
+                    }
                 }
             });
 
-            Sse::new(sse_stream).into_response()
+            Sse::new(stream).into_response()
         }
         Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({
                 "error": {
-                    "message": format!("Streaming failed: {}", e),
+                    "message": format!("Failed to reach TTS backend: {}", e),
                     "type": "ServerError"
                 }
             })),
@@ -317,72 +307,6 @@ fn content_type_for_format(format: &str) -> &'static str {
         "ogg" => "audio/ogg",
         _ => "audio/mpeg",
     }
-}
-
-/// Load or switch the TTS engine based on the requested model/engine name.
-///
-/// If the correct engine is already loaded, returns it without changes.
-/// Otherwise, loads the new engine from the backend registry (replacing any existing TTS engine).
-pub async fn load_or_get_engine(
-    state: &ProxyState,
-    engine_name: &str,
-) -> anyhow::Result<koji_tts::Engine> {
-    use anyhow::{anyhow, Context};
-
-    // Determine which kind of engine to load
-    let kind = match engine_name.to_lowercase().as_str() {
-        "kokoro" | "tts_kokoro" => koji_tts::EngineKind::Kokoro,
-        "piper" | "tts_piper" => koji_tts::EngineKind::Piper,
-        _ => koji_tts::EngineKind::Kokoro, // default to kokoro
-    };
-
-    // Check if the correct engine is already loaded
-    {
-        let current = state.tts_engine.read().await;
-        if let Some(ref eng) = *current {
-            if koji_tts::engine_matches_kind(eng, &kind) {
-                return Ok(eng.clone());
-            }
-        }
-    }
-
-    // Need to load/switch — find installed backend from registry
-    let base_dir =
-        crate::config::Config::base_dir().with_context(|| "Failed to get config directory")?;
-    let registry =
-        BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
-
-    let backend_name = match kind {
-        koji_tts::EngineKind::Kokoro => "tts_kokoro",
-        koji_tts::EngineKind::Piper => "tts_piper",
-    };
-
-    let backend = registry
-        .get(backend_name)
-        .with_context(|| format!("Failed to query backend '{}'", backend_name))?
-        .ok_or_else(|| {
-            anyhow!(
-                "TTS backend '{}' not installed. Run: koji backend add tts_{}",
-                backend_name,
-                match kind {
-                    koji_tts::EngineKind::Kokoro => "kokoro",
-                    koji_tts::EngineKind::Piper => "piper",
-                }
-            )
-        })?;
-
-    // Load the engine from the installed model files
-    let engine = koji_tts::load_engine(kind, &backend.path)
-        .await
-        .with_context(|| format!("Failed to load {} engine", backend_name))?;
-
-    // Replace in state (replaces previous TTS engine if any — singleton behavior)
-    {
-        let mut current = state.tts_engine.write().await;
-        *current = Some(engine.clone());
-    }
-
-    Ok(engine)
 }
 
 #[cfg(test)]
@@ -420,9 +344,9 @@ mod tests {
         assert_eq!(content_type_for_format("ogg"), "audio/ogg");
     }
 
-    /// Test that audio_speech returns 404 when no engine is loaded.
+    /// Test that audio_speech returns 404 when backend is not installed.
     #[tokio::test]
-    async fn test_audio_speech_returns_404_when_not_loaded() {
+    async fn test_audio_speech_returns_404_when_not_installed() {
         let state = Arc::new(create_test_state());
         let req = AudioRequest {
             model: "kokoro".to_string(),
@@ -433,6 +357,7 @@ mod tests {
             speed: 1.0,
         };
         let response = handle_audio_speech(State(state), Json(req)).await;
+        // Returns NOT_FOUND because tts_kokoro is not installed in the test env
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
