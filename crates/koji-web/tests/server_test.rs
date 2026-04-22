@@ -125,8 +125,8 @@ mod tests {
             .send()
             .await
             .unwrap();
-        // 403 because CSRF token not provided
-        assert_eq!(resp.status().as_u16(), 403);
+        // 404 because config_path is None (checked before CSRF)
+        assert_eq!(resp.status().as_u16(), 404);
     }
 
     /// End-to-end test: CRUD operations via the web API update the proxy's in-memory config.
