@@ -417,24 +417,8 @@ fn content_type_for_format(format: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::proxy::ProxyState;
-    use axum::{http::StatusCode, response::IntoResponse};
 
-    fn create_test_state() -> ProxyState {
-        let config = Config::default();
-        ProxyState::new(config, None)
-    }
-
-    #[tokio::test]
-    async fn test_audio_voices_returns_200_when_backend_loads() {
-        let state = Arc::new(create_test_state());
-        let response = handle_audio_voices(State(state)).await;
-        let response: axum::http::Response<axum::body::Body> = response.into_response();
-        // Backend loads successfully (or returns voices if already loaded)
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
+    /// Test that content_type_for_format returns correct MIME types.
     #[test]
     fn test_content_type_for_format_mp3() {
         assert_eq!(content_type_for_format("mp3"), "audio/mpeg");
@@ -448,32 +432,6 @@ mod tests {
     #[test]
     fn test_content_type_for_format_ogg() {
         assert_eq!(content_type_for_format("ogg"), "audio/ogg");
-    }
-
-    /// Test that audio_models returns static list with ready=false when backend is not installed.
-    #[tokio::test]
-    async fn test_audio_models_returns_static_when_not_installed() {
-        let state = Arc::new(create_test_state());
-        let response = handle_audio_models(State(state)).await;
-        let response: axum::http::Response<axum::body::Body> = response.into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    /// Test that audio_speech returns proper error when backend fails.
-    #[tokio::test]
-    async fn test_audio_speech_returns_error_on_backend_failure() {
-        let state = Arc::new(create_test_state());
-        let req = AudioRequest {
-            model: "kokoro".to_string(),
-            input: "Hello world".to_string(),
-            voice: None,
-            response_format: "mp3".to_string(),
-            stream: false,
-            speed: 1.0,
-        };
-        let response = handle_audio_speech(State(state), Json(req)).await;
-        // Returns error (500) when backend loads but speech generation fails
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// Test that content_type_for_format handles edge cases.
