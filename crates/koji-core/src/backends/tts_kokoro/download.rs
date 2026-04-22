@@ -153,20 +153,16 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
 
             // Check if package is already installed
             let already_installed = match mgr {
-                "dnf" | "yum" => {
-                    std::process::Command::new(format!("{sudo}{mgr}"))
-                        .args(["list", "installed", pkg])
-                        .output()
-                        .is_ok_and(|o| o.status.success())
-                }
-                "apt-get" => {
-                    std::process::Command::new("dpkg")
-                        .args(["-l", pkg])
-                        .output()
-                        .is_ok_and(|o| {
-                            String::from_utf8_lossy(&o.stdout).contains(&format!("^{pkg} "))
-                        })
-                }
+                "dnf" | "yum" => std::process::Command::new(format!("{sudo}{mgr}"))
+                    .args(["list", "installed", pkg])
+                    .output()
+                    .is_ok_and(|o| o.status.success()),
+                "apt-get" => std::process::Command::new("dpkg")
+                    .args(["-l", pkg])
+                    .output()
+                    .is_ok_and(|o| {
+                        String::from_utf8_lossy(&o.stdout).contains(&format!("^{pkg} "))
+                    }),
                 _ => false,
             };
 
@@ -217,7 +213,11 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
             ""
         };
         let status = std::process::Command::new(format!("{sudo}ln"))
-            .args(["-sf", "/usr/lib64/pkgconfig/blas.pc", "/usr/lib64/pkgconfig/openblas.pc"])
+            .args([
+                "-sf",
+                "/usr/lib64/pkgconfig/blas.pc",
+                "/usr/lib64/pkgconfig/openblas.pc",
+            ])
             .status()
             .with_context(|| "Failed to create openblas.pc symlink")?;
 
@@ -289,7 +289,11 @@ async fn install_dependencies(
     let extra = if has_rocm { "" } else { "[cpu]" };
     let msg = format!(
         "Installing Kokoro-FastAPI{}...",
-        if has_rocm { " (using system PyTorch)" } else { " CPU dependencies" }
+        if has_rocm {
+            " (using system PyTorch)"
+        } else {
+            " CPU dependencies"
+        }
     );
     progress.log(&msg);
     let status = tokio::process::Command::new(python_bin)
@@ -380,7 +384,8 @@ print(f'Downloaded {{len(voice_files)}} voices')"#,
     );
 
     let script_path = install_path.join(".download_voices_tmp.py");
-    std::fs::write(&script_path, &script).with_context(|| "Failed to write voice download script")?;
+    std::fs::write(&script_path, &script)
+        .with_context(|| "Failed to write voice download script")?;
 
     let status = tokio::process::Command::new(python_bin)
         .arg(&script_path)
