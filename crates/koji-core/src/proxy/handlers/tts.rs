@@ -136,16 +136,61 @@ pub async fn handle_audio_voices(State(state): State<Arc<ProxyState>>) -> impl I
 }
 
 /// GET /v1/audio/models - List available audio models.
-pub async fn handle_audio_models(State(_state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    let models = vec![serde_json::json!({
-        "id": "kokoro",
-        "object": "model",
-        "created": 0,
-        "owned_by": "kokoro",
-        "ready": true
-    })];
+pub async fn handle_audio_models(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    // Try to lazy-load the default TTS backend (Kokoro) if not already loaded
+    let server_url = match ensure_tts_server(&state, "kokoro").await {
+        Ok(url) => url,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("not installed")
+                || err_msg.contains("config directory")
+                || err_msg.contains("backend registry")
+            {
+                // No backend installed — return static list with ready=false
+                let models = vec![serde_json::json!({
+                    "id": "kokoro",
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "kokoro",
+                    "ready": false
+                })];
+                return Json(serde_json::json!({"object": "list", "data": models})).into_response();
+            }
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Failed to load TTS backend: {}", e),
+                        "type": "ServerError"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
 
-    Json(serde_json::json!({"object": "list", "data": models})).into_response()
+    // Forward to the backend's /v1/audio/models endpoint
+    let url = format!("{}/v1/audio/models", server_url);
+    match state.client.get(&url).send().await {
+        Ok(response) => {
+            let body = response.text().await.unwrap_or_default();
+            Json(
+                serde_json::from_str::<serde_json::Value>(&body)
+                    .unwrap_or_else(|_| serde_json::json!({"object": "list", "data": []})),
+            )
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!("Failed to reach TTS backend: {}", e),
+                    "type": "ServerError"
+                }
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// POST /v1/audio/speech - Synthesize speech (non-streaming).
@@ -360,6 +405,15 @@ mod tests {
     #[test]
     fn test_content_type_for_format_ogg() {
         assert_eq!(content_type_for_format("ogg"), "audio/ogg");
+    }
+
+    /// Test that audio_models returns static list with ready=false when backend is not installed.
+    #[tokio::test]
+    async fn test_audio_models_returns_static_when_not_installed() {
+        let state = Arc::new(create_test_state());
+        let response = handle_audio_models(State(state)).await;
+        let response: axum::http::Response<axum::body::Body> = response.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     /// Test that audio_speech returns 404 when backend is not installed.
