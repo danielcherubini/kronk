@@ -361,16 +361,21 @@ async fn download_voices(
 
     // Write a temp script since `for` can't be used in -c one-liners
     let script = format!(
-        r#"import os
+        r#"import os, shutil
 from huggingface_hub import hf_hub_download, list_repo_files
 repo_id = 'hexgrad/Kokoro-82M'
 voice_files = [f for f in list_repo_files(repo_id) if f.startswith('voices/') and f.endswith('.pt')]
 out_dir = '{}'
 os.makedirs(out_dir, exist_ok=True)
 for vf in voice_files:
+    basename = os.path.basename(vf)
     hf_hub_download(repo_id, vf, local_dir=out_dir)
-    print(f'Downloaded {{vf}}')
-print(f'Total: {{len(voice_files)}} voices')"#,
+    # Flatten: move from voices/ subdirectory to out_dir
+    nested = os.path.join(out_dir, 'voices', basename)
+    dest = os.path.join(out_dir, basename)
+    if os.path.exists(nested):
+        shutil.move(nested, dest)
+print(f'Downloaded {{len(voice_files)}} voices')"#,
         voices_dir.to_string_lossy()
     );
 
