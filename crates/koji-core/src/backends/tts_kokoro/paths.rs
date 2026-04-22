@@ -40,6 +40,16 @@ pub fn model_dir(base: &Path) -> PathBuf {
         .join("v1_0")
 }
 
+/// Return the voice packs directory.
+pub fn voices_dir(base: &Path) -> PathBuf {
+    install_dir(base)
+        .join("api")
+        .join("api")
+        .join("src")
+        .join("voices")
+        .join("v1_0")
+}
+
 /// Return the path to the Kokoro PyTorch model file.
 pub fn model_file(base: &Path) -> PathBuf {
     model_dir(base).join("kokoro-v1_0.pth")

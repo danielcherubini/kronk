@@ -347,6 +347,49 @@ async fn download_model(
     Ok(())
 }
 
+/// Download voice packs from HuggingFace.
+async fn download_voices(
+    python_bin: &Path,
+    install_path: &Path,
+    voices_dir: &Path,
+    progress: &Arc<dyn ProgressSink>,
+) -> Result<()> {
+    // Ensure the voice output directory exists
+    std::fs::create_dir_all(voices_dir).with_context(|| "Failed to create voices directory")?;
+
+    progress.log("Downloading Kokoro voice packs from HuggingFace...");
+    let status = tokio::process::Command::new(python_bin)
+        .args([
+            "-c",
+            &format!(
+                "from huggingface_hub import hf_hub_download, list_repo_files; \
+                 repo_id = 'hexgrad/Kokoro-82M'; \
+                 voice_files = [f for f in list_repo_files(repo_id) if f.startswith('voices/') and f.endswith('.pt')]; \
+                 out_dir = '{}'; \
+                 import os; \
+                 for vf in voice_files: \
+                     hf_hub_download(repo_id, vf, local_dir=out_dir); \
+                     print(f'Downloaded {{vf}}'); \
+                 print(f'Total: {{len(voice_files)}} voices')",
+                voices_dir.to_string_lossy()
+            ),
+        ])
+        .current_dir(install_path)
+        .status()
+        .await
+        .with_context(|| "Failed to spawn voice download script")?;
+
+    if !status.success() {
+        return Err(anyhow!("Voice pack download failed."));
+    }
+
+    progress.log(&format!(
+        "Voice packs downloaded to: {}",
+        voices_dir.display()
+    ));
+    Ok(())
+}
+
 /// Check if ROCm is available on the system.
 pub fn has_rocm() -> bool {
     Path::new("/opt/rocm").exists()
@@ -401,6 +444,7 @@ pub async fn install_kokoro_fastapi(progress: &Arc<dyn ProgressSink>) -> Result<
     let install_path = install_dir(&base);
     let python_path = python_bin(&base);
     let model_path = model_dir(&base);
+    let voices_path = super::paths::voices_dir(&base);
     let has_rocm = has_rocm();
 
     // Run the installation steps, cleaning up on any failure.
@@ -430,6 +474,9 @@ pub async fn install_kokoro_fastapi(progress: &Arc<dyn ProgressSink>) -> Result<
 
         // Step 5: Download model files
         download_model(&python_path, &install_path, &model_path, progress).await?;
+
+        // Step 6: Download voice packs from HuggingFace
+        download_voices(&python_path, &install_path, &voices_path, progress).await?;
 
         anyhow::Ok(())
     }
