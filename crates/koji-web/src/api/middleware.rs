@@ -103,13 +103,10 @@ pub async fn enforce_same_origin(
             (Some(cookie_val), Some(header_val)) if cookie_val == header_val => {
                 Ok(next.run(req).await)
             }
-            // Cookie present but header missing or mismatched — reject
+            // Cookie present but header missing — reject.
             // This means the browser sent a cookie but the frontend didn't
             // include the matching header, indicating a potential attack.
             (Some(_), None) => Err((StatusCode::FORBIDDEN, "CSRF token validation failed")),
-            (Some(cookie_val), Some(header_val)) => {
-                Err((StatusCode::FORBIDDEN, "CSRF token validation failed"))
-            }
             // Neither present — allow through.
             // This covers localhost development, race conditions where the
             // initial GET hasn't completed yet, and environments where
