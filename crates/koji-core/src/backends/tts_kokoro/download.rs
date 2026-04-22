@@ -47,13 +47,34 @@ pub fn check_disk_space(base: &Path) -> Result<u64> {
 }
 
 /// Create a Python virtualenv at the target directory.
+/// Prefers Python 3.13 since Kokoro-FastAPI doesn't support Python 3.14+.
 async fn create_venv(venv_path: &Path, progress: &Arc<dyn ProgressSink>) -> Result<()> {
     progress.log("Creating Python virtualenv...");
-    let status = tokio::process::Command::new("python3")
+
+    // kokoro-fastapi requires kokoro==0.9.2 which doesn't support Python 3.14+
+    // Prefer python3.13, fall back to python3.12, then python3
+    let python_cmd = if std::process::Command::new("python3.13")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        "python3.13"
+    } else if std::process::Command::new("python3.12")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        "python3.12"
+    } else {
+        "python3"
+    };
+
+    progress.log(&format!("Using {} for virtualenv...", python_cmd));
+    let status = tokio::process::Command::new(python_cmd)
         .args(["-m", "venv", &venv_path.to_string_lossy()])
         .status()
         .await
-        .with_context(|| "Failed to spawn python3 -m venv")?;
+        .with_context(|| format!("Failed to spawn {python_cmd} -m venv"))?;
 
     if !status.success() {
         return Err(anyhow!(
