@@ -46,26 +46,31 @@ fn default_speed() -> f32 {
 
 /// Ensure a TTS backend is loaded and return its server URL.
 async fn ensure_tts_server(state: &ProxyState, model_name: &str) -> anyhow::Result<String> {
-    // Check if already loaded
-    if let Some(server) = state.get_tts_server(model_name).await {
-        return Ok(format!("http://{}", server));
-    }
-
-    // Not loaded — try to load it
+    // Resolve backend name
     let backend_name = match model_name.to_lowercase().as_str() {
         "kokoro" | "tts_kokoro" => "tts_kokoro",
         _ => "tts_kokoro", // default to kokoro
     };
 
+    // Check if already loaded and get the actual URL from ModelState
+    let models = state.models.read().await;
+    if let Some(ms) = models.get(backend_name) {
+        if let Some(url) = ms.backend_url() {
+            return Ok(url.to_string());
+        }
+    }
+    drop(models);
+
+    // Not loaded — try to load it
     state.load_tts_backend(backend_name).await?;
 
     // After loading, get the server URL from models map
     let models = state.models.read().await;
-    if let Some(state) = models.get(backend_name) {
-        return Ok(state
-            .backend_url()
-            .map(|u| u.to_string())
-            .unwrap_or_default());
+    if let Some(ms) = models.get(backend_name) {
+        if let Some(url) = ms.backend_url() {
+            return Ok(url.to_string());
+        }
+        anyhow::bail!("TTS backend '{}' loaded but URL not set", backend_name);
     }
 
     anyhow::bail!("TTS backend '{}' loaded but URL not found", backend_name);
@@ -73,40 +78,56 @@ async fn ensure_tts_server(state: &ProxyState, model_name: &str) -> anyhow::Resu
 
 /// GET /v1/audio/voices - List available voices.
 pub async fn handle_audio_voices(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    // Try to lazy-load the default TTS backend (Kokoro) if not already loaded
-    let _ = ensure_tts_server(&state, "kokoro").await;
-
-    // Get the server URL and forward to the backend
-    match state.get_tts_server("tts_kokoro").await {
-        Some(server) => {
-            let url = format!("http://{}/v1/audio/voices", server);
-            match state.client.get(&url).send().await {
-                Ok(response) => {
-                    let body = response.text().await.unwrap_or_default();
-                    Json(
-                        serde_json::from_str::<serde_json::Value>(&body)
-                            .unwrap_or_else(|_| serde_json::json!({"data": []})),
-                    )
-                    .into_response()
-                }
-                Err(e) => (
-                    StatusCode::BAD_GATEWAY,
+    // Try to lazy-load the default TTS backend (Kokoro) if not already loaded,
+    // and get its actual URL from ModelState
+    let server_url = match ensure_tts_server(&state, "kokoro").await {
+        Ok(url) => url,
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("not installed")
+                || err_msg.contains("config directory")
+                || err_msg.contains("backend registry")
+            {
+                return (
+                    StatusCode::NOT_FOUND,
                     Json(serde_json::json!({
                         "error": {
-                            "message": format!("Failed to reach TTS backend: {}", e),
-                            "type": "ServerError"
+                            "message": err_msg,
+                            "type": "NotFoundError"
                         }
                     })),
                 )
-                    .into_response(),
+                    .into_response();
             }
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": format!("Failed to load TTS backend: {}", e),
+                        "type": "ServerError"
+                    }
+                })),
+            )
+                .into_response();
         }
-        None => (
-            StatusCode::NOT_FOUND,
+    };
+
+    let url = format!("{}/v1/audio/voices", server_url);
+    match state.client.get(&url).send().await {
+        Ok(response) => {
+            let body = response.text().await.unwrap_or_default();
+            Json(
+                serde_json::from_str::<serde_json::Value>(&body)
+                    .unwrap_or_else(|_| serde_json::json!({"data": []})),
+            )
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({
                 "error": {
-                    "message": "TTS backend not installed. Install a TTS backend first.",
-                    "type": "NotFoundError"
+                    "message": format!("Failed to reach TTS backend: {}", e),
+                    "type": "ServerError"
                 }
             })),
         )
