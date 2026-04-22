@@ -14,6 +14,19 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
+/// Get the backend URL for a TTS backend from the models map.
+///
+/// Returns `Ok(Some(url))` if the backend is loaded and has a URL,
+/// `Ok(None)` if the backend exists but has no URL (starting state)
+/// or is not yet in the map.
+async fn get_backend_url(state: &ProxyState, backend_name: &str) -> anyhow::Result<Option<String>> {
+    let models = state.models.read().await;
+    Ok(models
+        .get(backend_name)
+        .and_then(|ms| ms.backend_url())
+        .map(|u| u.to_string()))
+}
+
 /// Request body for speech synthesis.
 #[derive(Debug, Deserialize)]
 pub struct AudioRequest {
@@ -52,27 +65,17 @@ async fn ensure_tts_server(state: &ProxyState, model_name: &str) -> anyhow::Resu
     };
 
     // Check if already loaded and get the actual URL from ModelState
-    let models = state.models.read().await;
-    if let Some(ms) = models.get(backend_name) {
-        if let Some(url) = ms.backend_url() {
-            return Ok(url.to_string());
-        }
+    if let Some(url) = get_backend_url(state, backend_name).await? {
+        return Ok(url);
     }
-    drop(models);
 
     // Not loaded — try to load it
     state.load_tts_backend(backend_name).await?;
 
     // After loading, get the server URL from models map
-    let models = state.models.read().await;
-    if let Some(ms) = models.get(backend_name) {
-        if let Some(url) = ms.backend_url() {
-            return Ok(url.to_string());
-        }
-        anyhow::bail!("TTS backend '{}' loaded but URL not set", backend_name);
-    }
-
-    anyhow::bail!("TTS backend '{}' loaded but URL not found", backend_name);
+    get_backend_url(state, backend_name)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("TTS backend '{}' loaded but URL not set", backend_name))
 }
 
 /// GET /v1/audio/voices - List available voices.
