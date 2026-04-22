@@ -124,29 +124,55 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
 
     match pkg_mgr {
         Some((mgr, pkg)) => {
-            progress.log(&format!(
-                "Installing OpenBLAS development libraries ({pkg})..."
-            ));
             let sudo = if std::env::var("SUDO_USER").is_ok() {
                 "sudo "
             } else {
                 ""
             };
-            let args = if mgr == "apt-get" {
-                vec!["-y", "install", pkg]
-            } else {
-                vec!["install", "-y", pkg]
-            };
-            let status = std::process::Command::new(format!("{sudo}{mgr}"))
-                .args(&args)
-                .status()
-                .with_context(|| format!("Failed to run {mgr} install"))?;
 
-            if !status.success() {
-                return Err(anyhow!(
-                    "{mgr} install of {pkg} failed. \
-                     Please install OpenBLAS development libraries manually and retry."
+            // Check if package is already installed
+            let already_installed = match mgr {
+                "dnf" | "yum" => {
+                    std::process::Command::new(format!("{sudo}{mgr}"))
+                        .args(["list", "installed", pkg])
+                        .output()
+                        .is_ok_and(|o| o.status.success())
+                }
+                "apt-get" => {
+                    std::process::Command::new("dpkg")
+                        .args(["-l", pkg])
+                        .output()
+                        .is_ok_and(|o| {
+                            String::from_utf8_lossy(&o.stdout).contains(&format!("^{pkg} "))
+                        })
+                }
+                _ => false,
+            };
+
+            if already_installed {
+                progress.log(&format!(
+                    "OpenBLAS development libraries ({pkg}) already installed — skipping."
                 ));
+            } else {
+                progress.log(&format!(
+                    "Installing OpenBLAS development libraries ({pkg})..."
+                ));
+                let args = if mgr == "apt-get" {
+                    vec!["-y", "install", pkg]
+                } else {
+                    vec!["install", "-y", pkg]
+                };
+                let status = std::process::Command::new(format!("{sudo}{mgr}"))
+                    .args(&args)
+                    .status()
+                    .with_context(|| format!("Failed to run {mgr} install"))?;
+
+                if !status.success() {
+                    return Err(anyhow!(
+                        "{mgr} install of {pkg} failed. \
+                         Please install OpenBLAS development libraries manually and retry."
+                    ));
+                }
             }
         }
         None => {
