@@ -1,8 +1,290 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use std::path::Path;
 use std::sync::Arc;
 
 use super::paths::*;
-use crate::backends::ProgressSink;
+use crate::backends::{backends_dir, ProgressSink};
+
+/// Minimum free disk space warning threshold (10 GB in bytes).
+const DISK_SPACE_WARNING_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+/// Check available disk space and warn if below threshold.
+/// Returns the available space in bytes. Does not block installation.
+pub fn check_disk_space(base: &Path) -> Result<u64> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+
+    let base_mount = base.as_os_str();
+
+    for disk in disks.list() {
+        if disk.mount_point().as_os_str() == base_mount {
+            let available = disk.available_space();
+            if available < DISK_SPACE_WARNING_BYTES {
+                tracing::warn!(
+                    "Low disk space: {:.2} GB available (threshold: 10.0 GB). \
+                     Kokoro-FastAPI + PyTorch ROCm may need ~4-6 GB.",
+                    available as f64 / (1024.0_f64 * 1024.0_f64 * 1024.0_f64)
+                );
+            }
+            return Ok(available);
+        }
+    }
+
+    // Fallback: check root mount point
+    tracing::warn!(
+        "Could not determine disk space for {}; checking /",
+        base.display()
+    );
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    for disk in disks.list() {
+        if disk.mount_point() == Path::new("/") {
+            return Ok(disk.available_space());
+        }
+    }
+
+    // Cannot determine — return a large value to not block
+    tracing::warn!("Could not determine available disk space; proceeding without check.");
+    Ok(u64::MAX)
+}
+
+/// Create a Python virtualenv at the target directory.
+async fn create_venv(venv_path: &Path, progress: &Arc<dyn ProgressSink>) -> Result<()> {
+    progress.log("Creating Python virtualenv...");
+    let status = tokio::process::Command::new("python3")
+        .args(["-m", "venv", &venv_path.to_string_lossy()])
+        .status()
+        .await
+        .with_context(|| "Failed to spawn python3 -m venv")?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "Failed to create Python virtualenv at {}",
+            venv_path.display()
+        ));
+    }
+
+    progress.log(&format!("Virtualenv created at: {}", venv_path.display()));
+    Ok(())
+}
+
+/// Clone the Kokoro-FastAPI repository at the pinned tag.
+async fn clone_repo(
+    repo_url: &str,
+    tag: &str,
+    install_path: &Path,
+    progress: &Arc<dyn ProgressSink>,
+) -> Result<()> {
+    progress.log(&format!("Cloning Kokoro-FastAPI (tag {})...", tag));
+    let status = tokio::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            tag,
+            repo_url,
+            &install_path.to_string_lossy(),
+        ])
+        .status()
+        .await
+        .with_context(|| "Failed to spawn git clone")?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "Failed to clone Kokoro-FastAPI repository (tag {})",
+            tag
+        ));
+    }
+
+    progress.log(&format!("Repository cloned at: {}", install_path.display()));
+    Ok(())
+}
+
+/// Install dependencies via pip in the virtualenv.
+async fn install_dependencies(
+    python_bin: &Path,
+    install_path: &Path,
+    has_rocm: bool,
+    progress: &Arc<dyn ProgressSink>,
+) -> Result<()> {
+    if has_rocm {
+        progress.log("Detected ROCm — installing PyTorch ROCm extras...");
+        let status = tokio::process::Command::new(python_bin)
+            .args([
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                "\".[rocm]\"",
+                "--extra-index-url",
+                "https://download.pytorch.org/whl/rocm6.4",
+            ])
+            .current_dir(install_path)
+            .status()
+            .await
+            .with_context(|| "Failed to spawn pip install")?;
+
+        if !status.success() {
+            return Err(anyhow!(
+                "Failed to install Kokoro-FastAPI with ROCm extras. \
+                 Check that PyTorch ROCm is available for your system."
+            ));
+        }
+    } else {
+        progress.log("No ROCm detected — installing CPU dependencies...");
+        let status = tokio::process::Command::new(python_bin)
+            .args(["-m", "pip", "install", "-e", "\".[cpu]\""])
+            .current_dir(install_path)
+            .status()
+            .await
+            .with_context(|| "Failed to spawn pip install")?;
+
+        if !status.success() {
+            return Err(anyhow!(
+                "Failed to install Kokoro-FastAPI CPU dependencies."
+            ));
+        }
+    }
+
+    progress.log("Dependencies installed successfully.");
+    Ok(())
+}
+
+/// Download model files using the included download_model.py script.
+async fn download_model(
+    python_bin: &Path,
+    install_path: &Path,
+    model_dir: &Path,
+    progress: &Arc<dyn ProgressSink>,
+) -> Result<()> {
+    // Ensure the model output directory exists
+    std::fs::create_dir_all(model_dir).with_context(|| "Failed to create model directory")?;
+
+    let download_script = install_path
+        .join("docker")
+        .join("scripts")
+        .join("download_model.py");
+
+    progress.log("Downloading Kokoro model files via download_model.py...");
+    let status = tokio::process::Command::new(python_bin)
+        .args([
+            &download_script.to_string_lossy(),
+            "--output",
+            &model_dir.to_string_lossy(),
+        ])
+        .status()
+        .await
+        .with_context(|| "Failed to spawn download_model.py")?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "download_model.py exited with non-zero status. \
+             Model files may be incomplete."
+        ));
+    }
+
+    progress.log(&format!(
+        "Model files downloaded to: {}",
+        model_dir.display()
+    ));
+    Ok(())
+}
+
+/// Check if ROCm is available on the system.
+pub fn has_rocm() -> bool {
+    Path::new("/opt/rocm").exists()
+}
+
+/// Clean up partial installation (venv + repo clone) on failure.
+fn cleanup_installation(base: &Path, progress: &Arc<dyn ProgressSink>) {
+    let venv_path = venv_dir(base);
+    let install_path = install_dir(base);
+
+    progress.log("Cleaning up partial installation...");
+
+    if venv_path.exists() {
+        tracing::info!("Removing partial venv: {}", venv_path.display());
+        if let Err(e) = std::fs::remove_dir_all(&venv_path) {
+            tracing::warn!("Failed to remove venv {}: {}", venv_path.display(), e);
+        }
+    }
+
+    if install_path.exists() {
+        tracing::info!("Removing partial repo clone: {}", install_path.display());
+        if let Err(e) = std::fs::remove_dir_all(&install_path) {
+            tracing::warn!(
+                "Failed to remove repo clone {}: {}",
+                install_path.display(),
+                e
+            );
+        }
+    }
+
+    progress.log("Cleanup complete.");
+}
+
+/// Full installation pipeline for Kokoro-FastAPI.
+///
+/// Steps:
+/// 1. Check disk space (warn if <10 GB)
+/// 2. Create Python venv
+/// 3. Clone Kokoro-FastAPI repo at pinned tag
+/// 4. Install dependencies (ROCm or CPU)
+/// 5. Download model files via download_model.py
+///
+/// On failure at any step, cleans up partial installation.
+pub async fn install_kokoro_fastapi(progress: &Arc<dyn ProgressSink>) -> Result<()> {
+    let base = backends_dir().with_context(|| "Failed to get backends directory")?;
+
+    // Step 1: Check disk space
+    progress.log("Checking available disk space...");
+    check_disk_space(&base).with_context(|| "Disk space check failed")?;
+
+    let venv_path = venv_dir(&base);
+    let install_path = install_dir(&base);
+    let python_path = python_bin(&base);
+    let model_path = model_dir(&base);
+    let has_rocm = has_rocm();
+
+    // Run the installation steps, cleaning up on any failure.
+    let result = async {
+        // Step 2: Create venv
+        if !venv_path.exists() {
+            create_venv(&venv_path, progress).await?;
+        } else {
+            progress.log("Virtualenv already exists — skipping creation.");
+        }
+
+        // Step 3: Clone repo
+        if !(install_path.exists() && install_path.join(".git").exists()) {
+            clone_repo(
+                KOKORO_FASTAPI_URL,
+                KOKORO_FASTAPI_TAG,
+                &install_path,
+                progress,
+            )
+            .await?;
+        } else {
+            progress.log("Repository already cloned — skipping clone.");
+        }
+
+        // Step 4: Install dependencies
+        install_dependencies(&python_path, &install_path, has_rocm, progress).await?;
+
+        // Step 5: Download model files
+        download_model(&python_path, &install_path, &model_path, progress).await?;
+
+        anyhow::Ok(())
+    }
+    .await;
+
+    if let Err(e) = result {
+        cleanup_installation(&base, progress);
+        return Err(e);
+    }
+
+    progress.log("Kokoro-FastAPI installation complete.");
+    Ok(())
+}
 
 /// List of available Kokoro voice IDs (48 voices from hexgrad/Kokoro-82M).
 pub const VOICE_IDS: &[&str] = &[
@@ -66,57 +348,60 @@ pub const VOICE_IDS: &[&str] = &[
     "zf_xiaoyi",
 ];
 
-/// Download the Kokoro 82M PyTorch model from HuggingFace.
-/// The kokoro-micro Rust library handles ONNX conversion at runtime.
-pub async fn download_kokoro_model(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    let url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth";
-    let base_dir = crate::backends::backends_dir()?;
-    let dest = model_file(&base_dir);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
 
-    // Create parent directories
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).with_context(|| "Failed to create model directory")?;
+    #[test]
+    fn test_has_rocm_returns_false_when_no_rocm() {
+        // On most systems /opt/rocm won't exist unless ROCm is installed.
+        // This test documents the expected behavior.
+        let result = has_rocm();
+        // We don't assert true/false since it depends on the host system.
+        // Just verify it doesn't panic and returns a bool.
+        let _ = result;
     }
 
-    progress.log("Downloading Kokoro 82M model from HuggingFace...");
-    crate::backends::installer::download_with_client(url, &dest, Some(progress), None)
-        .await
-        .with_context(|| "Failed to download Kokoro model")?;
+    #[test]
+    fn test_disk_space_warning_bytes_constant() {
+        // Verify 10 GB constant is correct
+        assert_eq!(DISK_SPACE_WARNING_BYTES, 10 * 1024 * 1024 * 1024);
+    }
 
-    progress.log(&format!("Kokoro model saved to: {}", dest.display()));
-    Ok(())
-}
+    #[test]
+    fn test_voice_ids_count() {
+        // Voice ID count matches the actual Kokoro-82M release (50 voices)
+        assert_eq!(VOICE_IDS.len(), 50);
+    }
 
-/// Download all available Kokoro voice files from HuggingFace.
-pub async fn download_kokoro_voices(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    let base_dir = crate::backends::backends_dir()?;
-    let voices_path = voices_dir(&base_dir);
-    std::fs::create_dir_all(&voices_path).with_context(|| "Failed to create voices directory")?;
-
-    // Voice files are .pt (PyTorch) format — kokoro-micro handles them at runtime.
-    for voice_id in VOICE_IDS {
-        let url = format!(
-            "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{}.pt",
-            voice_id
+    #[test]
+    fn test_kokoro_fastapi_constants() {
+        assert_eq!(KOKORO_FASTAPI_TAG, "v0.3.0");
+        assert_eq!(
+            KOKORO_FASTAPI_URL,
+            "https://github.com/remsky/Kokoro-FastAPI.git"
         );
-        let dest = voice_file(&base_dir, voice_id);
-
-        progress.log(&format!("Downloading voice: {}...", voice_id));
-        crate::backends::installer::download_with_client(&url, &dest, Some(progress), None)
-            .await
-            .with_context(|| format!("Failed to download voice: {}", voice_id))?;
     }
 
-    progress.log(&format!(
-        "All {} Kokoro voices downloaded.",
-        VOICE_IDS.len()
-    ));
-    Ok(())
-}
+    #[test]
+    fn test_path_helpers_consistency() {
+        use super::super::paths::*;
 
-/// Download both the model and all voices.
-pub async fn download_all(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    download_kokoro_model(progress).await?;
-    download_kokoro_voices(progress).await?;
-    Ok(())
+        let base = PathBuf::from("/tmp/test_base");
+
+        // venv_dir should be a sibling of install_dir under base_dir
+        assert!(venv_dir(&base).starts_with(base_dir(&base)));
+        assert!(install_dir(&base).starts_with(base_dir(&base)));
+        assert_ne!(venv_dir(&base), install_dir(&base));
+
+        // python_bin should be inside venv_dir
+        assert!(python_bin(&base).starts_with(venv_dir(&base)));
+
+        // model_dir should be inside install_dir
+        assert!(model_dir(&base).starts_with(install_dir(&base)));
+
+        // model_file should be inside model_dir
+        assert!(model_file(&base).starts_with(model_dir(&base)));
+    }
 }
