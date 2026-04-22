@@ -99,6 +99,68 @@ async fn clone_repo(
     Ok(())
 }
 
+/// Check and install OpenBLAS development libraries (required by scipy).
+fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
+    // Check if OpenBLAS is already available
+    let check = std::process::Command::new("pkg-config")
+        .args(["--exists", "openblas"])
+        .output();
+
+    if check.is_ok_and(|o| o.status.success()) {
+        progress.log("OpenBLAS already available — skipping install.");
+        return Ok(());
+    }
+
+    // Try to detect package manager and install OpenBLAS
+    let pkg_mgr = if Path::new("/usr/bin/dnf").exists() {
+        Some(("dnf", "openblas-devel"))
+    } else if Path::new("/usr/bin/apt-get").exists() {
+        Some(("apt-get", "libopenblas-dev"))
+    } else if Path::new("/usr/bin/yum").exists() {
+        Some(("yum", "openblas-devel"))
+    } else {
+        None
+    };
+
+    match pkg_mgr {
+        Some((mgr, pkg)) => {
+            progress.log(&format!(
+                "Installing OpenBLAS development libraries ({pkg})..."
+            ));
+            let sudo = if std::env::var("SUDO_USER").is_ok() {
+                "sudo "
+            } else {
+                ""
+            };
+            let status = tokio::process::Command::new(format!("{sudo}{mgr}"))
+                .args(if mgr == "apt-get" {
+                    &["-y", "install", pkg]
+                } else {
+                    &["install", "-y", pkg]
+                })
+                .status()
+                .await
+                .with_context(|| format!("Failed to run {mgr} install"))?;
+
+            if !status.success() {
+                return Err(anyhow!(
+                    "{mgr} install of {pkg} failed. \
+                     Please install OpenBLAS development libraries manually and retry."
+                ));
+            }
+        }
+        None => {
+            return Err(anyhow!(
+                "OpenBLAS development libraries are required to build scipy. \
+                 Please install them manually (e.g., libopenblas-dev on Debian/Ubuntu, \
+                 openblas-devel on Fedora/RHEL) and retry."
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Install dependencies via pip in the virtualenv.
 async fn install_dependencies(
     python_bin: &Path,
@@ -106,6 +168,9 @@ async fn install_dependencies(
     has_rocm: bool,
     progress: &Arc<dyn ProgressSink>,
 ) -> Result<()> {
+    // Ensure OpenBLAS is available (required by scipy)
+    ensure_openblas(progress)?;
+
     if has_rocm {
         // Kokoro-FastAPI v0.2.4 doesn't have a [rocm] extra.
         // Install PyTorch ROCm first, then install the package without
