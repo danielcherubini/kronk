@@ -9,9 +9,8 @@ pub(crate) fn parse_backend_type(s: &str) -> Result<BackendType> {
         "llama_cpp" | "llama.cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
         "ik_llama" | "ik-llama" | "ikllama" | "ik_llama.cpp" => Ok(BackendType::IkLlama),
         "tts_kokoro" | "ttskokoro" | "kokoro" => Ok(BackendType::TtsKokoro),
-        "tts_piper" | "tts-piper" | "piper" => Ok(BackendType::TtsPiper),
         _ => Err(anyhow!(
-            "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, tts_kokoro, tts_piper",
+            "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, tts_kokoro",
             s
         )),
     }
@@ -148,7 +147,6 @@ mod tests {
         assert!(err.contains("llama_cpp"));
         assert!(err.contains("ik_llama"));
         assert!(err.contains("tts_kokoro"));
-        assert!(err.contains("tts_piper"));
     }
 
     #[test]
@@ -178,30 +176,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_backend_type_tts_piper() {
-        let result = parse_backend_type("tts_piper").unwrap();
-        assert!(matches!(result, BackendType::TtsPiper));
-    }
-
-    #[test]
-    fn test_parse_backend_type_tts_piper_dash() {
-        let result = parse_backend_type("tts-piper").unwrap();
-        assert!(matches!(result, BackendType::TtsPiper));
-    }
-
-    #[test]
-    fn test_parse_backend_type_tts_piper_short() {
-        let result = parse_backend_type("piper").unwrap();
-        assert!(matches!(result, BackendType::TtsPiper));
-    }
-
-    #[test]
     fn test_parse_backend_type_tts_case_insensitive() {
         let kokoro_result = parse_backend_type("TTS_KOKORO").unwrap();
         assert!(matches!(kokoro_result, BackendType::TtsKokoro));
-
-        let piper_result = parse_backend_type("TTS_PIPER").unwrap();
-        assert!(matches!(piper_result, BackendType::TtsPiper));
     }
 
     #[test]
@@ -211,7 +188,6 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Unknown backend type"));
         assert!(err.contains("tts_kokoro"));
-        assert!(err.contains("tts_piper"));
     }
 
     // ── current_unix_timestamp tests ──────────────────────────────────────

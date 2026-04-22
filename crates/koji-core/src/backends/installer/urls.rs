@@ -72,7 +72,7 @@ pub fn get_prebuilt_url(
                 "ik_llama does not provide pre-built release binaries. Use --build to build from source."
             ))
         }
-        BackendType::TtsKokoro | BackendType::TtsPiper => {
+        BackendType::TtsKokoro => {
             Err(anyhow!(
                 "TTS backends do not provide pre-built release binaries. Use --build to build from source."
             ))

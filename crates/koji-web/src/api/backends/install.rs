@@ -85,7 +85,6 @@ pub async fn install_backend(
         "llama_cpp" => koji_core::backends::BackendType::LlamaCpp,
         "ik_llama" => koji_core::backends::BackendType::IkLlama,
         "tts_kokoro" => koji_core::backends::BackendType::TtsKokoro,
-        "tts_piper" => koji_core::backends::BackendType::TtsPiper,
         "custom" => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -104,10 +103,7 @@ pub async fn install_backend(
 
     // TTS backends use a dedicated installer (downloads model files from HuggingFace).
     // They skip the normal prebuilt/source install flow entirely.
-    let is_tts = matches!(
-        backend_type,
-        koji_core::backends::BackendType::TtsKokoro | koji_core::backends::BackendType::TtsPiper
-    );
+    let is_tts = matches!(backend_type, koji_core::backends::BackendType::TtsKokoro);
 
     if is_tts {
         // For TTS backends: submit job first, then spawn the install task.
@@ -137,7 +133,6 @@ pub async fn install_backend(
 
         let backend_name = match &backend_type {
             koji_core::backends::BackendType::TtsKokoro => "tts_kokoro",
-            koji_core::backends::BackendType::TtsPiper => "tts_piper",
             _ => unreachable!(),
         };
 
@@ -189,9 +184,6 @@ pub async fn install_backend(
                     match bt {
                         koji_core::backends::BackendType::TtsKokoro => {
                             koji_core::backends::install_tts_kokoro(&mut registry, progress).await
-                        }
-                        koji_core::backends::BackendType::TtsPiper => {
-                            koji_core::backends::install_tts_piper(&mut registry, progress).await
                         }
                         _ => unreachable!(),
                     }

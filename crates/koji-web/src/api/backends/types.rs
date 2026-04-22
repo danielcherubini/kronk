@@ -185,7 +185,6 @@ pub(super) fn job_to_active_dto(j: &crate::jobs::Job) -> ActiveJobDto {
             Some(koji_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
             Some(koji_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
             Some(koji_core::backends::BackendType::TtsKokoro) => "tts_kokoro".to_string(),
-            Some(koji_core::backends::BackendType::TtsPiper) => "tts_piper".to_string(),
             Some(koji_core::backends::BackendType::Custom) => "custom".to_string(),
             None => String::new(),
         },
@@ -322,11 +321,6 @@ pub(super) const KNOWN_BACKENDS: &[(&str, &str, Option<&str>)] = &[
         "tts_kokoro",
         "Kokoro TTS",
         Some("https://huggingface.co/hexgrad/Kokoro-82M"),
-    ),
-    (
-        "tts_piper",
-        "Piper TTS",
-        Some("https://huggingface.co/rhasspy/piper-voices"),
     ),
 ];
 

@@ -9,7 +9,7 @@ use koji_core::db::queries::*;
 pub enum TtsConfigCmd {
     /// Set TTS configuration for an engine
     Set {
-        /// TTS engine name (kokoro or piper)
+        /// TTS engine name (kokoro)
         #[arg(long)]
         engine: String,
 

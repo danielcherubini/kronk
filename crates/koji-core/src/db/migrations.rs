@@ -428,7 +428,7 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
             r#"
                 CREATE TABLE tts_configs (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    engine       TEXT NOT NULL UNIQUE COLLATE NOCASE,  -- 'kokoro' or 'piper'
+                    engine       TEXT NOT NULL UNIQUE COLLATE NOCASE,  -- TTS engine name (e.g., 'kokoro')
                     default_voice TEXT,                                -- e.g., 'af_sky'
                     speed        REAL   NOT NULL DEFAULT 1.0,          -- 0.5 to 2.0
                     format       TEXT   NOT NULL DEFAULT 'mp3',        -- mp3, wav, ogg

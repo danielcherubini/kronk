@@ -7,8 +7,8 @@ use anyhow::{anyhow, Result};
 use clap::{Args, Subcommand};
 use koji_core::backends::{
     backends_dir, check_latest_version, check_updates, install_backend, install_tts_kokoro,
-    install_tts_piper, safe_remove_installation, update_backend, BackendInfo, BackendRegistry,
-    BackendSource, BackendType, InstallOptions, NullSink,
+    safe_remove_installation, update_backend, BackendInfo, BackendRegistry, BackendSource,
+    BackendType, InstallOptions, NullSink,
 };
 use koji_core::config::Config;
 use koji_core::db::queries::get_backend_by_version;
@@ -26,7 +26,7 @@ pub struct BackendArgs {
 pub enum BackendSubcommand {
     /// Install a new backend (LLM or TTS)
     Install {
-        /// Backend type: llama_cpp, ik_llama, tts_kokoro, or tts_piper
+        /// Backend type: llama_cpp, ik_llama, or tts_kokoro
         #[arg(value_name = "TYPE")]
         backend_type: String,
 
@@ -186,15 +186,13 @@ async fn cmd_install(
     // Fetch latest version if not specified (skip for TTS backends — they use pinned versions)
     let version = match version {
         Some(v) => v,
-        None if matches!(backend_type, BackendType::TtsKokoro | BackendType::TtsPiper) => {
-            String::from("latest")
-        }
+        None if matches!(backend_type, BackendType::TtsKokoro) => String::from("latest"),
         None => {
             println!("\nFetching latest version...");
             check_latest_version(&backend_type).await?
         }
     };
-    if !matches!(backend_type, BackendType::TtsKokoro | BackendType::TtsPiper) {
+    if !matches!(backend_type, BackendType::TtsKokoro) {
         println!("Version: {}", version);
     }
 
@@ -280,7 +278,7 @@ async fn cmd_install(
             true
         }
         _ if force_build => true,
-        BackendType::TtsKokoro | BackendType::TtsPiper => {
+        BackendType::TtsKokoro => {
             // TTS backends are handled separately above; this is unreachable.
             false
         }
@@ -303,27 +301,12 @@ async fn cmd_install(
     let target_dir = backends_dir()?.join(&backend_name);
 
     // Handle TTS backends with dedicated installers (no GPU selection needed)
-    if matches!(backend_type, BackendType::TtsKokoro | BackendType::TtsPiper) {
+    if matches!(backend_type, BackendType::TtsKokoro) {
         let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-        match backend_type {
-            BackendType::TtsKokoro => {
-                install_tts_kokoro(&mut registry, Box::new(NullSink)).await?;
-            }
-            BackendType::TtsPiper => {
-                install_tts_piper(&mut registry, Box::new(NullSink)).await?;
-            }
-            _ => unreachable!(),
-        }
+        install_tts_kokoro(&mut registry, Box::new(NullSink)).await?;
 
-        println!(
-            "\n{} TTS backend installed successfully!",
-            match backend_type {
-                BackendType::TtsKokoro => "Kokoro",
-                BackendType::TtsPiper => "Piper",
-                _ => unreachable!(),
-            }
-        );
+        println!("\nKokoro TTS backend installed successfully!");
         println!("  Name:    {}", backend_name);
         return Ok(());
     }
@@ -335,7 +318,7 @@ async fn cmd_install(
             anyhow::bail!("Custom backends cannot be installed via this command");
         }
         // TTS variants handled earlier with dedicated installers
-        BackendType::TtsKokoro | BackendType::TtsPiper => unreachable!(),
+        BackendType::TtsKokoro => unreachable!(),
     };
 
     let source = if use_source {
@@ -465,7 +448,7 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
                 BackendType::LlamaCpp => BackendSource::Prebuilt {
                     version: update_check.latest_version.clone(),
                 },
-                BackendType::TtsKokoro | BackendType::TtsPiper => {
+                BackendType::TtsKokoro => {
                     return Err(anyhow!("Cannot update TTS backends via this command"))
                 }
                 BackendType::Custom => return Err(anyhow!("Cannot update custom backends")),

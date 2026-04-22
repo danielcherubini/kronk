@@ -1,13 +1,11 @@
 pub mod installer;
 pub mod registry;
 pub mod tts_kokoro;
-pub mod tts_piper;
 pub mod updater;
 
 pub use installer::{install_backend, install_backend_with_progress, InstallOptions};
 pub use registry::{BackendInfo, BackendRegistry, BackendSource, BackendType};
 pub use tts_kokoro::install_tts_kokoro;
-pub use tts_piper::install_tts_piper;
 pub use updater::{
     check_latest_version, check_updates, update_backend, update_backend_with_progress, UpdateCheck,
 };

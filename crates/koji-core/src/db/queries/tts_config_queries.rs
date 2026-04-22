@@ -146,8 +146,8 @@ mod tests {
         let conn = setup_test_db();
         let record = TtsConfigRecord {
             id: 0,
-            engine: "piper".to_string(),
-            default_voice: Some("en_US-lessac-medium".to_string()),
+            engine: "kokoro".to_string(),
+            default_voice: Some("af_nicole".to_string()),
             speed: 1.5,
             format: "wav".to_string(),
             enabled: true,
@@ -156,8 +156,8 @@ mod tests {
         };
         upsert_tts_config(&conn, &record).unwrap();
 
-        let found = get_tts_config(&conn, "piper").unwrap().unwrap();
-        assert_eq!(found.engine, "piper");
+        let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
+        assert_eq!(found.engine, "kokoro");
         assert_eq!(found.speed, 1.5);
         assert_eq!(found.format, "wav");
     }
@@ -233,45 +233,6 @@ mod tests {
         let found = get_tts_config(&conn, "kokoro").unwrap().unwrap();
         assert_eq!(found.default_voice, Some("af_bella".to_string()));
         assert_eq!(found.speed, 1.5);
-    }
-
-    /// Test that get_all_tts_configs returns all records.
-    #[test]
-    fn test_get_all_returns_multiple_records() {
-        let conn = setup_test_db();
-
-        upsert_tts_config(
-            &conn,
-            &TtsConfigRecord {
-                id: 0,
-                engine: "kokoro".into(),
-                default_voice: None,
-                speed: 1.0,
-                format: "mp3".into(),
-                enabled: true,
-                created_at: String::new(),
-                updated_at: String::new(),
-            },
-        )
-        .unwrap();
-
-        upsert_tts_config(
-            &conn,
-            &TtsConfigRecord {
-                id: 0,
-                engine: "piper".into(),
-                default_voice: None,
-                speed: 1.2,
-                format: "wav".into(),
-                enabled: true,
-                created_at: String::new(),
-                updated_at: String::new(),
-            },
-        )
-        .unwrap();
-
-        let configs = get_all_tts_configs(&conn).unwrap();
-        assert_eq!(configs.len(), 2);
     }
 
     /// Test that delete_tts_config removes a record.

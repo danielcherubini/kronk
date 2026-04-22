@@ -21,7 +21,7 @@ pub struct TtsArgs {
 pub enum TtsSubcommand {
     /// Synthesize speech from text
     Say {
-        /// TTS engine to use (kokoro or piper)
+        /// TTS engine to use (kokoro)
         #[arg(long, default_value = "kokoro")]
         engine: String,
 
@@ -47,7 +47,7 @@ pub enum TtsSubcommand {
 
     /// List available voices for an engine
     Voices {
-        /// TTS engine to query (kokoro or piper)
+        /// TTS engine to query (kokoro)
         #[arg(long)]
         engine: String,
     },

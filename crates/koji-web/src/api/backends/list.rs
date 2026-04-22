@@ -143,10 +143,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
             for active in &active_backends {
                 let bt = active.backend_type.to_string();
-                if matches!(
-                    bt.as_str(),
-                    "llama_cpp" | "ik_llama" | "tts_kokoro" | "tts_piper"
-                ) {
+                if matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
                     continue;
                 }
 
@@ -375,10 +372,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             let active_backends = registry.list().unwrap_or_default();
             for active in &active_backends {
                 let bt = active.backend_type.to_string();
-                if matches!(
-                    bt.as_str(),
-                    "llama_cpp" | "ik_llama" | "tts_kokoro" | "tts_piper"
-                ) {
+                if matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
                     continue;
                 }
 
