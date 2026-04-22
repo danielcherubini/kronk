@@ -362,11 +362,12 @@ async fn download_voices(
         .args([
             "-c",
             &format!(
-                "from huggingface_hub import hf_hub_download, list_repo_files; \
+                "import os; \
+                 from huggingface_hub import hf_hub_download, list_repo_files; \
                  repo_id = 'hexgrad/Kokoro-82M'; \
                  voice_files = [f for f in list_repo_files(repo_id) if f.startswith('voices/') and f.endswith('.pt')]; \
                  out_dir = '{}'; \
-                 import os; \
+                 os.makedirs(out_dir, exist_ok=True); \
                  for vf in voice_files: \
                      hf_hub_download(repo_id, vf, local_dir=out_dir); \
                      print(f'Downloaded {{vf}}'); \
