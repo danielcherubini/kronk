@@ -101,7 +101,7 @@ async fn clone_repo(
 
 /// Check and install OpenBLAS development libraries (required by scipy).
 fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    // Check if OpenBLAS is already available
+    // Check if OpenBLAS is already available via pkg-config
     let check = std::process::Command::new("pkg-config")
         .args(["--exists", "openblas"])
         .output();
@@ -184,6 +184,17 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
         }
     }
 
+    // Create openblas.pc symlink if it doesn't exist.
+    // Many distros ship blas.pc but not openblas.pc, and scipy's meson build
+    // specifically looks for "openblas" via pkg-config.
+    let pc_dir = "/usr/lib64/pkgconfig";
+    let pc_path = Path::new(pc_dir).join("openblas.pc");
+    if !pc_path.exists() {
+        progress.log("Creating openblas.pc symlink for scipy build...");
+        std::fs::symlink("blas.pc", &pc_path)
+            .with_context(|| "Failed to create openblas.pc symlink")?;
+    }
+
     Ok(())
 }
 
@@ -222,6 +233,21 @@ async fn install_dependencies(
                  Check that your ROCm installation is compatible."
             ));
         }
+    }
+
+    // Override scipy version for Python 3.14 compatibility.
+    // Kokoro-FastAPI pins scipy==1.14.1 which has no wheels for Python 3.14.
+    // Install a compatible version first so pip won't try to downgrade it.
+    progress.log("Ensuring compatible scipy version...");
+    let status = tokio::process::Command::new(python_bin)
+        .args(["-m", "pip", "install", "scipy>=1.16,<2.0"])
+        .current_dir(install_path)
+        .status()
+        .await
+        .with_context(|| "Failed to install compatible scipy")?;
+
+    if !status.success() {
+        return Err(anyhow!("Failed to install compatible scipy version."));
     }
 
     // Install the package (with CPU extras if no ROCm, or bare install if ROCm)
