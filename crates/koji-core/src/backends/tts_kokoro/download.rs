@@ -132,14 +132,13 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
             } else {
                 ""
             };
-            let status = tokio::process::Command::new(format!("{sudo}{mgr}"))
+            let status = std::process::Command::new(format!("{sudo}{mgr}"))
                 .args(if mgr == "apt-get" {
                     &["-y", "install", pkg]
                 } else {
                     &["install", "-y", pkg]
                 })
                 .status()
-                .await
                 .with_context(|| format!("Failed to run {mgr} install"))?;
 
             if !status.success() {
