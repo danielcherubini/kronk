@@ -909,15 +909,66 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
         .map(|e| {
             let pp_sizes: Vec<u32> = serde_json::from_str(&e.pp_sizes).unwrap_or_default();
             let tg_sizes: Vec<u32> = serde_json::from_str(&e.tg_sizes).unwrap_or_default();
-            // `results_json` may be either the full BenchReport (new rows) or a
-            // plain summaries array (legacy rows). Extract the summaries array
-            // so the frontend only has one shape to deal with.
+
+            // `results_json` may be:
+            // - full BenchReport with "summaries" key (llama-bench)
+            // - SpecBenchResult with "entries" key (spec decode)
+            // - plain summaries array (legacy rows)
             let raw: serde_json::Value = serde_json::from_str(&e.results).unwrap_or_else(|err| {
                 tracing::warn!("Failed to parse results for benchmark id={}: {}", e.id, err);
                 serde_json::Value::Null
             });
             let summaries = match raw.get("summaries") {
                 Some(v) if v.is_array() => v.clone(),
+                // SpecBenchResult: convert entries to llama-bench summary format
+                // so the frontend can render them. Maps:
+                //   tg_ts_mean → tg_mean, tg_ts_stddev → tg_stddev,
+                //   spec_type + draft_max → extra fields for display
+                Some(entries) if entries.is_array() && raw.get("baseline_tg_ts").is_some() => {
+                    let _baseline = raw["baseline_tg_ts"].as_f64().unwrap_or(0.0);
+                    let mut summaries = serde_json::Value::Array(vec![]);
+                    for entry in entries.as_array().unwrap() {
+                        let tg_mean = entry["tg_ts_mean"].as_f64().unwrap_or(0.0);
+                        let stddev = entry["tg_ts_stddev"].as_f64().unwrap_or(0.0);
+                        let status = entry["status"].as_str().unwrap_or("failed");
+                        let delta_pct = entry["delta_pct"].as_f64().unwrap_or(0.0);
+                        let spec_type = entry["spec_type"].as_str().unwrap_or("");
+                        let draft_max = entry["draft_max"].as_u64().unwrap_or(0);
+                        let ngram_n = entry["ngram_n"].as_u64();
+                        let ngram_m = entry["ngram_m"].as_u64();
+
+                        let mut summary = serde_json::Map::new();
+                        // Frontend expects these fields for rendering.
+                        summary.insert("prompt_tokens".to_string(), serde_json::json!(0u64));
+                        summary.insert(
+                            "gen_tokens".to_string(),
+                            serde_json::json!(tg_sizes.first().copied().unwrap_or(0)),
+                        );
+                        summary.insert("tg_mean".to_string(), serde_json::json!(tg_mean));
+                        summary.insert("tg_stddev".to_string(), serde_json::json!(stddev));
+                        // Keep spec-specific fields for display.
+                        summary.insert("spec_type".to_string(), serde_json::json!(spec_type));
+                        summary.insert("draft_max".to_string(), serde_json::json!(draft_max));
+                        if let Some(n) = ngram_n {
+                            summary.insert("ngram_n".to_string(), serde_json::json!(n));
+                        }
+                        if let Some(m) = ngram_m {
+                            summary.insert("ngram_m".to_string(), serde_json::json!(m));
+                        }
+                        if delta_pct != 0.0 {
+                            summary.insert(
+                                "delta_pct".to_string(),
+                                serde_json::json!(format!("{:+.1}%", delta_pct)),
+                            );
+                        }
+                        summary.insert("status".to_string(), serde_json::json!(status));
+                        summaries
+                            .as_array_mut()
+                            .unwrap()
+                            .push(serde_json::Value::Object(summary));
+                    }
+                    summaries
+                }
                 _ if raw.is_array() => raw,
                 _ => serde_json::Value::Array(vec![]),
             };
