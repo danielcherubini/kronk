@@ -49,6 +49,11 @@ pub(super) fn build_args(
     args.push("-fa".to_string());
     args.push(if config.flash_attn { "1" } else { "0" }.to_string());
 
+    // Suppress conversation mode and prompt echoing
+    args.push("-no-cnv".to_string());
+    args.push("-sp".to_string());
+    args.push("0".to_string());
+
     // Spec-decoding flags — only for the knobs each type uses
     match spec_type {
         SpecType::NgramSimple => {
@@ -117,6 +122,11 @@ pub(super) fn build_baseline_args(config: &SpecBenchConfig) -> Vec<String> {
     // Flash attention
     args.push("-fa".to_string());
     args.push(if config.flash_attn { "1" } else { "0" }.to_string());
+
+    // Suppress conversation mode and prompt echoing
+    args.push("-no-cnv".to_string());
+    args.push("-sp".to_string());
+    args.push("0".to_string());
 
     args
 }
