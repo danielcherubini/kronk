@@ -466,7 +466,7 @@ pub fn SpecBench() -> impl IntoView {
                     }}
                 </select>
                 <small class="bench-hint">
-                    "Select a specific backend's llama-cli, or leave empty to use the model's backend."
+                    "Select a specific backend's llama-server, or leave empty to use the model's backend."
                 </small>
             </section>
 

@@ -543,7 +543,7 @@ async fn run_spec_benchmark_inner(
         jobs: jobs_clone.clone(),
     };
 
-    // Resolve backend path for llama-cli discovery
+    // Resolve backend path for llama-server discovery
     let target_backend = req
         .backend_name
         .as_deref()
@@ -553,13 +553,13 @@ async fn run_spec_benchmark_inner(
         config.resolve_backend_path(target_backend, &conn)?
     };
 
-    // Discover llama-cli binary
+    // Discover llama-server binary
     // The resolved path may be a file (llama-server) rather than the backend directory.
-    // Use its parent as the search base for llama-cli.
+    // Use its parent as the search base for llama-server.
     let backend_dir = backend_path.parent().unwrap_or(&backend_path);
-    tracing::info!(job_id = %job.id, backend_dir = %backend_dir.display(), "Resolving llama-cli for benchmark");
-    let cli_binary = llama_cli_spec::find_llama_cli(backend_dir).context(format!(
-        "llama-cli not found for backend '{}'. Install llama.cpp from source or set LLAMA_CLI_PATH",
+    tracing::info!(job_id = %job.id, backend_dir = %backend_dir.display(), "Resolving llama-server for benchmark");
+    let server_binary = llama_cli_spec::find_llama_server(backend_dir).context(format!(
+        "llama-server not found for backend '{}'. Install llama.cpp from source or set LLAMA_SERVER_PATH",
         target_backend
     ))?;
     tracing::info!(
@@ -574,10 +574,10 @@ async fn run_spec_benchmark_inner(
         runs = runs,
         "Starting speculative decoding benchmark",
     );
-    tracing::info!(job_id = %job.id, llama_cli = %cli_binary.display(), "Using llama-cli binary");
+    tracing::info!(job_id = %job.id, llama_server = %server_binary.display(), "Using llama-server binary");
 
     // Run spec benchmark
-    let result = llama_cli_spec::run_spec_bench(&spec_config, Some(cli_binary), &sink).await?;
+    let result = llama_cli_spec::run_spec_bench(&spec_config, Some(server_binary), &sink).await?;
 
     // Store results in database
     let db_dir = tama_core::config::Config::config_dir()?;

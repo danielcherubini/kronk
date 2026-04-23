@@ -15,7 +15,7 @@
 mod discovery;
 mod server;
 
-pub use discovery::find_llama_cli;
+pub use discovery::find_llama_server;
 
 use crate::backends::ProgressSink;
 use anyhow::{bail, Context, Result};
@@ -427,7 +427,7 @@ pub async fn run_spec_bench(
         }
         bp
     } else {
-        discovery::find_llama_cli(backend_dir)
+        discovery::find_llama_server(backend_dir)
             .context("llama-server not found. Set LLAMA_SERVER_PATH or ensure llama-server is in the backend directory.")?
     };
 
