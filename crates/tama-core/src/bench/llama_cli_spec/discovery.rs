@@ -173,7 +173,27 @@ mod tests {
     #[test]
     fn test_find_llama_server_error_lists_paths() {
         let nonexistent = PathBuf::from("/nonexistent/path/backend");
+
+        // Clear LLAMA_SERVER_PATH and temporarily blank PATH so step 5
+        // (PATH lookup) never finds llama-server — otherwise this test is
+        // flaky on machines that have it installed.
+        let prev_env = std::env::var_os("LLAMA_SERVER_PATH");
+        let prev_path = std::env::var_os("PATH");
+        std::env::remove_var("LLAMA_SERVER_PATH");
+        std::env::set_var("PATH", "");
+
         let result = find_llama_server(&nonexistent);
+
+        match prev_env {
+            Some(val) => std::env::set_var("LLAMA_SERVER_PATH", val),
+            None => std::env::remove_var("LLAMA_SERVER_PATH"),
+        }
+        if let Some(ref p) = prev_path {
+            std::env::set_var("PATH", p.clone());
+        } else {
+            std::env::remove_var("PATH");
+        }
+
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Searched:"));
