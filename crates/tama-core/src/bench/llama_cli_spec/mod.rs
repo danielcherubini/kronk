@@ -245,25 +245,45 @@ enum RunOutcome {
 /// Does NOT bail on non-success exit — returns `Failed` with stderr so the
 /// caller can classify the error (OOM vs other failures).
 async fn run_llama_cli_once(binary: &PathBuf, args: &[String]) -> Result<RunOutcome> {
-    let output = Command::new(binary)
+    use std::time::Duration;
+
+
+    // Parse timeout from env, default to 5 minutes
+    let timeout_secs = std::env::var("LLAMA_CLI_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300);
+
+    let child = Command::new(binary)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .kill_on_drop(true)
+        .spawn()
         .context("Failed to execute llama-cli")?;
 
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
-    if !output.status.success() {
-        return Ok(RunOutcome::Failed(format!("{:?}", output.status), stderr));
+
+            if !output.status.success() {
+                return Ok(RunOutcome::Failed(format!("{:?}", output.status), stderr));
+            }
+
+            // Try parsing stderr first, then stdout.
+            let timing = parse::parse_timing(&stderr).or_else(|_| parse::parse_timing(&stdout))?;
+
+
+            Ok(RunOutcome::Success(timing, stderr))
+        }
+        Ok(Err(e)) => anyhow::bail!("wait_with_output failed: {e}"),
+        Err(_) => anyhow::bail!(
+            "llama-cli timed out after {timeout_secs}s. Args: {:?}",
+            args
+        ),
     }
-
-    // Try parsing stderr first, then stdout.
-    let timing = parse::parse_timing(&stderr).or_else(|_| parse::parse_timing(&stdout))?;
-
-    Ok(RunOutcome::Success(timing, stderr))
 }
 
 /// Execute a benchmark run with retry logic and OOM detection.
