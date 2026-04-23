@@ -227,7 +227,9 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
 
         if let Some(blas) = blas_path {
             // Determine the pkg-config directory from the blas.pc location.
-            let pc_dir = Path::new(blas).parent().unwrap_or(Path::new("/usr/lib64/pkgconfig"));
+            let pc_dir = Path::new(blas)
+                .parent()
+                .unwrap_or(Path::new("/usr/lib64/pkgconfig"));
             let dst = pc_dir.join("openblas.pc");
 
             let sudo = if std::env::var("SUDO_USER").is_ok() {
@@ -239,7 +241,9 @@ fn ensure_openblas(progress: &Arc<dyn ProgressSink>) -> Result<()> {
             let status = std::process::Command::new(format!("{sudo}ln"))
                 .args(["-sf", blas, &dst.to_string_lossy()])
                 .status()
-                .with_context(|| format!("Failed to create openblas.pc symlink at {}", dst.display()))?;
+                .with_context(|| {
+                    format!("Failed to create openblas.pc symlink at {}", dst.display())
+                })?;
 
             if !status.success() {
                 return Err(anyhow!(

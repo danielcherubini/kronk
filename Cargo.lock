@@ -3730,6 +3730,7 @@ dependencies = [
  "inquire",
  "libc",
  "lru",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "self_update",
