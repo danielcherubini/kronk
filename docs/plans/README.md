@@ -14,9 +14,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 71
+- **Total Plans**: 72
 - **Completed**: 71 ✅
-- **In Progress**: 0 🚧
+- **In Progress**: 1 🚧
 - **Remaining**: 0 📋
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -140,6 +140,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [OpenCode Tama Plugin](2026-04-12-opencode-tama-plugin.md) | Auto-discover models via /v1/models, provide modalities and config | `f4530d6`, `dbf1e51`, `b1260e4` |
 | [Proxy API Endpoints](2026-04-20-proxy-api-endpoints.md) | Add all missing llama.cpp-compatible API endpoints using wildcard forwarding | #68 `3e1d180` ✅ COMPLETED |
 | [Max Loaded Models with LRU Eviction](2026-04-21-max-loaded-models.md) | Add `max_loaded_models` config field (default=1) that automatically evicts the least-recently-used model when capacity is reached | #69 ✅ COMPLETED |
+| [Speculative Decoding Benchmark](2026-04-23-spec-decode-bench.md) | llama-cli based spec-decoding benchmark with sweep presets (ngram-simple/mod/map-k/k4v), delta vs baseline results table | 🚧 IN PROGRESS |
 
 ---
 
