@@ -11,7 +11,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 
 use self::spec_bench::SpecBench;
-use self::types::{BenchmarkPreset, HistoryEntry};
+use self::types::{BenchmarkPreset, HistoryEntry, BENCHMARK_TYPES, LLAMA_BENCH_PRESETS};
 use self::utils::{format_relative, format_timestamp};
 use crate::components::job_log_panel::JobLogPanel;
 use crate::utils::{extract_and_store_csrf_token, post_request};
@@ -160,6 +160,9 @@ pub fn Benchmarks() -> impl IntoView {
     let selected_backend = RwSignal::new(String::new());
     let available_backends = RwSignal::new(Vec::<(String, String)>::new()); // (name, display_name)
 
+    // Test Type dropdown — selects a preset benchmark type that auto-fills form fields.
+    let selected_bench_type = RwSignal::new("baseline".to_string());
+
     // Test configuration
     let pp_sizes_str = RwSignal::new("512".to_string());
     let tg_sizes_str = RwSignal::new("128".to_string());
@@ -287,6 +290,19 @@ pub fn Benchmarks() -> impl IntoView {
         }
     };
 
+    // Test Type auto-fill handler — when the user picks a benchmark type,
+    // auto-populate the relevant form fields.
+    let apply_bench_type = move |bench_type: &str| {
+        if let Some((_, preset)) = LLAMA_BENCH_PRESETS.iter().find(|(k, _)| *k == bench_type) {
+            pp_sizes_str.set(preset.pp_sizes.to_string());
+            tg_sizes_str.set(preset.tg_sizes.to_string());
+            batch_sizes_str.set(preset.batch_sizes.to_string());
+            ubatch_sizes_str.set(preset.ubatch_sizes.to_string());
+            kv_cache_type.set(preset.kv_cache_type.to_string());
+            depth_str.set(preset.depth.to_string());
+        }
+    };
+
     // Apply preset handler — writes every methodology knob (not just the
     // core sizes) so loading a preset fully reproduces the phase it maps to.
     let apply_preset_handler = move |preset: BenchmarkPreset| {
@@ -359,6 +375,7 @@ pub fn Benchmarks() -> impl IntoView {
             let body = serde_json::json!({
                 "model_id": model_id,
                 "backend_name": backend_name,
+                "benchmark_type": Some(selected_bench_type.get()),
                 "pp_sizes": pp,
                 "tg_sizes": tg,
                 "runs": runs_val,
@@ -471,6 +488,26 @@ pub fn Benchmarks() -> impl IntoView {
                 view! { <SpecBench /> }.into_any()
             } else {
                 view! {
+                    // Test Type dropdown
+                    <section class="card">
+                        <h3>"Test Type"</h3>
+                        <select
+                            class="form-select"
+                            on:change=move |e| {
+                                let val = e.target().unwrap().dyn_into::<web_sys::HtmlSelectElement>().unwrap().value();
+                                selected_bench_type.set(val.clone());
+                                apply_bench_type(&val);
+                            }
+                        >
+                            {BENCHMARK_TYPES.iter().map(|(val, label)| {
+                                let is_selected = move || selected_bench_type.get() == *val;
+                                view! {
+                                    <option value=*val selected=is_selected>{*label}</option>
+                                }.into_any()
+                            }).collect::<Vec<_>>()}
+                        </select>
+                    </section>
+
                     // Model selection — two-step: model, then quant. Models can ship with
         // multiple quants (e.g. Q4_K_M vs Q6_K) and the delta matters for
         // benchmarking, so we make the quant an explicit choice.
@@ -938,6 +975,7 @@ pub fn Benchmarks() -> impl IntoView {
                                     <th style="width:1.5rem"></th>
                                     <th>"When"</th>
                                     <th>"Model"</th>
+                                    <th>"Type"</th>
                                     <th>"Engine"</th>
                                     <th>"Backend"</th>
                                     <th>"PP / TG sizes"</th>
@@ -993,6 +1031,15 @@ pub fn Benchmarks() -> impl IntoView {
                                     let summaries = entry.results.as_array().cloned().unwrap_or_default();
                                     let status_text = entry.status.clone();
                                     let backend_text = entry.backend.clone();
+                                    let bench_type_text = entry.benchmark_type.clone().unwrap_or_default();
+                                    let type_badge_class = match entry.benchmark_type.as_deref() {
+                                        Some("baseline") => "badge badge-muted",
+                                        Some("pp_sweep") => "badge badge-info",
+                                        Some("kv_quant_q8") | Some("kv_quant_q4") => "badge badge-success",
+                                        Some("context_test") => "badge badge-warning",
+                                        Some("spec_scan") | Some("spec_sweep") => "badge badge-danger",
+                                        _ => "badge badge-muted",
+                                    };
                                     let engine_text = entry
                                         .engine
                                         .clone()
@@ -1011,6 +1058,7 @@ pub fn Benchmarks() -> impl IntoView {
                                             <td class="text-mono text-muted">{move || if is_open.get() { "▾" } else { "▸" }}</td>
                                             <td title=when_title_for_row>{when_rel}</td>
                                             <td>{model_cell}</td>
+                                            <td><span class={type_badge_class}>{bench_type_text}</span></td>
                                             <td><span class={engine_badge}>{engine_text}</span></td>
                                             <td><span class="badge badge-muted">{backend_text}</span></td>
                                             <td class="text-mono">{sizes}</td>
@@ -1020,7 +1068,7 @@ pub fn Benchmarks() -> impl IntoView {
                                         {move || is_open.get().then(|| view! {
                                             <tr class="bench-history__detail">
                                                 <td></td>
-                                                <td colspan="7">
+                                                <td colspan="8">
                                                     {render_summaries_table(&summaries)}
                                                 </td>
                                             </tr>

@@ -7,7 +7,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 
 use crate::components::job_log_panel::JobLogPanel;
-use crate::pages::benchmarks::types::parse_model;
+use crate::pages::benchmarks::types::{parse_model, BENCHMARK_TYPES, SPEC_BENCH_PRESETS};
 use crate::utils::{extract_and_store_csrf_token, post_request};
 
 /// Human-readable descriptions for each spec type.
@@ -133,6 +133,9 @@ pub fn SpecBench() -> impl IntoView {
     let selected_model = RwSignal::new(String::new());
     let available_models = RwSignal::new(Vec::<(String, String, String)>::new());
 
+    // Test Type dropdown — selects a preset benchmark type that auto-fills form fields.
+    let selected_bench_type = RwSignal::new("spec_scan".to_string());
+
     // ── Backend selection ──────────────────────────────────────────────
     let selected_backend = RwSignal::new(String::new());
     let available_backends = RwSignal::new(Vec::<(String, String)>::new());
@@ -216,6 +219,24 @@ pub fn SpecBench() -> impl IntoView {
         }
     });
 
+    // Test Type auto-fill handler — when the user picks a benchmark type,
+    // auto-populate the relevant form fields.
+    let apply_bench_type = move |bench_type: &str| {
+        if let Some((_, (draft_max, _draft_max_str_val, ngram_n, ngram_m))) =
+            SPEC_BENCH_PRESETS.iter().find(|(k, _)| *k == bench_type)
+        {
+            draft_max_str.set(
+                draft_max
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            ngram_n_str.set(ngram_n.to_string());
+            ngram_m_str.set(ngram_m.to_string());
+        }
+    };
+
     // ── Preset handler ─────────────────────────────────────────────────
     let apply_preset = move |preset: SpecPreset| {
         spec_types.set(preset.spec_types.iter().map(|s| s.to_string()).collect());
@@ -253,6 +274,7 @@ pub fn SpecBench() -> impl IntoView {
             let body = serde_json::json!({
                 "model_id": model_id,
                 "backend_name": backend_name,
+                "benchmark_type": Some(selected_bench_type.get()),
                 "spec_types": types,
                 "draft_max_values": draft_max,
                 "ngram_n_values": ngram_n,
@@ -328,6 +350,28 @@ pub fn SpecBench() -> impl IntoView {
 
     view! {
         <div>
+            // Test Type dropdown (spec-decode only)
+            <section class="card">
+                <h3>"Test Type"</h3>
+                <select
+                    class="form-select"
+                    on:change=move |e| {
+                        let val = e.target().unwrap().dyn_into::<web_sys::HtmlSelectElement>().unwrap().value();
+                        selected_bench_type.set(val.clone());
+                        apply_bench_type(&val);
+                    }
+                >
+                    {BENCHMARK_TYPES.iter()
+                        .filter(|(val, _)| *val == "spec_scan" || *val == "spec_sweep")
+                        .map(|(val, label)| {
+                            let is_selected = move || selected_bench_type.get() == *val;
+                            view! {
+                                <option value=*val selected=is_selected>{*label}</option>
+                            }.into_any()
+                        }).collect::<Vec<_>>()}
+                </select>
+            </section>
+
             // ── Model selection ───────────────────────────────────────
             <section class="card">
                 <h3>"Model"</h3>

@@ -25,6 +25,9 @@ pub struct BenchmarkRow {
     pub vram_total_mib: Option<i64>,
     pub duration_seconds: f64,
     pub status: String,
+    /// Identifies what kind of benchmark was run (e.g., "baseline", "pp_sweep").
+    /// NULL for legacy rows.
+    pub benchmark_type: Option<String>,
 }
 
 /// Parameters for inserting a benchmark result row.
@@ -47,6 +50,8 @@ pub struct BenchmarkInsertParams<'a> {
     pub vram_total_mib: Option<i64>,
     pub duration_seconds: f64,
     pub status: &'a str,
+    /// Identifies what kind of benchmark was run (e.g., "baseline", "pp_sweep").
+    pub benchmark_type: Option<&'a str>,
 }
 
 /// Insert a benchmark result row. Returns the new row id.
@@ -61,8 +66,8 @@ pub fn insert_benchmark(conn: &Connection, params: &BenchmarkInsertParams) -> Re
             created_at, model_id, display_name, quant, backend, engine,
             pp_sizes, tg_sizes, threads, ngl_range, runs, warmup,
             results, load_time_ms, vram_used_mib, vram_total_mib,
-            duration_seconds, status
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            duration_seconds, status, benchmark_type
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             created_at,
             params.model_id,
@@ -82,6 +87,7 @@ pub fn insert_benchmark(conn: &Connection, params: &BenchmarkInsertParams) -> Re
             params.vram_total_mib,
             params.duration_seconds,
             params.status,
+            params.benchmark_type,
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -95,7 +101,7 @@ pub fn list_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
         "SELECT id, created_at, model_id, display_name, quant, backend, engine,
                 pp_sizes, tg_sizes, threads, ngl_range, runs, warmup,
                 results, load_time_ms, vram_used_mib, vram_total_mib,
-                duration_seconds, status
+                duration_seconds, status, benchmark_type
          FROM benchmarks
          ORDER BY created_at DESC",
     )?;
@@ -120,6 +126,7 @@ pub fn list_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
             vram_total_mib: row.get(16)?,
             duration_seconds: row.get(17)?,
             status: row.get(18)?,
+            benchmark_type: row.get(19)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -159,7 +166,8 @@ mod tests {
                 vram_used_mib       INTEGER,
                 vram_total_mib      INTEGER,
                 duration_seconds    REAL,
-                status              TEXT NOT NULL DEFAULT 'success'
+                status              TEXT NOT NULL DEFAULT 'success',
+                benchmark_type      TEXT
             )",
         )
         .unwrap();
@@ -192,6 +200,7 @@ mod tests {
             vram_total_mib: Some(8192),
             duration_seconds: 30.5,
             status: "success",
+            benchmark_type: Some("baseline"),
         }
     }
 
@@ -295,6 +304,7 @@ mod tests {
             vram_total_mib: None,
             duration_seconds: 30.5,
             status: "success",
+            benchmark_type: None,
         };
 
         let id = insert_benchmark(&conn, &params).unwrap();
@@ -305,6 +315,7 @@ mod tests {
         assert_eq!(benchmarks.len(), 1);
         assert!(benchmarks[0].display_name.is_none());
         assert!(benchmarks[0].quant.is_none());
+        assert!(benchmarks[0].benchmark_type.is_none());
     }
 
     // Tests using open_in_memory() with full migration schema
@@ -337,6 +348,7 @@ mod tests {
             vram_total_mib: Some(8192),
             duration_seconds: 45.5,
             status: "success",
+            benchmark_type: Some("baseline"),
         };
         let id = insert_benchmark(&conn, &params).unwrap();
 
@@ -371,6 +383,7 @@ mod tests {
             vram_total_mib: None,
             duration_seconds: 0.0,
             status: "success",
+            benchmark_type: None,
         };
         let params_b = BenchmarkInsertParams {
             model_id: "b",

@@ -50,6 +50,9 @@ pub struct BenchmarkRunRequest {
     pub depth: Vec<u32>,
     #[serde(default)]
     pub flash_attn: Option<bool>,
+    /// Identifies what kind of benchmark was run (e.g., "baseline", "pp_sweep").
+    #[serde(default)]
+    pub benchmark_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +82,9 @@ pub struct SpecBenchmarkRunRequest {
     pub ngl: Option<u32>,
     #[serde(default = "default_flash_attn")]
     pub flash_attn: bool,
+    /// Identifies what kind of benchmark was run (e.g., "spec_scan", "spec_sweep").
+    #[serde(default)]
+    pub benchmark_type: Option<String>,
 }
 
 fn default_min_hits() -> u32 {
@@ -102,6 +108,11 @@ pub struct BenchmarkHistoryEntry {
     pub display_name: Option<String>,
     pub quant: Option<String>,
     pub backend: String,
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Identifies what kind of benchmark was run (e.g., "baseline", "pp_sweep").
+    #[serde(default)]
+    pub benchmark_type: Option<String>,
     pub pp_sizes: Vec<u32>,
     pub tg_sizes: Vec<u32>,
     pub runs: u32,
@@ -309,6 +320,7 @@ async fn run_benchmark_inner(
             vram_total_mib: vram.as_ref().map(|v| v.total_mib as i64),
             duration_seconds: 0.0, // duration tracked by job system
             status: "success",
+            benchmark_type: req.benchmark_type.as_deref(),
         },
     )?;
 
@@ -566,6 +578,7 @@ async fn run_spec_benchmark_inner(
             vram_total_mib: vram.as_ref().map(|v| v.total_mib as i64),
             duration_seconds: 0.0,
             status: "success",
+            benchmark_type: req.benchmark_type.as_deref(),
         },
     )?;
 
@@ -874,6 +887,7 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
                 quant: e.quant,
                 backend: e.backend,
                 engine: Some(e.engine),
+                benchmark_type: e.benchmark_type,
                 pp_sizes,
                 tg_sizes,
                 runs: e.runs,
