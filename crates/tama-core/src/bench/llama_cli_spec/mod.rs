@@ -247,20 +247,23 @@ enum RunOutcome {
 async fn run_llama_cli_once(binary: &PathBuf, args: &[String]) -> Result<RunOutcome> {
     use std::time::Duration;
 
-
     // Parse timeout from env, default to 5 minutes
     let timeout_secs = std::env::var("LLAMA_CLI_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    let child = Command::new(binary)
+    let mut child = Command::new(binary)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .stdin(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .context("Failed to execute llama-cli")?;
+    // Drop stdin explicitly before waiting — prevents the child from
+    // hanging if it tries to read prompt input that we'll never send.
+    drop(child.stdin.take());
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
         Ok(Ok(output)) => {
