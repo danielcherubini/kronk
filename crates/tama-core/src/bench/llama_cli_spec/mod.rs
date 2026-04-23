@@ -231,8 +231,20 @@ fn compute_mean_stddev(values: &[f64]) -> (f64, f64) {
     (mean, stddev)
 }
 
-/// Run a single llama-cli command and return the timing output.
-async fn run_llama_cli_once(binary: &PathBuf, args: &[String]) -> Result<(f64, String)> {
+/// Outcome of a single llama-cli execution.
+#[derive(Debug)]
+enum RunOutcome {
+    /// Success with parsed timing and captured stderr.
+    Success(f64, String),
+    /// Process exited with error. Contains (exit_code_display, stderr).
+    Failed(String, String),
+}
+
+/// Run a single llama-cli command and return the outcome.
+///
+/// Does NOT bail on non-success exit — returns `Failed` with stderr so the
+/// caller can classify the error (OOM vs other failures).
+async fn run_llama_cli_once(binary: &PathBuf, args: &[String]) -> Result<RunOutcome> {
     let output = Command::new(binary)
         .args(args)
         .stdout(Stdio::piped())
@@ -245,17 +257,13 @@ async fn run_llama_cli_once(binary: &PathBuf, args: &[String]) -> Result<(f64, S
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     if !output.status.success() {
-        bail!(
-            "llama-cli exited with error (code {}): {}",
-            output.status,
-            stderr.lines().take(5).collect::<Vec<_>>().join("\n")
-        );
+        return Ok(RunOutcome::Failed(format!("{:?}", output.status), stderr));
     }
 
     // Try parsing stderr first, then stdout.
     let timing = parse::parse_timing(&stderr).or_else(|_| parse::parse_timing(&stdout))?;
 
-    Ok((timing, stderr))
+    Ok(RunOutcome::Success(timing, stderr))
 }
 
 /// Execute a benchmark run with retry logic and OOM detection.
@@ -285,11 +293,17 @@ async fn execute_config_run(
     for run in 1..=bench_cfg.runs {
         progress.log(&format!("[{}] run {}/{}", label, run, bench_cfg.runs));
 
-        let result = run_llama_cli_once(binary, &args).await;
+        let result = match run_llama_cli_once(binary, &args).await {
+            Ok(o) => o,
+            Err(e) => RunOutcome::Failed("spawn failed".to_string(), e.to_string()),
+        };
 
         match result {
-            Ok((timing, stderr)) => {
-                // Check for OOM in output
+            RunOutcome::Success(timing, _stderr) => {
+                timings.push(timing);
+            }
+            RunOutcome::Failed(code, stderr) => {
+                // Check for OOM in stderr
                 if stderr.to_lowercase().contains("oom")
                     || stderr.to_lowercase().contains("out of memory")
                 {
@@ -313,16 +327,27 @@ async fn execute_config_run(
                         )),
                     };
                 }
-                timings.push(timing);
-            }
-            Err(e) => {
+
                 // Retry once (2 total attempts)
-                progress.log(&format!("[{}] run {} failed: {}", label, run, e));
-                let retry_result = run_llama_cli_once(binary, &args).await;
+                progress.log(&format!(
+                    "[{}] run {} failed ({}): {}",
+                    label,
+                    run,
+                    code,
+                    stderr.lines().take(3).collect::<Vec<_>>().join(" ")
+                ));
+                let retry_result = match run_llama_cli_once(binary, &args).await {
+                    Ok(o) => o,
+                    Err(e) => RunOutcome::Failed("spawn failed".to_string(), e.to_string()),
+                };
+
                 match retry_result {
-                    Ok((timing, stderr)) => {
-                        if stderr.to_lowercase().contains("oom")
-                            || stderr.to_lowercase().contains("out of memory")
+                    RunOutcome::Success(timing, _stderr) => {
+                        timings.push(timing);
+                    }
+                    RunOutcome::Failed(retry_code, retry_stderr) => {
+                        if retry_stderr.to_lowercase().contains("oom")
+                            || retry_stderr.to_lowercase().contains("out of memory")
                         {
                             progress.log(&format!("[{}] OOM detected on retry", label));
                             return SpecEntry {
@@ -337,10 +362,13 @@ async fn execute_config_run(
                                 error: Some("OOM detected during retry".to_string()),
                             };
                         }
-                        timings.push(timing);
-                    }
-                    Err(e2) => {
-                        let err_msg = format!("{} (retry: {})", e, e2);
+                        let err_msg = format!(
+                            "exit={} stderr={} | retry: exit={} stderr={}",
+                            code,
+                            stderr.lines().take(2).collect::<Vec<_>>().join(" "),
+                            retry_code,
+                            retry_stderr.lines().take(2).collect::<Vec<_>>().join(" ")
+                        );
                         progress.log(&format!("[{}] failed after retry: {}", label, err_msg));
                         return SpecEntry {
                             spec_type: sweep_cfg.spec_type.as_str().to_string(),
@@ -423,22 +451,37 @@ pub async fn run_spec_bench(
 
     for run in 1..=config.runs {
         progress.log(&format!("[baseline] run {}/{}", run, config.runs));
-        match run_llama_cli_once(&binary, &baseline_args).await {
-            Ok((timing, _stderr)) => {
+        let outcome = match run_llama_cli_once(&binary, &baseline_args).await {
+            Ok(o) => o,
+            Err(e) => RunOutcome::Failed("spawn failed".to_string(), e.to_string()),
+        };
+        match outcome {
+            RunOutcome::Success(timing, _stderr) => {
                 baseline_timings.push(timing);
             }
-            Err(e) => {
-                progress.log(&format!("[baseline] run {} failed: {}", run, e));
+            RunOutcome::Failed(code, stderr) => {
+                progress.log(&format!(
+                    "[baseline] run {} failed ({}): {}",
+                    run,
+                    code,
+                    stderr.lines().take(2).collect::<Vec<_>>().join(" ")
+                ));
                 // Retry once
-                match run_llama_cli_once(&binary, &baseline_args).await {
-                    Ok((timing, _stderr)) => {
+                let retry_outcome = match run_llama_cli_once(&binary, &baseline_args).await {
+                    Ok(o) => o,
+                    Err(e) => RunOutcome::Failed("spawn failed".to_string(), e.to_string()),
+                };
+                match retry_outcome {
+                    RunOutcome::Success(timing, _stderr) => {
                         baseline_timings.push(timing);
                     }
-                    Err(e2) => {
+                    RunOutcome::Failed(retry_code, retry_stderr) => {
                         bail!(
-                            "Baseline failed after retry: {} (retry: {}). Cannot continue sweep without baseline.",
-                            e,
-                            e2
+                            "Baseline failed after retry: exit={} stderr={} | retry: exit={} stderr={}. Cannot continue sweep without baseline.",
+                            code,
+                            stderr.lines().take(2).collect::<Vec<_>>().join(" "),
+                            retry_code,
+                            retry_stderr.lines().take(2).collect::<Vec<_>>().join(" ")
                         );
                     }
                 }

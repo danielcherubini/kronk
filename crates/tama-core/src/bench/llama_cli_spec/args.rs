@@ -85,6 +85,8 @@ pub(super) fn build_args(
             args.push(n.to_string());
             args.push("--spec-ngram-size-m".to_string());
             args.push(m.to_string());
+            args.push("--spec-ngram-min-hits".to_string());
+            args.push(config.ngram_min_hits.to_string());
             args.push("--draft-max".to_string());
             args.push(draft_max.to_string());
         }

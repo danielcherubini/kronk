@@ -918,7 +918,6 @@ pub fn Benchmarks() -> impl IntoView {
         }}
                     }.into_any() // close inner view!{} for else branch (llama-bench form)
                 }
-                    .into_any()
                 }}    // closes tab conditional closure
 
         // History — always shown. Newest rows appear at the top because the

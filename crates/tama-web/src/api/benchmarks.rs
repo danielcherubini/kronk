@@ -587,10 +587,28 @@ fn resolve_model_path(
     let record = tama_core::db::queries::get_model_config(conn, rec_id)?
         .with_context(|| format!("Model config record (id={}) not found in database", rec_id))?;
     let files = tama_core::db::queries::get_model_files(conn, record.id)?;
+
+    // Resolve the target filename: use the selected quant's file from mc.quants,
+    // falling back to the first .gguf if quants map is empty (legacy configs).
+    let first_gguf = files
+        .iter()
+        .find(|f| f.filename.ends_with(".gguf"))
+        .map(|f| f.filename.clone());
+
+    let target_filename = if let Some(ref quant_label) = mc.quant {
+        mc.quants
+            .get(quant_label)
+            .map(|qe| qe.file.clone())
+            .or(first_gguf.clone())
+    } else {
+        first_gguf
+    }
+    .context("No model file found for this config")?;
+
     let model_file = files
         .into_iter()
-        .find(|f| f.filename.ends_with(".gguf"))
-        .context("No .gguf model file found for this config")?;
+        .find(|f| f.filename == target_filename)
+        .context("Resolved model file not found in database")?;
 
     let model_data_dir = config.models_dir()?;
     let candidate = model_data_dir

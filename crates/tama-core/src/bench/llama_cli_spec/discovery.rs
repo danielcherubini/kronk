@@ -211,9 +211,14 @@ mod tests {
         });
         fs::write(&env_cli, "#!/bin/sh\necho from-env").unwrap();
 
+        // Save and restore previous env var state to avoid test interference
+        let prev = std::env::var_os("LLAMA_CLI_PATH");
         std::env::set_var("LLAMA_CLI_PATH", env_cli.to_str().unwrap());
         let result = find_llama_cli(backend_path);
-        std::env::remove_var("LLAMA_CLI_PATH");
+        match prev {
+            Some(val) => std::env::set_var("LLAMA_CLI_PATH", val),
+            None => std::env::remove_var("LLAMA_CLI_PATH"),
+        }
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), env_cli);

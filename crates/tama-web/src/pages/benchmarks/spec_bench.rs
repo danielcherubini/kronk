@@ -154,6 +154,7 @@ pub fn SpecBench() -> impl IntoView {
     let is_running = RwSignal::new(false);
     let current_job_id = RwSignal::new(Option::<String>::None);
     let benchmark_results = RwSignal::new(Option::<serde_json::Value>::None);
+    let error_msg = RwSignal::new(String::new());
 
     // ── Refresh trigger for model fetch ────────────────────────────────
     let model_refresh = RwSignal::new(0u32);
@@ -261,23 +262,36 @@ pub fn SpecBench() -> impl IntoView {
             });
 
             let submitted = async {
-                let resp = post_request("/tama/v1/benchmarks/spec-run")
+                let builder = post_request("/tama/v1/benchmarks/spec-run")
                     .header("Content-Type", "application/json")
                     .body(body.to_string())
                     .ok()?;
-                let resp = resp.send().await.ok()?;
+                let resp = builder.send().await.ok()?;
+                if resp.status() >= 400 {
+                    let err_text =
+                        resp.text().await.ok().unwrap_or_else(|| {
+                            format!("Request failed with status {}", resp.status())
+                        });
+                    return Some(Err(err_text));
+                }
                 let body = resp.json::<serde_json::Value>().await.ok()?;
                 body.get("job_id")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
+                    .map(|s| Ok(s.to_string()))
             }
             .await;
 
             match submitted {
-                Some(job_id) => {
+                Some(Ok(job_id)) => {
                     current_job_id.set(Some(job_id));
                 }
+                Some(Err(err)) => {
+                    error_msg.set(err);
+                    is_running.set(false);
+                }
                 None => {
+                    error_msg
+                        .set("Failed to submit benchmark — check network connection.".to_string());
                     is_running.set(false);
                 }
             }
@@ -309,6 +323,7 @@ pub fn SpecBench() -> impl IntoView {
     let (runs_sig, _) = runs.split();
     let (is_running_sig, _) = is_running.split();
     let (current_job_id_sig, _) = current_job_id.split();
+    let (error_sig, _) = error_msg.split();
     let (benchmark_results_sig, _) = benchmark_results.split();
 
     view! {
@@ -539,6 +554,20 @@ pub fn SpecBench() -> impl IntoView {
                     {move || if is_running_sig.get() { "Running..." } else { "▶ Run Spec Benchmark" }}
                 </button>
             </div>
+
+            // ── Error display ─────────────────────────────────────────
+            {move || {
+                let err = error_sig.get();
+                if !err.is_empty() {
+                    view! {
+                        <div class="alert alert-danger mt-2">
+                            <p class="mb-0">{err}</p>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div></div> }.into_any()
+                }
+            }}
 
             // ── Progress / logs ───────────────────────────────────────
             {move || {
