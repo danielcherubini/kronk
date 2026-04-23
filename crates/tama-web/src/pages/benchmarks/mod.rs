@@ -1,5 +1,6 @@
-//! Benchmarks page — run llama-bench benchmarks from the web UI.
+//! Benchmarks page — run llama-bench and spec-decoding benchmarks from the web UI.
 
+mod spec_bench;
 mod types;
 mod utils;
 
@@ -9,6 +10,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 
+use self::spec_bench::SpecBench;
 use self::types::{BenchmarkPreset, HistoryEntry};
 use self::utils::{format_relative, format_timestamp};
 use crate::components::job_log_panel::JobLogPanel;
@@ -443,12 +445,33 @@ pub fn Benchmarks() -> impl IntoView {
     let (is_running_sig, _) = is_running.split();
     let (current_job_id_sig, _) = current_job_id.split();
 
+    // Tab toggle — switch between llama-bench and spec-decoding views.
+    let active_tab = RwSignal::new("llama-bench");
+
     view! {
         <div class="page-header">
             <h1>"Benchmarks"</h1>
         </div>
 
-        // Model selection — two-step: model, then quant. Models can ship with
+        // Tab buttons
+        <div class="tab-buttons">
+            <button class=move || if active_tab.get() == "llama-bench" { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" }
+                    on:click=move |_| active_tab.set("llama-bench")>
+                "LLaMA-Bench"
+            </button>
+            <button class=move || if active_tab.get() == "spec-decode" { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" }
+                    on:click=move |_| active_tab.set("spec-decode")>
+                "Spec Decoding"
+            </button>
+        </div>
+
+        // LLaMA-Bench tab content
+        {move || {
+            if active_tab.get() == "spec-decode" {
+                view! { <SpecBench /> }.into_any()
+            } else {
+                view! {
+                    // Model selection — two-step: model, then quant. Models can ship with
         // multiple quants (e.g. Q4_K_M vs Q6_K) and the delta matters for
         // benchmarking, so we make the quant an explicit choice.
         <section class="card">
@@ -893,6 +916,10 @@ pub fn Benchmarks() -> impl IntoView {
                 </section>
             }.into_any()
         }}
+                    }.into_any() // close inner view!{} for else branch (llama-bench form)
+                }
+                    .into_any()
+                }}    // closes tab conditional closure
 
         // History — always shown. Newest rows appear at the top because the
         // server returns ORDER BY created_at DESC.
