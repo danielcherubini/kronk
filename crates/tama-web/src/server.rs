@@ -20,7 +20,8 @@ use crate::api::backends::{
 };
 use crate::api::backup::{restore_preview, start_restore};
 use crate::api::benchmarks::{
-    benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history, run_benchmark,
+    benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history,
+    run_benchmark, run_spec_benchmark,
 };
 use crate::jobs::JobManager;
 #[allow(unused_imports)]
@@ -289,6 +290,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/tama/v1/benchmarks/run",
             post(run_benchmark).layer(json_body_limit),
+        )
+        .route(
+            "/tama/v1/benchmarks/spec-run",
+            post(run_spec_benchmark).layer(json_body_limit),
         )
         .route(
             "/tama/v1/downloads/:job_id/cancel",

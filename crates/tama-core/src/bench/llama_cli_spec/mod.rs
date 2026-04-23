@@ -133,6 +133,20 @@ struct SweepConfig {
     ngram_m: Option<u32>,
 }
 
+/// Validate a [`SpecBenchConfig`] would produce at least one sweep entry.
+///
+/// Checks that required dimensions (e.g. `ngram_n_values` for ngram-mod) are
+/// populated for the selected spec-types, and that the sweep is not empty.
+pub fn validate_sweep_config(config: &SpecBenchConfig) -> Result<()> {
+    let matrix = build_sweep_matrix(config)?;
+    if matrix.is_empty() {
+        bail!(
+            "Sweep would produce zero entries. Ensure draft_max_values is not empty and required ngram dimensions are populated."
+        );
+    }
+    Ok(())
+}
+
 /// Build the sweep matrix of configurations to test.
 ///
 /// Returns an error if required dimensions are not populated for the selected spec-types.
