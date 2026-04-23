@@ -28,6 +28,9 @@ pub struct HistoryEntry {
     pub display_name: Option<String>,
     pub quant: Option<String>,
     pub backend: String,
+    /// Engine used for this benchmark: "llama_bench" or "llama_cli_spec".
+    #[serde(default)]
+    pub engine: Option<String>,
     pub pp_sizes: Vec<u32>,
     pub tg_sizes: Vec<u32>,
     pub runs: u32,

@@ -938,6 +938,7 @@ pub fn Benchmarks() -> impl IntoView {
                                     <th style="width:1.5rem"></th>
                                     <th>"When"</th>
                                     <th>"Model"</th>
+                                    <th>"Engine"</th>
                                     <th>"Backend"</th>
                                     <th>"PP / TG sizes"</th>
                                     <th>"Best t/s"</th>
@@ -992,13 +993,25 @@ pub fn Benchmarks() -> impl IntoView {
                                     let summaries = entry.results.as_array().cloned().unwrap_or_default();
                                     let status_text = entry.status.clone();
                                     let backend_text = entry.backend.clone();
+                                    let engine_text = entry
+                                        .engine
+                                        .clone()
+                                        .unwrap_or_else(|| "llama_bench".to_string());
                                     let when_title_for_row = when_title.clone();
+
+                                    // Engine badge — distinguishes llama-bench from spec-decode runs
+                                    let engine_badge = if engine_text == "llama_cli_spec" {
+                                        "badge badge-info".to_string()
+                                    } else {
+                                        "badge badge-muted".to_string()
+                                    };
 
                                     view! {
                                         <tr class="bench-history__row" on:click=toggle>
                                             <td class="text-mono text-muted">{move || if is_open.get() { "▾" } else { "▸" }}</td>
                                             <td title=when_title_for_row>{when_rel}</td>
                                             <td>{model_cell}</td>
+                                            <td><span class={engine_badge}>{engine_text}</span></td>
                                             <td><span class="badge badge-muted">{backend_text}</span></td>
                                             <td class="text-mono">{sizes}</td>
                                             <td class="text-mono">{best_cell}</td>
@@ -1007,7 +1020,7 @@ pub fn Benchmarks() -> impl IntoView {
                                         {move || is_open.get().then(|| view! {
                                             <tr class="bench-history__detail">
                                                 <td></td>
-                                                <td colspan="6">
+                                                <td colspan="7">
                                                     {render_summaries_table(&summaries)}
                                                 </td>
                                             </tr>

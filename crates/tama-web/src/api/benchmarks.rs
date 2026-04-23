@@ -873,6 +873,7 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
                 display_name: e.display_name,
                 quant: e.quant,
                 backend: e.backend,
+                engine: Some(e.engine),
                 pp_sizes,
                 tg_sizes,
                 runs: e.runs,
