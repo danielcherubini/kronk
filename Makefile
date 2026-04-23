@@ -30,8 +30,8 @@ install: build-frontend
 
 # Stop service, rebuild + reinstall (frontend + backend), restart service
 update: build-frontend
-	tama service stop || true
 	cargo build --release --workspace
+	tama service stop || true
 	cargo install --path crates/tama-cli --force
 	tama service start
 
