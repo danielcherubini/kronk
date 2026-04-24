@@ -15,9 +15,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 73
-- **Completed**: 72 ✅
+- **Completed**: 73 ✅
 - **In Progress**: 0 🚧
-- **Remaining**: 1 📋
+- **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -141,7 +141,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Proxy API Endpoints](2026-04-20-proxy-api-endpoints.md) | Add all missing llama.cpp-compatible API endpoints using wildcard forwarding | #68 `3e1d180` ✅ COMPLETED |
 | [Max Loaded Models with LRU Eviction](2026-04-21-max-loaded-models.md) | Add `max_loaded_models` config field (default=1) that automatically evicts the least-recently-used model when capacity is reached | #69 ✅ COMPLETED |
 | [Speculative Decoding Benchmark](2026-04-23-spec-decode-bench.md) | llama-cli based spec-decoding benchmark with sweep presets (ngram-simple/mod/map-k/k4v), delta vs baseline results table | #71 `dd9c1c1` ✅ COMPLETED |
-| [Backend Log Viewing](2026-04-24-backend-log-viewing.md) | View logs for any individual backend from the dashboard's Active Models section via a "Logs" button with live-updating modal log viewer | 📋 DRAFT |
+| [Backend Log Viewing](2026-04-24-backend-log-viewing.md) | Grouped logs endpoint GET /tama/v1/logs returning all sources (tama + backends) in one response, Logs page with source dropdown selector, auto-refresh every 5s | #72 ✅ COMPLETED |
 
 ---
 
