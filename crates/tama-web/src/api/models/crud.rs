@@ -1175,4 +1175,67 @@ mod tests {
         let result = apply_model_body(body, None);
         assert!(result.quants.is_empty());
     }
+
+    /// When an existing model has `kv_unified: false` and the body omits the
+    /// field, the existing value must be preserved (not overwritten to true).
+    #[test]
+    fn apply_model_body_kv_unified_passthrough() {
+        let existing = existing_with_size("Q4_K_M", "Model-Q4_K_M.gguf", None);
+        assert!(!existing.kv_unified, "helper must create kv_unified=false");
+
+        let body = ModelBody {
+            backend: "llama".to_string(),
+            model: Some("org/repo".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            kv_unified: None, // omitted — should preserve existing
+        };
+
+        let result = apply_model_body(body, Some(existing));
+        assert_eq!(
+            result.kv_unified, false,
+            "existing kv_unified=false must be preserved when body omits the field"
+        );
+    }
+
+    /// When creating a new model (no existing config) and the body omits
+    /// `kv_unified`, the result must default to `true`.
+    #[test]
+    fn apply_model_body_kv_unified_default_true_for_new() {
+        let body = ModelBody {
+            backend: "llama".to_string(),
+            model: Some("org/repo".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            display_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            kv_unified: None, // omitted — should default to true
+        };
+
+        let result = apply_model_body(body, None);
+        assert!(
+            result.kv_unified,
+            "new model must default kv_unified to true when body omits the field"
+        );
+    }
 }
