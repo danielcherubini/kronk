@@ -1,5 +1,6 @@
 //! Backend log panel - displays live backend logs via SSE streaming.
 
+use futures_util::StreamExt;
 use gloo_net::eventsource::futures::EventSource;
 use leptos::prelude::*;
 use serde::Deserialize;
@@ -78,7 +79,7 @@ pub fn BackendLogPanel(
                 }
 
                 let url = format!("/tama/v1/logs/{}/events", backend);
-                let es = match EventSource::new(&url) {
+                let mut es = match EventSource::new(&url) {
                     Ok(es) => es,
                     Err(e) => {
                         connection_error.set(Some(format!("Failed to open SSE stream: {e:?}")));
