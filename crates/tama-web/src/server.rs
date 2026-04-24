@@ -150,7 +150,23 @@ async fn proxy_tama(
             let mut response = Response::new(body);
             *response.status_mut() = status;
             for (k, v) in &resp_headers {
+                // Skip hop-by-hop headers that shouldn't be forwarded
+                if k.as_str().eq_ignore_ascii_case("connection")
+                    || k.as_str().eq_ignore_ascii_case("keep-alive")
+                    || k.as_str().eq_ignore_ascii_case("transfer-encoding")
+                {
+                    continue;
+                }
                 response.headers_mut().insert(k, v.clone());
+            }
+            // Ensure SSE connections stay open — tell browser not to cache
+            if is_sse {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CONNECTION, "keep-alive".parse().unwrap());
             }
             response
         }

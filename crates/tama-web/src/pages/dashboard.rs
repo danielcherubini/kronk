@@ -4,8 +4,8 @@ use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use crate::components::backend_log_panel::BackendLogPanel;
-use crate::components::modal::Modal;
+
+
 use crate::components::sparkline::SparklineChart;
 use crate::utils::{extract_and_store_csrf_token, post_request};
 
@@ -193,7 +193,6 @@ fn ModelRow(
     unload_pending: RwSignal<bool>,
     on_load: Callback<String>,
     on_unload: Callback<String>,
-    on_logs: Callback<String>,
 ) -> impl IntoView {
     let badge_class = model_status_badge_class(&state);
     let badge_label = model_status_badge_label(&state);
@@ -244,15 +243,13 @@ fn ModelRow(
                         </button>
                     }.into_any()
                 }}
-                <button
-                    class="btn btn-secondary btn-sm"
-                    title="View backend logs"
-                    on:click=move |_| {
-                        on_logs.run(backend_for_logs.clone());
-                    }
+                <A
+                    href=format!("/logs?backend={}", backend_for_logs)
+                    attr:class="btn btn-secondary btn-sm"
+                    attr:title="View backend logs"
                 >
                     "Logs"
-                </button>
+                </A>
                 <A
                     href=format!("/models/{}/edit", db_id.map(|n| n.to_string()).unwrap_or_else(|| id_for_edit.clone()))
                     attr:class="btn btn-secondary btn-sm"
@@ -381,19 +378,6 @@ pub fn Dashboard() -> impl IntoView {
                 .await;
             unload_busy.set(false);
         }
-    });
-
-    // Log panel state: controlled by clicking the "Logs" button on each model row.
-    let log_panel_open = RwSignal::new(false);
-    let log_panel_backend = RwSignal::new(None);
-
-    let on_log_click = Callback::new(move |backend: String| {
-        log_panel_backend.set(Some(backend));
-        log_panel_open.set(true);
-    });
-
-    let on_log_close = Callback::new(move |_| {
-        log_panel_open.set(false);
     });
 
     view! {
@@ -603,7 +587,6 @@ pub fn Dashboard() -> impl IntoView {
                                                 unload_pending=unload_busy
                                                 on_load=on_load_cb
                                                 on_unload=on_unload_cb
-                                                on_logs=on_log_click.clone()
                                             />
                                         }
                                     }).collect::<Vec<_>>()}
@@ -612,23 +595,6 @@ pub fn Dashboard() -> impl IntoView {
                         }
                     }
                 </section>
-
-                <Modal
-                    open=log_panel_open
-                    title=move || format!("{} logs", log_panel_backend.get().as_deref().unwrap_or("Backend"))
-                    on_close=on_log_close
-                >
-                    {move || {
-                        log_panel_backend.get().map(|backend| {
-                            view! {
-                                <BackendLogPanel
-                                    backend_name=backend.clone()
-                                    on_close=on_log_close.clone()
-                                />
-                            }.into_any()
-                        })
-                    }}
-                </Modal>
             }.into_any()
         }}
     }

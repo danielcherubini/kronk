@@ -53,11 +53,10 @@ pub async fn handle_backend_log_sse(
             .boxed()
         }
         None => {
-            futures_util::stream::iter(vec![Ok(axum::response::sse::Event::default()
-                .event("log")
-                .json_data(json!({ "line": format!("[No active backend logs for '{}'. Start the backend first.]", backend) }))
-                .unwrap())])
-            .boxed()
+            // Return an empty stream that stays open but sends no data.
+            // This keeps the SSE connection alive without spamming requests
+            // when there's no active backend to stream from.
+            futures_util::stream::empty().boxed()
         }
     };
 
