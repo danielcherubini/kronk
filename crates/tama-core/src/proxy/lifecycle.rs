@@ -122,8 +122,10 @@ impl ProxyState {
             server_config.backend, server_name, pid
         );
 
-        // Get the backend log stream for SSE broadcasting.
-        let log_stream = self.backend_logs.get_or_create(&server_name).await;
+        // Get the backend log stream for SSE broadcasting — use same key as
+        // the dashboard constructs: {backend}_{server_name}.
+        let log_key = format!("{}_{}", server_config.backend, server_name);
+        let log_stream = self.backend_logs.get_or_create(&log_key).await;
 
         // Open log file for this backend instance — include server name so
         // multiple models on the same backend get separate log files.
