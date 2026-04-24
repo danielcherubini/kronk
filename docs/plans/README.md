@@ -14,16 +14,22 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 73
+- **Total Plans**: 74
 - **Completed**: 73 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 0
+- **In Progress**: 1 🚧
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
 ---
 
 ## Completed Plans
+
+### In Progress
+
+| Plan | Description | Status |
+|------|-------------|--------|
+| [KV Unified Support](2026-04-24-kv-unified-support.md) | Add --kv-unified flag support for llama-server shared KV cache pools | 🚧 IN PROGRESS |
 
 ### Core Infrastructure
 
