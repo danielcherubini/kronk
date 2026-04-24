@@ -15,9 +15,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 74
-- **Completed**: 73 ✅
-- **In Progress**: 1 🚧
-- **Remaining**: 1
+- **Completed**: 74 ✅
+- **In Progress**: 0 🚧
+- **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -25,16 +25,13 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Completed Plans
 
-### In Progress
-
-| Plan | Description | Status |
-|------|-------------|--------|
-| [KV Unified Support](2026-04-24-kv-unified-support.md) | Add --kv-unified flag support for llama-server shared KV cache pools | 🚧 IN PROGRESS |
+### Completed Plans
 
 ### Core Infrastructure
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [KV Unified Support](2026-04-24-kv-unified-support.md) | Add --kv-unified flag support for llama-server shared KV cache pools | #73 `b3e535a`, `ab3ea8a`, `341dd66`, `c48f4a9` |
 | [Rename Kronk to Tama](2026-04-06-rename-kronk-to-tama.md) | Complete rename across README, crates, routes, service names | `6d3a220`, `8281739`, `ab25016`, `bb8b734`, `d731eab` |
 | [Split Large Files (Wave 1 & 2)](2026-03-23-split-large-files.md) | Split CLI and core files into focused modules | #20 `9915565`, `57b1fe2`, `3ee005e` |
 | [Split Large Files (Wave 3)](2026-04-10-split-large-files.md) | Split remaining large files into domain submodules | #48 `b1e2f7d`, `8705ad0`, `7c6d50c` |
