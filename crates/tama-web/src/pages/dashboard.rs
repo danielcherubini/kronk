@@ -244,7 +244,7 @@ fn ModelRow(
                     }.into_any()
                 }}
                 <A
-                    href=format!("/logs?backend={}", backend_for_logs)
+                    href=format!("/logs?source={}", backend_for_logs)
                     attr:class="btn btn-secondary btn-sm"
                     attr:title="View backend logs"
                 >

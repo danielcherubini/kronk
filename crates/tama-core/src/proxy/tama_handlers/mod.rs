@@ -1,4 +1,4 @@
-mod backend_logs;
+pub mod backend_logs;
 mod models;
 mod pull;
 mod system;

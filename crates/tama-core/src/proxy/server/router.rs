@@ -14,7 +14,7 @@ use crate::proxy::handlers::{
     handle_status, handle_stream_chat_completions,
 };
 use crate::proxy::tama_handlers::{
-    handle_backend_log_sse, handle_hf_list_quants, handle_opencode_list_models,
+    backend_logs::handle_all_logs, handle_backend_log_sse, handle_hf_list_quants, handle_opencode_list_models,
     handle_pull_job_stream, handle_system_metrics_history, handle_system_metrics_stream,
     handle_tama_get_model as handle_tama_get_model_fn, handle_tama_get_pull_job,
     handle_tama_list_models, handle_tama_load_model, handle_tama_pull_model,
@@ -66,7 +66,8 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
             get(handle_system_metrics_stream),
         )
         .route("/tama/v1/system/restart", post(handle_tama_system_restart))
-        // Backend log SSE streaming
+        // Backend log endpoints
+        .route("/tama/v1/logs", get(handle_all_logs))
         .route(
             "/tama/v1/logs/:backend/events",
             get(handle_backend_log_sse),
