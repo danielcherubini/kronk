@@ -329,9 +329,9 @@ impl Config {
 
         // Inject --kv-unified flag when enabled and backend supports it.
         if is_llama_cpp_backend && server.kv_unified {
-            let already_has_kv_unified = grouped.iter().any(|e| {
-                matches!(crate::config::flag_name(e), Some("--kv-unified"))
-            });
+            let already_has_kv_unified = grouped
+                .iter()
+                .any(|e| matches!(crate::config::flag_name(e), Some("--kv-unified")));
             if !already_has_kv_unified {
                 grouped.push("--kv-unified".to_string());
             }

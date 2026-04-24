@@ -79,9 +79,9 @@ pub fn find_llama_server(backend_path: &std::path::Path) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
     use std::sync::Mutex;
-    use super::*;
 
     // Protects tests that manipulate LLAMA_SERVER_PATH env var from running in parallel.
     static ENV_VAR_MUTEX: Mutex<()> = Mutex::new(());
