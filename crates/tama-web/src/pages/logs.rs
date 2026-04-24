@@ -105,12 +105,7 @@ pub fn Logs() -> impl IntoView {
                         let value = urlencoding::decode(&param[eq_pos + 1..]).ok();
                         if key == "source" {
                             if let Some(source) = value {
-                                if !source.is_empty()
-                                    && sources
-                                        .get()
-                                        .iter()
-                                        .any(|s| s.name == source)
-                                {
+                                if !source.is_empty() {
                                     selected_source.set(source.to_string());
                                 }
                             }
