@@ -342,8 +342,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/tama/v1/self-update/events",
             get(api::self_update::update_events),
         )
-        // Logs endpoint — returns grouped logs (proxied from tama-core)
-        .route("/tama/v1/logs", get(api::logs::get_all_logs))
         // Benchmark GET routes (no CSRF needed)
         .route("/tama/v1/benchmarks/jobs/:id", get(get_benchmark_result))
         .route("/tama/v1/benchmarks/jobs/:id/events", get(benchmark_events))
