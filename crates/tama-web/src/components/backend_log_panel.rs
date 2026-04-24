@@ -100,8 +100,7 @@ pub fn BackendLogPanel(
                     }
                 };
 
-                // Reset reconnecting state on successful connection.
-                is_reconnecting = false;
+                // Clear error message and reset delay on successful connection.
                 connection_error.set(None);
                 delay_ms = INITIAL_DELAY_MS;
 
