@@ -4,6 +4,8 @@ use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use crate::components::backend_log_panel::BackendLogPanel;
+use crate::components::modal::Modal;
 use crate::components::sparkline::SparklineChart;
 use crate::utils::{extract_and_store_csrf_token, post_request};
 
@@ -288,6 +290,19 @@ pub fn Dashboard() -> impl IntoView {
     let load_pending = load_action.pending();
     let unload_pending = unload_action.pending();
 
+    // Log panel state: controlled by clicking the "Logs" button on each model row.
+    let log_panel_open = RwSignal::new(false);
+    let log_panel_backend = RwSignal::new(None);
+
+    let on_log_click = Callback::new(move |backend: String| {
+        log_panel_backend.set(Some(backend));
+        log_panel_open.set(true);
+    });
+
+    let on_log_close = Callback::new(move |_| {
+        log_panel_open.set(false);
+    });
+
     view! {
         <div class="page-header">
             <h1>"Dashboard"</h1>
@@ -481,12 +496,13 @@ pub fn Dashboard() -> impl IntoView {
                                                 n.to_string()
                                             }
                                         }).unwrap_or_else(|| "—".to_string());
+                                        let backend_name = m.backend.clone();
                                         view! {
                                             <div class="model-row card">
                                                 <span class="model-row__name">{display_name}</span>
                                                 <span class="model-row__meta">{quant_display}</span>
                                                 <span class="model-row__meta">{context_display}</span>
-                                                <span class="model-row__backend text-mono">{m.backend}</span>
+                                                <span class="model-row__backend text-mono">{backend_name.clone()}</span>
                                                 <div class="model-row__actions">
                                                     <span class={badge_class}>{badge_label}</span>
                                                     {if matches!(m.state.as_str(), "ready") {
@@ -520,6 +536,15 @@ pub fn Dashboard() -> impl IntoView {
                                                             </button>
                                                         }.into_any()
                                                     }}
+                                                    <button
+                                                        class="btn btn-secondary btn-sm"
+                                                        title=format!("View logs for {}", backend_name)
+                                                        on:click=move |_| {
+                                                            on_log_click.run(backend_name.clone());
+                                                        }
+                                                    >
+                                                        "Logs"
+                                                    </button>
                                                     <A
                                                         href=format!("/models/{}/edit", id_edit)
                                                         attr:class="btn btn-secondary btn-sm"
@@ -535,6 +560,23 @@ pub fn Dashboard() -> impl IntoView {
                         }
                     }
                 </section>
+
+                <Modal
+                    open=log_panel_open
+                    title=move || format!("{} logs", log_panel_backend.get().as_deref().unwrap_or("Backend"))
+                    on_close=on_log_close
+                >
+                    {move || {
+                        log_panel_backend.get().map(|backend| {
+                            view! {
+                                <BackendLogPanel
+                                    backend_name=backend.clone()
+                                    on_close=on_log_close.clone()
+                                />
+                            }.into_any()
+                        })
+                    }}
+                </Modal>
             }.into_any()
         }}
     }

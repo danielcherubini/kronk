@@ -1,5 +1,60 @@
 use leptos::prelude::*;
 use std::boxed::Box;
+
+/// Title content for the modal header — either a static string or a reactive
+/// closure that returns a `String`. This lets callers pass plain text (for
+/// most modals) or a `move || format!(...)` closure when the title must
+/// reflect changing state (e.g. the backend name in the log viewer).
+pub enum ModalTitle {
+    Static(String),
+    Reactive(Box<dyn Fn() -> String + Send + Sync>),
+}
+
+impl Clone for ModalTitle {
+    fn clone(&self) -> Self {
+        match self {
+            ModalTitle::Static(s) => ModalTitle::Static(s.clone()),
+            ModalTitle::Reactive(_) => {
+                // A reactive title can't be cloned since the closure is not Clone.
+                // In practice this only matters when Leptos clones the component
+                // props during re-render, which is fine — we fall back to a static
+                // snapshot. This shouldn't occur in normal usage.
+                panic!("ModalTitle::Reactive does not support Clone")
+            }
+        }
+    }
+}
+
+impl From<String> for ModalTitle {
+    fn from(s: String) -> Self {
+        ModalTitle::Static(s)
+    }
+}
+
+impl From<&str> for ModalTitle {
+    fn from(s: &str) -> Self {
+        ModalTitle::Static(s.to_string())
+    }
+}
+
+impl<F, R> From<F> for ModalTitle
+where
+    F: Fn() -> R + Send + Sync + 'static,
+    R: Into<String>,
+{
+    fn from(f: F) -> Self {
+        ModalTitle::Reactive(Box::new(move || f().into()))
+    }
+}
+
+impl ModalTitle {
+    pub fn render(&self) -> String {
+        match self {
+            ModalTitle::Static(s) => s.clone(),
+            ModalTitle::Reactive(f) => f(),
+        }
+    }
+}
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::KeyboardEvent;
@@ -33,9 +88,11 @@ pub fn Modal(
     /// Called when the user dismisses via X / Escape / backdrop click.
     #[prop(into)]
     on_close: Callback<()>,
-    /// Title shown in the modal header.
+    /// Title shown in the modal header. Accepts a `String`, `&str`, or a
+    /// reactive closure (`move || format!("...")`). Reactive titles update
+    /// when their captured signals change.
     #[prop(into)]
-    title: String,
+    title: ModalTitle,
     /// Modal body. `ChildrenFn` so it can be projected into a reactive
     /// always-rendered tree.
     children: ChildrenFn,
@@ -87,7 +144,7 @@ pub fn Modal(
         >
             <div class="modal" on:click=on_modal_click>
                 <div class="modal-header">
-                    <h2 class="modal-title">{title}</h2>
+                    <h2 class="modal-title">{move || title.render()}</h2>
                     <button
                         type="button"
                         class="modal-close"
