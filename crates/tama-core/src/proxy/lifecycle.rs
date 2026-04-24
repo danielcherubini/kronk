@@ -130,9 +130,9 @@ impl ProxyState {
         // Open log file for this backend instance — include server name so
         // multiple models on the same backend get separate log files.
         let log_name = format!("{}_{}", server_config.backend, server_name);
-        let log_file = logs_dir.as_ref().and_then(|dir| {
-            logging::open_log(dir, &log_name).ok()
-        });
+        let log_file = logs_dir
+            .as_ref()
+            .and_then(|dir| logging::open_log(dir, &log_name).ok());
         let log_file_arc = log_file.map(|f| Arc::new(Mutex::new(f)));
 
         // Helper to push a line: broadcast + write to file.

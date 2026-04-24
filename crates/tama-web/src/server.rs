@@ -161,12 +161,14 @@ async fn proxy_tama(
             }
             // Ensure SSE connections stay open — tell browser not to cache
             if is_sse {
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::CONNECTION, "keep-alive".parse().unwrap());
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    "no-cache".parse().unwrap(),
+                );
+                response.headers_mut().insert(
+                    axum::http::header::CONNECTION,
+                    "keep-alive".parse().unwrap(),
+                );
             }
             response
         }

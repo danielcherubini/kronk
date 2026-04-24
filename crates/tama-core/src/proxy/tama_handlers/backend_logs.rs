@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::logging;
 use super::super::ProxyState;
+use crate::logging;
 
 /// Response from GET /tama/v1/logs — grouped by source.
 #[derive(Debug, Clone, Serialize)]
@@ -55,14 +55,12 @@ pub async fn handle_all_logs(
     {
         let tama_path = logs_dir.join("tama.log");
         if tama_path.exists() {
-            let lines = match tokio::task::spawn_blocking(move || {
-                logging::tail_lines(&tama_path, n)
-            })
-            .await
-            {
-                Ok(Ok(l)) => l,
-                _ => Vec::new(),
-            };
+            let lines =
+                match tokio::task::spawn_blocking(move || logging::tail_lines(&tama_path, n)).await
+                {
+                    Ok(Ok(l)) => l,
+                    _ => Vec::new(),
+                };
             if !lines.is_empty() {
                 sources.push(SourceLogs {
                     name: "tama".to_string(),
@@ -89,16 +87,17 @@ pub async fn handle_all_logs(
             if fname_str.ends_with(".log") && fname_str != "tama.log" {
                 let source_name = fname_str[..fname_str.len() - 4].to_string();
                 let path = entry.path();
-                let lines = match tokio::task::spawn_blocking(move || {
-                    logging::tail_lines(&path, n)
-                })
-                .await
+                let lines = match tokio::task::spawn_blocking(move || logging::tail_lines(&path, n))
+                    .await
                 {
                     Ok(Ok(l)) => l,
                     _ => Vec::new(),
                 };
                 if !lines.is_empty() {
-                    sources.push(SourceLogs { name: source_name, lines });
+                    sources.push(SourceLogs {
+                        name: source_name,
+                        lines,
+                    });
                 }
             }
         }

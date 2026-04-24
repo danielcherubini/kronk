@@ -34,7 +34,9 @@ fn default_lines() -> usize {
 pub fn is_valid_backend_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// GET /tama/v1/logs/:backend — return the last N lines of a backend's log file.

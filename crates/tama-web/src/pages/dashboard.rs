@@ -4,8 +4,6 @@ use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-
-
 use crate::components::sparkline::SparklineChart;
 use crate::utils::{extract_and_store_csrf_token, post_request};
 
