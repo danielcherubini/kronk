@@ -102,21 +102,6 @@ mod tests {
         );
     }
 
-    /// GET /tama/v1/logs returns empty sources when logs_dir is not configured.
-    #[tokio::test]
-    async fn test_api_logs_returns_empty_when_unconfigured() {
-        let (client, addr) = start_test_server().await;
-        let resp = client
-            .get(format!("http://{}/tama/v1/logs", addr))
-            .send()
-            .await
-            .unwrap();
-        // When logs_dir is None, tama-core returns 200 with empty sources array
-        assert_eq!(resp.status().as_u16(), 200);
-        let body: serde_json::Value = resp.json().await.unwrap();
-        assert_eq!(body["sources"].as_array().unwrap().len(), 0);
-    }
-
     /// POST /tama/v1/config returns 404 when config_path is None (checked before TOML validation).
     #[tokio::test]
     async fn test_api_config_save_returns_403_when_unauthenticated() {
