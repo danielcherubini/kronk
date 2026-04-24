@@ -286,8 +286,14 @@ impl Config {
                 .any(|e| matches!(crate::config::flag_name(e), Some("-c") | Some("--ctx-size")));
             if !already_has_c {
                 let slots = server.num_parallel.unwrap_or(1);
-                let effective_ctx = ctx.saturating_mul(slots);
-                grouped.push(format!("-c {}", effective_ctx));
+                let total_ctx = if server.kv_unified {
+                    // Unified KV: all slots share one pool, -c = per-slot context
+                    ctx
+                } else {
+                    // Non-unified: each slot gets dedicated region, -c = per_slot * slots
+                    ctx.saturating_mul(slots)
+                };
+                grouped.push(format!("-c {}", total_ctx));
             }
         }
 
@@ -316,6 +322,16 @@ impl Config {
             });
             if !already_has_ngl {
                 grouped.push(format!("-ngl {}", ngl));
+            }
+        }
+
+        // Inject --kv-unified flag when enabled and not already present.
+        if server.kv_unified {
+            let already_has_kv_unified = grouped
+                .iter()
+                .any(|e| matches!(crate::config::flag_name(e), Some("--kv-unified")));
+            if !already_has_kv_unified {
+                grouped.push("--kv-unified".to_string());
             }
         }
 
