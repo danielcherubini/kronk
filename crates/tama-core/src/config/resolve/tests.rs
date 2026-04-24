@@ -1664,3 +1664,73 @@ fn test_build_full_args_ctx_override_unified() {
         args
     );
 }
+
+/// Tests that --kv-unified is not duplicated when the user manually adds it
+/// in their args array AND server.kv_unified=true.
+#[test]
+fn test_build_full_args_kv_unified_not_duplicated_when_in_user_args() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let models_dir = temp_dir.path().join("models");
+    let org_dir = models_dir.join("org").join("repo");
+    let quant_file = org_dir.join("model-Q4_K_M.gguf");
+
+    std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+    std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+    let mut quants = std::collections::BTreeMap::new();
+    quants.insert(
+        "Q4_K_M".to_string(),
+        crate::config::types::QuantEntry {
+            file: "model-Q4_K_M.gguf".to_string(),
+            kind: Default::default(),
+            size_bytes: None,
+            context_length: Some(8192),
+        },
+    );
+
+    let mut config = Config::default();
+    config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+    config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+    // User manually added --kv-unified in args, AND kv_unified=true in config.
+    // The flag should appear exactly once (not duplicated).
+    let server = ModelConfig {
+        backend: "llama_cpp".to_string(),
+        args: vec!["--kv-unified".to_string()], // User manually added it
+        sampling: None,
+        model: Some("org/repo".to_string()),
+        quant: Some("Q4_K_M".to_string()),
+        mmproj: None,
+        port: None,
+        health_check: None,
+        enabled: true,
+        context_length: Some(8192),
+        num_parallel: Some(2),
+        kv_unified: true, // Config also says unified
+        profile: None,
+        api_name: None,
+        gpu_layers: None,
+        quants,
+        modalities: None,
+        display_name: None,
+        db_id: None,
+    };
+
+    let backend = BackendConfig {
+        path: None,
+        default_args: vec![],
+        health_check_url: None,
+        version: None,
+    };
+
+    let args = config
+        .build_full_args(&server, &backend, None)
+        .expect("build_full_args failed");
+
+    let kv_count = args.iter().filter(|a| *a == "--kv-unified").count();
+    assert_eq!(
+        kv_count, 1,
+        "--kv-unified should appear exactly once, got {} in: {:?}",
+        kv_count, args
+    );
+}
