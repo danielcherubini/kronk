@@ -1,6 +1,6 @@
 [package]
 name = "tama-core"
-version = "1.47.0"
+version = "1.47.1"
 edition.workspace = true
 
 [dependencies]
