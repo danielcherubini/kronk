@@ -158,53 +158,58 @@ pub fn Logs() -> impl IntoView {
         </div>
 
         // Loading state
-        {if loading.get() && sources.get().is_empty() {
-            view! {
-                <div class="spinner-container mt-4">
-                    <span class="spinner"></span>
-                    <span class="text-muted">"Loading logs..."</span>
-                </div>
-            }.into_any()
-        } else if let Some(err) = error.get() {
-            view! {
-                <div class="alert alert--warning mt-2">
-                    <span class="alert__icon">"⚠"</span>
-                    <span>{err}</span>
-                </div>
-            }.into_any()
-        } else if sources.get().is_empty() {
-            view! {
-                <div class="alert alert--info mt-2">
-                    <span class="alert__icon">"ℹ"</span>
-                    <span>"No logs yet. Logs will appear here after backend processes are started."</span>
-                </div>
-            }.into_any()
-        } else {
+        {move || {
             let all_sources = sources.get();
-            let selected = selected_source.get();
-            view! {
-                <div class="log-viewer card">
-                    {all_sources.into_iter().filter(|s| {
-                        selected.is_empty() || s.name == selected
-                    }).flat_map(|source| {
-                        // Add a header for each source (unless showing all)
-                        let headers = if selected.is_empty() && !source.lines.is_empty() {
-                            vec![format!("=== {} ===", source.name)]
-                        } else {
-                            vec![]
-                        };
-                        let lines = headers.into_iter().chain(source.lines).collect::<Vec<_>>();
-                        lines.into_iter().map(|line| {
-                            let cls = if line.starts_with("===") {
-                                "log-line log-line--header".to_string()
+            let err = error.get();
+            let is_loading = loading.get();
+            if is_loading && all_sources.is_empty() {
+                view! {
+                    <div class="spinner-container mt-4">
+                        <span class="spinner"></span>
+                        <span class="text-muted">"Loading logs..."</span>
+                    </div>
+                }.into_any()
+            } else if let Some(e) = err {
+                view! {
+                    <div class="alert alert--warning mt-2">
+                        <span class="alert__icon">"⚠"</span>
+                        <span>{e}</span>
+                    </div>
+                }.into_any()
+            } else if all_sources.is_empty() {
+                view! {
+                    <div class="alert alert--info mt-2">
+                        <span class="alert__icon">"ℹ"</span>
+                        <span>"No logs yet. Logs will appear here after backend processes are started."</span>
+                    </div>
+                }.into_any()
+            } else {
+                let selected = selected_source.get();
+                let selected_clone = selected.clone();
+                view! {
+                    <div class="log-viewer card">
+                        {all_sources.into_iter().filter(move |s| {
+                            selected.is_empty() || s.name == selected
+                        }).flat_map(|source| {
+                            // Add a header for each source (unless showing all)
+                            let headers = if selected_clone.is_empty() && !source.lines.is_empty() {
+                                vec![format!("=== {} ===", source.name)]
                             } else {
-                                format!("log-line {}", log_level_class(&line))
+                                vec![]
                             };
-                            view! { <div class=cls>{line}</div> }
-                        }).collect::<Vec<_>>()
-                    }).collect::<Vec<_>>()}
-                </div>
-            }.into_any()
+                            let lines = headers.into_iter().chain(source.lines).collect::<Vec<_>>();
+                            lines.into_iter().map(|line| {
+                                let cls = if line.starts_with("===") {
+                                    "log-line log-line--header".to_string()
+                                } else {
+                                    format!("log-line {}", log_level_class(&line))
+                                };
+                                view! { <div class=cls>{line}</div> }
+                            }).collect::<Vec<_>>()
+                        }).collect::<Vec<_>>()}
+                    </div>
+                }.into_any()
+            }
         }}
     }
 }
