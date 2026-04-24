@@ -55,11 +55,16 @@ pub fn Logs() -> impl IntoView {
             {
                 Ok(resp) => {
                     extract_and_store_csrf_token(&resp);
-                    if resp.status() >= 200 && resp.status() < 300 {
-                        if let Ok(data) = resp.json::<AllLogsResponse>().await {
-                            sources.set(data.sources);
-                        } else {
-                            error.set(Some("Failed to parse log data".to_string()));
+                    let status = resp.status();
+                    if status >= 200 && status < 300 {
+                        match resp.text().await {
+                            Ok(text) => {
+                                match serde_json::from_str::<AllLogsResponse>(&text) {
+                                    Ok(data) => sources.set(data.sources),
+                                    Err(e) => error.set(Some(format!("Parse error: {e} (body len={})", text.len()))),
+                                }
+                            }
+                            Err(e) => error.set(Some(format!("Failed to read body: {e}"))),
                         }
                     } else {
                         error.set(Some(format!(
