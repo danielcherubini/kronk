@@ -63,8 +63,19 @@ mod tests {
         let vram = response.get("vram");
         assert!(vram.is_some(), "vram key should be present (even if null)");
 
-        // idle_timeout_secs at top level per spec
-        assert!(response.get("idle_timeout_secs").is_some());
+        // auto_unload and idle_timeout_secs at top level per spec
+        assert_eq!(
+            response.get("auto_unload").and_then(|v| v.as_bool()),
+            Some(false),
+            "auto_unload should be a boolean (default false)"
+        );
+        assert!(
+            response
+                .get("idle_timeout_secs")
+                .and_then(|v| v.as_u64())
+                .is_some(),
+            "idle_timeout_secs should be a number"
+        );
 
         // models is an object keyed by model name
         let models = response.get("models").unwrap();

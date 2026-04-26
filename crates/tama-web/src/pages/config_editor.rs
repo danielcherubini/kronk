@@ -104,6 +104,8 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub port: u16,
     #[serde(default)]
+    pub auto_unload: bool,
+    #[serde(default)]
     pub idle_timeout_secs: u64,
     #[serde(default)]
     pub startup_timeout_secs: u64,
@@ -430,10 +432,28 @@ fn ProxyForm(config: RwSignal<Option<Config>>) -> impl IntoView {
                 </div>
 
                 <div>
+                    <label class="checkbox-label">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || get_proxy().auto_unload
+                            on:change=move |ev| {
+                                use wasm_bindgen::JsCast;
+                                let checked = ev.target()
+                                    .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                    .map(|el| el.checked())
+                                    .unwrap_or(false);
+                                config.update(|c| if let Some(c) = c { c.proxy.auto_unload = checked; });
+                            }
+                        />
+                        "Auto-unload idle models"
+                    </label>
+                </div>
+
+                <div>
                     <label>"Idle Timeout (seconds)"</label>
                     <input
                         type="number"
-                        min="0"
+                        min="1"
                         prop:value=move || get_proxy().idle_timeout_secs.to_string()
                         on:input=move |ev| {
                             if let Ok(v) = target_value(&ev).parse::<u64>() {

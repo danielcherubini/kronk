@@ -70,8 +70,9 @@ pub async fn main() -> Result<()> {
             if proxy {
                 let host = config.proxy.host.clone();
                 let port = config.proxy.port;
+                let auto_unload = config.proxy.auto_unload;
                 let idle_timeout = config.proxy.idle_timeout_secs;
-                serve::cmd_serve(&config, host, port, idle_timeout).await
+                serve::cmd_serve(&config, host, port, auto_unload, idle_timeout).await
             } else {
                 let server = server.ok_or_else(|| {
                     anyhow::anyhow!("Either --server or --proxy must be provided for service-run")
@@ -109,8 +110,18 @@ pub async fn main() -> Result<()> {
         Commands::Serve {
             host,
             port,
+            auto_unload,
             idle_timeout,
-        } => serve::cmd_serve(&config, host, port, idle_timeout).await,
+        } => {
+            serve::cmd_serve(
+                &config,
+                host,
+                port,
+                auto_unload.unwrap_or(config.proxy.auto_unload),
+                idle_timeout,
+            )
+            .await
+        }
         Commands::Logs {
             name,
             follow,

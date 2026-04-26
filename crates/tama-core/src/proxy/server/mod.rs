@@ -60,7 +60,7 @@ impl ProxyServer {
         }
 
         Self::cleanup_stale_processes(&state).await;
-        let handle = Self::start_idle_timeout_checker(state.clone());
+        let idle_timeout_handle = Self::start_idle_timeout_checker(state.clone());
 
         // Spawn background task to refresh system metrics every 2s.
         // Each tick: collect metrics, update the cached snapshot, persist to SQLite
@@ -144,7 +144,7 @@ impl ProxyServer {
 
         Self {
             state,
-            idle_timeout_handle: Some(handle),
+            idle_timeout_handle: Some(idle_timeout_handle),
             metrics_handle: Some(metrics_handle),
         }
     }
@@ -223,13 +223,27 @@ impl ProxyServer {
         }
     }
 
+    /// Spawn the idle timeout checker task.
+    /// Always spawns — the task reads config each iteration and respects runtime
+    /// changes to auto_unload (e.g., via web UI) without requiring a restart.
+    /// check_idle_timeouts is always called so Failed backends get cleaned up
+    /// even when auto_unload is disabled; the idle-unload logic inside it is
+    /// gated on the auto_unload flag.
     fn start_idle_timeout_checker(state: Arc<ProxyState>) -> tokio::task::JoinHandle<()> {
         use std::time::Duration;
+
         tokio::spawn(async move {
-            let interval =
-                Duration::from_secs((state.config.read().await.proxy.idle_timeout_secs / 2).max(1));
             loop {
+                // Re-read config each iteration so runtime changes (e.g., via web UI)
+                // take effect without a restart.
+                let idle_timeout_secs = state.config.read().await.proxy.idle_timeout_secs;
+                let interval = if idle_timeout_secs > 0 {
+                    Duration::from_secs((idle_timeout_secs / 2).max(1))
+                } else {
+                    Duration::from_secs(30)
+                };
                 tokio::time::sleep(interval).await;
+                // Always called — cleans up Failed backends even when auto_unload is off.
                 let _ = state.check_idle_timeouts().await;
             }
         })

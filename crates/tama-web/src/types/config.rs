@@ -224,6 +224,8 @@ pub struct ProxyConfig {
     pub host: String,
     #[serde(default = "default_proxy_port")]
     pub port: u16,
+    #[serde(default)]
+    pub auto_unload: bool,
     #[serde(default = "default_proxy_timeout")]
     pub idle_timeout_secs: u64,
     #[serde(default = "default_startup_timeout")]
@@ -570,6 +572,7 @@ impl From<CoreProxyConfig> for ProxyConfig {
         Self {
             host: p.host,
             port: p.port,
+            auto_unload: p.auto_unload,
             idle_timeout_secs: p.idle_timeout_secs,
             startup_timeout_secs: p.startup_timeout_secs,
             circuit_breaker_threshold: p.circuit_breaker_threshold,
@@ -587,6 +590,7 @@ impl From<ProxyConfig> for CoreProxyConfig {
         Self {
             host: p.host,
             port: p.port,
+            auto_unload: p.auto_unload,
             idle_timeout_secs: p.idle_timeout_secs,
             startup_timeout_secs: p.startup_timeout_secs,
             circuit_breaker_threshold: p.circuit_breaker_threshold,
@@ -802,7 +806,8 @@ mod tests {
         let proxy = ProxyConfig {
             host: "0.0.0.0".to_string(),
             port: 8080,
-            idle_timeout_secs: 0,
+            auto_unload: false,
+            idle_timeout_secs: 300,
             startup_timeout_secs: 60,
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_seconds: 300,
@@ -816,6 +821,8 @@ mod tests {
 
         assert_eq!(deserialized.host, "0.0.0.0");
         assert_eq!(deserialized.port, 8080);
+        assert!(!deserialized.auto_unload, "auto_unload should be false");
+        assert_eq!(deserialized.idle_timeout_secs, 300);
         assert_eq!(deserialized.circuit_breaker_threshold, 5);
     }
 

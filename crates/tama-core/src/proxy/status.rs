@@ -75,6 +75,7 @@ impl ProxyState {
 
         let config = self.config.read().await;
         let model_configs = self.model_configs.read().await;
+        let auto_unload = config.proxy.auto_unload;
         let idle_timeout_secs = config.proxy.idle_timeout_secs;
         let models = self.models.read().await;
         let mut models_obj = serde_json::Map::new();
@@ -97,12 +98,17 @@ impl ProxyState {
                 }) => {
                     let now = Instant::now();
                     let last_accessed_secs_ago = now.duration_since(*last_accessed).as_secs();
-                    let timeout = Duration::from_secs(idle_timeout_secs);
                     let elapsed = now.duration_since(*last_accessed);
-                    let idle_timeout_remaining_secs = if elapsed < timeout {
-                        (timeout - elapsed).as_secs()
+                    let idle_timeout_remaining_secs: serde_json::Value = if auto_unload {
+                        let timeout = Duration::from_secs(idle_timeout_secs);
+                        if elapsed < timeout {
+                            serde_json::json!((timeout - elapsed).as_secs())
+                        } else {
+                            serde_json::json!(0)
+                        }
                     } else {
-                        0
+                        // Auto-unload disabled — no countdown
+                        serde_json::Value::Null
                     };
                     let load_time_secs = load_time
                         .duration_since(UNIX_EPOCH)
@@ -230,6 +236,7 @@ impl ProxyState {
                 "used_mib": v.used_mib,
                 "total_mib": v.total_mib,
             })),
+            "auto_unload": auto_unload,
             "idle_timeout_secs": idle_timeout_secs,
             "metrics": {
                 "total_requests": metrics.total_requests.load(Relaxed),

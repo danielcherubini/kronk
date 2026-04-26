@@ -5,9 +5,15 @@
 use anyhow::Result;
 use tama_core::config::Config;
 
-/// Start the tama server (proxy) with the given host, port, and idle timeout.
-pub async fn cmd_serve(config: &Config, host: String, port: u16, idle_timeout: u64) -> Result<()> {
-    start_proxy_server(config, host, port, idle_timeout).await
+/// Start the tama server (proxy) with the given host, port, auto_unload setting, and idle timeout.
+pub async fn cmd_serve(
+    config: &Config,
+    host: String,
+    port: u16,
+    auto_unload: bool,
+    idle_timeout: u64,
+) -> Result<()> {
+    start_proxy_server(config, host, port, auto_unload, idle_timeout).await
 }
 
 /// Set up HF_TOKEN environment variable from config if present.
@@ -21,11 +27,12 @@ fn setup_hf_token(config: &Config) {
     }
 }
 
-/// Start the tama server (proxy) with the given host, port, and idle timeout.
+/// Start the tama server (proxy) with the given host, port, auto_unload setting, and idle timeout.
 async fn start_proxy_server(
     config: &Config,
     host: String,
     port: u16,
+    auto_unload: bool,
     idle_timeout: u64,
 ) -> Result<()> {
     use std::net::SocketAddr;
@@ -37,6 +44,7 @@ async fn start_proxy_server(
     let mut updated_config = config.clone();
     updated_config.proxy.host = host.clone();
     updated_config.proxy.port = port;
+    updated_config.proxy.auto_unload = auto_unload;
     updated_config.proxy.idle_timeout_secs = idle_timeout;
 
     // Set up HF_TOKEN from config before any hf_hub usage
@@ -57,7 +65,11 @@ async fn start_proxy_server(
     }
 
     tracing::info!("Starting tama on {}", addr);
-    tracing::info!("Idle timeout: {}s", idle_timeout);
+    tracing::info!(
+        "Auto-unload: {} (idle timeout: {}s)",
+        auto_unload,
+        idle_timeout
+    );
 
     let db_dir = tama_core::config::Config::config_dir().ok();
     // Trigger backfill if DB is fresh (best-effort: log failures but don't abort)
