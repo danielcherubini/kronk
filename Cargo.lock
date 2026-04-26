@@ -3689,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "tama"
-version = "1.47.1"
+version = "1.48.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3710,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "tama-core"
-version = "1.47.1"
+version = "1.48.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3757,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "tama-mock"
-version = "1.47.1"
+version = "1.48.0"
 dependencies = [
  "tokio",
  "tracing",
@@ -3766,7 +3766,7 @@ dependencies = [
 
 [[package]]
 name = "tama-web"
-version = "1.47.1"
+version = "1.48.0"
 dependencies = [
  "anyhow",
  "async-stream",

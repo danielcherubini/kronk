@@ -70,6 +70,12 @@ pub struct ProxyConfig {
     pub host: String,
     #[serde(default = "default_proxy_port")]
     pub port: u16,
+    /// Whether to automatically unload models after a period of inactivity.
+    /// When false, models stay loaded until explicitly unloaded or evicted by LRU.
+    #[serde(default)]
+    pub auto_unload: bool,
+    /// How long (in seconds) a model must be idle before it is automatically unloaded.
+    /// Only takes effect when `auto_unload` is true. Default: 300 (5 minutes).
     #[serde(default = "default_proxy_timeout")]
     pub idle_timeout_secs: u64,
     #[serde(default = "default_startup_timeout")]
@@ -97,6 +103,7 @@ impl Default for ProxyConfig {
         Self {
             host: default_proxy_host(),
             port: default_proxy_port(),
+            auto_unload: false,
             idle_timeout_secs: default_proxy_timeout(),
             startup_timeout_secs: default_startup_timeout(),
             circuit_breaker_threshold: default_circuit_breaker_threshold(),

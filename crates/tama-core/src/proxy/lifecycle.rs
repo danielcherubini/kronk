@@ -452,12 +452,10 @@ impl ProxyState {
         let mut to_unload = Vec::new();
         let mut failed_to_remove = Vec::new();
 
-        let idle_timeout_secs = self.config.read().await.proxy.idle_timeout_secs;
-
-        // A timeout of 0 means auto-unload is disabled
-        if idle_timeout_secs == 0 {
-            return Vec::new();
-        }
+        let (auto_unload, idle_timeout_secs) = {
+            let cfg = self.config.read().await;
+            (cfg.proxy.auto_unload, cfg.proxy.idle_timeout_secs)
+        };
 
         let timeout = Duration::from_secs(idle_timeout_secs);
         let models = self.models.read().await;
@@ -491,7 +489,8 @@ impl ProxyState {
             };
             let idle_duration = now.saturating_duration_since(last);
 
-            if idle_duration > timeout {
+            // Only check idle timeout when auto_unload is enabled
+            if auto_unload && idle_duration > timeout {
                 warn!(
                     "Server '{}' has been idle for {}s (timeout: {}s)",
                     server_name,
@@ -827,16 +826,16 @@ mod tests {
         }
     }
 
-    /// Test that idle timeout of 0 disables auto-unload.
+    /// Test that auto_unload=false disables auto-unload.
     #[tokio::test]
-    async fn test_idle_timeout_zero_disables_auto_unload() {
+    async fn test_auto_unload_disabled() {
         let config = Config::default();
         let state = ProxyState::new(config, None);
-        // With default config, idle_timeout_secs is 0 (disabled)
+        // With default config, auto_unload is false (disabled)
         let result = state.check_idle_timeouts().await;
         assert!(
             result.is_empty(),
-            "Idle timeout of 0 should disable auto-unload"
+            "auto_unload=false should disable auto-unload"
         );
     }
 

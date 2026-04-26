@@ -48,9 +48,17 @@ fn print_proxy_status(status: &serde_json::Value, config: &Config) {
         println!("  VRAM:     {} / {} MiB", used, total);
     }
 
-    // Idle timeout
+    // Auto-unload / idle timeout
+    let auto_unload = status
+        .get("auto_unload")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if let Some(timeout) = status.get("idle_timeout_secs").and_then(|v| v.as_u64()) {
-        println!("  Timeout:  {}s", timeout);
+        if auto_unload {
+            println!("  Auto-unload: enabled ({}s idle)", timeout);
+        } else {
+            println!("  Auto-unload: disabled");
+        }
     }
 
     // Metrics

@@ -63,7 +63,8 @@ mod tests {
         let vram = response.get("vram");
         assert!(vram.is_some(), "vram key should be present (even if null)");
 
-        // idle_timeout_secs at top level per spec
+        // auto_unload and idle_timeout_secs at top level per spec
+        assert!(response.get("auto_unload").is_some());
         assert!(response.get("idle_timeout_secs").is_some());
 
         // models is an object keyed by model name
