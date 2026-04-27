@@ -136,8 +136,14 @@ fn apply_model_body(
             })
             .collect(),
         kv_unified: body.kv_unified.unwrap_or(base.kv_unified),
-        cache_type_k: body.cache_type_k,
-        cache_type_v: body.cache_type_v,
+        cache_type_k: body
+            .cache_type_k
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        cache_type_v: body
+            .cache_type_v
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         db_id: base.db_id,
     }
 }
@@ -1428,5 +1434,69 @@ mod tests {
         let result = apply_model_body(body, None);
         assert_eq!(result.cache_type_k, None);
         assert_eq!(result.cache_type_v, None);
+    }
+
+    /// Whitespace-only cache_type_k/v must be normalized to None.
+    #[test]
+    fn test_apply_model_body_cache_type_whitespace_only_becomes_none() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            kv_unified: None,
+            cache_type_k: Some("   ".to_string()),
+            cache_type_v: Some("\t\n".to_string()),
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(
+            result.cache_type_k, None,
+            "whitespace-only cache_type_k must become None"
+        );
+        assert_eq!(
+            result.cache_type_v, None,
+            "whitespace-only cache_type_v must become None"
+        );
+    }
+
+    /// cache_type_k/v with leading/trailing whitespace must be trimmed.
+    #[test]
+    fn test_apply_model_body_cache_type_trims_whitespace() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            kv_unified: None,
+            cache_type_k: Some("  q4_0  ".to_string()),
+            cache_type_v: Some(" q8_0 ".to_string()),
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.cache_type_k, Some("q4_0".to_string()));
+        assert_eq!(result.cache_type_v, Some("q8_0".to_string()));
     }
 }
