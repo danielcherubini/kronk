@@ -274,6 +274,8 @@ mod tests {
             profile: None,
             api_name: None,
             gpu_layers: None,
+            cache_type_k: None,
+            cache_type_v: None,
             quants: BTreeMap::new(),
             modalities: None,
             display_name: None,

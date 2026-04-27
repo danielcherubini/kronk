@@ -12,11 +12,12 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
     conn.execute(
         "INSERT INTO model_configs (
             repo_id, display_name, backend, enabled, selected_quant,
-            selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers, port, args,
+            selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
+            cache_type_k, cache_type_v, port, args,
             sampling, modalities, profile, api_name, health_check,
             created_at, updated_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
         )
          ON CONFLICT(repo_id) DO UPDATE SET
              display_name = excluded.display_name,
@@ -28,6 +29,8 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
              num_parallel = excluded.num_parallel,
              kv_unified = excluded.kv_unified,
              gpu_layers = excluded.gpu_layers,
+             cache_type_k = excluded.cache_type_k,
+             cache_type_v = excluded.cache_type_v,
              port = excluded.port,
              args = excluded.args,
              sampling = excluded.sampling,
@@ -47,6 +50,8 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
             record.num_parallel,
             record.kv_unified as i32,
             record.gpu_layers,
+            record.cache_type_k,
+            record.cache_type_v,
             record.port,
             record.args,
             record.sampling,
@@ -71,7 +76,8 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
 pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfigRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, display_name, backend, enabled, selected_quant,
-                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers, port, args,
+                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
+                cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
                 created_at, updated_at
          FROM model_configs WHERE id = ?1",
@@ -89,15 +95,17 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
             num_parallel: row.get(8)?,
             kv_unified: row.get::<_, i32>(9)? != 0,
             gpu_layers: row.get(10)?,
-            port: row.get(11)?,
-            args: row.get(12)?,
-            sampling: row.get(13)?,
-            modalities: row.get(14)?,
-            profile: row.get(15)?,
-            api_name: row.get(16)?,
-            health_check: row.get(17)?,
-            created_at: row.get(18)?,
-            updated_at: row.get(19)?,
+            cache_type_k: row.get(11)?,
+            cache_type_v: row.get(12)?,
+            port: row.get(13)?,
+            args: row.get(14)?,
+            sampling: row.get(15)?,
+            modalities: row.get(16)?,
+            profile: row.get(17)?,
+            api_name: row.get(18)?,
+            health_check: row.get(19)?,
+            created_at: row.get(20)?,
+            updated_at: row.get(21)?,
         })
     })?;
     match rows.next() {
@@ -113,7 +121,8 @@ pub fn get_model_config_by_repo_id(
 ) -> Result<Option<ModelConfigRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, display_name, backend, enabled, selected_quant,
-                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers, port, args,
+                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
+                cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
                 created_at, updated_at
          FROM model_configs WHERE repo_id = ?1",
@@ -131,15 +140,17 @@ pub fn get_model_config_by_repo_id(
             num_parallel: row.get(8)?,
             kv_unified: row.get::<_, i32>(9)? != 0,
             gpu_layers: row.get(10)?,
-            port: row.get(11)?,
-            args: row.get(12)?,
-            sampling: row.get(13)?,
-            modalities: row.get(14)?,
-            profile: row.get(15)?,
-            api_name: row.get(16)?,
-            health_check: row.get(17)?,
-            created_at: row.get(18)?,
-            updated_at: row.get(19)?,
+            cache_type_k: row.get(11)?,
+            cache_type_v: row.get(12)?,
+            port: row.get(13)?,
+            args: row.get(14)?,
+            sampling: row.get(15)?,
+            modalities: row.get(16)?,
+            profile: row.get(17)?,
+            api_name: row.get(18)?,
+            health_check: row.get(19)?,
+            created_at: row.get(20)?,
+            updated_at: row.get(21)?,
         })
     })?;
     match rows.next() {
@@ -152,7 +163,8 @@ pub fn get_model_config_by_repo_id(
 pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, display_name, backend, enabled, selected_quant,
-                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers, port, args,
+                selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
+                cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
                 created_at, updated_at
          FROM model_configs",
@@ -170,15 +182,17 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
             num_parallel: row.get(8)?,
             kv_unified: row.get::<_, i32>(9)? != 0,
             gpu_layers: row.get(10)?,
-            port: row.get(11)?,
-            args: row.get(12)?,
-            sampling: row.get(13)?,
-            modalities: row.get(14)?,
-            profile: row.get(15)?,
-            api_name: row.get(16)?,
-            health_check: row.get(17)?,
-            created_at: row.get(18)?,
-            updated_at: row.get(19)?,
+            cache_type_k: row.get(11)?,
+            cache_type_v: row.get(12)?,
+            port: row.get(13)?,
+            args: row.get(14)?,
+            sampling: row.get(15)?,
+            modalities: row.get(16)?,
+            profile: row.get(17)?,
+            api_name: row.get(18)?,
+            health_check: row.get(19)?,
+            created_at: row.get(20)?,
+            updated_at: row.get(21)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()

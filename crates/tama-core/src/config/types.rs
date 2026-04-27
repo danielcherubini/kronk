@@ -233,6 +233,12 @@ pub struct ModelConfig {
     /// Default GPU layers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_layers: Option<u32>,
+    /// KV cache data type for K head (e.g., "f16", "q4_0"). Passed as --cache-type-k.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type_k: Option<String>,
+    /// KV cache data type for V head (e.g., "f16", "q8_0"). Passed as --cache-type-v.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type_v: Option<String>,
     /// Available quantizations
     #[serde(default, skip_serializing_if = "is_btreemap_empty")]
     pub quants: BTreeMap<String, QuantEntry>,
@@ -267,6 +273,8 @@ impl ModelConfig {
             num_parallel: self.num_parallel,
             kv_unified: self.kv_unified,
             gpu_layers: self.gpu_layers,
+            cache_type_k: self.cache_type_k.clone(),
+            cache_type_v: self.cache_type_v.clone(),
             port: self.port,
             args: serde_json::to_string(&self.args).ok(),
             sampling: self
@@ -305,6 +313,8 @@ impl ModelConfig {
             num_parallel: record.num_parallel,
             kv_unified: record.kv_unified,
             gpu_layers: record.gpu_layers,
+            cache_type_k: record.cache_type_k.clone(),
+            cache_type_v: record.cache_type_v.clone(),
             model: Some(record.repo_id.clone()),
             quant: record.selected_quant.clone(),
             mmproj: record.selected_mmproj.clone(),
@@ -592,6 +602,8 @@ host = "0.0.0.0"
             num_parallel: Some(2),
             api_name: Some("my-model".to_string()),
             gpu_layers: Some(32),
+            cache_type_k: None,
+            cache_type_v: None,
             modalities: Some(ModelModalities {
                 input: vec!["text".to_string(), "image".to_string()],
                 output: vec!["text".to_string()],
@@ -617,6 +629,8 @@ host = "0.0.0.0"
         assert_eq!(round_trip.num_parallel, mc.num_parallel);
         assert_eq!(round_trip.api_name, mc.api_name);
         assert_eq!(round_trip.gpu_layers, mc.gpu_layers);
+        assert_eq!(round_trip.cache_type_k, mc.cache_type_k);
+        assert_eq!(round_trip.cache_type_v, mc.cache_type_v);
         assert_eq!(round_trip.modalities, mc.modalities);
         assert_eq!(round_trip.display_name, mc.display_name);
         assert_eq!(round_trip.kv_unified, mc.kv_unified);

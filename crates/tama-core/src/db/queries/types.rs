@@ -14,6 +14,8 @@ pub struct ModelConfigRecord {
     pub num_parallel: Option<u32>,
     pub kv_unified: bool,
     pub gpu_layers: Option<u32>,
+    pub cache_type_k: Option<String>,
+    pub cache_type_v: Option<String>,
     pub port: Option<u16>,
     pub args: Option<String>,       // raw JSON string
     pub sampling: Option<String>,   // raw JSON string

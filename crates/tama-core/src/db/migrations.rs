@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 17;
+pub const LATEST_VERSION: i32 = 18;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -449,6 +449,13 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
             r#"
                 ALTER TABLE model_configs ADD COLUMN kv_unified INTEGER NOT NULL DEFAULT 0;
                 UPDATE model_configs SET kv_unified = 1 WHERE num_parallel IS NULL OR num_parallel <= 1;
+            "#,
+        ),
+        (
+            18,
+            r#"
+                ALTER TABLE model_configs ADD COLUMN cache_type_k TEXT;
+                ALTER TABLE model_configs ADD COLUMN cache_type_v TEXT;
             "#,
         ),
     ];
