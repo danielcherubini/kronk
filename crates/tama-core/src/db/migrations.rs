@@ -829,4 +829,29 @@ mod tests {
             .unwrap();
         assert_eq!(fk_after, 1);
     }
+
+    /// Regression test: migration v18 must add cache_type_k and cache_type_v
+    /// columns to model_configs.
+    #[test]
+    fn test_migration_v18_adds_cache_type_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        let k_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('model_configs') WHERE name='cache_type_k'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let v_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('model_configs') WHERE name='cache_type_v'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(k_exists, 1);
+        assert_eq!(v_exists, 1);
+    }
 }

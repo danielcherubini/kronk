@@ -188,8 +188,8 @@ fn test_upsert_and_get_model_config() {
         num_parallel: Some(1),
         kv_unified: false,
         gpu_layers: Some(32),
-        cache_type_k: None,
-        cache_type_v: None,
+        cache_type_k: Some("q8_0".to_string()),
+        cache_type_v: Some("q4_0".to_string()),
         port: Some(8080),
         args: Some(r#"["--flash-attn"]"#.to_string()),
         sampling: Some(r#"{"temp": 0.7}"#.to_string()),
@@ -219,6 +219,8 @@ fn test_upsert_and_get_model_config() {
     assert_eq!(retrieved.context_length, record.context_length);
     assert_eq!(retrieved.kv_unified, record.kv_unified);
     assert_eq!(retrieved.gpu_layers, record.gpu_layers);
+    assert_eq!(retrieved.cache_type_k, record.cache_type_k);
+    assert_eq!(retrieved.cache_type_v, record.cache_type_v);
     assert_eq!(retrieved.port, record.port);
     assert_eq!(retrieved.args, record.args);
     assert_eq!(retrieved.sampling, record.sampling);
