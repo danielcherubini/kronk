@@ -165,6 +165,12 @@ pub struct ModelConfig {
     /// Whether all parallel slots share a single unified KV cache pool.
     #[serde(default)]
     pub kv_unified: bool,
+    /// KV cache quantization for keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type_k: Option<String>,
+    /// KV cache quantization for values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_type_v: Option<String>,
     /// Forward-compatibility: preserve unknown fields
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<serde_json::Map<String, serde_json::Value>>,
@@ -506,6 +512,8 @@ impl From<CoreModelConfig> for ModelConfig {
             modalities: m.modalities.map(Into::into),
             display_name: m.display_name,
             kv_unified: m.kv_unified,
+            cache_type_k: m.cache_type_k,
+            cache_type_v: m.cache_type_v,
             extra: None, // Forward-compat field - preserve unknown fields on POST
         }
     }
@@ -533,6 +541,8 @@ impl From<ModelConfig> for CoreModelConfig {
             modalities: m.modalities.map(Into::into),
             display_name: m.display_name,
             kv_unified: m.kv_unified,
+            cache_type_k: m.cache_type_k,
+            cache_type_v: m.cache_type_v,
             db_id: None, // not carried through mirror types
         }
     }

@@ -107,6 +107,8 @@ fn model_entry_json(
         "display_name": record.display_name,
         "kv_unified": record.kv_unified,
         "gpu_layers": record.gpu_layers,
+        "cache_type_k": record.cache_type_k,
+        "cache_type_v": record.cache_type_v,
         "quants": quants_json,
         "modalities": m.modalities,
     });

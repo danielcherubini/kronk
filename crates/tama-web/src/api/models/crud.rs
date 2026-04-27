@@ -52,6 +52,10 @@ pub struct ModelBody {
     pub modalities: Option<tama_core::config::ModelModalities>,
     #[serde(default)]
     pub kv_unified: Option<bool>,
+    #[serde(default)]
+    pub cache_type_k: Option<String>,
+    #[serde(default)]
+    pub cache_type_v: Option<String>,
 }
 
 fn apply_model_body(
@@ -77,6 +81,8 @@ fn apply_model_body(
         modalities: None,
         display_name: None,
         kv_unified: true,
+        cache_type_k: None,
+        cache_type_v: None,
         db_id: None,
     });
 
@@ -129,6 +135,8 @@ fn apply_model_body(
             })
             .collect(),
         kv_unified: body.kv_unified.unwrap_or(base.kv_unified),
+        cache_type_k: body.cache_type_k,
+        cache_type_v: body.cache_type_v,
         db_id: base.db_id,
     }
 }
@@ -789,6 +797,8 @@ mod tests {
             quants: Some(quants),
             modalities: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         }
     }
 
@@ -822,6 +832,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: false,
+            cache_type_k: None,
+            cache_type_v: None,
             db_id: None,
         }
     }
@@ -968,6 +980,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -993,6 +1007,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1019,6 +1035,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1044,6 +1062,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1069,6 +1089,8 @@ mod tests {
             modalities: None,
             display_name: Some("My Model".to_string()),
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1094,6 +1116,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1120,6 +1144,8 @@ mod tests {
             display_name: None,
             num_parallel: Some(4),
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1145,6 +1171,8 @@ mod tests {
             display_name: None,
             num_parallel: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1170,6 +1198,8 @@ mod tests {
             modalities: None,
             display_name: None,
             kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1200,6 +1230,8 @@ mod tests {
             quants: None,
             modalities: None,
             kv_unified: None, // omitted — should preserve existing
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, Some(existing));
@@ -1230,6 +1262,8 @@ mod tests {
             quants: None,
             modalities: None,
             kv_unified: None, // omitted — should default to true
+            cache_type_k: None,
+            cache_type_v: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1237,5 +1271,63 @@ mod tests {
             result.kv_unified,
             "new model must default kv_unified to true when body omits the field"
         );
+    }
+
+    /// Verify that cache_type_k and cache_type_v flow from body through to ModelConfig.
+    #[test]
+    fn test_apply_model_body_cache_type_passthrough() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            kv_unified: None,
+            cache_type_k: Some("q4_0".to_string()),
+            cache_type_v: Some("q8_0".to_string()),
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.cache_type_k, Some("q4_0".to_string()));
+        assert_eq!(result.cache_type_v, Some("q8_0".to_string()));
+    }
+
+    /// When cache_type_k/v are omitted in the body, they should be None.
+    #[test]
+    fn test_apply_model_body_cache_type_defaults_none() {
+        let body = ModelBody {
+            backend: "llama-cpp".to_string(),
+            model: Some("model.gguf".to_string()),
+            quant: None,
+            mmproj: None,
+            args: vec![],
+            sampling: None,
+            enabled: None,
+            context_length: None,
+            num_parallel: None,
+            port: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: None,
+            modalities: None,
+            display_name: None,
+            kv_unified: None,
+            cache_type_k: None,
+            cache_type_v: None,
+        };
+
+        let result = apply_model_body(body, None);
+        assert_eq!(result.cache_type_k, None);
+        assert_eq!(result.cache_type_v, None);
     }
 }
