@@ -63,6 +63,10 @@ pub struct ModelDetail {
     #[serde(default = "default_kv_unified")]
     pub kv_unified: bool,
     pub gpu_layers: Option<u32>,
+    #[serde(default)]
+    pub cache_type_k: Option<String>,
+    #[serde(default)]
+    pub cache_type_v: Option<String>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<String>,
     #[serde(default)]
@@ -104,6 +108,10 @@ pub struct ModelForm {
     #[serde(default = "default_kv_unified")]
     pub kv_unified: bool,
     pub gpu_layers: Option<u32>,
+    #[serde(default)]
+    pub cache_type_k: Option<String>,
+    #[serde(default)]
+    pub cache_type_v: Option<String>,
     pub quants: BTreeMap<String, QuantInfo>,
     #[serde(default)]
     pub modalities: Option<ModelModalities>,

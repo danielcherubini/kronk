@@ -189,6 +189,8 @@ pub fn ModelEditor() -> impl IntoView {
                     api_name: d.api_name.clone(),
                     display_name: d.display_name.clone(),
                     gpu_layers: d.gpu_layers,
+                    cache_type_k: d.cache_type_k,
+                    cache_type_v: d.cache_type_v,
                     quants: d.quants.clone(),
                     modalities,
                 }));
@@ -359,6 +361,8 @@ pub fn ModelEditor() -> impl IntoView {
                 api_name: initial_form.api_name.clone(),
                 display_name: initial_form.display_name.clone(),
                 gpu_layers: initial_form.gpu_layers,
+                cache_type_k: initial_form.cache_type_k,
+                cache_type_v: initial_form.cache_type_v,
                 quants: initial_form.quants.clone(),
                 modalities: initial_form.modalities.clone(),
             };
