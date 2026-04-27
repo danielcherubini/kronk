@@ -283,11 +283,12 @@ impl JobManager {
             state.error = error;
         }
 
-        // Note: we intentionally do NOT broadcast the final status here.
-        // The SSE stream already delivers it to live subscribers before closing,
-        // and late-connecting clients get it from the snapshot replay in
-        // `job_events_sse()`. Broadcasting here races with stream teardown
-        // and always fails when subscribers exist (they've already dropped).
+        // Broadcast the final status to live SSE subscribers.
+        // The JobLogPanel component waits for this event to transition from "running"
+        // to "succeeded"/"failed" and close the panel. Without this broadcast,
+        // live subscribers never learn the job is done.
+        // send() errors are expected when all receivers have disconnected — harmless.
+        let _ = job.log_tx.send(JobEvent::Status(status));
 
         // Release active slot
         *self.active.lock().await = None;
