@@ -118,6 +118,19 @@ fn loaded_model_count(models: &[ModelStatus]) -> usize {
     models.iter().filter(|m| m.state == "ready").count()
 }
 
+/// Filter models to only those that are currently loaded (state == "ready").
+///
+/// Used by the dashboard to render the Active Models list and by the
+/// "X loaded" summary heading. Extracted as a free function so it can
+/// be unit-tested independently of the Leptos reactive view.
+fn loaded_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
+    models
+        .iter()
+        .filter(|m| m.state == "ready")
+        .cloned()
+        .collect()
+}
+
 /// CSS class string used for the per-model status badge in the
 /// "Active Models" grid. Maps lifecycle states to colour classes.
 fn model_status_badge_class(state: &str) -> &'static str {
@@ -422,7 +435,8 @@ pub fn Dashboard() -> impl IntoView {
             let vram_max = buf.last().and_then(|h| h.vram.as_ref().map(|v| v.total_mib as f32)).unwrap_or(1.0);
             let vram_y_refs = vec![vram_max];
 
-            let models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
+            let all_models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
+            let models = loaded_models(&all_models);
 
             view! {
                 <div class="grid-stats">
@@ -530,14 +544,20 @@ pub fn Dashboard() -> impl IntoView {
                     <div class="page-header">
                         <h2>"Active Models"</h2>
                         <span class="text-muted">
-                            {format!("{} loaded", loaded_model_count(&models))}
+                            {format!("{} loaded", models.len())}
                         </span>
                     </div>
                     {
-                        if models.is_empty() {
+                        if all_models.is_empty() {
                             view! {
                                 <div class="card card--centered">
                                     <p class="text-muted">"No models configured yet."</p>
+                                </div>
+                            }.into_any()
+                        } else if models.is_empty() {
+                            view! {
+                                <div class="card card--centered">
+                                    <p class="text-muted">"No models currently loaded."</p>
                                 </div>
                             }.into_any()
                         } else {
@@ -865,6 +885,80 @@ mod tests {
 
         assert_eq!(model_status_badge_class("idle"), "badge badge-muted");
         assert_eq!(model_status_badge_label("idle"), "Idle");
+    }
+
+    /// `loaded_models` returns only models whose state is "ready".
+    #[test]
+    fn loaded_models_filters_to_ready_only() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "idle".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "c".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "d".into(),
+                state: "loading".into(),
+                ..Default::default()
+            },
+        ];
+
+        let loaded = loaded_models(&models);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "a");
+        assert_eq!(loaded[1].id, "c");
+    }
+
+    /// `loaded_models` returns an empty vec when all models are idle.
+    #[test]
+    fn loaded_models_returns_empty_when_none_ready() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "idle".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "failed".into(),
+                ..Default::default()
+            },
+        ];
+
+        let loaded = loaded_models(&models);
+        assert!(loaded.is_empty());
+    }
+
+    /// `loaded_models` returns a clone of all models when all are ready.
+    #[test]
+    fn loaded_models_returns_all_when_all_ready() {
+        let models = vec![ModelStatus {
+            id: "x".into(),
+            state: "ready".into(),
+            ..Default::default()
+        }];
+
+        let loaded = loaded_models(&models);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "x");
+    }
+
+    /// `loaded_models` returns an empty vec for an empty input slice.
+    #[test]
+    fn loaded_models_returns_empty_for_empty_input() {
+        let models: Vec<ModelStatus> = vec![];
+        let loaded = loaded_models(&models);
+        assert!(loaded.is_empty());
     }
 
     /// When the backend includes a populated `models` array, every `ModelStatus`
