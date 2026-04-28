@@ -132,11 +132,16 @@ fn query_nvidia_gpu_utilization() -> Option<u8> {
     stdout.lines().next()?.trim().parse().ok()
 }
 
-/// Read GPU busy percentage from AMD AMDGPU sysfs interface.
+/// Read GPU utilization from AMD AMDGPU sysfs interfaces.
 ///
-/// Iterates `/sys/class/drm/card*/device/gpu_busy_percent` and returns
-/// the first successfully parsed value.
+/// Tries two sources in order:
+/// 1. `gpu_busy_percent` — simple text file, but returns `-EBUSY` on some
+///    driver versions when the SMU firmware is unresponsive.
+/// 2. `gpu_metrics` — binary blob defined in the kernel header
+///    `kgd_pp_interface.h`. More reliable but requires parsing the struct
+///    layout based on `format_revision` / `content_revision`.
 fn query_amd_gpu_utilization() -> Option<u8> {
+    // 1. Try the simple text interface first.
     let pattern = "/sys/class/drm/card*/device/gpu_busy_percent";
     if let Ok(paths) = glob::glob(pattern) {
         for path in paths.flatten() {
@@ -147,7 +152,110 @@ fn query_amd_gpu_utilization() -> Option<u8> {
             }
         }
     }
+
+    // 2. Fallback: parse the gpu_metrics binary blob.
+    query_amd_gpu_metrics_utilization()
+}
+
+/// Read GPU utilization from the AMD `gpu_metrics` sysfs binary blob.
+///
+/// The binary format is defined in the Linux kernel header
+/// `drivers/gpu/drm/amd/include/kgd_pp_interface.h`.  The header is a
+/// `metrics_table_header { uint16_t structure_size; uint8_t format_revision;
+/// uint8_t content_revision; }`, followed by format-specific fields.
+///
+/// Returns the average GFX activity as a percentage (0–100), or `None` if
+/// the file cannot be read or parsed.
+fn query_amd_gpu_metrics_utilization() -> Option<u8> {
+    let pattern = "/sys/class/drm/card*/device/gpu_metrics";
+    if let Ok(paths) = glob::glob(pattern) {
+        for path in paths.flatten() {
+            if let Ok(data) = std::fs::read(&path) {
+                if let Some(pct) = parse_amd_gpu_metrics_gfx_activity(&data) {
+                    return Some(pct);
+                }
+            }
+        }
+    }
     None
+}
+
+/// Sentinel value used by the AMDGPU driver for "not available" fields.
+const AMD_GPU_METRICS_NA: u16 = 0xFFFF;
+
+/// Parse `average_gfx_activity` from an AMD `gpu_metrics` binary blob.
+///
+/// The offset of `average_gfx_activity` depends on the format revision
+/// (and, for some revisions, the content revision):
+///
+/// | format_rev | content_rev | Struct            | Offset |
+/// |------------|-------------|-------------------|--------|
+/// | 0          | any         | gpu_metrics_v1_0  | 24     |
+/// | 1          | 0–3         | gpu_metrics_v1_1+ | 16     |
+/// | 1          | ≥ 4         | gpu_metrics_v1_4+ | 12     |
+/// | 2          | 0           | gpu_metrics_v2_0  | 36     |
+/// | 2          | ≥ 1         | gpu_metrics_v2_1+ | 28     |
+/// | 3          | any         | gpu_metrics_v3_0  | 42     |
+///
+/// Some newer formats report utilization in **centi-percent** (0–10 000)
+/// rather than percent (0–100).  When the raw value exceeds 100 we assume
+/// centi-percent and divide by 100.
+fn parse_amd_gpu_metrics_gfx_activity(data: &[u8]) -> Option<u8> {
+    if data.len() < 4 {
+        return None;
+    }
+
+    let struct_size = u16::from_le_bytes([data[0], data[1]]) as usize;
+    let format_rev = data[2];
+    let content_rev = data[3];
+
+    // Validate that we have enough data for the declared struct.
+    if data.len() < struct_size {
+        return None;
+    }
+
+    let offset = match format_rev {
+        // gpu_metrics_v1_0: header(4) + system_clock_counter(8) + 6×temperature(12)
+        0 => 24,
+        // gpu_metrics_v1_1 / v1_2 / v1_3: header(4) + 6×temperature(12)
+        // gpu_metrics_v1_4 / v1_5: header(4) + 3×temperature(6) + curr_socket_power(2)
+        1 => {
+            if content_rev >= 4 {
+                12
+            } else {
+                16
+            }
+        }
+        // gpu_metrics_v2_0: header(4) + system_clock_counter(8) + temps(24)
+        // gpu_metrics_v2_1+: header(4) + temps(24)
+        2 => {
+            if content_rev == 0 {
+                36
+            } else {
+                28
+            }
+        }
+        // gpu_metrics_v3_0: header(4) + 2×temp(4) + 16×temp(32) + temp_skin(2)
+        3 => 42,
+        _ => return None,
+    };
+
+    if data.len() < offset + 2 {
+        return None;
+    }
+
+    let val = u16::from_le_bytes([data[offset], data[offset + 1]]);
+
+    // AMDGPU uses 0xFFFF as a sentinel for "not available".
+    if val == AMD_GPU_METRICS_NA {
+        return None;
+    }
+
+    // Some formats report in centi-percent (0–10 000), others in percent (0–100).
+    // If the value exceeds 100, assume centi-percent and divide by 100.
+    let pct = if val > 100 { (val / 100) as u8 } else { val as u8 };
+
+    Some(pct)
 }
 
 #[cfg(test)]
@@ -196,5 +304,140 @@ mod tests {
             metrics.ram_used_mib,
             metrics.ram_total_mib
         );
+    }
+
+    // ── gpu_metrics binary parsing tests ────────────────────────────────
+
+    /// Helper: build a minimal gpu_metrics blob with a known
+    /// `average_gfx_activity` value at the correct offset.
+    fn build_gpu_metrics_blob(format_rev: u8, content_rev: u8, gfx_activity: u16) -> Vec<u8> {
+        let offset = match format_rev {
+            0 => 24,
+            1 => {
+                if content_rev >= 4 { 12 } else { 16 }
+            }
+            2 => {
+                if content_rev == 0 { 36 } else { 28 }
+            }
+            3 => 42,
+            _ => 50,
+        };
+        // Allocate enough bytes to cover the offset + 2 (u16), plus some
+        // trailing data so `struct_size` validation passes.
+        let struct_size = (offset + 2 + 16) as u16;
+        let mut data = vec![0u8; struct_size as usize];
+        // Header
+        data[0..2].copy_from_slice(&struct_size.to_le_bytes());
+        data[2] = format_rev;
+        data[3] = content_rev;
+        // average_gfx_activity
+        data[offset..offset + 2].copy_from_slice(&gfx_activity.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_0_percent() {
+        let blob = build_gpu_metrics_blob(0, 0, 42);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(42));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_0_zero() {
+        let blob = build_gpu_metrics_blob(0, 0, 0);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(0));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_0_full() {
+        let blob = build_gpu_metrics_blob(0, 0, 100);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(100));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_1_percent() {
+        let blob = build_gpu_metrics_blob(1, 1, 73);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(73));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_3_percent() {
+        // v1_3: format_revision=1, content_revision=3 → offset 16
+        let blob = build_gpu_metrics_blob(1, 3, 55);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(55));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_4_percent() {
+        // v1_4: format_revision=1, content_revision=4 → offset 12
+        let blob = build_gpu_metrics_blob(1, 4, 85);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(85));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v1_5_centi_percent() {
+        // v1_5 with centi-percent: 7400 → 74%
+        let blob = build_gpu_metrics_blob(1, 5, 7400);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(74));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v2_0_percent() {
+        let blob = build_gpu_metrics_blob(2, 0, 30);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(30));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v2_1_percent() {
+        let blob = build_gpu_metrics_blob(2, 1, 65);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(65));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v2_1_centi_percent() {
+        // v2_1 with centi-percent: 5550 → 55%
+        let blob = build_gpu_metrics_blob(2, 1, 5550);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(55));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v2_4_centi_percent() {
+        // v2_4 explicitly uses centi-percent: 10000 → 100%
+        let blob = build_gpu_metrics_blob(2, 4, 10000);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(100));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_v3_0_percent() {
+        let blob = build_gpu_metrics_blob(3, 0, 15);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), Some(15));
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_na_sentinel() {
+        // 0xFFFF means "not available" → should return None
+        let blob = build_gpu_metrics_blob(1, 1, 0xFFFF);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), None);
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_truncated_data() {
+        // Data shorter than declared struct_size → None
+        let mut blob = build_gpu_metrics_blob(1, 1, 50);
+        // Set struct_size larger than actual data
+        let big_size = (blob.len() + 100) as u16;
+        blob[0..2].copy_from_slice(&big_size.to_le_bytes());
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), None);
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_too_short() {
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&[]), None);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&[0u8; 3]), None);
+    }
+
+    #[test]
+    fn test_parse_gpu_metrics_unknown_format() {
+        let blob = build_gpu_metrics_blob(99, 0, 50);
+        assert_eq!(parse_amd_gpu_metrics_gfx_activity(&blob), None);
     }
 }

@@ -108,15 +108,15 @@ fn format_number(n: u64) -> String {
     result
 }
 
-/// Filter models to only those that are currently loaded (state == "ready").
+/// Filter models to only those that are currently active (ready, loading, or unloading).
 ///
 /// Used by the dashboard to render the Active Models list and by the
 /// "X loaded" summary heading. Extracted as a free function so it can
 /// be unit-tested independently of the Leptos reactive view.
-fn loaded_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
+fn active_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
     models
         .iter()
-        .filter(|m| m.state == "ready")
+        .filter(|m| matches!(m.state.as_str(), "ready" | "loading" | "unloading"))
         .cloned()
         .collect()
 }
@@ -426,7 +426,7 @@ pub fn Dashboard() -> impl IntoView {
             let vram_y_refs = vec![vram_max];
 
             let all_models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
-            let models = loaded_models(&all_models);
+            let models = active_models(&all_models);
 
             view! {
                 <div class="grid-stats">
@@ -728,10 +728,10 @@ mod tests {
         assert_eq!(format_number(65183), "65,183");
     }
 
-    /// `loaded_models` returns only entries whose state is "ready", preserving
-    /// order and including all fields (id, backend, state, etc.).
+    /// `active_models` returns entries whose state is "ready", "loading", or
+    /// "unloading", preserving order and including all fields.
     #[test]
-    fn loaded_models_returns_only_ready_entries() {
+    fn active_models_returns_ready_loading_unloading_entries() {
         let models = vec![
             ModelStatus {
                 id: "a".into(),
@@ -757,7 +757,7 @@ mod tests {
                 api_name: None,
                 display_name: None,
                 backend: "ik_llama".into(),
-                state: "ready".into(),
+                state: "loading".into(),
                 ..Default::default()
             },
             ModelStatus {
@@ -766,19 +766,28 @@ mod tests {
                 api_name: None,
                 display_name: None,
                 backend: "ik_llama".into(),
-                state: "idle".into(),
+                state: "failed".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "e".into(),
+                db_id: None,
+                api_name: None,
+                display_name: None,
+                backend: "llama_cpp".into(),
+                state: "unloading".into(),
                 ..Default::default()
             },
         ];
 
-        let loaded = loaded_models(&models);
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].id, "a");
-        assert_eq!(loaded[0].backend, "llama_cpp");
-        assert_eq!(loaded[0].state, "ready");
-        assert_eq!(loaded[1].id, "c");
-        assert_eq!(loaded[1].backend, "ik_llama");
-        assert_eq!(loaded[1].state, "ready");
+        let active = active_models(&models);
+        assert_eq!(active.len(), 3);
+        assert_eq!(active[0].id, "a");
+        assert_eq!(active[0].state, "ready");
+        assert_eq!(active[1].id, "c");
+        assert_eq!(active[1].state, "loading");
+        assert_eq!(active[2].id, "e");
+        assert_eq!(active[2].state, "unloading");
     }
 
     /// Loaded (ready) models must use the success badge class so they visually pop
@@ -875,9 +884,9 @@ mod tests {
         assert_eq!(model_status_badge_label("idle"), "Idle");
     }
 
-    /// `loaded_models` returns only models whose state is "ready".
+    /// `active_models` includes ready, loading, and unloading models.
     #[test]
-    fn loaded_models_filters_to_ready_only() {
+    fn active_models_filters_to_active_states() {
         let models = vec![
             ModelStatus {
                 id: "a".into(),
@@ -891,25 +900,26 @@ mod tests {
             },
             ModelStatus {
                 id: "c".into(),
-                state: "ready".into(),
+                state: "loading".into(),
                 ..Default::default()
             },
             ModelStatus {
                 id: "d".into(),
-                state: "loading".into(),
+                state: "unloading".into(),
                 ..Default::default()
             },
         ];
 
-        let loaded = loaded_models(&models);
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].id, "a");
-        assert_eq!(loaded[1].id, "c");
+        let active = active_models(&models);
+        assert_eq!(active.len(), 3);
+        assert_eq!(active[0].id, "a");
+        assert_eq!(active[1].id, "c");
+        assert_eq!(active[2].id, "d");
     }
 
-    /// `loaded_models` returns an empty vec when all models are idle.
+    /// `active_models` returns an empty vec when all models are idle or failed.
     #[test]
-    fn loaded_models_returns_empty_when_none_ready() {
+    fn active_models_returns_empty_when_none_active() {
         let models = vec![
             ModelStatus {
                 id: "a".into(),
@@ -923,30 +933,38 @@ mod tests {
             },
         ];
 
-        let loaded = loaded_models(&models);
-        assert!(loaded.is_empty());
+        let active = active_models(&models);
+        assert!(active.is_empty());
     }
 
-    /// `loaded_models` returns a clone of all models when all are ready.
+    /// `active_models` returns a clone of all models when all are active.
     #[test]
-    fn loaded_models_returns_all_when_all_ready() {
-        let models = vec![ModelStatus {
-            id: "x".into(),
-            state: "ready".into(),
-            ..Default::default()
-        }];
+    fn active_models_returns_all_when_all_active() {
+        let models = vec![
+            ModelStatus {
+                id: "x".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "y".into(),
+                state: "loading".into(),
+                ..Default::default()
+            },
+        ];
 
-        let loaded = loaded_models(&models);
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, "x");
+        let active = active_models(&models);
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].id, "x");
+        assert_eq!(active[1].id, "y");
     }
 
-    /// `loaded_models` returns an empty vec for an empty input slice.
+    /// `active_models` returns an empty vec for an empty input slice.
     #[test]
-    fn loaded_models_returns_empty_for_empty_input() {
+    fn active_models_returns_empty_for_empty_input() {
         let models: Vec<ModelStatus> = vec![];
-        let loaded = loaded_models(&models);
-        assert!(loaded.is_empty());
+        let active = active_models(&models);
+        assert!(active.is_empty());
     }
 
     /// When the backend includes a populated `models` array, every `ModelStatus`
