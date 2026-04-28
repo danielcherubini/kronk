@@ -15,8 +15,8 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 76
-- **Completed**: 75 ✅
-- **In Progress**: 1 🚧
+- **Completed**: 76 ✅
+- **In Progress**: 0 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -113,7 +113,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [System Metrics](2026-04-04-system-metrics.md) | CPU%, RAM, GPU metrics with background collection task | `67029b2`, `2465a4d`, `11d9287` |
 | [Persist Dashboard Metrics](2026-04-06-persist-dashboard-metrics.md) | SQLite persistence + SSE streaming for dashboard | `b657e22`, `8e6a5b5`, `fd12bf8`, `4c6d6e2`, `2892764` |
 | [Dashboard Time Series Graphs](2026-04-06-dashboard-time-series-graphs.md) | Sparkline SVG charts for metrics visualization | `404f3be`, `6b651cf`, `9dc78d3`, `502e2f6` |
-| [Dashboard Filter Loaded Models](2026-04-28-dashboard-filter-loaded-models.md) | Filter Active Models section to show only loaded (ready) models with proper empty-state UX | 🚧 IN PROGRESS |
+| [Dashboard Filter Loaded Models](2026-04-28-dashboard-filter-loaded-models.md) | Filter Active Models section to show only loaded (ready) models with proper empty-state UX | #78 `8a20bff` ✅ COMPLETED |
 
 ### Configuration
 
