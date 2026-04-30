@@ -61,7 +61,7 @@ const VLLM_ROCM_TEMPLATE: &str = r#"services:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
     volumes:
-      - {volume_path}:/data/models
+      - "{volume_path}:/data/models"
     environment:
       - VLLM_ROCM_USE_AITER=1
       - VLLM_ROCM_ALLOW_RDNA4_AITER_ATTENTION=1
@@ -94,7 +94,7 @@ const VLLM_CUDA_TEMPLATE: &str = r#"services:
     runtime: nvidia
     network_mode: host
     volumes:
-      - {volume_path}:/data/models
+      - "{volume_path}:/data/models"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     command: >
@@ -116,7 +116,7 @@ const LLAMA_CPP_TEMPLATE: &str = r#"services:
     image: ghcr.io/ggml-org/llama.cpp:latest
     network_mode: host
     volumes:
-      - {volume_path}:/data/models
+      - "{volume_path}:/data/models"
     command: >
       ./server
       -m /data/models/{model_path}
