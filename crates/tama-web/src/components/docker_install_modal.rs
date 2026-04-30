@@ -4,7 +4,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 use crate::components::docker_template_card::DockerTemplateGrid;
-use crate::utils::target_value;
+use crate::utils::{extract_and_store_csrf_token, post_request, target_value};
 
 #[derive(Clone, PartialEq)]
 enum ModalTab {
@@ -85,14 +85,13 @@ pub fn DockerInstallModal(
         });
 
         wasm_bindgen_futures::spawn_local(async move {
-            let resp = gloo_net::http::Request::post(&url)
-                .json(&body)
-                .unwrap()
-                .send()
-                .await;
+            let resp = post_request(&url).json(&body).unwrap().send().await;
 
             match resp {
                 Ok(response) => {
+                    // Store CSRF token from response header
+                    extract_and_store_csrf_token(&response);
+
                     let status = response.status();
                     let data: serde_json::Value = response.json().await.unwrap_or_default();
 
