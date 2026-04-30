@@ -117,6 +117,9 @@ pub async fn refresh_model_metadata(
     };
 
     // Step 3: DB writes (blocking pool, fresh connection).
+    // Only update metadata for files that already exist locally — do NOT create
+    // new entries for quants the user never downloaded. This prevents the
+    // "Check all for updates" button from polluting the model_files table.
     let repo_id_for_db = repo_id.clone();
     let config_dir_for_db = config_dir.clone();
     let commit_sha = listing.commit_sha.clone();
@@ -125,7 +128,18 @@ pub async fn refresh_model_metadata(
         let open = tama_core::db::open(&config_dir_for_db)?;
         let conn = &open.conn;
         tama_core::db::queries::upsert_model_pull(conn, model_id, &repo_id_for_db, &commit_sha)?;
+
+        // Build a set of filenames already tracked locally.
+        let local_files = tama_core::db::queries::get_model_files(conn, model_id)?;
+        let local_filenames: std::collections::HashSet<&str> =
+            local_files.iter().map(|f| f.filename.as_str()).collect();
+
+        // Only upsert metadata for files that already exist in the local DB.
         for file in &files {
+            if !local_filenames.contains(file.filename.as_str()) {
+                // Skip remote-only files — don't pollute the DB.
+                continue;
+            }
             let blob = blobs.get(&file.filename);
             tama_core::db::queries::upsert_model_file(
                 conn,

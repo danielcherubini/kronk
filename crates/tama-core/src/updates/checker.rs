@@ -119,9 +119,12 @@ impl UpdateChecker {
             let config_dir = config_dir.to_path_buf();
             move || -> anyhow::Result<UpdateSyncResults> {
                 let registry = BackendRegistry::open(&config_dir)?;
-                let backends: Vec<(String, BackendType)> = registry
-                    .list()
-                    .unwrap_or_default()
+                let active_backends = registry.list().unwrap_or_default();
+                tracing::info!(
+                    "Found {} active backends in registry",
+                    active_backends.len()
+                );
+                let backends: Vec<(String, BackendType)> = active_backends
                     .iter()
                     .map(|b| (b.name.clone(), b.backend_type.clone()))
                     .collect();
@@ -132,6 +135,7 @@ impl UpdateChecker {
                     .into_iter()
                     .map(|r| (r.id, Some(r.repo_id)))
                     .collect();
+                tracing::info!("Found {} model configs to check", models.len());
 
                 Ok((backends, models))
             }
@@ -169,6 +173,7 @@ impl UpdateChecker {
         backend_name: &str,
         backend_type: &BackendType,
     ) -> anyhow::Result<()> {
+        tracing::info!("Checking backend: {} ({:?})", backend_name, backend_type);
         // Sync: Get current version from DB
         let current_version = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
