@@ -6,7 +6,7 @@ use tokio::io::AsyncBufReadExt;
 use tracing::{debug, info, warn};
 
 use super::process::{force_kill_process, is_process_alive, kill_process, override_arg};
-use super::types::{ModelState, ProxyState};
+use super::types::{BackendKind, ModelState, ProxyState};
 use crate::backends::BackendRegistry;
 use crate::logging;
 
@@ -57,6 +57,8 @@ impl ProxyState {
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                     failure_timestamp: None,
+                    backend_type: BackendKind::Local,
+                    container_id: None,
                 },
             );
         }
@@ -252,6 +254,8 @@ impl ProxyState {
                         consecutive_failures: cf,
                         failure_timestamp: ft,
                         restart_count: 0,
+                        backend_type: BackendKind::Local,
+                        container_id: None,
                     };
                 }
             }
@@ -344,6 +348,8 @@ impl ProxyState {
                     failure_timestamp,
                     restart_count,
                     load_time: _,
+                    backend_type,
+                    container_id,
                 } = std::mem::take(state)
                 {
                     *state = ModelState::Unloading {
@@ -355,6 +361,8 @@ impl ProxyState {
                         consecutive_failures,
                         failure_timestamp,
                         restart_count,
+                        backend_type,
+                        container_id,
                     };
                 }
             }
@@ -389,6 +397,14 @@ impl ProxyState {
                 server_name,
                 state
             ));
+        }
+
+        // Handle Docker backends separately
+        if state.is_docker() {
+            // Docker unload handled by docker::uninstall::stop_container() in Task 4
+            let mut models = self.models.write().await;
+            models.remove(server_name);
+            return Ok(());
         }
 
         let (backend_name, pid) = match &state {
@@ -510,6 +526,11 @@ impl ProxyState {
             // Skip TTS backends for Ready checks (separate lifecycle)
             // TTS Starting was already checked above
             if state.is_tts_backend() {
+                continue;
+            }
+
+            // Skip Docker backends — container state is checked separately
+            if state.is_docker() {
                 continue;
             }
 
@@ -813,6 +834,8 @@ impl ProxyState {
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                     failure_timestamp: None,
+                    backend_type: BackendKind::Local,
+                    container_id: None,
                 },
             );
         }
@@ -930,6 +953,8 @@ impl ProxyState {
                         consecutive_failures: cf,
                         failure_timestamp: ft,
                         restart_count: 0,
+                        backend_type: BackendKind::Local,
+                        container_id: None,
                     };
                 }
             }
@@ -1034,6 +1059,8 @@ mod tests {
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             failure_timestamp: None,
             restart_count: 0,
+            backend_type: BackendKind::Local,
+            container_id: None,
         }
     }
 
@@ -1047,6 +1074,8 @@ mod tests {
             start_time: Instant::now(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             failure_timestamp: None,
+            backend_type: BackendKind::Local,
+            container_id: None,
         }
     }
 
@@ -1070,6 +1099,8 @@ mod tests {
             consecutive_failures: Arc::new(AtomicU32::new(0)),
             failure_timestamp: None,
             restart_count: 0,
+            backend_type: BackendKind::Local,
+            container_id: None,
         }
     }
 

@@ -254,6 +254,7 @@ impl ProxyState {
 mod tests {
     use super::*;
     use crate::config::{BackendConfig, Config, ModelConfig};
+    use crate::proxy::types::BackendKind;
     use std::collections::BTreeMap;
 
     fn make_model_config(backend: &str) -> ModelConfig {
@@ -386,6 +387,8 @@ mod tests {
                     consecutive_failures: Arc::new(AtomicU32::new(0)),
                     failure_timestamp: None,
                     restart_count: 0,
+                    backend_type: BackendKind::Local,
+                    container_id: None,
                 },
             );
         }
@@ -456,6 +459,8 @@ mod tests {
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(AtomicU32::new(0)),
                     failure_timestamp: None,
+                    backend_type: BackendKind::Local,
+                    container_id: None,
                 },
             );
         }

@@ -409,6 +409,8 @@ mod tests {
                 consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 failure_timestamp: None,
                 restart_count: 0,
+                backend_type: crate::proxy::types::BackendKind::Local,
+                container_id: None,
             },
         );
         drop(models);

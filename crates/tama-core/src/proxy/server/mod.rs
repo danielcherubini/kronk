@@ -200,6 +200,8 @@ impl ProxyServer {
                         ),
                         failure_timestamp: None,
                         restart_count: 0,
+                        backend_type: super::types::BackendKind::Local,
+                        container_id: None,
                     },
                 );
             } else {

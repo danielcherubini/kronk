@@ -4,6 +4,13 @@ use std::time::Instant;
 use super::download_queue::DownloadQueueService;
 use super::pull_jobs::PullJob;
 
+/// Kind of backend — local process or Docker container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendKind {
+    Local,
+    Docker,
+}
+
 /// State for a model backend.
 #[derive(Debug, Clone)]
 pub enum ModelState {
@@ -16,18 +23,22 @@ pub enum ModelState {
         start_time: Instant,
         consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
         failure_timestamp: Option<std::time::SystemTime>,
+        backend_type: BackendKind,
+        container_id: Option<String>, // always None for Starting
     },
     /// Backend is ready and accepting traffic
     Ready {
         model_name: String,
         backend: String,
-        backend_pid: u32,
+        backend_pid: u32, // 0 for Docker backends
         backend_url: String,
         load_time: std::time::SystemTime,
         last_accessed: Instant,
         consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
         failure_timestamp: Option<std::time::SystemTime>,
         restart_count: u32,
+        backend_type: BackendKind,
+        container_id: Option<String>,
     },
     /// Backend failed to start
     Failed {
@@ -39,12 +50,14 @@ pub enum ModelState {
     Unloading {
         model_name: String,
         backend: String,
-        backend_pid: u32,
+        backend_pid: u32, // 0 for Docker backends
         backend_url: String,
         last_accessed: Instant,
         consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
         failure_timestamp: Option<std::time::SystemTime>,
         restart_count: u32,
+        backend_type: BackendKind,
+        container_id: Option<String>,
     },
 }
 
@@ -153,6 +166,26 @@ impl ModelState {
         match self {
             ModelState::Starting { start_time, .. } => Some(*start_time),
             _ => None,
+        }
+    }
+
+    /// Returns true if this is a Docker backend.
+    pub fn is_docker(&self) -> bool {
+        match self {
+            ModelState::Starting { backend_type, .. }
+            | ModelState::Ready { backend_type, .. }
+            | ModelState::Unloading { backend_type, .. } => *backend_type == BackendKind::Docker,
+            ModelState::Failed { .. } => false,
+        }
+    }
+
+    /// Returns the container ID for Docker backends, or None for local backends.
+    pub fn container_id(&self) -> Option<&str> {
+        match self {
+            ModelState::Starting { container_id, .. }
+            | ModelState::Ready { container_id, .. }
+            | ModelState::Unloading { container_id, .. } => container_id.as_deref(),
+            ModelState::Failed { .. } => None,
         }
     }
 
