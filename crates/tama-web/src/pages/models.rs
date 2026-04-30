@@ -84,7 +84,7 @@ pub fn Models() -> impl IntoView {
     let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
         async move {
-            let _ = gloo_net::http::Request::post(&format!("/tama/v1/models/{}/load", id))
+            let _ = post_request(&format!("/tama/v1/models/{}/load", id))
                 .send()
                 .await;
             refresh.update(|n| *n += 1);
@@ -94,7 +94,7 @@ pub fn Models() -> impl IntoView {
     let unload_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
         async move {
-            let _ = gloo_net::http::Request::post(&format!("/tama/v1/models/{}/unload", id))
+            let _ = post_request(&format!("/tama/v1/models/{}/unload", id))
                 .send()
                 .await;
             refresh.update(|n| *n += 1);

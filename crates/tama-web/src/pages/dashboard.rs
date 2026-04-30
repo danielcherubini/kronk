@@ -125,6 +125,9 @@ fn active_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
 
 /// Returns models whose state is NOT one of the "active" states.
 /// These are models that are idle, failed, or otherwise not running.
+/// Note: Models with an empty state string are treated as inactive.
+/// This matches the behavior of `active_models()` which only considers
+/// "ready", "loading", and "unloading" as active states.
 fn inactive_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
     models
         .iter()
@@ -193,7 +196,7 @@ fn model_display_name(m: &ModelStatus) -> String {
 
 /// Pre-computed display values for a model row, used to deduplicate
 /// the Active and Inactive model section rendering logic.
-struct NormalizedModel {
+struct ModelDisplayData {
     id: String,
     db_id: Option<i64>,
     display_name: String,
@@ -203,8 +206,22 @@ struct NormalizedModel {
     state: String,
 }
 
+/// Format context length in human-readable form (e.g., 8192 → "8k", 32768 → "32k").
+fn format_context_length(n: u32) -> String {
+    if n >= 1024 && n.is_multiple_of(1024) {
+        format!("{}k", n / 1024)
+    } else if n >= 1000 && n.is_multiple_of(1000) {
+        format!("{}k", n / 1000)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Normalize a slice of models: sort by id and compute display values.
-fn normalize_models(models: &[ModelStatus]) -> Vec<NormalizedModel> {
+///
+/// Used by both the Active and Inactive model sections to deduplicate
+/// the rendering logic. Returns models sorted by id in stable order.
+fn normalize_models(models: &[ModelStatus]) -> Vec<ModelDisplayData> {
     let mut sorted: Vec<ModelStatus> = models.to_vec();
     sorted.sort_by(|a, b| a.id.cmp(&b.id));
     sorted
@@ -214,18 +231,10 @@ fn normalize_models(models: &[ModelStatus]) -> Vec<NormalizedModel> {
             let quant_display: String = m.quant.as_deref().unwrap_or("\u{2014}").into();
             let context_display = m
                 .context_length
-                .map(|n| {
-                    if n >= 1024 && n % 1024 == 0 {
-                        format!("{}k", n / 1024)
-                    } else if n >= 1000 && n % 1000 == 0 {
-                        format!("{}k", n / 1000)
-                    } else {
-                        n.to_string()
-                    }
-                })
+                .map(format_context_length)
                 .unwrap_or_else(|| "—".to_string());
             let backend_name = format!("{}_{}", m.backend, m.id);
-            NormalizedModel {
+            ModelDisplayData {
                 id: m.id,
                 db_id: m.db_id,
                 display_name,
