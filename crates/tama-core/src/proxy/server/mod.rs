@@ -22,8 +22,9 @@ impl ProxyServer {
     /// and unloads them.
     pub async fn new(state: Arc<ProxyState>) -> Self {
         // Check Docker availability at startup
-        let docker_available =
-            crate::backends::docker::health::check_docker_available().await.is_ok();
+        let docker_available = crate::backends::docker::health::check_docker_available()
+            .await
+            .is_ok();
         if !docker_available {
             tracing::warn!("Docker daemon not available — Docker backends will not function");
         }

@@ -48,6 +48,7 @@ pub async fn get_job(
             crate::jobs::JobKind::Restore => "restore".to_string(),
             crate::jobs::JobKind::Benchmark => "benchmark".to_string(),
             crate::jobs::JobKind::DockerInstall => "docker_install".to_string(),
+            crate::jobs::JobKind::DockerUninstall => "docker_uninstall".to_string(),
         },
         status: state.status,
         backend_type: job

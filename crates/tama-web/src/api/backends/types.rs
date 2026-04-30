@@ -181,6 +181,7 @@ pub(super) fn job_to_active_dto(j: &crate::jobs::Job) -> ActiveJobDto {
             crate::jobs::JobKind::Restore => "restore".to_string(),
             crate::jobs::JobKind::Benchmark => "benchmark".to_string(),
             crate::jobs::JobKind::DockerInstall => "docker_install".to_string(),
+            crate::jobs::JobKind::DockerUninstall => "docker_uninstall".to_string(),
         },
         backend_type: match j.backend_type.as_ref() {
             Some(tama_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),

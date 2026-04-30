@@ -56,6 +56,23 @@ pub async fn handle_docker_install(
         ));
     }
 
+    // Check for name collision
+    let config_dir = tama_core::config::Config::base_dir().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("failed to get config dir: {}", e)})),
+        )
+    })?;
+    let save_dir = config_dir.join("docker").join(&request.name);
+    if save_dir.exists() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(
+                serde_json::json!({"error": format!("backend '{}' already exists", request.name)}),
+            ),
+        ));
+    }
+
     let job_manager = state.jobs.as_ref().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,6 +125,28 @@ pub async fn handle_docker_install(
                 tama_core::backends::docker::install::start_container(&docker_backend)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to start container: {}", e))?;
+
+            // Insert into backend_installations table
+            let db_dir = config_dir.join("db");
+            let conn = tama_core::db::open(&db_dir)?;
+            let record = tama_core::db::queries::BackendInstallationRecord {
+                id: 0,
+                name: name.clone(),
+                backend_type: "docker".to_string(),
+                version: version.clone().unwrap_or("latest".to_string()),
+                path: save_dir.to_string_lossy().to_string(),
+                installed_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                gpu_type: None,
+                source: None,
+                is_active: true,
+                compose_yaml: Some(compose_yaml.clone()),
+                dockerfile: dockerfile.clone(),
+                target_port: target_port.map(|p| p as i32),
+            };
+            tama_core::db::queries::insert_backend_installation(&conn.conn, &record)?;
 
             // Save compose YAML
             let save_dir = config_dir.join("docker").join(&name);
@@ -291,7 +330,7 @@ pub async fn handle_docker_uninstall(
     let container_name = format!("tama_{}", name);
     let jm = jobs.clone();
     let job_clone = jobs
-        .submit(crate::jobs::JobKind::DockerInstall, None)
+        .submit(crate::jobs::JobKind::DockerUninstall, None)
         .await
         .ok();
 
@@ -334,6 +373,16 @@ pub async fn handle_docker_uninstall(
 
                 // Clean up directory
                 std::fs::remove_dir_all(&docker_dir).ok();
+
+                // Remove from DB
+                let db_dir = config_dir_clone.join("db");
+                if let Ok(conn) = tama_core::db::open(&db_dir) {
+                    let _ = tama_core::db::queries::delete_backend_installation(
+                        &conn.conn,
+                        &name_clone,
+                        "latest",
+                    );
+                }
 
                 Ok::<_, anyhow::Error>(())
             }
@@ -401,14 +450,104 @@ pub async fn handle_docker_status(
         .ok()
         .flatten();
 
-    let health_url = format!("http://127.0.0.1:8000/health");
+    // Look up port from metadata file
+    let config_dir = tama_core::config::Config::base_dir().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "failed to get config"})),
+        )
+    })?;
+    let metadata_path = config_dir.join("docker").join(&name).join("metadata.json");
+    let port: Option<u16> = if metadata_path.exists() {
+        let metadata_str = match std::fs::read_to_string(&metadata_path) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "failed to read metadata"})),
+                ));
+            }
+        };
+        let metadata: serde_json::Value = match serde_json::from_str(&metadata_str) {
+            Ok(v) => v,
+            Err(_) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "failed to parse metadata"})),
+                ));
+            }
+        };
+        metadata
+            .get("target_port")
+            .and_then(|v| v.as_u64())
+            .map(|p| p as u16)
+    } else {
+        None
+    };
+
+    let health_url = port
+        .map(|p| format!("http://127.0.0.1:{}/health", p))
+        .unwrap_or_else(|| "http://127.0.0.1:8000/health".to_string());
+
+    // Get uptime and exit_code from docker inspect
+    let (uptime_seconds, exit_code) = if status == "running" {
+        match tokio::process::Command::new("docker")
+            .args([
+                "inspect",
+                &container_name,
+                "--format",
+                "{{.State.StartedAt}}",
+            ])
+            .output()
+            .await
+        {
+            Ok(inspect_output) if inspect_output.status.success() => {
+                let started_at = String::from_utf8_lossy(&inspect_output.stdout)
+                    .trim()
+                    .to_string();
+                match chrono::DateTime::parse_from_rfc3339(&started_at) {
+                    Ok(parsed) => {
+                        let uptime = chrono::Utc::now()
+                            .signed_duration_since(parsed)
+                            .num_seconds()
+                            .max(0) as u64;
+                        (Some(uptime), None)
+                    }
+                    Err(_) => (None, None),
+                }
+            }
+            _ => (None, None),
+        }
+    } else if status == "exited" {
+        match tokio::process::Command::new("docker")
+            .args([
+                "inspect",
+                &container_name,
+                "--format",
+                "{{.State.ExitCode}}",
+            ])
+            .output()
+            .await
+        {
+            Ok(inspect_output) if inspect_output.status.success() => {
+                let exit_code = String::from_utf8_lossy(&inspect_output.stdout)
+                    .trim()
+                    .parse::<i32>()
+                    .ok();
+                (None, exit_code)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
 
     Ok(Json(DockerStatusResponse {
         state: status,
         container_id,
-        port: None,
+        port,
         health_url,
-        uptime_seconds: None,
-        exit_code: None,
+        uptime_seconds,
+        exit_code,
     }))
 }
