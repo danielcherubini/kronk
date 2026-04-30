@@ -426,6 +426,9 @@ pub fn Dashboard() -> impl IntoView {
                 }
             };
 
+            // Store CSRF token from response for subsequent POST requests
+            extract_and_store_csrf_token(&resp);
+
             // Surface non-2xx HTTP responses
             if !resp.ok() {
                 let status = resp.status();
