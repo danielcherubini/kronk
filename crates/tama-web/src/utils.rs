@@ -118,6 +118,20 @@ pub fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -
     read.into()
 }
 
+/// Typed response from GET /tama/v1/models for the "Check all for updates" action.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CheckAllModelsApiResponse {
+    pub models: Vec<CheckAllModelEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CheckAllModelEntry {
+    pub id: i64,
+}
+
+/// Result of the check-all-for-updates operation.
+pub type CheckAllResult = (bool, String);
+
 #[cfg(test)]
 mod tests {
     use leptos::prelude::{GetUntracked, RwSignal, Set, Signal};

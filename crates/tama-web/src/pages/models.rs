@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
-use crate::utils::{post_request, rw_signal_to_signal};
+use crate::utils::{post_request, rw_signal_to_signal, CheckAllModelsApiResponse};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
@@ -27,17 +27,6 @@ struct ModelEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelsResponse {
     models: Vec<ModelEntry>,
-}
-
-/// Typed response from GET /tama/v1/models for the "Check all for updates" action.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct CheckAllModelsApiResponse {
-    models: Vec<CheckAllModelEntry>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct CheckAllModelEntry {
-    id: i64,
 }
 
 /// Returns the preferred display name for a model, preferring `display_name`,

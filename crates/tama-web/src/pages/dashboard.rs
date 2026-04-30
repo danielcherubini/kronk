@@ -7,7 +7,9 @@ use wasm_bindgen::prelude::*;
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::components::sparkline::SparklineChart;
-use crate::utils::{extract_and_store_csrf_token, post_request, rw_signal_to_signal};
+use crate::utils::{
+    extract_and_store_csrf_token, post_request, rw_signal_to_signal, CheckAllModelsApiResponse,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MetricSample {
@@ -222,12 +224,12 @@ fn format_context_length(n: u32) -> String {
 /// Used by both the Active and Inactive model sections to deduplicate
 /// the rendering logic. Returns models sorted by id in stable order.
 fn normalize_models(models: &[ModelStatus]) -> Vec<ModelDisplayData> {
-    let mut sorted: Vec<ModelStatus> = models.to_vec();
+    let mut sorted: Vec<_> = models.iter().collect();
     sorted.sort_by(|a, b| a.id.cmp(&b.id));
     sorted
         .into_iter()
-        .map(|m| {
-            let display_name = model_display_name(&m);
+        .map(|m: &ModelStatus| {
+            let display_name = model_display_name(m);
             let quant_display: String = m.quant.as_deref().unwrap_or("\u{2014}").into();
             let context_display = m
                 .context_length
@@ -235,13 +237,13 @@ fn normalize_models(models: &[ModelStatus]) -> Vec<ModelDisplayData> {
                 .unwrap_or_else(|| "—".to_string());
             let backend_name = format!("{}_{}", m.backend, m.id);
             ModelDisplayData {
-                id: m.id,
+                id: m.id.clone(),
                 db_id: m.db_id,
                 display_name,
                 quant_display,
                 context_display,
                 backend_name,
-                state: m.state,
+                state: m.state.clone(),
             }
         })
         .collect()
@@ -328,17 +330,6 @@ fn ModelRow(
             </div>
         </div>
     }
-}
-
-/// Typed response from GET /tama/v1/models for the "Check all for updates" action.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct ModelsApiResponse {
-    models: Vec<CheckAllModel>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct CheckAllModel {
-    id: i64,
 }
 
 #[component]
@@ -441,6 +432,7 @@ pub fn Dashboard() -> impl IntoView {
     // Check all for updates
     let check_all_busy = RwSignal::new(false);
     let check_all_status = RwSignal::new(Option::<(bool, String)>::None);
+    let check_all_dismiss = RwSignal::new(false);
 
     let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
@@ -498,7 +490,7 @@ pub fn Dashboard() -> impl IntoView {
             }
 
             // Parse using typed struct (NOT serde_json::Value::as_str() — that returns None for JSON numbers)
-            let list: ModelsApiResponse = match resp.json().await {
+            let list: CheckAllModelsApiResponse = match resp.json().await {
                 Ok(v) => v,
                 Err(e) => {
                     check_all_status
@@ -595,10 +587,26 @@ pub fn Dashboard() -> impl IntoView {
         </div>
 
         // Alert banner — always visible, outside reactive closure
-        {move || check_all_status.get().map(|(ok, msg)| {
-            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
-            view! { <div class=cls>{msg}</div> }
-        })}
+        {move || {
+            check_all_dismiss.get(); // track dismiss signal
+            check_all_status.get().map(|(ok, msg)| {
+                let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+                view! {
+                    <div class=cls>
+                        <span>{msg}</span>
+                        <button
+                            class="btn btn-sm btn-link alert__dismiss"
+                            on:click=move |_| {
+                                check_all_status.set(None);
+                                check_all_dismiss.update(|v| *v = !*v);
+                            }
+                        >
+                            "✕"
+                        </button>
+                    </div>
+                }
+            })
+        }}
 
         {move || {
             let buf = history.get();
