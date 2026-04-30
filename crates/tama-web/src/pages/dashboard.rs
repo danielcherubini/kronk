@@ -798,7 +798,9 @@ pub fn Dashboard() -> impl IntoView {
                 </section>
 
                 // Inactive Models section — only render when all_models is non-empty
-                if !all_models.is_empty() {
+                {if all_models.is_empty() {
+                    view! { <div></div> }.into_any()
+                } else {
                     view! {
                         <section class="dashboard-models">
                             <div class="page-header">
@@ -847,9 +849,7 @@ pub fn Dashboard() -> impl IntoView {
                             }
                         </section>
                     }.into_any()
-                } else {
-                    view! { <div></div> }.into_any()
-                }
+                }}
             }.into_any()
         }}
 
