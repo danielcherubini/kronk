@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -8,7 +8,21 @@ use tracing::{debug, info, warn};
 use super::process::{force_kill_process, is_process_alive, kill_process, override_arg};
 use super::types::{BackendKind, ModelState, ProxyState};
 use crate::backends::BackendRegistry;
+use crate::config::Config;
 use crate::logging;
+
+/// Resolve whether a backend name refers to a Docker or Local backend.
+fn resolve_backend_type(
+    backend_name: &str,
+    conn: &rusqlite::Connection,
+) -> crate::proxy::types::BackendKind {
+    if let Ok(Some(record)) = crate::db::queries::get_active_backend(conn, backend_name) {
+        if record.backend_type == "docker" {
+            return crate::proxy::types::BackendKind::Docker;
+        }
+    }
+    crate::proxy::types::BackendKind::Local
+}
 
 impl ProxyState {
     /// Load a model by starting its backend process.
@@ -61,6 +75,24 @@ impl ProxyState {
                     container_id: None,
                 },
             );
+        }
+
+        // Resolve backend type (Docker vs Local)
+        let backend_kind = if let Some(conn) = self.open_db() {
+            resolve_backend_type(&server_config.backend, &conn)
+        } else {
+            BackendKind::Local
+        };
+
+        match backend_kind {
+            BackendKind::Docker => {
+                return self
+                    .load_docker_backend(model_name, &server_name, &server_config, &backend_config)
+                    .await;
+            }
+            BackendKind::Local => {
+                // Continue with existing local backend logic below...
+            }
         }
 
         // Resolve the backend binary path: DB takes priority, config.path is fallback.
@@ -281,6 +313,178 @@ impl ProxyState {
         Ok(server_name)
     }
 
+    /// Load a model by starting its Docker container.
+    pub async fn load_docker_backend(
+        &self,
+        model_name: &str,
+        server_name: &str,
+        server_config: &crate::config::ModelConfig,
+        _backend_config: &crate::config::BackendConfig,
+    ) -> Result<String> {
+        debug!("Loading Docker backend: {}", server_name);
+
+        let config = self.config.read().await.clone();
+
+        // Atomically check if already loaded
+        {
+            let mut models = self.models.write().await;
+            if let Some(state) = models.get(server_name) {
+                if state.is_ready() || matches!(state, ModelState::Starting { .. }) {
+                    debug!("Docker server '{}' already loaded/starting", server_name);
+                    return Ok(server_name.to_string());
+                }
+            }
+            models.insert(
+                server_name.to_string(),
+                ModelState::Starting {
+                    model_name: model_name.to_string(),
+                    backend: server_config.backend.clone(),
+                    backend_url: String::new(),
+                    last_accessed: Instant::now(),
+                    start_time: Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    backend_type: BackendKind::Docker,
+                    container_id: None,
+                },
+            );
+        }
+
+        // Get model config to find docker_backend_name
+        let model_config = {
+            let model_configs = self.model_configs.read().await;
+            model_configs
+                .get(server_name)
+                .ok_or_else(|| anyhow!("No model config for server '{}'", server_name))?
+                .clone()
+        };
+        let docker_backend_name = model_config.docker_backend_name.as_ref().ok_or_else(|| {
+            anyhow!(
+                "No docker_backend_name in model config for server '{}'",
+                server_name
+            )
+        })?;
+        let tp_size = model_config.tensor_parallel_size.unwrap_or(1);
+
+        // Look up the Docker backend from DB
+        let db_dir = self
+            .db_dir
+            .clone()
+            .ok_or_else(|| anyhow!("DB dir not configured"))?;
+        let docker_backend =
+            crate::backends::docker::db::get_backend_by_name(docker_backend_name, &db_dir)
+                .await?
+                .ok_or_else(|| anyhow!("Docker backend '{}' not found", docker_backend_name))?;
+
+        // Replace placeholders in compose YAML
+        let models_dir = config.models_dir()?;
+        let model_path = models_dir.join(model_name);
+        let model_path_str = model_path.to_string_lossy().to_string();
+        let templated_yaml = docker_backend
+            .compose_yaml
+            .replace("{volume_path}", &model_path_str)
+            .replace("{model_path}", &model_path_str)
+            .replace("{tp_size}", &tp_size.to_string());
+
+        let docker_backend = crate::backends::docker::DockerBackend {
+            name: docker_backend.name.clone(),
+            compose_yaml: templated_yaml,
+            dockerfile: docker_backend.dockerfile,
+            target_port: docker_backend.target_port,
+            config_dir: Config::base_dir()?
+        };
+
+        // Start the container
+        let container_id = crate::backends::docker::install::start_container(&docker_backend)
+            .await
+            .with_context(|| format!("Failed to start Docker container for '{}'", server_name))?;
+
+        // Wait for health check
+        let target_port = docker_backend.target_port.unwrap_or(8000);
+        let health_path = model_config
+            .health_check
+            .as_ref()
+            .and_then(|hc| hc.url.as_deref())
+            .unwrap_or("/health");
+        let health_url = format!("http://127.0.0.1:{}{}", target_port, health_path);
+        let timeout = Duration::from_secs(config.proxy.startup_timeout_secs);
+        let start = Instant::now();
+        let mut health_ok = false;
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if start.elapsed() >= timeout {
+                break;
+            }
+            if let Ok(response) = super::process::check_health(&health_url, Some(30)).await {
+                if response.status().is_success() {
+                    debug!("Health check passed for Docker server: {}", server_name);
+                    health_ok = true;
+                    break;
+                }
+            }
+        }
+
+        if !health_ok {
+            let mut models = self.models.write().await;
+            models.remove(server_name);
+            return Err(anyhow!(
+                "Docker backend '{}' failed health check (timeout after {}s)",
+                server_name,
+                timeout.as_secs()
+            ));
+        }
+
+        // Transition to Ready
+        {
+            let mut models = self.models.write().await;
+            if let Some(state) = models.get_mut(server_name) {
+                if let ModelState::Starting {
+                    consecutive_failures,
+                    failure_timestamp,
+                    ..
+                } = state
+                {
+                    consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
+                    let cf = Arc::clone(consecutive_failures);
+                    let ft = *failure_timestamp;
+                    *state = ModelState::Ready {
+                        model_name: model_name.to_string(),
+                        backend: server_config.backend.clone(),
+                        backend_pid: 0,
+                        backend_url: format!("http://127.0.0.1:{}", target_port),
+                        load_time: std::time::SystemTime::now(),
+                        last_accessed: Instant::now(),
+                        consecutive_failures: cf,
+                        failure_timestamp: ft,
+                        restart_count: 0,
+                        backend_type: BackendKind::Docker,
+                        container_id: Some(container_id),
+                    };
+                }
+            }
+        }
+
+        // Write to DB
+        if let Some(conn) = self.open_db() {
+            let _ = crate::db::queries::insert_active_model(
+                &conn,
+                server_name,
+                model_name,
+                &server_config.backend,
+                0,
+                target_port as i64,
+                &format!("http://127.0.0.1:{}", target_port),
+            );
+        }
+
+        info!("Docker server '{}' loaded successfully", server_name);
+        self.metrics
+            .models_loaded
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(server_name.to_string())
+    }
+
     /// Evict the least-recently-used Ready model if the proxy is at capacity.
     ///
     /// This method atomically transitions a Ready model to Unloading (holding
@@ -399,9 +603,25 @@ impl ProxyState {
             ));
         }
 
-        // Handle Docker backends separately
+        // Handle Docker backends
         if state.is_docker() {
-            // Docker unload handled by docker::uninstall::stop_container() in Task 4
+            let docker_name = {
+                let model_configs = self.model_configs.read().await;
+                model_configs
+                    .values()
+                    .find_map(|mc| mc.docker_backend_name.as_ref())
+                    .ok_or_else(|| anyhow!("No docker_backend_name found"))?
+                    .to_string()
+            };
+            let db_dir = self
+                .db_dir
+                .clone()
+                .ok_or_else(|| anyhow!("DB dir not configured"))?;
+            let docker_backend =
+                crate::backends::docker::db::get_backend_by_name(&docker_name, &db_dir)
+                    .await?
+                    .ok_or_else(|| anyhow!("Docker backend '{}' not found", docker_name))?;
+            crate::backends::docker::uninstall::stop_container(&docker_backend).await?;
             let mut models = self.models.write().await;
             models.remove(server_name);
             return Ok(());
@@ -529,8 +749,55 @@ impl ProxyState {
                 continue;
             }
 
-            // Skip Docker backends — container state is checked separately
+            // Docker backends — check container status
             if state.is_docker() {
+                if let Some(container_id) = state.container_id() {
+                    let status = crate::backends::docker::health::container_status(container_id)
+                        .await
+                        .ok();
+                    match status.as_deref() {
+                        Some("exited" | "dead") => {
+                            let max_restarts = max_restarts;
+                            let restart_count = state.restart_count().unwrap_or(0);
+                            if restart_count < max_restarts {
+                                // Will be restarted by spawn below
+                                dead_pid_candidates.push((
+                                    server_name.clone(),
+                                    state.model_name().to_string(),
+                                    state.backend().to_string(),
+                                    restart_count,
+                                    0, // no PID for Docker
+                                    state
+                                        .backend_url()
+                                        .map(|u| u.to_string())
+                                        .unwrap_or_default(),
+                                ));
+                            } else {
+                                failed_to_remove.push(server_name.clone());
+                            }
+                        }
+                        Some("running") => {
+                            // Health check the HTTP endpoint
+                            if let Some(backend_url) = state.backend_url() {
+                                let health_url = format!("{}/health", backend_url);
+                                if super::process::check_health(&health_url, Some(5))
+                                    .await
+                                    .is_err()
+                                {
+                                    dead_pid_candidates.push((
+                                        server_name.clone(),
+                                        state.model_name().to_string(),
+                                        state.backend().to_string(),
+                                        state.restart_count().unwrap_or(0),
+                                        0,
+                                        backend_url.to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 continue;
             }
 

@@ -154,6 +154,15 @@ impl Config {
         }
     }
 
+    /// Resolve the Docker directory path: `<base_dir>/docker/`.
+    /// Creates the directory if it doesn't exist.
+    pub fn docker_dir(&self) -> Result<PathBuf> {
+        let base = Config::base_dir()?;
+        let dir = base.join("docker");
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
     pub fn with_models_dir(&self, dir: impl Into<PathBuf>) -> Self {
         let dir = dir.into();
         Self {

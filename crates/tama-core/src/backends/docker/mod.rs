@@ -7,6 +7,7 @@ pub mod health;
 pub mod install;
 pub mod logs;
 pub mod templates;
+pub mod uninstall;
 
 use std::path::PathBuf;
 

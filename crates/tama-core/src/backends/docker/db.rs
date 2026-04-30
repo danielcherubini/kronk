@@ -1,7 +1,6 @@
 /// Database helpers for Docker backends.
 ///
 /// Provides functions to look up Docker backends by name from the SQLite DB.
-
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 
@@ -11,10 +10,7 @@ use super::DockerBackend;
 ///
 /// Requires the DB directory path to open the connection.
 /// Returns `Ok(None)` if no backend with that name exists.
-pub async fn get_backend_by_name(
-    name: &str,
-    db_dir: &Path,
-) -> Result<Option<DockerBackend>> {
+pub async fn get_backend_by_name(name: &str, db_dir: &Path) -> Result<Option<DockerBackend>> {
     let conn = crate::db::open(db_dir)
         .with_context(|| format!("Failed to open DB at {}", db_dir.display()))?;
 

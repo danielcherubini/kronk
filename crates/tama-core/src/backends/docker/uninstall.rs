@@ -3,7 +3,7 @@
 /// Stops the container via `docker compose down`, kills it if still running,
 /// and cleans up disk files.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use tokio::process::Command;
 
 use super::DockerBackend;
