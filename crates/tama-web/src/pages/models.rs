@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+use crate::utils::rw_signal_to_signal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
@@ -26,11 +27,6 @@ struct ModelEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelsResponse {
     models: Vec<ModelEntry>,
-}
-
-fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
-    let (read, _) = sig.split();
-    read.into()
 }
 
 /// Returns the preferred display name for a model, preferring `display_name`,

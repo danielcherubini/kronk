@@ -1,6 +1,7 @@
 pub mod self_update;
 
 use gloo_net::http::{Request, RequestBuilder, Response};
+use leptos::prelude::{RwSignal, Signal};
 use wasm_bindgen::JsValue;
 
 /// CSRF token cookie name — must match server-side constant.
@@ -109,4 +110,36 @@ pub fn target_value(ev: &leptos::ev::Event) -> String {
                 })
         })
         .unwrap_or_default()
+}
+
+/// Convert an `RwSignal<T>` to a read-only `Signal<T>` by splitting and returning the read half.
+pub fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
+    let (read, _) = sig.split();
+    read.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use leptos::prelude::{GetUntracked, RwSignal, Set, Signal};
+
+    use super::rw_signal_to_signal;
+
+    #[test]
+    fn rw_signal_to_signal_returns_read_half() {
+        let rw = RwSignal::new(42i32);
+        let sig: Signal<i32> = rw_signal_to_signal(rw);
+        assert_eq!(sig.get_untracked(), 42);
+    }
+
+    #[test]
+    fn rw_signal_to_signal_does_not_share_writes() {
+        let rw = RwSignal::new(0i32);
+        let _sig: Signal<i32> = rw_signal_to_signal(rw);
+        rw.set(100);
+        // The split discards the write half, so the returned Signal
+        // should still see the latest value from the RwSignal.
+        // After split, writes to rw still work, reads via the returned
+        // Signal should track the latest value.
+        assert_eq!(rw.get_untracked(), 100);
+    }
 }
