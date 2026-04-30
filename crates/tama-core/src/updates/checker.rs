@@ -119,11 +119,22 @@ impl UpdateChecker {
             let config_dir = config_dir.to_path_buf();
             move || -> anyhow::Result<UpdateSyncResults> {
                 let registry = BackendRegistry::open(&config_dir)?;
-                let active_backends = registry.list().unwrap_or_default();
-                tracing::info!(
-                    "Found {} active backends in registry",
-                    active_backends.len()
-                );
+                let active_backends = match registry.list() {
+                    Ok(backends) => {
+                        tracing::info!(
+                            "Found {} active backends in registry",
+                            backends.len()
+                        );
+                        backends
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to list active backends: {}",
+                            e
+                        );
+                        vec![]
+                    }
+                };
                 let backends: Vec<(String, BackendType)> = active_backends
                     .iter()
                     .map(|b| (b.name.clone(), b.backend_type.clone()))
