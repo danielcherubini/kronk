@@ -17,6 +17,3 @@ pub mod sidebar;
 pub mod sparkline;
 pub mod supervisor_section;
 pub mod toast;
-
-pub use docker_install_modal::DockerInstallModal;
-pub use docker_template_card::{DockerTemplateCard, DockerTemplateGrid};
