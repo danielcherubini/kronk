@@ -223,6 +223,27 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/tama/v1/backends/jobs/:id", get(get_job))
         .route("/tama/v1/backends/jobs/:id/events", get(job_events_sse))
+        // Docker backend routes
+        .route(
+            "/tama/v1/backends/docker/install",
+            post(crate::api::backends::docker::handle_docker_install),
+        )
+        .route(
+            "/tama/v1/backends/docker/install/:job_id/stream",
+            get(crate::api::backends::docker::handle_docker_install_stream),
+        )
+        .route(
+            "/tama/v1/backends/docker/:name",
+            delete(crate::api::backends::docker::handle_docker_uninstall),
+        )
+        .route(
+            "/tama/v1/backends/docker/:name/logs",
+            get(crate::api::backends::docker::handle_docker_logs),
+        )
+        .route(
+            "/tama/v1/backends/docker/:name/status",
+            get(crate::api::backends::docker::handle_docker_status),
+        )
         // Restore routes (CSRF-protected)
         .route("/tama/v1/restore/preview", post(restore_preview))
         .route("/tama/v1/restore", post(start_restore))

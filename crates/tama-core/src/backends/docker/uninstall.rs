@@ -2,7 +2,6 @@
 ///
 /// Stops the container via `docker compose down`, kills it if still running,
 /// and cleans up disk files.
-
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
@@ -56,9 +55,8 @@ pub async fn stop_container(backend: &DockerBackend) -> Result<()> {
     // Step 3: Clean up disk files
     let dir = backend.config_dir.join("docker").join(&backend.name);
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).with_context(|| {
-            format!("Failed to clean up directory: {}", dir.display())
-        })?;
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("Failed to clean up directory: {}", dir.display()))?;
     }
 
     Ok(())

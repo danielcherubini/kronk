@@ -391,7 +391,7 @@ impl ProxyState {
             compose_yaml: templated_yaml,
             dockerfile: docker_backend.dockerfile,
             target_port: docker_backend.target_port,
-            config_dir: Config::base_dir()?
+            config_dir: Config::base_dir()?,
         };
 
         // Start the container
