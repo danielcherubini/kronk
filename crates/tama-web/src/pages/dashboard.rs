@@ -191,6 +191,53 @@ fn model_display_name(m: &ModelStatus) -> String {
         .to_string()
 }
 
+/// Pre-computed display values for a model row, used to deduplicate
+/// the Active and Inactive model section rendering logic.
+struct NormalizedModel {
+    id: String,
+    db_id: Option<i64>,
+    display_name: String,
+    quant_display: String,
+    context_display: String,
+    backend_name: String,
+    state: String,
+}
+
+/// Normalize a slice of models: sort by id and compute display values.
+fn normalize_models(models: &[ModelStatus]) -> Vec<NormalizedModel> {
+    let mut sorted: Vec<ModelStatus> = models.to_vec();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    sorted
+        .into_iter()
+        .map(|m| {
+            let display_name = model_display_name(&m);
+            let quant_display: String = m.quant.as_deref().unwrap_or("\u{2014}").into();
+            let context_display = m
+                .context_length
+                .map(|n| {
+                    if n >= 1024 && n % 1024 == 0 {
+                        format!("{}k", n / 1024)
+                    } else if n >= 1000 && n % 1000 == 0 {
+                        format!("{}k", n / 1000)
+                    } else {
+                        n.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "—".to_string());
+            let backend_name = format!("{}_{}", m.backend, m.id);
+            NormalizedModel {
+                id: m.id,
+                db_id: m.db_id,
+                display_name,
+                quant_display,
+                context_display,
+                backend_name,
+                state: m.state,
+            }
+        })
+        .collect()
+}
+
 /// Renders a single model row. Isolated component so only changed rows rebuild
 /// when metrics update — prevents the entire list from being destroyed/recreated.
 #[component]
@@ -680,31 +727,10 @@ pub fn Dashboard() -> impl IntoView {
                                 </div>
                             }.into_any()
                         } else {
-                            // Sort by id (stable order, matching the backend)
-                            let mut sorted = active;
-                            sorted.sort_by(|a, b| a.id.cmp(&b.id));
+                            let sorted = normalize_models(&active);
                             view! {
                                 <div class="models-list">
                                     {sorted.into_iter().map(|m| {
-                                        let display_name = model_display_name(&m);
-                                        let quant_display: String = m
-                                            .quant
-                                            .as_deref()
-                                            .unwrap_or("\u{2014}")
-                                            .into();
-                                        let context_display = m.context_length.map(|n| {
-                                            if n >= 1024 && n % 1024 == 0 {
-                                                format!("{}k", n / 1024)
-                                            } else if n >= 1000 && n % 1000 == 0 {
-                                                format!("{}k", n / 1000)
-                                            } else {
-                                                n.to_string()
-                                            }
-                                        }).unwrap_or_else(|| "—".to_string());
-                                        let backend_name = format!("{}_{}", m.backend, m.id);
-                                        let id = m.id.clone();
-                                        let db_id = m.db_id;
-                                        let state = m.state.clone();
                                         let on_load_cb = Callback::new(move |id: String| {
                                             load_action.dispatch(id);
                                         });
@@ -713,13 +739,13 @@ pub fn Dashboard() -> impl IntoView {
                                         });
                                         view! {
                                             <ModelRow
-                                                id=id
-                                                db_id=db_id
-                                                display_name=display_name
-                                                quant_display=quant_display
-                                                context_display=context_display
-                                                backend_name=backend_name
-                                                state=state
+                                                id=m.id
+                                                db_id=m.db_id
+                                                display_name=m.display_name
+                                                quant_display=m.quant_display
+                                                context_display=m.context_display
+                                                backend_name=m.backend_name
+                                                state=m.state
                                                 load_pending=load_busy
                                                 unload_pending=unload_busy
                                                 on_load=on_load_cb
@@ -751,31 +777,10 @@ pub fn Dashboard() -> impl IntoView {
                                         </div>
                                     }.into_any()
                                 } else {
-                                    // Sort by id (stable order, matching the backend)
-                                    let mut sorted = inactive;
-                                    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+                                    let sorted = normalize_models(&inactive);
                                     view! {
                                         <div class="models-list">
                                             {sorted.into_iter().map(|m| {
-                                                let display_name = model_display_name(&m);
-                                                let quant_display: String = m
-                                                    .quant
-                                                    .as_deref()
-                                                    .unwrap_or("\u{2014}")
-                                                    .into();
-                                                let context_display = m.context_length.map(|n| {
-                                                    if n >= 1024 && n % 1024 == 0 {
-                                                        format!("{}k", n / 1024)
-                                                    } else if n >= 1000 && n % 1000 == 0 {
-                                                        format!("{}k", n / 1000)
-                                                    } else {
-                                                        n.to_string()
-                                                    }
-                                                }).unwrap_or_else(|| "—".to_string());
-                                                let backend_name = format!("{}_{}", m.backend, m.id);
-                                                let id = m.id.clone();
-                                                let db_id = m.db_id;
-                                                let state = m.state.clone();
                                                 let on_load_cb = Callback::new(move |id: String| {
                                                     load_action.dispatch(id);
                                                 });
@@ -784,13 +789,13 @@ pub fn Dashboard() -> impl IntoView {
                                                 });
                                                 view! {
                                                     <ModelRow
-                                                        id=id
-                                                        db_id=db_id
-                                                        display_name=display_name
-                                                        quant_display=quant_display
-                                                        context_display=context_display
-                                                        backend_name=backend_name
-                                                        state=state
+                                                        id=m.id
+                                                        db_id=m.db_id
+                                                        display_name=m.display_name
+                                                        quant_display=m.quant_display
+                                                        context_display=m.context_display
+                                                        backend_name=m.backend_name
+                                                        state=m.state
                                                         load_pending=load_busy
                                                         unload_pending=unload_busy
                                                         on_load=on_load_cb
