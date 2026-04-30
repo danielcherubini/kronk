@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Extract `rw_signal_to_signal` to `crate::utils`
+## Task 1: Extract `rw_signal_to_signal` to `crate::utils`
 
 **Context:**
 The `rw_signal_to_signal` helper function exists as a private function in two files (`models.rs` and `model_editor/mod.rs`) and is needed by the dashboard to wire the `PullQuantWizard` modal. Extracting it to a shared location eliminates duplication and ensures consistency across all three pages.
@@ -50,7 +50,7 @@ pub fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -
 
 ---
 
-### Task 2: Add `inactive_models()` helper and compute both lists
+## Task 2: Add `inactive_models()` helper and compute both lists
 
 **Context:**
 The dashboard currently computes `active = active_models(&all_models)` but has no equivalent for inactive models. Adding `inactive_models()` as a symmetric complement enables rendering the Inactive Models section. This is a pure data transformation with no UI changes — the UI section comes in Task 3.
@@ -108,7 +108,7 @@ let inactive = inactive_models(&all_models);
 
 ---
 
-### Task 3: Add Inactive Models UI section to dashboard
+## Task 3: Add Inactive Models UI section to dashboard
 
 **Context:**
 With the data separation in Task 2, we can now render inactive models. This task adds a second `<section>` below the Active Models section, using the existing `ModelRow` component (which already handles idle/failed states correctly — idle shows "Load"/green, failed shows "Retry"/yellow).
@@ -226,7 +226,7 @@ No changes to `ModelRow` are needed.
 
 ---
 
-### Task 4: Add "Pull Model" button and "Check all for updates" to dashboard header
+## Task 4: Add "Pull Model" button and "Check all for updates" to dashboard header
 
 **Context:**
 The models page has two features the dashboard lacks: "Pull Model" (opens a wizard modal) and "Check all for updates" (refreshes metadata for all models). These need to be added to the dashboard header.
@@ -458,7 +458,7 @@ Exact surrounding context:
 
 ---
 
-### Task 5: Hide Models from sidebar
+## Task 5: Hide Models from sidebar
 
 **Context:**
 The Models page should no longer appear in the sidebar navigation (users can still access it directly via `/models` for Edit functionality). This is a simple navigation change.
@@ -493,7 +493,7 @@ Delete it entirely (do not comment out).
 
 ---
 
-### Task 6: Add unit tests for `inactive_models()`
+## Task 6: Add unit tests for `inactive_models()`
 
 **Context:**
 The `inactive_models()` function (added in Task 2) needs test coverage matching the existing `active_models()` test suite. These are pure data tests that run on the host target (no WASM dependency).
@@ -578,7 +578,7 @@ fn inactive_models_treats_unknown_state_as_inactive() {
 
 ---
 
-### Task 7: Final verification — format, lint, and test all
+## Task 7: Final verification — format, lint, and test all
 
 **Context:**
 After all feature tasks are complete, run the full workspace checks to ensure no regressions were introduced.
