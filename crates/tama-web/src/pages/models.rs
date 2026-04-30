@@ -29,6 +29,17 @@ struct ModelsResponse {
     models: Vec<ModelEntry>,
 }
 
+/// Typed response from GET /tama/v1/models for the "Check all for updates" action.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CheckAllModelsApiResponse {
+    models: Vec<CheckAllModelEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CheckAllModelEntry {
+    id: i64,
+}
+
 /// Returns the preferred display name for a model, preferring `display_name`,
 /// then `api_name`, falling back to the model `id` otherwise.
 fn model_display_name(m: &ModelEntry) -> String {
@@ -120,7 +131,7 @@ pub fn Models() -> impl IntoView {
                 check_all_busy.set(false);
                 return;
             }
-            let list = match resp.json::<serde_json::Value>().await {
+            let list = match resp.json::<CheckAllModelsApiResponse>().await {
                 Ok(v) => v,
                 Err(e) => {
                     check_all_status
@@ -129,24 +140,14 @@ pub fn Models() -> impl IntoView {
                     return;
                 }
             };
-            let ids: Vec<String> = list
-                .get("models")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+
+            let ids: Vec<i64> = list.models.iter().map(|m| m.id).collect();
 
             let total = ids.len();
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
             for id in ids {
-                // Percent-encode the id so values containing `/`, spaces or
-                // other reserved characters route correctly to the backend.
-                let encoded_id = urlencoding::encode(&id);
-                let url = format!("/tama/v1/models/{}/refresh", encoded_id);
+                let url = format!("/tama/v1/models/{}/refresh", id);
                 match post_request(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
                     Ok(r) => {
