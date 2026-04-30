@@ -93,63 +93,74 @@ pub fn DockerInstallModal(
 
             match resp {
                 Ok(response) => {
+                    let status = response.status();
                     let data: serde_json::Value = response.json().await.unwrap_or_default();
+
+                    // Check for error responses
+                    if status != 200 {
+                        let err_msg = data
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        error.set(Some(err_msg.to_string()));
+                        installing.set(false);
+                        return;
+                    }
+
                     let job_id = data.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if job_id.is_empty() {
+                        error.set(Some("No job ID returned".to_string()));
+                        installing.set(false);
+                        return;
+                    }
 
                     // Subscribe to SSE stream using web_sys::EventSource
-                    if !job_id.is_empty() {
-                        let stream_url =
-                            format!("/tama/v1/backends/docker/install/{}/stream", job_id);
+                    let stream_url = format!("/tama/v1/backends/docker/install/{}/stream", job_id);
 
-                        let installing_sig = installing;
+                    let installing_sig = installing;
 
-                        match web_sys::EventSource::new(&stream_url) {
-                            Ok(es) => {
-                                // Open event — install completed successfully
-                                if let Some(ref cb) = on_success {
-                                    let cb = cb.clone();
-                                    let on_open =
-                                        Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
-                                            installing_sig.set(false);
-                                            cb.run(());
-                                        });
-                                    let _ = es.add_event_listener_with_callback(
-                                        "open",
-                                        on_open.as_ref().unchecked_ref(),
-                                    );
-                                    on_open.forget();
-                                }
-
-                                // Error event
-                                let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
-                                    installing.set(false);
-                                    error.set(Some("Install failed".to_string()));
+                    match web_sys::EventSource::new(&stream_url) {
+                        Ok(es) => {
+                            // Open event — install completed successfully
+                            if let Some(ref cb) = on_success {
+                                let cb = cb.clone();
+                                let on_open = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
+                                    installing_sig.set(false);
+                                    cb.run(());
                                 });
-                                let _ = es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-                                on_error.forget();
-
-                                // Log event
-                                let on_log = Closure::<dyn Fn(web_sys::MessageEvent)>::new(
-                                    move |evt: web_sys::MessageEvent| {
-                                        if let Some(data) = evt.data().as_string() {
-                                            install_progress.set(Some(data));
-                                        }
-                                    },
-                                );
                                 let _ = es.add_event_listener_with_callback(
-                                    "log",
-                                    on_log.as_ref().unchecked_ref(),
+                                    "open",
+                                    on_open.as_ref().unchecked_ref(),
                                 );
-                                on_log.forget();
+                                on_open.forget();
                             }
-                            Err(_) => {
+
+                            // Error event
+                            let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
                                 installing.set(false);
-                                error.set(Some("Failed to connect to install stream".to_string()));
-                            }
+                                error.set(Some("Install failed".to_string()));
+                            });
+                            let _ = es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+                            on_error.forget();
+
+                            // Log event
+                            let on_log = Closure::<dyn Fn(web_sys::MessageEvent)>::new(
+                                move |evt: web_sys::MessageEvent| {
+                                    if let Some(data) = evt.data().as_string() {
+                                        install_progress.set(Some(data));
+                                    }
+                                },
+                            );
+                            let _ = es.add_event_listener_with_callback(
+                                "log",
+                                on_log.as_ref().unchecked_ref(),
+                            );
+                            on_log.forget();
                         }
-                    } else {
-                        installing.set(false);
-                        error.set(Some("No job ID returned".to_string()));
+                        Err(_) => {
+                            installing.set(false);
+                            error.set(Some("Failed to connect to install stream".to_string()));
+                        }
                     }
                 }
                 Err(e) => {
