@@ -121,6 +121,16 @@ fn active_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
         .collect()
 }
 
+/// Returns models whose state is NOT one of the "active" states.
+/// These are models that are idle, failed, or otherwise not running.
+fn inactive_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
+    models
+        .iter()
+        .filter(|m| !matches!(m.state.as_str(), "ready" | "loading" | "unloading"))
+        .cloned()
+        .collect()
+}
+
 /// CSS class string used for the per-model status badge in the
 /// "Active Models" grid. Maps lifecycle states to colour classes.
 fn model_status_badge_class(state: &str) -> &'static str {
@@ -426,7 +436,8 @@ pub fn Dashboard() -> impl IntoView {
             let vram_y_refs = vec![vram_max];
 
             let all_models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
-            let models = active_models(&all_models);
+            let active = active_models(&all_models);
+            let _inactive = inactive_models(&all_models);
 
             view! {
                 <div class="grid-stats">
@@ -534,7 +545,7 @@ pub fn Dashboard() -> impl IntoView {
                     <div class="page-header">
                         <h2>"Active Models"</h2>
                         <span class="text-muted">
-                            {format!("{} loaded", models.len())}
+                            {format!("{} loaded", active.len())}
                         </span>
                     </div>
                     {
@@ -544,7 +555,7 @@ pub fn Dashboard() -> impl IntoView {
                                     <p class="text-muted">"No models configured yet."</p>
                                 </div>
                             }.into_any()
-                        } else if models.is_empty() {
+                        } else if active.is_empty() {
                             view! {
                                 <div class="card card--centered">
                                     <p class="text-muted">"No models currently loaded."</p>
@@ -552,7 +563,7 @@ pub fn Dashboard() -> impl IntoView {
                             }.into_any()
                         } else {
                             // Sort by id (stable order, matching the backend)
-                            let mut sorted = models;
+                            let mut sorted = active;
                             sorted.sort_by(|a, b| a.id.cmp(&b.id));
                             view! {
                                 <div class="models-list">
@@ -965,6 +976,140 @@ mod tests {
         let models: Vec<ModelStatus> = vec![];
         let active = active_models(&models);
         assert!(active.is_empty());
+    }
+
+    /// `inactive_models` returns entries whose state is NOT "ready", "loading",
+    /// or "unloading" — i.e. idle, failed, and any unknown states.
+    #[test]
+    fn inactive_models_returns_idle_failed_and_unknown_entries() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "idle".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "c".into(),
+                state: "loading".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "d".into(),
+                state: "failed".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "e".into(),
+                state: "unloading".into(),
+                ..Default::default()
+            },
+        ];
+
+        let inactive = inactive_models(&models);
+        assert_eq!(inactive.len(), 2);
+        assert_eq!(inactive[0].id, "b");
+        assert_eq!(inactive[0].state, "idle");
+        assert_eq!(inactive[1].id, "d");
+        assert_eq!(inactive[1].state, "failed");
+    }
+
+    /// `inactive_models` returns an empty vec when all models are active
+    /// (ready, loading, or unloading).
+    #[test]
+    fn inactive_models_returns_empty_when_all_active() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "loading".into(),
+                ..Default::default()
+            },
+        ];
+
+        let inactive = inactive_models(&models);
+        assert!(inactive.is_empty());
+    }
+
+    /// `inactive_models` returns all models when none are active.
+    #[test]
+    fn inactive_models_returns_all_when_none_active() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "idle".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "failed".into(),
+                ..Default::default()
+            },
+        ];
+
+        let inactive = inactive_models(&models);
+        assert_eq!(inactive.len(), 2);
+        assert_eq!(inactive[0].id, "a");
+        assert_eq!(inactive[1].id, "b");
+    }
+
+    /// `inactive_models` returns an empty vec for an empty input slice.
+    #[test]
+    fn inactive_models_returns_empty_for_empty_input() {
+        let models: Vec<ModelStatus> = vec![];
+        let inactive = inactive_models(&models);
+        assert!(inactive.is_empty());
+    }
+
+    /// `active_models` and `inactive_models` are symmetric complements:
+    /// together they must contain exactly all input models, with no overlap.
+    #[test]
+    fn active_and_inactive_models_are_symmetric_complements() {
+        let models = vec![
+            ModelStatus {
+                id: "a".into(),
+                state: "ready".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "b".into(),
+                state: "idle".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "c".into(),
+                state: "loading".into(),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "d".into(),
+                state: "failed".into(),
+                ..Default::default()
+            },
+        ];
+
+        let active = active_models(&models);
+        let inactive = inactive_models(&models);
+
+        assert_eq!(active.len() + inactive.len(), models.len());
+
+        // No overlap: no model id appears in both lists.
+        let active_ids: Vec<&str> = active.iter().map(|m| m.id.as_str()).collect();
+        for inactive_model in &inactive {
+            assert!(
+                !active_ids.contains(&inactive_model.id.as_str()),
+                "model '{}' should not be in both active and inactive",
+                inactive_model.id
+            );
+        }
     }
 
     /// When the backend includes a populated `models` array, every `ModelStatus`
