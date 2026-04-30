@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 78
+- **Total Plans**: 79
 - **Completed**: 77 ✅
-- **In Progress**: 1 🚧
-- **Remaining**: 1
+- **In Progress**: 2 🚧
+- **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -29,6 +29,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [Dashboard: Show All Models + Pull Model + Check All](2026-04-30-dashboard-all-models.md) | Extend dashboard to show inactive models section, add Pull Model and Check all for updates buttons, hide Models from sidebar | 🚧 IN PROGRESS |
 
 ### Completed Plans
 
@@ -111,6 +112,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Wizard & Cache Improvements](2026-04-14-wizard-cache-improvements.md) | Fix KV dropdown, add APEX/UD quant support, implement HF cache cleanup | #58 `3be54a8`, `db955e0`, `6af6423`, `ae1c8f1` |
 | [Context Length Selector](2026-04-14-context-length-selector.md) | Shared component for context length input with dropdown and custom value fallback | #59 |
 | [KV Cache Quantization Dropdowns](2026-04-27-kv-cache-quants.md) | Add K and V cache quantization dropdown selectors to model editor form, wired through all layers to llama-server CLI flags | #77 ✅ COMPLETED |
+| [Dashboard: Show All Models + Pull Model + Check All](2026-04-30-dashboard-all-models.md) | Extend dashboard to show inactive models section, add Pull Model and Check all for updates buttons, hide Models from sidebar | 🚧 IN PROGRESS
 | [Models Page Horizontal Layout](2026-04-30-models-page-horizontal-layout.md) | Replace models page vertical card grid with horizontal row layout matching dashboard | #81 `fe94160` ✅ COMPLETED |
 | [Benchmarks Page](2026-04-19-benchmarks.md) | Web UI benchmarking page with llama-bench integration, SSE progress streaming, preset configs (Quick/VRAM Sweet Spot/Thread Scaling), and benchmark history | `dd869b8`–`4be90f7` ✅ COMPLETED |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
@@ -223,4 +225,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-28
+**Last Updated**: 2026-04-30
