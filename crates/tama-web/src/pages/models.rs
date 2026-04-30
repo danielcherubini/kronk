@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+use crate::utils::{post_request, rw_signal_to_signal, CheckAllModelsApiResponse};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
@@ -26,11 +27,6 @@ struct ModelEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelsResponse {
     models: Vec<ModelEntry>,
-}
-
-fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
-    let (read, _) = sig.split();
-    read.into()
 }
 
 /// Returns the preferred display name for a model, preferring `display_name`,
@@ -77,7 +73,7 @@ pub fn Models() -> impl IntoView {
     let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
         async move {
-            let _ = gloo_net::http::Request::post(&format!("/tama/v1/models/{}/load", id))
+            let _ = post_request(&format!("/tama/v1/models/{}/load", id))
                 .send()
                 .await;
             refresh.update(|n| *n += 1);
@@ -87,7 +83,7 @@ pub fn Models() -> impl IntoView {
     let unload_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
         async move {
-            let _ = gloo_net::http::Request::post(&format!("/tama/v1/models/{}/unload", id))
+            let _ = post_request(&format!("/tama/v1/models/{}/unload", id))
                 .send()
                 .await;
             refresh.update(|n| *n += 1);
@@ -124,7 +120,7 @@ pub fn Models() -> impl IntoView {
                 check_all_busy.set(false);
                 return;
             }
-            let list = match resp.json::<serde_json::Value>().await {
+            let list = match resp.json::<CheckAllModelsApiResponse>().await {
                 Ok(v) => v,
                 Err(e) => {
                     check_all_status
@@ -133,25 +129,17 @@ pub fn Models() -> impl IntoView {
                     return;
                 }
             };
-            let ids: Vec<String> = list
-                .get("models")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+
+            let ids: Vec<i64> = list.models.iter().map(|m| m.id).collect();
 
             let total = ids.len();
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
             for id in ids {
-                // Percent-encode the id so values containing `/`, spaces or
-                // other reserved characters route correctly to the backend.
-                let encoded_id = urlencoding::encode(&id);
-                let url = format!("/tama/v1/models/{}/refresh", encoded_id);
-                match gloo_net::http::Request::post(&url).send().await {
+                // Integer IDs don't need URL encoding, but we use format! for
+                // consistency with the string-based API in models.rs.
+                let url = format!("/tama/v1/models/{}/refresh", id);
+                match post_request(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
                     Ok(r) => {
                         let text = r.text().await.unwrap_or_default();

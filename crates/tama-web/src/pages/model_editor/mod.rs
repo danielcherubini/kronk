@@ -12,6 +12,7 @@ use leptos_router::hooks::use_params_map;
 
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+use crate::utils::rw_signal_to_signal;
 
 use self::api::*;
 use self::extra_args_form::ModelEditorExtraArgsForm;
@@ -19,12 +20,6 @@ use self::general_form::ModelEditorGeneralForm;
 use self::quants_vision_form::ModelEditorQuantsVisionForm;
 use self::sampling_form::ModelEditorSamplingForm;
 use self::types::*;
-
-// Helper to convert RwSignal to Signal for Modal
-fn rw_signal_to_signal<T: Clone + Send + Sync + 'static>(sig: RwSignal<T>) -> Signal<T> {
-    let (read, _) = sig.split();
-    read.into()
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
