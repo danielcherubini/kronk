@@ -437,7 +437,7 @@ pub fn Dashboard() -> impl IntoView {
 
             let all_models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
             let active = active_models(&all_models);
-            let _inactive = inactive_models(&all_models);
+            let inactive = inactive_models(&all_models);
 
             view! {
                 <div class="grid-stats">
@@ -614,6 +614,81 @@ pub fn Dashboard() -> impl IntoView {
                         }
                     }
                 </section>
+
+                // Inactive Models section — only render when all_models is non-empty
+                if !all_models.is_empty() {
+                    view! {
+                        <section class="dashboard-models">
+                            <div class="page-header">
+                                <h2>"Inactive Models"</h2>
+                                <span class="text-muted">
+                                    {format!("{} inactive", inactive.len())}
+                                </span>
+                            </div>
+                            {
+                                if inactive.is_empty() {
+                                    view! {
+                                        <div class="card card--centered">
+                                            <p class="text-muted">"No inactive models."</p>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    // Sort by id (stable order, matching the backend)
+                                    let mut sorted = inactive;
+                                    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+                                    view! {
+                                        <div class="models-list">
+                                            {sorted.into_iter().map(|m| {
+                                                let display_name = model_display_name(&m);
+                                                let quant_display: String = m
+                                                    .quant
+                                                    .as_deref()
+                                                    .unwrap_or("\u{2014}")
+                                                    .into();
+                                                let context_display = m.context_length.map(|n| {
+                                                    if n >= 1024 && n % 1024 == 0 {
+                                                        format!("{}k", n / 1024)
+                                                    } else if n >= 1000 && n % 1000 == 0 {
+                                                        format!("{}k", n / 1000)
+                                                    } else {
+                                                        n.to_string()
+                                                    }
+                                                }).unwrap_or_else(|| "—".to_string());
+                                                let backend_name = format!("{}_{}", m.backend, m.id);
+                                                let id = m.id.clone();
+                                                let db_id = m.db_id;
+                                                let state = m.state.clone();
+                                                let on_load_cb = Callback::new(move |id: String| {
+                                                    load_action.dispatch(id);
+                                                });
+                                                let on_unload_cb = Callback::new(move |id: String| {
+                                                    unload_action.dispatch(id);
+                                                });
+                                                view! {
+                                                    <ModelRow
+                                                        id=id
+                                                        db_id=db_id
+                                                        display_name=display_name
+                                                        quant_display=quant_display
+                                                        context_display=context_display
+                                                        backend_name=backend_name
+                                                        state=state
+                                                        load_pending=load_busy
+                                                        unload_pending=unload_busy
+                                                        on_load=on_load_cb
+                                                        on_unload=on_unload_cb
+                                                    />
+                                                }
+                                            }).collect::<Vec<_>>()}
+                                        </div>
+                                    }.into_any()
+                                }
+                            }
+                        </section>
+                    }.into_any()
+                } else {
+                    view! { <div></div> }.into_any()
+                }
             }.into_any()
         }}
     }
@@ -1067,6 +1142,75 @@ mod tests {
         let models: Vec<ModelStatus> = vec![];
         let inactive = inactive_models(&models);
         assert!(inactive.is_empty());
+    }
+
+    /// `inactive_models` preserves all model fields (display_name, quant,
+    /// context_length, db_id, backend) so the Inactive Models section can
+    /// render them without any data loss.
+    #[test]
+    fn inactive_models_preserves_all_fields() {
+        let models = vec![
+            ModelStatus {
+                id: "llama3-8b".into(),
+                db_id: Some(1),
+                api_name: Some("meta-llama/Llama-3-8B".into()),
+                display_name: Some("Llama 3 8B".into()),
+                backend: "llama_cpp".into(),
+                state: "ready".into(),
+                quant: Some("Q4_K_M".into()),
+                context_length: Some(8192),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "mistral-7b".into(),
+                db_id: Some(2),
+                api_name: Some("mistralai/Mistral-7B".into()),
+                display_name: Some("Mistral 7B".into()),
+                backend: "llama_cpp".into(),
+                state: "idle".into(),
+                quant: Some("Q4_0".into()),
+                context_length: Some(32768),
+                ..Default::default()
+            },
+            ModelStatus {
+                id: "gemma-2b".into(),
+                db_id: Some(3),
+                api_name: Some("google/gemma-2b".into()),
+                display_name: Some("Gemma 2B".into()),
+                backend: "llama_cpp".into(),
+                state: "failed".into(),
+                quant: Some("Q5_K_M".into()),
+                context_length: Some(4096),
+                ..Default::default()
+            },
+        ];
+
+        let inactive = inactive_models(&models);
+        assert_eq!(inactive.len(), 2);
+
+        // Verify idle model fields are preserved
+        let idle_model = &inactive
+            .iter()
+            .find(|m| m.state == "idle")
+            .expect("idle model missing");
+        assert_eq!(idle_model.id, "mistral-7b");
+        assert_eq!(idle_model.db_id, Some(2));
+        assert_eq!(idle_model.display_name, Some("Mistral 7B".into()));
+        assert_eq!(idle_model.quant, Some("Q4_0".into()));
+        assert_eq!(idle_model.context_length, Some(32768));
+        assert_eq!(idle_model.backend, "llama_cpp");
+
+        // Verify failed model fields are preserved
+        let failed_model = &inactive
+            .iter()
+            .find(|m| m.state == "failed")
+            .expect("failed model missing");
+        assert_eq!(failed_model.id, "gemma-2b");
+        assert_eq!(failed_model.db_id, Some(3));
+        assert_eq!(failed_model.display_name, Some("Gemma 2B".into()));
+        assert_eq!(failed_model.quant, Some("Q5_K_M".into()));
+        assert_eq!(failed_model.context_length, Some(4096));
+        assert_eq!(failed_model.backend, "llama_cpp");
     }
 
     /// `active_models` and `inactive_models` are symmetric complements:
