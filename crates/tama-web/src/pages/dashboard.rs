@@ -209,6 +209,8 @@ struct ModelDisplayData {
 }
 
 /// Format context length in human-readable form (e.g., 8192 → "8k", 32768 → "32k").
+/// Uses 1024 for binary kilobytes (KiB) and 1000 for decimal kilobytes (kB)
+/// to handle both conventions used by different backends.
 fn format_context_length(n: u32) -> String {
     if n >= 1024 && n.is_multiple_of(1024) {
         format!("{}k", n / 1024)
@@ -432,7 +434,6 @@ pub fn Dashboard() -> impl IntoView {
     // Check all for updates
     let check_all_busy = RwSignal::new(false);
     let check_all_status = RwSignal::new(Option::<(bool, String)>::None);
-    let check_all_dismiss = RwSignal::new(false);
 
     let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
@@ -521,7 +522,14 @@ pub fn Dashboard() -> impl IntoView {
 
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
-            for id in ids {
+            for (index, id) in ids.into_iter().enumerate() {
+                // Update progress for better UX during long operations
+                if total > 5 && index % 5 == 0 {
+                    check_all_status.set(Some((
+                        false,
+                        format!("Refreshing models... {}/{}", index.saturating_add(1), total),
+                    )));
+                }
                 let url = format!("/tama/v1/models/{}/refresh", id);
                 match post_request(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
@@ -587,26 +595,21 @@ pub fn Dashboard() -> impl IntoView {
         </div>
 
         // Alert banner — always visible, outside reactive closure
-        {move || {
-            check_all_dismiss.get(); // track dismiss signal
-            check_all_status.get().map(|(ok, msg)| {
-                let cls = if ok { "alert alert--success" } else { "alert alert--error" };
-                view! {
-                    <div class=cls>
-                        <span>{msg}</span>
-                        <button
-                            class="btn btn-sm btn-link alert__dismiss"
-                            on:click=move |_| {
-                                check_all_status.set(None);
-                                check_all_dismiss.update(|v| *v = !*v);
-                            }
-                        >
-                            "✕"
-                        </button>
-                    </div>
-                }
-            })
-        }}
+        {move || check_all_status.get().map(|(ok, msg)| {
+            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
+            view! {
+                <div class=cls>
+                    <span>{msg}</span>
+                    <button
+                        class="btn btn-sm btn-link alert__dismiss"
+                        on:click=move |_| { check_all_status.set(None); }
+                        attr:aria-label="Dismiss alert"
+                    >
+                        "×"
+                    </button>
+                </div>
+            }
+        })}
 
         {move || {
             let buf = history.get();
