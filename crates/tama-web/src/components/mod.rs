@@ -2,6 +2,8 @@ pub mod backend_card;
 
 pub mod context_length_selector;
 // pub mod backup_section; // TODO: Fix compilation
+pub mod docker_install_modal;
+pub mod docker_template_card;
 pub mod form_validation;
 pub mod general_section;
 pub mod install_modal;
@@ -15,3 +17,6 @@ pub mod sidebar;
 pub mod sparkline;
 pub mod supervisor_section;
 pub mod toast;
+
+pub use docker_install_modal::DockerInstallModal;
+pub use docker_template_card::{DockerTemplateCard, DockerTemplateGrid};

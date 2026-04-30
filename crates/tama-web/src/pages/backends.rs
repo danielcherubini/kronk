@@ -4,6 +4,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::backend_card::{BackendCard, BackendCardDto};
+use crate::components::docker_install_modal::DockerInstallModal;
 use crate::components::install_modal::{CapabilitiesDto, InstallModal, InstallRequest};
 use crate::components::job_log_panel::JobLogPanel;
 use crate::utils::{extract_and_store_csrf_token, post_request};
@@ -35,6 +36,7 @@ pub fn Backends() -> impl IntoView {
         RwSignal::new(std::collections::HashMap::new());
     let save_status: RwSignal<Option<String>> = RwSignal::new(None);
     let saving: RwSignal<bool> = RwSignal::new(false);
+    let docker_modal_open = RwSignal::new(false);
 
     // ── Fetch backends list (re-runs on refresh_tick) ────────────────────────
     Effect::new(move |_| {
@@ -170,6 +172,11 @@ pub fn Backends() -> impl IntoView {
         install_modal_for.set(None);
     });
 
+    let on_docker_success = Callback::new(move |_: ()| {
+        docker_modal_open.set(false);
+        refresh_tick.update(|n| *n += 1);
+    });
+
     let on_job_close = Callback::new(move |_: ()| {
         active_job_id.set(None);
         refresh_tick.update(|n| *n += 1);
@@ -264,6 +271,12 @@ pub fn Backends() -> impl IntoView {
         <div class="page-header">
             <h1>"Backends"</h1>
             <div style="display:flex;gap:0.5rem;align-items:center;">
+                <button
+                    class="btn btn-primary"
+                    on:click=move |_| docker_modal_open.set(true)
+                >
+                    "+ Add Docker"
+                </button>
                 {move || save_status.get().map(|s| view! { <span class="text-muted">{s}</span> })}
                 <button
                     class="btn btn-primary"
@@ -337,6 +350,20 @@ pub fn Backends() -> impl IntoView {
                             capabilities=caps
                             on_submit=on_install_submit
                             on_cancel=on_install_cancel
+                        />
+                    }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }
+            }}
+
+            {/* Docker install modal */}
+            {move || {
+                if docker_modal_open.get() {
+                    view! {
+                        <DockerInstallModal
+                            open=docker_modal_open
+                            on_success=on_docker_success
                         />
                     }.into_any()
                 } else {
