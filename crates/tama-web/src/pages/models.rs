@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::modal::Modal;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
-use crate::utils::rw_signal_to_signal;
+use crate::utils::{post_request, rw_signal_to_signal};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelEntry {
@@ -147,7 +147,7 @@ pub fn Models() -> impl IntoView {
                 // other reserved characters route correctly to the backend.
                 let encoded_id = urlencoding::encode(&id);
                 let url = format!("/tama/v1/models/{}/refresh", encoded_id);
-                match gloo_net::http::Request::post(&url).send().await {
+                match post_request(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
                     Ok(r) => {
                         let text = r.text().await.unwrap_or_default();
