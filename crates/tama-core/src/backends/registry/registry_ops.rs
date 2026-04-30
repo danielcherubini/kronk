@@ -258,10 +258,9 @@ impl BackendRegistry {
         };
 
         // Safe conversion: Option<i32> → Option<u16>, negative values become None
-        let target_port =
-            record
-                .target_port
-                .and_then(|v| if v < 0 { None } else { Some(v as u16) });
+        let target_port = record
+            .target_port
+            .and_then(|v| if v < 0 { None } else { Some(v as u16) });
 
         Ok(BackendInfo {
             name: record.name,

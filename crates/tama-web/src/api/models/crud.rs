@@ -140,7 +140,7 @@ fn apply_model_body(
                         kind: v.kind,
                         size_bytes: preserved_size,
                         context_length: v.context_length,
-                    ..Default::default()
+                        ..Default::default()
                     },
                 )
             })
@@ -856,7 +856,7 @@ mod tests {
                 kind: QuantKind::Model,
                 size_bytes: size,
                 context_length: Some(4096),
-        ..Default::default()
+                ..Default::default()
             },
         );
         ModelConfig {
@@ -1031,7 +1031,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1061,7 +1061,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1092,7 +1092,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1122,7 +1122,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1152,7 +1152,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1182,7 +1182,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1213,7 +1213,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1243,7 +1243,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1273,7 +1273,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1308,7 +1308,7 @@ mod tests {
             kv_unified: None, // omitted — should preserve existing
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1343,7 +1343,7 @@ mod tests {
             kv_unified: None, // omitted — should default to true
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1409,7 +1409,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("a".repeat(MAX_CACHE_TYPE + 1)),
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };
@@ -1500,7 +1500,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
-                    tensor_parallel_size: None,
+            tensor_parallel_size: None,
             docker_backend_name: None,
             engine_type: None,
         };

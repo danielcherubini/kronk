@@ -431,7 +431,7 @@ installed_at = 1700000000
                 gpu_type: None,
                 source: None,
                 is_active: true,
-            ..Default::default()
+                ..Default::default()
             },
         )
         .unwrap();
