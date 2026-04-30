@@ -567,11 +567,20 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
             .prompt()?;
 
         if remove_files {
-            // Use the shared safe_remove_installation helper which handles:
-            // - Path validation (prevents directory traversal attacks)
-            // - Windows PermissionDenied retry logic
-            // - Cross-platform file removal
-            safe_remove_installation(&backend)?;
+            // Docker backends: clean up compose files directly
+            if backend.backend_type == BackendType::Docker {
+                let docker_dir = Config::base_dir()?.join("docker");
+                let docker_backend_dir = docker_dir.join(&backend.name);
+                if docker_backend_dir.exists() {
+                    std::fs::remove_dir_all(&docker_backend_dir)?;
+                }
+            } else {
+                // Use the shared safe_remove_installation helper which handles:
+                // - Path validation (prevents directory traversal attacks)
+                // - Windows PermissionDenied retry logic
+                // - Cross-platform file removal
+                safe_remove_installation(&backend)?;
+            }
         }
     }
 

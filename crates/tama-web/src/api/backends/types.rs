@@ -204,6 +204,8 @@ pub struct CapabilitiesDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detected_cuda_version: Option<String>,
     pub supported_cuda_versions: Vec<String>,
+    #[serde(default)]
+    pub docker_available: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,6 +403,7 @@ impl CapabilitiesCache {
                     "12.4".to_string(),
                     "13.1".to_string(),
                 ],
+                docker_available: false,
             }
         })
         .await;
@@ -411,6 +414,9 @@ impl CapabilitiesCache {
                 return Err(anyhow::anyhow!("Failed to detect capabilities: {}", e));
             }
         };
+
+        let mut caps = caps;
+        caps.docker_available = false;
 
         *guard = Some((now, caps.clone()));
         Ok(caps)
@@ -485,6 +491,7 @@ mod tests {
             compiler_available: true,
             detected_cuda_version: Some("12.4".to_string()),
             supported_cuda_versions: vec!["12.0".to_string(), "12.4".to_string()],
+            docker_available: true,
         };
 
         let json = serde_json::to_string(&caps).unwrap();
@@ -509,6 +516,7 @@ mod tests {
             compiler_available: false,
             detected_cuda_version: None,
             supported_cuda_versions: vec![],
+            docker_available: false,
         };
 
         let json = serde_json::to_string(&caps).unwrap();

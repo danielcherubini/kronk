@@ -271,12 +271,20 @@ pub fn Backends() -> impl IntoView {
         <div class="page-header">
             <h1>"Backends"</h1>
             <div style="display:flex;gap:0.5rem;align-items:center;">
-                <button
-                    class="btn btn-primary"
-                    on:click=move |_| docker_modal_open.set(true)
-                >
-                    "+ Add Docker"
-                </button>
+                {move || {
+                    if capabilities.get().docker_available {
+                        view! {
+                            <button
+                                class="btn btn-primary"
+                                on:click=move |_| docker_modal_open.set(true)
+                            >
+                                "+ Add Docker"
+                            </button>
+                        }.into_any()
+                    } else {
+                        view! { <span/> }.into_any()
+                    }
+                }}
                 {move || save_status.get().map(|s| view! { <span class="text-muted">{s}</span> })}
                 <button
                     class="btn btn-primary"
@@ -287,6 +295,19 @@ pub fn Backends() -> impl IntoView {
                 </button>
             </div>
         </div>
+
+        {/* Docker unavailable warning banner */}
+        {move || {
+            if !capabilities.get().docker_available {
+                view! {
+                    <div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:0.75rem;border-radius:4px;margin-bottom:1rem;font-size:0.875rem;">
+                        "Docker is not installed or not running. Docker backends will not function."
+                    </div>
+                }.into_any()
+            } else {
+                view! { <span/> }.into_any()
+            }
+        }}
 
         <div class="card">
             <p class="text-muted">"Manage inference backend installations."</p>

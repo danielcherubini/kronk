@@ -23,7 +23,12 @@ pub async fn system_capabilities(State(state): State<Arc<AppState>>) -> impl Int
         )
         .await
     {
-        Ok(caps) => Json(caps).into_response(),
+        Ok(mut caps) => {
+            caps.docker_available = tama_core::backends::docker::health::check_docker_available()
+                .await
+                .is_ok();
+            Json(caps).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),

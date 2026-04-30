@@ -245,6 +245,8 @@ pub struct ProxyState {
     pub config_write_semaphore: Arc<tokio::sync::Semaphore>,
     /// Backend log stream manager — broadcasts backend stdout/stderr via SSE.
     pub backend_logs: crate::backends::log_stream::BackendLogManager,
+    /// Whether the Docker daemon is available on this host.
+    pub docker_available: Arc<tokio::sync::RwLock<bool>>,
 }
 
 impl ProxyState {

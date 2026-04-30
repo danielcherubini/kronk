@@ -21,6 +21,14 @@ impl ProxyServer {
     /// Starts a background task that periodically checks for idle models
     /// and unloads them.
     pub async fn new(state: Arc<ProxyState>) -> Self {
+        // Check Docker availability at startup
+        let docker_available =
+            crate::backends::docker::health::check_docker_available().await.is_ok();
+        if !docker_available {
+            tracing::warn!("Docker daemon not available — Docker backends will not function");
+        }
+        *state.docker_available.write().await = docker_available;
+
         // Populate in-memory model registry from DB
         if let Some(conn) = state.open_db() {
             // First, run migration from tama.toml to DB if needed.

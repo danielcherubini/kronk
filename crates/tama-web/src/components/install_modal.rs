@@ -18,6 +18,8 @@ pub struct CapabilitiesDto {
     pub detected_cuda_version: Option<String>,
     #[serde(default)]
     pub supported_cuda_versions: Vec<String>,
+    #[serde(default)]
+    pub docker_available: bool,
 }
 
 impl Default for CapabilitiesDto {
@@ -34,6 +36,7 @@ impl Default for CapabilitiesDto {
                 "12.4".to_string(),
                 "13.1".to_string(),
             ],
+            docker_available: false,
         }
     }
 }
