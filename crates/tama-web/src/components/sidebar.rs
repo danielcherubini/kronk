@@ -101,10 +101,6 @@ pub fn Sidebar() -> impl IntoView {
                     <span class="sidebar-item__icon">"🏠"</span>
                     <span class="sidebar-item__text">"Dashboard"</span>
                 </A>
-                <A href="/models" attr:class="sidebar-item" attr:data-tooltip="Models" on:click=move |_| mobile_open.set(false)>
-                    <span class="sidebar-item__icon">"📦"</span>
-                    <span class="sidebar-item__text">"Models"</span>
-                </A>
                 <A href="/backends" attr:class="sidebar-item" attr:data-tooltip="Backends" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"🔧"</span>
                     <span class="sidebar-item__text">"Backends"</span>
