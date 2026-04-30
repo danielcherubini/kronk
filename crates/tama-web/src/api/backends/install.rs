@@ -443,6 +443,9 @@ pub async fn install_backend(
                             installed_at,
                             gpu_type: reg_gpu_type,
                             source: Some(reg_source),
+                            compose_yaml: None,
+                            dockerfile: None,
+                            target_port: None,
                         })
                     })
                     .await;

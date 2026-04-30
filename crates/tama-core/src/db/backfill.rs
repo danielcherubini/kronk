@@ -151,6 +151,9 @@ pub fn migrate_backend_registry_toml(
             gpu_type: gpu_type_json,
             source: source_json,
             is_active: true,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         };
 
         // INSERT OR REPLACE handles duplicate (name, version) by replacing the row
@@ -428,6 +431,7 @@ installed_at = 1700000000
                 gpu_type: None,
                 source: None,
                 is_active: true,
+            ..Default::default()
             },
         )
         .unwrap();
@@ -486,6 +490,9 @@ installed_at = 1700000000
             health_check: None,
             created_at: now.clone(),
             updated_at: now,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         let model_id = upsert_model_config(&conn, &record).unwrap();
 
@@ -563,6 +570,9 @@ installed_at = 1700000000
             health_check: None,
             created_at: now.clone(),
             updated_at: now,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         let id = upsert_model_config(&conn, &record).unwrap();
 

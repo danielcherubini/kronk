@@ -24,6 +24,12 @@ pub struct BackendInfo {
     pub gpu_type: Option<GpuType>,
     #[serde(default)]
     pub source: Option<BackendSource>,
+    #[serde(default)]
+    pub compose_yaml: Option<String>,
+    #[serde(default)]
+    pub dockerfile: Option<String>,
+    #[serde(default)]
+    pub target_port: Option<u16>,
 }
 
 /// Source of a backend installation
@@ -141,6 +147,9 @@ impl BackendRegistry {
                 .map_or(0, |d| d.as_secs() as i64),
             gpu_type: existing.gpu_type,
             source: new_source,
+            compose_yaml: existing.compose_yaml,
+            dockerfile: existing.dockerfile,
+            target_port: existing.target_port,
         };
 
         self.add(updated)
@@ -248,6 +257,12 @@ impl BackendRegistry {
             None => None,
         };
 
+        // Safe conversion: Option<i32> → Option<u16>, negative values become None
+        let target_port =
+            record
+                .target_port
+                .and_then(|v| if v < 0 { None } else { Some(v as u16) });
+
         Ok(BackendInfo {
             name: record.name,
             backend_type,
@@ -256,6 +271,9 @@ impl BackendRegistry {
             installed_at: record.installed_at,
             gpu_type,
             source,
+            compose_yaml: record.compose_yaml,
+            dockerfile: record.dockerfile,
+            target_port,
         })
     }
 
@@ -275,6 +293,9 @@ impl BackendRegistry {
             None => None,
         };
 
+        // Safe conversion: Option<u16> → Option<i32>
+        let target_port = backend.target_port.map(|v| v as i32);
+
         Ok(BackendInstallationRecord {
             id: 0,
             name: backend.name.clone(),
@@ -285,15 +306,19 @@ impl BackendRegistry {
             gpu_type: gpu_type_json,
             source: source_json,
             is_active: true,
+            compose_yaml: backend.compose_yaml.clone(),
+            dockerfile: backend.dockerfile.clone(),
+            target_port,
         })
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BackendType {
     LlamaCpp,
     IkLlama,
     TtsKokoro,
+    Docker,
     Custom,
 }
 
@@ -303,6 +328,7 @@ impl std::fmt::Display for BackendType {
             BackendType::LlamaCpp => write!(f, "llama_cpp"),
             BackendType::IkLlama => write!(f, "ik_llama"),
             BackendType::TtsKokoro => write!(f, "tts_kokoro"),
+            BackendType::Docker => write!(f, "docker"),
             BackendType::Custom => write!(f, "custom"),
         }
     }
@@ -322,9 +348,10 @@ impl FromStr for BackendType {
             "llama_cpp" | "llamacpp" => Ok(BackendType::LlamaCpp),
             "ik_llama" | "ik-llama" | "ikllama" => Ok(BackendType::IkLlama),
             "tts_kokoro" | "ttskokoro" => Ok(BackendType::TtsKokoro),
+            "docker" => Ok(BackendType::Docker),
             "custom" => Ok(BackendType::Custom),
             _ => Err(format!(
-                "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, tts_kokoro, custom",
+                "Unknown backend type '{}'. Supported: llama_cpp, ik_llama, tts_kokoro, docker, custom",
                 s
             )),
         }
@@ -347,6 +374,9 @@ mod tests {
                 .as_secs() as i64,
             gpu_type: None,
             source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         }
     }
 
@@ -428,6 +458,9 @@ mod tests {
             installed_at: now - 100,
             gpu_type: None,
             source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         };
 
         let info2 = BackendInfo {
@@ -438,6 +471,9 @@ mod tests {
             installed_at: now,
             gpu_type: None,
             source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         };
 
         registry.add(info1).unwrap();
@@ -553,5 +589,102 @@ mod tests {
         // list() returns empty for this backend
         let active = registry.get("llama_cpp").unwrap();
         assert!(active.is_none());
+    }
+
+    // ── BackendType::Docker tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_backend_type_docker_display() {
+        assert_eq!(BackendType::Docker.to_string(), "docker");
+    }
+
+    #[test]
+    fn test_backend_type_docker_from_str() {
+        assert_eq!(
+            "docker".parse::<BackendType>().unwrap(),
+            BackendType::Docker
+        );
+        assert_eq!(
+            "DOCKER".parse::<BackendType>().unwrap(),
+            BackendType::Docker
+        );
+    }
+
+    #[test]
+    fn test_backend_type_docker_serialization_roundtrip() {
+        let backend = BackendInfo {
+            name: "my_docker".to_string(),
+            backend_type: BackendType::Docker,
+            version: "latest".to_string(),
+            path: PathBuf::from("/usr/local/bin/docker"),
+            installed_at: 1700000000,
+            gpu_type: None,
+            source: None,
+            compose_yaml: Some("services:\n  app:\n    image: myapp".to_string()),
+            dockerfile: Some("FROM python:3.12".to_string()),
+            target_port: Some(8080),
+        };
+
+        let json = serde_json::to_string(&backend).unwrap();
+        let round_trip: BackendInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(round_trip.name, "my_docker");
+        assert_eq!(round_trip.backend_type, BackendType::Docker);
+        assert_eq!(round_trip.version, "latest");
+        assert_eq!(
+            round_trip.compose_yaml,
+            Some("services:\n  app:\n    image: myapp".to_string())
+        );
+        assert_eq!(round_trip.dockerfile, Some("FROM python:3.12".to_string()));
+        assert_eq!(round_trip.target_port, Some(8080));
+    }
+
+    #[test]
+    fn test_backend_type_docker_db_roundtrip() {
+        let backend = BackendInfo {
+            name: "docker_backend".to_string(),
+            backend_type: BackendType::Docker,
+            version: "v1.0".to_string(),
+            path: PathBuf::from("/opt/docker/bin"),
+            installed_at: 1700000000,
+            gpu_type: None,
+            source: None,
+            compose_yaml: Some("compose: yaml".to_string()),
+            dockerfile: Some("FROM alpine".to_string()),
+            target_port: Some(3000),
+        };
+
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+        registry.add(backend.clone()).unwrap();
+
+        let retrieved = registry.get("docker_backend").unwrap().unwrap();
+        assert_eq!(retrieved.backend_type, BackendType::Docker);
+        assert_eq!(retrieved.compose_yaml, Some("compose: yaml".to_string()));
+        assert_eq!(retrieved.dockerfile, Some("FROM alpine".to_string()));
+        assert_eq!(retrieved.target_port, Some(3000));
+    }
+
+    #[test]
+    fn test_backend_type_docker_db_roundtrip_negative_port() {
+        // Negative target_port should round-trip as None
+        let backend = BackendInfo {
+            name: "docker_neg_port".to_string(),
+            backend_type: BackendType::Docker,
+            version: "v1.0".to_string(),
+            path: PathBuf::from("/opt/docker/bin"),
+            installed_at: 1700000000,
+            gpu_type: None,
+            source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: Some(0), // 0 is valid
+        };
+
+        let mut registry = BackendRegistry::open_in_memory().unwrap();
+        registry.add(backend.clone()).unwrap();
+
+        let retrieved = registry.get("docker_neg_port").unwrap().unwrap();
+        assert_eq!(retrieved.backend_type, BackendType::Docker);
+        assert_eq!(retrieved.target_port, Some(0));
     }
 }

@@ -180,11 +180,13 @@ pub(super) fn job_to_active_dto(j: &crate::jobs::Job) -> ActiveJobDto {
             crate::jobs::JobKind::Update => "update".to_string(),
             crate::jobs::JobKind::Restore => "restore".to_string(),
             crate::jobs::JobKind::Benchmark => "benchmark".to_string(),
+            crate::jobs::JobKind::DockerInstall => "docker_install".to_string(),
         },
         backend_type: match j.backend_type.as_ref() {
             Some(tama_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
             Some(tama_core::backends::BackendType::IkLlama) => "ik_llama".to_string(),
             Some(tama_core::backends::BackendType::TtsKokoro) => "tts_kokoro".to_string(),
+            Some(tama_core::backends::BackendType::Docker) => "docker".to_string(),
             Some(tama_core::backends::BackendType::Custom) => "custom".to_string(),
             None => String::new(),
         },
@@ -322,6 +324,8 @@ pub(super) const KNOWN_BACKENDS: &[(&str, &str, Option<&str>)] = &[
         "Kokoro TTS",
         Some("https://huggingface.co/hexgrad/Kokoro-82M"),
     ),
+    // Docker backends — user-provided Docker images
+    ("docker", "Docker", None),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

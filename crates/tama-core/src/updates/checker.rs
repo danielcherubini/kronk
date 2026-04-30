@@ -202,7 +202,7 @@ impl UpdateChecker {
                     }
                 }
             }
-            BackendType::TtsKokoro | BackendType::Custom => None,
+            BackendType::TtsKokoro | BackendType::Custom | BackendType::Docker => None,
         };
 
         let update_available = latest_version

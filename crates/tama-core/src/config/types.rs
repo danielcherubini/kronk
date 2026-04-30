@@ -254,6 +254,19 @@ pub struct ModelConfig {
     /// expose the canonical integer id for API consumers.
     #[serde(default, skip)]
     pub db_id: Option<i64>,
+    /// Number of tensor parallel workers for distributed inference (e.g. vLLM).
+    /// Only meaningful for Docker backends that support tensor parallelism.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tensor_parallel_size: Option<u32>,
+    /// Name of the Docker backend container to use (e.g. "vllm", "llamacpp-docker").
+    /// Only meaningful for Docker backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_backend_name: Option<String>,
+    /// Inference engine type (e.g. "vllm", "llamacpp", "text-generation-inference").
+    /// Tells Tama which set of config fields to use when building the container command.
+    /// This is NOT the same as BackendType — it's a free-form string for the engine name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_type: Option<String>,
 }
 
 impl ModelConfig {
@@ -293,6 +306,9 @@ impl ModelConfig {
                 .and_then(|s| serde_json::to_string(s).ok()),
             created_at: now.clone(),
             updated_at: now,
+            tensor_parallel_size: self.tensor_parallel_size.map(|v| v as i32),
+            docker_backend_name: self.docker_backend_name.clone(),
+            engine_type: self.engine_type.clone(),
         }
     }
 
@@ -338,6 +354,9 @@ impl ModelConfig {
             profile: record.profile.clone(),
             quants: BTreeMap::new(), // Not stored in DB record
             db_id: Some(record.id),
+            tensor_parallel_size: record.tensor_parallel_size.map(|v| v as u32),
+            docker_backend_name: record.docker_backend_name.clone(),
+            engine_type: record.engine_type.clone(),
         }
     }
 }
@@ -610,6 +629,9 @@ host = "0.0.0.0"
             }),
             display_name: Some("My Custom Model".to_string()),
             kv_unified: true,
+            tensor_parallel_size: Some(2),
+            docker_backend_name: Some("vllm".to_string()),
+            engine_type: Some("vllm".to_string()),
             ..Default::default()
         };
 
@@ -637,5 +659,10 @@ host = "0.0.0.0"
 
         // quants should be empty as it's not persisted
         assert!(round_trip.quants.is_empty());
+
+        // New Docker-related fields
+        assert_eq!(round_trip.tensor_parallel_size, Some(2));
+        assert_eq!(round_trip.docker_backend_name, Some("vllm".to_string()));
+        assert_eq!(round_trip.engine_type, Some("vllm".to_string()));
     }
 }

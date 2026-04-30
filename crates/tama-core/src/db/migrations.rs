@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 18;
+pub const LATEST_VERSION: i32 = 19;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -456,6 +456,17 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
             r#"
                 ALTER TABLE model_configs ADD COLUMN cache_type_k TEXT;
                 ALTER TABLE model_configs ADD COLUMN cache_type_v TEXT;
+            "#,
+        ),
+        (
+            19,
+            r#"
+                ALTER TABLE backend_installations ADD COLUMN compose_yaml TEXT DEFAULT NULL;
+                ALTER TABLE backend_installations ADD COLUMN dockerfile TEXT DEFAULT NULL;
+                ALTER TABLE backend_installations ADD COLUMN target_port INTEGER DEFAULT NULL;
+                ALTER TABLE model_configs ADD COLUMN tensor_parallel_size INTEGER DEFAULT NULL;
+                ALTER TABLE model_configs ADD COLUMN docker_backend_name TEXT DEFAULT NULL;
+                ALTER TABLE model_configs ADD COLUMN engine_type TEXT DEFAULT NULL;
             "#,
         ),
     ];

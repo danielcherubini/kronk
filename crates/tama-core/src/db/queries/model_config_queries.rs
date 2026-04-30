@@ -15,9 +15,9 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
             selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
             cache_type_k, cache_type_v, port, args,
             sampling, modalities, profile, api_name, health_check,
-            created_at, updated_at
+            created_at, updated_at, tensor_parallel_size, docker_backend_name, engine_type
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
         )
          ON CONFLICT(repo_id) DO UPDATE SET
              display_name = excluded.display_name,
@@ -38,6 +38,9 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
              profile = excluded.profile,
              api_name = excluded.api_name,
              health_check = excluded.health_check,
+             tensor_parallel_size = excluded.tensor_parallel_size,
+             docker_backend_name = excluded.docker_backend_name,
+             engine_type = excluded.engine_type,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
         params![
             record.repo_id,
@@ -61,6 +64,9 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
             record.health_check,
             record.created_at,
             record.updated_at,
+            record.tensor_parallel_size,
+            record.docker_backend_name,
+            record.engine_type,
         ],
     )?;
     // Return the id (either existing or newly created)
@@ -79,7 +85,7 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
                 selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
                 cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
-                created_at, updated_at
+                created_at, updated_at, tensor_parallel_size, docker_backend_name, engine_type
          FROM model_configs WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map([id], |row| {
@@ -106,6 +112,9 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
             health_check: row.get(19)?,
             created_at: row.get(20)?,
             updated_at: row.get(21)?,
+            tensor_parallel_size: row.get(22)?,
+            docker_backend_name: row.get(23)?,
+            engine_type: row.get(24)?,
         })
     })?;
     match rows.next() {
@@ -124,7 +133,7 @@ pub fn get_model_config_by_repo_id(
                 selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
                 cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
-                created_at, updated_at
+                created_at, updated_at, tensor_parallel_size, docker_backend_name, engine_type
          FROM model_configs WHERE repo_id = ?1",
     )?;
     let mut rows = stmt.query_map([repo_id], |row| {
@@ -151,6 +160,9 @@ pub fn get_model_config_by_repo_id(
             health_check: row.get(19)?,
             created_at: row.get(20)?,
             updated_at: row.get(21)?,
+            tensor_parallel_size: row.get(22)?,
+            docker_backend_name: row.get(23)?,
+            engine_type: row.get(24)?,
         })
     })?;
     match rows.next() {
@@ -166,7 +178,7 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
                 selected_mmproj, context_length, num_parallel, kv_unified, gpu_layers,
                 cache_type_k, cache_type_v, port, args,
                 sampling, modalities, profile, api_name, health_check,
-                created_at, updated_at
+                created_at, updated_at, tensor_parallel_size, docker_backend_name, engine_type
          FROM model_configs",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -193,6 +205,9 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
             health_check: row.get(19)?,
             created_at: row.get(20)?,
             updated_at: row.get(21)?,
+            tensor_parallel_size: row.get(22)?,
+            docker_backend_name: row.get(23)?,
+            engine_type: row.get(24)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()

@@ -4,7 +4,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 /// A stored installation record for a backend binary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BackendInstallationRecord {
     /// Set to 0 when constructing a record for INSERT (DB assigns the real id via AUTOINCREMENT).
     pub id: i64,
@@ -16,6 +16,9 @@ pub struct BackendInstallationRecord {
     pub gpu_type: Option<String>,
     pub source: Option<String>,
     pub is_active: bool,
+    pub compose_yaml: Option<String>,
+    pub dockerfile: Option<String>,
+    pub target_port: Option<i32>,
 }
 
 /// Insert or replace a backend installation record, marking it as active.
@@ -34,8 +37,8 @@ pub fn insert_backend_installation(
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "INSERT OR REPLACE INTO backend_installations
-             (name, backend_type, version, path, installed_at, gpu_type, source, is_active)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+             (name, backend_type, version, path, installed_at, gpu_type, source, is_active, compose_yaml, dockerfile, target_port)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10)",
         (
             &record.name,
             &record.backend_type,
@@ -44,6 +47,9 @@ pub fn insert_backend_installation(
             record.installed_at,
             record.gpu_type.as_deref(),
             record.source.as_deref(),
+            record.compose_yaml.as_deref(),
+            record.dockerfile.as_deref(),
+            record.target_port,
         ),
     )?;
     tx.execute(
@@ -60,7 +66,7 @@ pub fn get_active_backend(
     name: &str,
 ) -> Result<Option<BackendInstallationRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active, compose_yaml, dockerfile, target_port
          FROM backend_installations
          WHERE name = ?1 AND is_active = 1",
     )?;
@@ -75,6 +81,9 @@ pub fn get_active_backend(
             gpu_type: row.get(6)?,
             source: row.get(7)?,
             is_active: row.get::<_, i64>(8)? != 0,
+            compose_yaml: row.get(9)?,
+            dockerfile: row.get(10)?,
+            target_port: row.get(11)?,
         })
     })?;
     match rows.next() {
@@ -86,7 +95,7 @@ pub fn get_active_backend(
 /// Return all active backend installations (one per backend name).
 pub fn list_active_backends(conn: &Connection) -> Result<Vec<BackendInstallationRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active, compose_yaml, dockerfile, target_port
          FROM backend_installations
          WHERE is_active = 1",
     )?;
@@ -101,6 +110,9 @@ pub fn list_active_backends(conn: &Connection) -> Result<Vec<BackendInstallation
             gpu_type: row.get(6)?,
             source: row.get(7)?,
             is_active: row.get::<_, i64>(8)? != 0,
+            compose_yaml: row.get(9)?,
+            dockerfile: row.get(10)?,
+            target_port: row.get(11)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -113,7 +125,7 @@ pub fn list_backend_versions(
     name: &str,
 ) -> Result<Vec<BackendInstallationRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active, compose_yaml, dockerfile, target_port
          FROM backend_installations
          WHERE name = ?1
          ORDER BY installed_at DESC",
@@ -129,6 +141,9 @@ pub fn list_backend_versions(
             gpu_type: row.get(6)?,
             source: row.get(7)?,
             is_active: row.get::<_, i64>(8)? != 0,
+            compose_yaml: row.get(9)?,
+            dockerfile: row.get(10)?,
+            target_port: row.get(11)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -143,7 +158,7 @@ pub fn get_backend_by_version(
     version: &str,
 ) -> Result<Option<BackendInstallationRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active
+        "SELECT id, name, backend_type, version, path, installed_at, gpu_type, source, is_active, compose_yaml, dockerfile, target_port
          FROM backend_installations
          WHERE name = ?1 AND version = ?2",
     )?;
@@ -158,6 +173,9 @@ pub fn get_backend_by_version(
             gpu_type: row.get(6)?,
             source: row.get(7)?,
             is_active: row.get::<_, i64>(8)? != 0,
+            compose_yaml: row.get(9)?,
+            dockerfile: row.get(10)?,
+            target_port: row.get(11)?,
         })
     })?;
     match rows.next() {

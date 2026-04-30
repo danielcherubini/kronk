@@ -43,6 +43,7 @@ lru = "0.12"
 base64 = "0.22"
 futures = "0.3"
 regex.workspace = true
+serde_yml.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

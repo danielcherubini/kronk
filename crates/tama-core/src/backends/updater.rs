@@ -85,6 +85,7 @@ pub async fn check_latest_version(backend: &BackendType) -> Result<String> {
             Ok(format!("main@{}", &commit.sha[..8]))
         }
         BackendType::TtsKokoro => Err(anyhow!("Cannot check updates for TTS backends")),
+        BackendType::Docker => Err(anyhow!("Cannot check updates for Docker backends")),
         BackendType::Custom => Err(anyhow!("Cannot check updates for custom backends")),
     }
 }

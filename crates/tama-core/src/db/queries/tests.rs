@@ -199,6 +199,9 @@ fn test_upsert_and_get_model_config() {
         health_check: Some(r#"{"path": "/health"}"#.to_string()),
         created_at: "2024-04-15T12:00:00Z".to_string(),
         updated_at: "2024-04-15T12:00:00Z".to_string(),
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     };
 
     upsert_model_config(&conn, &record).unwrap();
@@ -258,6 +261,9 @@ fn test_get_all_model_configs() {
         health_check: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     };
     let rec2 = ModelConfigRecord {
         id: 0,
@@ -282,6 +288,9 @@ fn test_get_all_model_configs() {
         health_check: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     };
 
     upsert_model_config(&conn, &rec1).unwrap();
@@ -317,6 +326,9 @@ fn test_delete_model_config() {
         health_check: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     };
 
     upsert_model_config(&conn, &record).unwrap();

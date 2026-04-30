@@ -314,6 +314,9 @@ async fn cmd_install(
     let git_url = match backend_type {
         BackendType::LlamaCpp => "https://github.com/ggml-org/llama.cpp.git",
         BackendType::IkLlama => "https://github.com/ikawrakow/ik_llama.cpp.git",
+        BackendType::Docker => {
+            anyhow::bail!("Docker backends cannot be installed via this command");
+        }
         BackendType::Custom => {
             anyhow::bail!("Custom backends cannot be installed via this command");
         }
@@ -355,6 +358,9 @@ async fn cmd_install(
         installed_at: current_unix_timestamp(),
         gpu_type: Some(gpu_type),
         source: Some(source),
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     })?;
 
     println!("\nInstallation complete!");
@@ -450,6 +456,9 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
                 },
                 BackendType::TtsKokoro => {
                     return Err(anyhow!("Cannot update TTS backends via this command"))
+                }
+                BackendType::Docker => {
+                    return Err(anyhow!("Cannot update Docker backends via this command"))
                 }
                 BackendType::Custom => return Err(anyhow!("Cannot update custom backends")),
             }
@@ -771,6 +780,9 @@ async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Resu
         installed_at: record.installed_at,
         gpu_type: None,
         source: None,
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     };
 
     if info.path.exists() {

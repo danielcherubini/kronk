@@ -49,6 +49,9 @@ fn test_resolve_backend_path_from_db() {
         gpu_type: None,
         source: None,
         is_active: false,
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     };
     insert_backend_installation(&conn, &record).unwrap();
 
@@ -105,6 +108,9 @@ fn test_resolve_backend_path_version_pin() {
         gpu_type: None,
         source: None,
         is_active: false,
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     };
     insert_backend_installation(&conn, &r1).unwrap();
 
@@ -118,6 +124,9 @@ fn test_resolve_backend_path_version_pin() {
         gpu_type: None,
         source: None,
         is_active: false,
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     };
     insert_backend_installation(&conn, &r2).unwrap();
 
@@ -218,6 +227,9 @@ fn test_build_full_args_unified() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -301,6 +313,9 @@ fn test_build_full_args_ctx_override() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -367,6 +382,9 @@ fn test_build_full_args_no_sampling() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -417,6 +435,9 @@ fn test_build_full_args_no_quants() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -475,6 +496,9 @@ fn test_build_args_dedupes_backend_vs_model_flags() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
@@ -540,6 +564,9 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
@@ -604,6 +631,9 @@ fn test_build_full_args_dedupes_backend_vs_model_flags() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -692,6 +722,9 @@ fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -766,6 +799,7 @@ fn test_resolve_by_api_name() {
             modalities: None,
             display_name: None,
             db_id: None,
+        ..Default::default()
         },
     );
 
@@ -824,6 +858,7 @@ fn test_api_name_takes_priority() {
             modalities: None,
             display_name: None,
             db_id: None,
+        ..Default::default()
         },
     );
 
@@ -882,6 +917,7 @@ fn test_backward_compat_no_api_name() {
             modalities: None,
             display_name: None,
             db_id: None,
+        ..Default::default()
         },
     );
 
@@ -943,6 +979,7 @@ fn test_resolve_server_by_api_name() {
             modalities: None,
             display_name: None,
             db_id: None,
+        ..Default::default()
         },
     );
 
@@ -1000,6 +1037,9 @@ fn test_build_full_args_context_multiplied_by_num_parallel() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1079,6 +1119,9 @@ fn test_build_full_args_context_saturating_overflow() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1151,6 +1194,9 @@ fn test_build_full_args_context_no_num_parallel_defaults_to_one() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1218,6 +1264,9 @@ fn test_build_full_args_injects_np_flag() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1300,6 +1349,9 @@ fn test_build_full_args_no_np_when_default() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1370,6 +1422,9 @@ fn test_build_full_args_skips_np_when_already_present() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1449,6 +1504,9 @@ fn test_build_full_args_unified_n_slots() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1526,6 +1584,9 @@ fn test_build_full_args_non_unified_n_slots() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1666,6 +1727,9 @@ fn test_build_full_args_ctx_override_unified() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1746,6 +1810,9 @@ fn test_build_full_args_kv_unified_not_duplicated_when_in_user_args() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let backend = BackendConfig {
@@ -1823,6 +1890,9 @@ fn test_kv_cache_type_args_injected_when_set() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let args = config
@@ -1899,6 +1969,9 @@ fn test_kv_cache_type_args_not_injected_when_none() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let args = config
@@ -1974,6 +2047,9 @@ fn test_kv_cache_type_args_not_injected_for_non_llama_backend() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let args = config
@@ -2049,6 +2125,9 @@ fn test_kv_cache_type_args_no_duplicate_when_in_user_args() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let args = config
@@ -2127,6 +2206,9 @@ fn test_kv_cache_type_args_not_injected_for_empty_string() {
         modalities: None,
         display_name: None,
         db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
     };
 
     let args = config

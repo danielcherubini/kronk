@@ -415,6 +415,9 @@ pub async fn remove_backend_version(
         installed_at: info.installed_at,
         gpu_type: None,
         source: None,
+        compose_yaml: None,
+        dockerfile: None,
+        target_port: None,
     };
 
     // Check if a job is running for this backend

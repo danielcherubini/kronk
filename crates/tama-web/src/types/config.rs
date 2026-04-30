@@ -171,6 +171,15 @@ pub struct ModelConfig {
     /// KV cache quantization for values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_type_v: Option<String>,
+    /// Number of tensor parallel workers for distributed inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tensor_parallel_size: Option<u32>,
+    /// Name of the Docker backend container to use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_backend_name: Option<String>,
+    /// Inference engine type (e.g. "vllm", "llamacpp").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_type: Option<String>,
     /// Forward-compatibility: preserve unknown fields
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<serde_json::Map<String, serde_json::Value>>,
@@ -514,6 +523,9 @@ impl From<CoreModelConfig> for ModelConfig {
             kv_unified: m.kv_unified,
             cache_type_k: m.cache_type_k,
             cache_type_v: m.cache_type_v,
+            tensor_parallel_size: m.tensor_parallel_size,
+            docker_backend_name: m.docker_backend_name,
+            engine_type: m.engine_type,
             extra: None, // Forward-compat field - preserve unknown fields on POST
         }
     }
@@ -544,6 +556,9 @@ impl From<ModelConfig> for CoreModelConfig {
             cache_type_k: m.cache_type_k,
             cache_type_v: m.cache_type_v,
             db_id: None, // not carried through mirror types
+            tensor_parallel_size: m.tensor_parallel_size,
+            docker_backend_name: m.docker_backend_name,
+            engine_type: m.engine_type,
         }
     }
 }

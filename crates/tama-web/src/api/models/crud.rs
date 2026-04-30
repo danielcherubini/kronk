@@ -57,6 +57,12 @@ pub struct ModelBody {
     pub cache_type_k: Option<String>,
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    #[serde(default)]
+    pub tensor_parallel_size: Option<u32>,
+    #[serde(default)]
+    pub docker_backend_name: Option<String>,
+    #[serde(default)]
+    pub engine_type: Option<String>,
 }
 
 fn apply_model_body(
@@ -85,6 +91,9 @@ fn apply_model_body(
         cache_type_k: None,
         cache_type_v: None,
         db_id: None,
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     });
 
     // Handle sampling from body
@@ -131,6 +140,7 @@ fn apply_model_body(
                         kind: v.kind,
                         size_bytes: preserved_size,
                         context_length: v.context_length,
+                    ..Default::default()
                     },
                 )
             })
@@ -145,6 +155,9 @@ fn apply_model_body(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s != "__custom"),
         db_id: base.db_id,
+        tensor_parallel_size: body.tensor_parallel_size,
+        docker_backend_name: body.docker_backend_name,
+        engine_type: body.engine_type,
     }
 }
 
@@ -828,6 +841,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         }
     }
 
@@ -840,6 +856,7 @@ mod tests {
                 kind: QuantKind::Model,
                 size_bytes: size,
                 context_length: Some(4096),
+        ..Default::default()
             },
         );
         ModelConfig {
@@ -864,6 +881,9 @@ mod tests {
             cache_type_k: None,
             cache_type_v: None,
             db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         }
     }
 
@@ -1011,6 +1031,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1038,6 +1061,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1066,6 +1092,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1093,6 +1122,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1120,6 +1152,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1147,6 +1182,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1175,6 +1213,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1202,6 +1243,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1229,6 +1273,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1261,6 +1308,9 @@ mod tests {
             kv_unified: None, // omitted — should preserve existing
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, Some(existing));
@@ -1293,6 +1343,9 @@ mod tests {
             kv_unified: None, // omitted — should default to true
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1324,6 +1377,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("q4_0".to_string()),
             cache_type_v: Some("q8_0".to_string()),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1353,6 +1409,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("a".repeat(MAX_CACHE_TYPE + 1)),
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         let result = validate_model_body(&body);
         assert!(result.is_err());
@@ -1381,6 +1440,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: Some("a".repeat(MAX_CACHE_TYPE + 1)),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         let result = validate_model_body(&body);
         assert!(result.is_err());
@@ -1409,6 +1471,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("a".repeat(MAX_CACHE_TYPE)),
             cache_type_v: Some("b".repeat(MAX_CACHE_TYPE)),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         assert!(validate_model_body(&body).is_ok());
     }
@@ -1435,6 +1500,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+                    tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1464,6 +1532,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("   ".to_string()),
             cache_type_v: Some("\t\n".to_string()),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);
@@ -1499,6 +1570,9 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("  q4_0  ".to_string()),
             cache_type_v: Some(" q8_0 ".to_string()),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
 
         let result = apply_model_body(body, None);

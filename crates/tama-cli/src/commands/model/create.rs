@@ -78,6 +78,9 @@ pub(super) async fn cmd_create(
         cache_type_k: None,
         cache_type_v: None,
         db_id: None,
+        tensor_parallel_size: None,
+        docker_backend_name: None,
+        engine_type: None,
     };
 
     tama_core::db::save_model_config(&conn, &server_name, &model_config)?;

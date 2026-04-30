@@ -157,6 +157,9 @@ mod tests {
             installed_at: 0,
             gpu_type: None,
             source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         };
 
         let result = safe_remove_installation(&outside_info);
@@ -243,6 +246,9 @@ mod tests {
             installed_at: 0,
             gpu_type: None,
             source: None,
+            compose_yaml: None,
+            dockerfile: None,
+            target_port: None,
         };
 
         // Call safe_remove_installation — since info.path is a directory,

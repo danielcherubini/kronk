@@ -1,7 +1,7 @@
 //! Record types for database query results.
 
 /// Per-repo user configuration for a model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelConfigRecord {
     pub id: i64,         // auto-increment primary key
     pub repo_id: String, // HF repo name
@@ -25,6 +25,9 @@ pub struct ModelConfigRecord {
     pub health_check: Option<String>, // raw JSON string
     pub created_at: String,
     pub updated_at: String,
+    pub tensor_parallel_size: Option<i32>,
+    pub docker_backend_name: Option<String>,
+    pub engine_type: Option<String>,
 }
 
 /// A stored pull record for a HuggingFace repo.

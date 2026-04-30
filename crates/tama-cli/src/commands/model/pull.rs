@@ -375,6 +375,9 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                                 cache_type_v: None,
                                 created_at: super::utils::manual_timestamp(),
                                 updated_at: super::utils::manual_timestamp(),
+                                tensor_parallel_size: None,
+                                docker_backend_name: None,
+                                engine_type: None,
                             };
                             tama_core::db::queries::upsert_model_config(conn, &record)?;
                             tama_core::db::queries::get_model_config_by_repo_id(conn, &repo_id)?
@@ -528,6 +531,9 @@ mod tests {
             cache_type_v: None,
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         upsert_model_config(conn, &record).unwrap();
         let configs = get_all_model_configs(conn).unwrap();
@@ -580,6 +586,9 @@ mod tests {
             cache_type_v: None,
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         upsert_model_config(conn, &record).unwrap();
 
@@ -624,6 +633,7 @@ mod tests {
                 cache_type_v: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -660,6 +670,7 @@ mod tests {
                 cache_type_v: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -688,6 +699,7 @@ mod tests {
                 cache_type_v: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
+                ..Default::default()
             },
         )
         .unwrap();

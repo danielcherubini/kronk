@@ -269,6 +269,9 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             cache_type_k: None,
             cache_type_v: None,
             db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         };
         tama_core::db::save_model_config(&conn, "test_server", &dummy_model)
             .expect("Failed to save model config to DB");

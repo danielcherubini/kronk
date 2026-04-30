@@ -280,6 +280,9 @@ mod tests {
             modalities: None,
             display_name: None,
             db_id: None,
+            tensor_parallel_size: None,
+            docker_backend_name: None,
+            engine_type: None,
         }
     }
 

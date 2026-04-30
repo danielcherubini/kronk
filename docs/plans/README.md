@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 79
+- **Total Plans**: 80
 - **Completed**: 79 ✅
 - **In Progress**: 0 🚧
-- **Remaining**: 0
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -72,6 +72,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [ROCm Build Flags](2026-04-14-rocm-build-flags.md) | Detect AMDGPU_TARGETS via rocminfo; add rocWMMA FA, FA_ALL_QUANTS, LLAMA_CURL; export HIPCXX/HIP_PATH | `e862ab6`, `69d492a`, `c99304a`, `7698a11` ✅ COMPLETED |
 | [Backend Version Cards](2026-04-17-backend-version-cards.md) | Multiple backend versions with visual cards, activate/switch, version-specific remove | #61 |
 | [TTS Backend Support](2026-04-21-tts-backend.md) | Add Kokoro and Piper TTS engines with OpenAI-compatible `/v1/audio/*` endpoints, SQLite config, CLI commands, web UI integration | #70 `26c6a9d`, `79ea29b`, `38b072c`, `4738059`, `e1f63e7`, `88de610`, `3bb5c42`, `8c0c91c`, `f0277eb`, `cd7acfc`, `2e4c7c6`, `8ebfaa6` ✅ COMPLETED |
+| [Docker Backend](2026-04-30-docker-backend.md) | Add BackendType::Docker with compose YAML management, container lifecycle (start/stop/health/restart), template picker, and SSE log streaming | 📋 DRAFT |
 
 ### Model Management
 

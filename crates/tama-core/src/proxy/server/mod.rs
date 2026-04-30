@@ -425,6 +425,7 @@ mod tests {
                     modalities: None,
                     display_name: None,
                     db_id: None,
+        ..Default::default()
                 },
             );
         }
@@ -592,6 +593,7 @@ mod tests {
                     modalities: None,
                     display_name: None,
                     db_id: None,
+        ..Default::default()
                 },
             );
         }

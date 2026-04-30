@@ -80,6 +80,9 @@ pub fn get_prebuilt_url(
         BackendType::Custom => {
             Err(anyhow!("Custom backends must be added manually"))
         }
+        BackendType::Docker => {
+            Err(anyhow!("Docker backends do not use pre-built release binaries"))
+        }
     }
 }
 

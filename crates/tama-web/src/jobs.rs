@@ -22,6 +22,7 @@ pub enum JobKind {
     Update,
     Restore,
     Benchmark,
+    DockerInstall,
 }
 
 #[derive(Debug, Clone)]

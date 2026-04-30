@@ -2086,6 +2086,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libyml"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3302702afa434ffa30847a83305f0a69d6abd74293b6554c18ec85c7ef30c980"
+dependencies = [
+ "anyhow",
+ "version_check",
+]
+
+[[package]]
 name = "linear-map"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3361,6 +3371,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yml"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59e2dd588bf1597a252c3b920e0143eb99b0f76e4e082f4c92ce34fbc9e71ddd"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyml",
+ "memchr",
+ "ryu",
+ "serde",
+ "version_check",
+]
+
+[[package]]
 name = "server_fn"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3689,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "tama"
-version = "1.49.0"
+version = "1.50.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3710,7 +3735,7 @@ dependencies = [
 
 [[package]]
 name = "tama-core"
-version = "1.49.0"
+version = "1.50.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3737,6 +3762,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serde_yml",
  "sha2",
  "shlex",
  "sysinfo",
@@ -3757,7 +3783,7 @@ dependencies = [
 
 [[package]]
 name = "tama-mock"
-version = "1.49.0"
+version = "1.50.0"
 dependencies = [
  "tokio",
  "tracing",
@@ -3766,7 +3792,7 @@ dependencies = [
 
 [[package]]
 name = "tama-web"
-version = "1.49.0"
+version = "1.50.0"
 dependencies = [
  "anyhow",
  "async-stream",
