@@ -567,7 +567,7 @@ pub fn Dashboard() -> impl IntoView {
     view! {
         <div class="page-header">
             <h1>"Dashboard"</h1>
-            <div class="page-header__actions">
+            <div class="page-header-actions">
                 // Existing status badge + Restart (inside conditional, only shown after SSE data arrives)
                 {move || {
                     history.get().last().cloned().map(|_h| {

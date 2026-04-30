@@ -172,7 +172,7 @@ pub fn Models() -> impl IntoView {
     view! {
         <div class="page-header">
             <h1>"Models"</h1>
-            <div class="page-header__actions">
+            <div class="page-header-actions">
                 <button
                     class="btn btn-secondary"
                     prop:disabled=move || check_all_busy.get()
