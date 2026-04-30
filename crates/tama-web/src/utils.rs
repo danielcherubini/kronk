@@ -132,14 +132,14 @@ mod tests {
     }
 
     #[test]
-    fn rw_signal_to_signal_does_not_share_writes() {
+    fn rw_signal_to_signal_returns_signal_that_tracks_writes() {
         let rw = RwSignal::new(0i32);
-        let _sig: Signal<i32> = rw_signal_to_signal(rw);
+        let sig: Signal<i32> = rw_signal_to_signal(rw);
         rw.set(100);
         // The split discards the write half, so the returned Signal
         // should still see the latest value from the RwSignal.
         // After split, writes to rw still work, reads via the returned
         // Signal should track the latest value.
-        assert_eq!(rw.get_untracked(), 100);
+        assert_eq!(sig.get_untracked(), 100);
     }
 }
