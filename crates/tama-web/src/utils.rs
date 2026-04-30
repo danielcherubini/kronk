@@ -129,9 +129,6 @@ pub struct CheckAllModelEntry {
     pub id: i64,
 }
 
-/// Result of the check-all-for-updates operation.
-pub type CheckAllResult = (bool, String);
-
 #[cfg(test)]
 mod tests {
     use leptos::prelude::{GetUntracked, RwSignal, Set, Signal};

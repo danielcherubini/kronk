@@ -212,10 +212,12 @@ struct ModelDisplayData {
 /// Uses 1024 for binary kilobytes (KiB) and 1000 for decimal kilobytes (kB)
 /// to handle both conventions used by different backends.
 fn format_context_length(n: u32) -> String {
-    if n >= 1024 && n.is_multiple_of(1024) {
-        format!("{}k", n / 1024)
-    } else if n >= 1000 && n.is_multiple_of(1000) {
-        format!("{}k", n / 1000)
+    const BINARY_K: u32 = 1024;
+    const DECIMAL_K: u32 = 1000;
+    if n >= BINARY_K && n.is_multiple_of(BINARY_K) {
+        format!("{}k", n / BINARY_K)
+    } else if n >= DECIMAL_K && n.is_multiple_of(DECIMAL_K) {
+        format!("{}k", n / DECIMAL_K)
     } else {
         n.to_string()
     }

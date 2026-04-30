@@ -136,6 +136,8 @@ pub fn Models() -> impl IntoView {
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
             for id in ids {
+                // Integer IDs don't need URL encoding, but we use format! for
+                // consistency with the string-based API in models.rs.
                 let url = format!("/tama/v1/models/{}/refresh", id);
                 match post_request(&url).send().await {
                     Ok(r) if r.status() == 200 => ok_count += 1,
