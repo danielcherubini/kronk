@@ -225,7 +225,15 @@ impl BackendRegistry {
         let backend_type: BackendType = record
             .backend_type
             .parse()
-            .map_err(|e: String| anyhow!("{}", e))?;
+            .unwrap_or_else(|_| {
+                // Treat any unrecognized backend type as Custom so the
+                // registry list doesn't fail entirely (e.g. tts_piper).
+                tracing::warn!(
+                    "Unknown backend type '{}', treating as Custom",
+                    record.backend_type
+                );
+                BackendType::Custom
+            });
 
         let gpu_type: Option<GpuType> = match record.gpu_type {
             Some(ref s) => Some(
