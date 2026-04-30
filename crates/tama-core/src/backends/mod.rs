@@ -1,3 +1,4 @@
+pub mod docker;
 pub mod installer;
 pub mod log_stream;
 pub mod registry;
