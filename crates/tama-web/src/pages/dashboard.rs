@@ -500,8 +500,24 @@ pub fn Dashboard() -> impl IntoView {
             };
 
             let ids: Vec<i64> = list.models.iter().map(|m| m.id).collect();
-
             let total = ids.len();
+
+            // Safety valve: abort if there are too many models to prevent
+            // the UI from being blocked indefinitely. Sequential refresh of
+            // 100+ models would take minutes with no timeout mechanism in WASM.
+            if total > 100 {
+                check_all_status.set(Some((
+                    false,
+                    format!(
+                        "Check all skipped: {} models exceeds the 100-model limit.\n\
+                         Consider refreshing models in smaller batches.",
+                        total
+                    ),
+                )));
+                check_all_busy.set(false);
+                return;
+            }
+
             let mut ok_count = 0usize;
             let mut failed = Vec::<String>::new();
             for id in ids {
