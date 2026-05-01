@@ -151,6 +151,7 @@ pub async fn handle_hf_list_all(Path(repo_id): Path<String>) -> Response {
                     serde_json::json!({
                         "filename": b.filename,
                         "size_bytes": b.size,
+                        "quant": crate::models::pull::infer_quant_from_filename(&b.filename),
                     })
                 }).collect::<Vec<_>>(),
                 "total_size_bytes": total_size,

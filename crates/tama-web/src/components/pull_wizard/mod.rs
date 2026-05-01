@@ -214,12 +214,21 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
     let stem_upper = stem.to_uppercase();
 
     for pattern in &quant_patterns {
-        if stem_upper.contains(pattern) {
+        // Require a separator (-, ., _) before the pattern to avoid
+        // false matches like "XQ4_K_M" matching "Q4_K_M"
+        if stem_upper == *pattern
+            || stem_upper.contains(&format!("-{}", pattern))
+            || stem_upper.contains(&format!(".{}", pattern))
+            || stem_upper.contains(&format!("_{}", pattern))
+        {
             return Some((*pattern).to_string());
         }
     }
 
-    None
+    // Fallback: last component after splitting by - or _
+    stem.split(|c| ['-', '_'].contains(&c))
+        .next_back()
+        .map(|s| s.to_string())
 }
 
 // ── Request body type ────────────────────────────────────────────────────────

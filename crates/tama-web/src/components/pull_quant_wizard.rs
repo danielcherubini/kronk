@@ -171,9 +171,15 @@ pub fn PullQuantWizard(
                                         .filter_map(|f| {
                                             let filename = f.get("filename")?.as_str()?.to_string();
                                             let size_bytes = f.get("size_bytes")?.as_i64();
+                                            let quant = f.get("quant")
+                                                .and_then(|v| v.as_str())
+                                                .map(String::from)
+                                                .or_else(|| {
+                                                    crate::components::pull_wizard::infer_quant_from_filename(&filename)
+                                                });
                                             Some(QuantEntry {
                                                 filename,
-                                                quant: None,
+                                                quant,
                                                 size_bytes,
                                                 kind: QuantKind::Model,
                                             })
@@ -289,9 +295,15 @@ pub fn PullQuantWizard(
                                                         .filter_map(|f| {
                                                             let filename = f.get("filename")?.as_str()?.to_string();
                                                             let size_bytes = f.get("size_bytes")?.as_i64();
+                                                            let quant = f.get("quant")
+                                                                .and_then(|v| v.as_str())
+                                                                .map(String::from)
+                                                                .or_else(|| {
+                                                                    crate::components::pull_wizard::infer_quant_from_filename(&filename)
+                                                                });
                                                             Some(QuantEntry {
                                                                 filename,
-                                                                quant: None,
+                                                                quant,
                                                                 size_bytes,
                                                                 kind: QuantKind::Model,
                                                             })

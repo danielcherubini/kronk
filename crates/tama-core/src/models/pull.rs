@@ -997,6 +997,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_infer_quant_complex_filename() {
+        // Long filenames with multiple dashes should extract the quant correctly
+        assert_eq!(
+            infer_quant_from_filename("Qwen3.6-27B-NEO-CODE-2T-OT-Q6_K.gguf"),
+            Some("Q6_K".to_string())
+        );
+    }
+
     // ── HF Cache Cleanup tests ───────────────────────────────────────────────
 
     /// Verifies that `cleanup_hf_cache` deletes the source file when:
