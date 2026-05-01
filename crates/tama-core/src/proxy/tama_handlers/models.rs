@@ -258,9 +258,12 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
         // Output limit: 1/8 of context window, floored at 16K and capped at 32K.
         let output_limit = context_length.map(|ctx| (ctx / 8).clamp(16384, 32768));
 
-        // API id is the lowercased HF repo name (includes org prefix).
+        // API id: prefer the configured API Name; fall back to lowercased HF repo.
         // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "unsloth/qwen3.5-35b-a3b-gguf"
-        let api_id = hf_repo.to_lowercase();
+        let api_id = cfg
+            .api_name
+            .clone()
+            .unwrap_or_else(|| hf_repo.to_lowercase());
 
         // Generate a pretty display name with org prefix.
         // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "Unsloth: Qwen3.5 35B A3B"
