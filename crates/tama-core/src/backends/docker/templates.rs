@@ -4,6 +4,7 @@
 /// custom blank template.
 
 /// A built-in Docker template.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Template {
     /// Display name shown in the UI.
     pub name: &'static str,

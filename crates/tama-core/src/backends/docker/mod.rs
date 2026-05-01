@@ -9,6 +9,8 @@ pub mod logs;
 pub mod templates;
 pub mod uninstall;
 
+pub use templates::{available_templates, Template};
+
 use std::path::PathBuf;
 
 /// Docker backend configuration.
