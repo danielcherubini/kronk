@@ -125,7 +125,7 @@ pub async fn handle_docker_install(
             }
 
             // Insert into backend_installations table
-            let db_dir = config_dir.join("db");
+            let db_dir = config_dir.clone();
             let conn = tama_core::db::open(&db_dir)?;
             let record = tama_core::db::queries::BackendInstallationRecord {
                 id: 0,
@@ -368,7 +368,7 @@ pub async fn handle_docker_uninstall(
                 std::fs::remove_dir_all(&docker_dir).ok();
 
                 // Remove from DB
-                let db_dir = config_dir_clone.join("db");
+                let db_dir = config_dir_clone.clone();
                 if let Ok(conn) = tama_core::db::open(&db_dir) {
                     let _ = tama_core::db::queries::delete_backend_installation(
                         &conn.conn,
