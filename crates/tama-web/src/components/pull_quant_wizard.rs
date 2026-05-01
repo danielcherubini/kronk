@@ -9,8 +9,12 @@ use gloo_net::eventsource::futures::EventSource;
 
 // Re-export CompletedQuant for use in pages
 use crate::components::pull_wizard::components::{
-    context_step::ContextStep, done_step::DoneStep, download_step::DownloadStep,
-    loading_step::LoadingStep, repo_input::RepoInput, selection_step::SelectionStep,
+    context_step::ContextStep,
+    done_step::DoneStep,
+    download_step::DownloadStep,
+    loading_step::LoadingStep,
+    repo_input::RepoInput,
+    selection_step::{SelectionStep, SelectionStepDocker},
 };
 pub use crate::components::pull_wizard::CompletedQuant;
 
@@ -52,6 +56,7 @@ pub fn PullQuantWizard(
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
+    let is_docker_compatible = RwSignal::new(false);
 
     // ── Cancel flag: flipped on component unmount ───────────────────────────
     let cancelled = RwSignal::new(false);
@@ -150,19 +155,51 @@ pub fn PullQuantWizard(
             wizard_step.set(WizardStep::LoadingQuants);
 
             wasm_bindgen_futures::spawn_local(async move {
-                let url = format!("/tama/v1/hf/{}", repo);
+                // Fetch all files (not just GGUF) to detect Docker-compatible repos
+                let url = format!("/tama/v1/hf/{}/all", repo);
                 match gloo_net::http::Request::get(&url).send().await {
-                    Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
-                        Ok(quants) => {
-                            if quants.is_empty() {
-                                error_msg.set(Some(
-                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
-                                ));
-                                wizard_step.set(WizardStep::RepoInput);
-                            } else {
+                    Ok(resp) => match resp.json::<serde_json::Value>().await {
+                        Ok(data) => {
+                            let docker_compatible = data
+                                .get("docker_compatible")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let files = data
+                                .get("files")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|f| {
+                                            let filename = f.get("filename")?.as_str()?.to_string();
+                                            let size_bytes = f.get("size_bytes")?.as_i64();
+                                            Some(QuantEntry {
+                                                filename,
+                                                quant: None,
+                                                size_bytes,
+                                                kind: QuantKind::Model,
+                                            })
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+
+                            let ggufs: Vec<QuantEntry> = files
+                                .iter()
+                                .filter(|f| f.filename.ends_with(".gguf"))
+                                .cloned()
+                                .collect();
+
+                            if docker_compatible {
+                                // Docker-compatible repo: store all files and mark as Docker-compatible
+                                is_docker_compatible.set(true);
+                                available_quants.set(files);
+                                available_mmprojs.set(Vec::new());
+                                wizard_step.set(WizardStep::SelectQuants);
+                            } else if !ggufs.is_empty() {
+                                // GGUF repo: show quant picker
                                 let mut model_quants: Vec<QuantEntry> = Vec::new();
                                 let mut mmprojs: Vec<QuantEntry> = Vec::new();
-                                for q in quants {
+                                for q in ggufs {
                                     if q.kind == QuantKind::Mmproj {
                                         mmprojs.push(q);
                                     } else {
@@ -172,6 +209,11 @@ pub fn PullQuantWizard(
                                 available_quants.set(model_quants);
                                 available_mmprojs.set(mmprojs);
                                 wizard_step.set(WizardStep::SelectQuants);
+                            } else {
+                                error_msg.set(Some(
+                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
+                                ));
+                                wizard_step.set(WizardStep::RepoInput);
                             }
                         }
                         Err(e) => {
@@ -276,27 +318,45 @@ pub fn PullQuantWizard(
                     <LoadingStep />
                 }.into_any(),
 
-                WizardStep::SelectQuants => view! {
-                    <SelectionStep
-                        repo_id=repo_id.into()
-                        available_quants=available_quants.into()
-                        available_mmprojs=available_mmprojs.into()
-                        selected_filenames=selected_filenames
-                        selected_mmproj_filenames=selected_mmproj_filenames
-                        on_next=Callback::new(move |_| {
-                            let sel = selected_filenames.get();
-                            let mut ctx = HashMap::new();
-                            for fname in &sel {
-                                ctx.insert(fname.clone(), 32768u32);
-                            }
-                            context_lengths.set(ctx);
-                            wizard_step.set(WizardStep::SetContext);
-                        })
-                        on_back=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::RepoInput);
-                        })
-                    />
-                }.into_any(),
+                WizardStep::SelectQuants => {
+                    let is_dc = is_docker_compatible.get();
+                    if is_dc {
+                        view! {
+                            <SelectionStepDocker
+                                repo_id=repo_id.into()
+                                on_next=Callback::new(move |_| {
+                                    // For Docker-compatible repos, skip context step and go straight to download
+                                    wizard_step.set(WizardStep::Downloading);
+                                })
+                                on_back=Callback::new(move |_| {
+                                    wizard_step.set(WizardStep::RepoInput);
+                                })
+                            />
+                        }.into_any()
+                    } else {
+                        view! {
+                            <SelectionStep
+                                repo_id=repo_id.into()
+                                available_quants=available_quants.into()
+                                available_mmprojs=available_mmprojs.into()
+                                selected_filenames=selected_filenames
+                                selected_mmproj_filenames=selected_mmproj_filenames
+                                on_next=Callback::new(move |_| {
+                                    let sel = selected_filenames.get();
+                                    let mut ctx = HashMap::new();
+                                    for fname in &sel {
+                                        ctx.insert(fname.clone(), 32768u32);
+                                    }
+                                    context_lengths.set(ctx);
+                                    wizard_step.set(WizardStep::SetContext);
+                                })
+                                on_back=Callback::new(move |_| {
+                                    wizard_step.set(WizardStep::RepoInput);
+                                })
+                            />
+                        }.into_any()
+                    }
+                }
 
                 WizardStep::SetContext => view! {
                     <ContextStep
@@ -337,7 +397,17 @@ pub fn PullQuantWizard(
 
                             quants.extend(selected_mmprojs);
 
-                            let body = PullRequest { repo_id: rid, quants };
+                            let is_dc = is_docker_compatible.get();
+                            let body = if is_dc {
+                                // For Docker-compatible repos, use pull_all mode
+                                serde_json::json!({
+                                    "repo_id": rid,
+                                    "pull_all": true
+                                })
+                            } else {
+                                let pr = PullRequest { repo_id: rid, quants };
+                                serde_json::to_value(&pr).unwrap_or(serde_json::Value::Null)
+                            };
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 let build_result = post_request("/tama/v1/pulls")

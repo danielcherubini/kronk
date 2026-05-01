@@ -123,6 +123,50 @@ pub async fn handle_hf_list_quants(Path(repo_id): Path<String>) -> Response {
     }
 }
 
+/// Handle listing ALL files for a HuggingFace repo (Tama management API).
+/// Used by the pull wizard to detect Docker-compatible repos (safetensors, etc.).
+///
+/// Registered as `GET /tama/v1/hf/*repo_id/all`.
+pub async fn handle_hf_list_all(Path(repo_id): Path<String>) -> Response {
+    // Reject repo_id segments containing traversal sequences or null bytes (SSRF mitigation).
+    if !repo_id.split('/').all(is_safe_path_component) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid repo_id" })),
+        )
+            .into_response();
+    }
+
+    match crate::models::pull::fetch_all_blob_metadata(&repo_id).await {
+        Ok(blobs) => {
+            let total_size: i64 = blobs.values().map(|b| b.size.unwrap_or(0)).sum();
+
+            // Detect if this repo is "Docker-compatible" (has safetensors + config)
+            let has_safetensors = blobs.values().any(|b| b.filename.contains(".safetensors"));
+            let has_config = blobs.values().any(|b| b.filename == "config.json");
+            let docker_compatible = has_safetensors && has_config;
+
+            let response = serde_json::json!({
+                "files": blobs.into_values().map(|b| {
+                    serde_json::json!({
+                        "filename": b.filename,
+                        "size_bytes": b.size,
+                    })
+                }).collect::<Vec<_>>(),
+                "total_size_bytes": total_size,
+                "docker_compatible": docker_compatible,
+            });
+
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// Handle system restart (Tama management API).
 /// Triggers a graceful shutdown and then exits the process.
 pub async fn handle_tama_system_restart(state: State<Arc<ProxyState>>) -> Response {

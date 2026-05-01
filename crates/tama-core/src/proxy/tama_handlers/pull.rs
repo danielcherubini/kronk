@@ -1063,12 +1063,84 @@ pub(crate) async fn setup_model_after_pull(
     // config write guard also dropped here, making the new model entry visible immediately
 }
 
+/// Handle pulling an entire HuggingFace repo (for Docker-compatible models).
+///
+/// Lists all files, creates one job per file (like multi-quant), and enqueues them.
+pub async fn handle_pull_all(state: &Arc<ProxyState>, repo_id: &str) -> Response {
+    // List all files in the repo
+    let blobs = match crate::models::pull::fetch_all_blob_metadata(repo_id).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": format!("Failed to fetch file list from HuggingFace: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if blobs.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No files found in repo"
+            })),
+        )
+            .into_response();
+    }
+
+    let mut job_entries = Vec::with_capacity(blobs.len());
+
+    for (filename, _blob) in blobs {
+        let job_id = format!("pull-{}", uuid::Uuid::new_v4().hyphenated());
+
+        // Create pull job
+        let pull_job = PullJob {
+            job_id: job_id.clone(),
+            repo_id: repo_id.to_string(),
+            filename: filename.clone(),
+            ..Default::default()
+        };
+
+        {
+            let mut jobs = state.pull_jobs.write().await;
+            jobs.insert(job_id.clone(), pull_job);
+        }
+
+        // Enqueue in the DB queue
+        let _ = enqueue_download(
+            state,
+            job_id.clone(),
+            repo_id.to_string(),
+            &filename,
+            None,
+            None,
+            None,
+        );
+
+        job_entries.push(serde_json::json!({
+            "job_id": job_id,
+            "filename": filename,
+            "status": "pending"
+        }));
+    }
+
+    Json(serde_json::Value::Array(job_entries)).into_response()
+}
+
 /// Handle starting a pull job (Tama management API).
 pub async fn handle_tama_pull_model(
     state: State<Arc<ProxyState>>,
     Json(request): Json<PullRequest>,
 ) -> Response {
     let repo_id = request.repo_id.clone();
+
+    // Pull-all path: download entire repo (for Docker-compatible models)
+    if request.pull_all {
+        return handle_pull_all(&state, &repo_id).await.into_response();
+    }
 
     // Multi-quant path: when `quants` is non-empty, spawn one job per entry.
     if !request.quants.is_empty() {

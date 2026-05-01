@@ -45,6 +45,9 @@ pub struct PullRequest {
     pub quants: Vec<QuantDownloadSpec>,
     #[serde(default)]
     pub context_length: Option<u32>,
+    /// If true, pull the entire repo (all files, not just GGUF). Used for Docker-compatible models.
+    #[serde(default)]
+    pub pull_all: bool,
 }
 
 /// Response for a pull job.

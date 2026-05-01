@@ -14,12 +14,12 @@ use crate::proxy::handlers::{
     handle_status, handle_stream_chat_completions,
 };
 use crate::proxy::tama_handlers::{
-    backend_logs::handle_all_logs, handle_backend_log_sse, handle_hf_list_quants,
-    handle_opencode_list_models, handle_pull_job_stream, handle_system_metrics_history,
-    handle_system_metrics_stream, handle_tama_get_model as handle_tama_get_model_fn,
-    handle_tama_get_pull_job, handle_tama_list_models, handle_tama_load_model,
-    handle_tama_pull_model, handle_tama_system_health, handle_tama_system_restart,
-    handle_tama_unload_model,
+    backend_logs::handle_all_logs, handle_backend_log_sse, handle_hf_list_all,
+    handle_hf_list_quants, handle_opencode_list_models, handle_pull_job_stream,
+    handle_system_metrics_history, handle_system_metrics_stream,
+    handle_tama_get_model as handle_tama_get_model_fn, handle_tama_get_pull_job,
+    handle_tama_list_models, handle_tama_load_model, handle_tama_pull_model,
+    handle_tama_system_health, handle_tama_system_restart, handle_tama_unload_model,
 };
 use crate::proxy::ProxyState;
 
@@ -52,6 +52,8 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         .route("/tama/v1/pulls/:job_id/stream", get(handle_pull_job_stream))
         // HuggingFace quant listing — wildcard captures `owner/repo` with embedded slash
         .route("/tama/v1/hf/*repo_id", get(handle_hf_list_quants))
+        // HuggingFace all-files listing (for Docker-compatible repo detection)
+        .route("/tama/v1/hf/*repo_id/all", get(handle_hf_list_all))
         // System
         .route("/tama/v1/system/health", get(handle_tama_system_health))
         .route(

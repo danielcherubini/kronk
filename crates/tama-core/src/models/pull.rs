@@ -126,6 +126,15 @@ pub async fn list_gguf_files(repo_id: &str) -> Result<RepoGgufListing> {
 /// which returns `blobId`, `size`, and `lfs.sha256` per sibling.
 /// Returns a map of filename → BlobInfo for GGUF files only.
 pub async fn fetch_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobInfo>> {
+    let all = fetch_all_blob_metadata(repo_id).await?;
+    Ok(all
+        .into_iter()
+        .filter(|(_, b)| b.filename.ends_with(".gguf"))
+        .collect())
+}
+
+/// Fetch per-file blob metadata for ALL files in a HuggingFace repo.
+pub async fn fetch_all_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobInfo>> {
     let api = hf_api().await?;
     let endpoint =
         std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
@@ -148,7 +157,7 @@ pub async fn fetch_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobIn
         .await
         .with_context(|| format!("Failed to parse blob metadata response for '{}'", repo_id))?;
 
-    Ok(parse_blob_siblings(&response))
+    Ok(parse_all_blob_siblings(&response))
 }
 
 /// Fetch the pipeline_tag from HuggingFace model metadata API.
@@ -242,6 +251,14 @@ pub fn infer_modalities_from_pipeline(
 /// This is a pure function for testability — extract from `fetch_blob_metadata`
 /// so it can be unit-tested with fixture data.
 pub fn parse_blob_siblings(value: &serde_json::Value) -> HashMap<String, BlobInfo> {
+    parse_all_blob_siblings(value)
+        .into_iter()
+        .filter(|(_, b)| b.filename.ends_with(".gguf"))
+        .collect()
+}
+
+/// Parse ALL siblings (not just GGUF) from a HuggingFace blobs API response.
+pub fn parse_all_blob_siblings(value: &serde_json::Value) -> HashMap<String, BlobInfo> {
     let mut result = HashMap::new();
 
     let siblings = match value.get("siblings").and_then(|s| s.as_array()) {
@@ -254,10 +271,6 @@ pub fn parse_blob_siblings(value: &serde_json::Value) -> HashMap<String, BlobInf
             Some(f) => f,
             None => continue,
         };
-
-        if !rfilename.ends_with(".gguf") {
-            continue;
-        }
 
         let blob_id = sibling
             .get("blobId")

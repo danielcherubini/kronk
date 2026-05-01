@@ -1,6 +1,39 @@
 use crate::components::pull_wizard::*;
 use std::collections::HashSet;
 
+/// Selection step for Docker-compatible repos (safetensors/HF-style models).
+/// Shows a "Pull entire repo" button instead of quant picker.
+#[component]
+pub fn SelectionStepDocker(
+    repo_id: Signal<String>,
+    on_next: Callback<()>,
+    on_back: Callback<()>,
+) -> impl IntoView {
+    view! {
+        <div class="form-card__header">
+            <h2 class="form-card__title">"Pull Entire Repo"</h2>
+            <p class="form-card__desc text-muted">
+                "This repo contains safetensors/HF-style files suitable for Docker backends (vLLM, etc.)."
+            </p>
+            <p class="form-card__desc text-muted mt-1">
+                "All files will be downloaded from "
+                <code>{move || repo_id.get()}</code>"."
+            </p>
+        </div>
+
+        <div class="form-actions mt-3">
+            <Show when=move || !repo_id.get().trim().is_empty()>
+                <button class="btn btn-secondary" on:click=move |_| on_back.run(())>
+                    "Back"
+                </button>
+            </Show>
+            <button class="btn btn-primary" on:click=move |_| on_next.run(())>
+                "Pull Entire Repo"
+            </button>
+        </div>
+    }
+}
+
 #[component]
 pub fn SelectionStep(
     repo_id: Signal<String>,
