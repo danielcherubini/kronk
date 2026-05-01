@@ -263,6 +263,7 @@ pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<
         let api_id = cfg
             .api_name
             .clone()
+            .map(|s| s.to_lowercase())
             .unwrap_or_else(|| hf_repo.to_lowercase());
 
         // Generate a pretty display name with org prefix.
