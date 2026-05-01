@@ -87,7 +87,7 @@ impl ProxyState {
         match backend_kind {
             BackendKind::Docker => {
                 return self
-                    .load_docker_backend(model_name, &server_name, &server_config, &backend_config)
+                    .load_docker_backend(model_name, &server_name, server_config, backend_config)
                     .await;
             }
             BackendKind::Local => {
@@ -757,7 +757,6 @@ impl ProxyState {
                         .ok();
                     match status.as_deref() {
                         Some("exited" | "dead") => {
-                            let max_restarts = max_restarts;
                             let restart_count = state.restart_count().unwrap_or(0);
                             if restart_count < max_restarts {
                                 // Will be restarted by spawn below

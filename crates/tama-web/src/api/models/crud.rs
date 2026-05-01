@@ -140,7 +140,6 @@ fn apply_model_body(
                         kind: v.kind,
                         size_bytes: preserved_size,
                         context_length: v.context_length,
-                        ..Default::default()
                     },
                 )
             })
@@ -856,7 +855,6 @@ mod tests {
                 kind: QuantKind::Model,
                 size_bytes: size,
                 context_length: Some(4096),
-                ..Default::default()
             },
         );
         ModelConfig {

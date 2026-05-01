@@ -49,7 +49,7 @@ pub async fn handle_docker_install(
     Json(request): Json<DockerInstallRequest>,
 ) -> Result<Json<DockerInstallResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Validate YAML syntax first
-    if let Err(_) = serde_yml::from_str::<serde_yml::Value>(&request.compose_yaml) {
+    if serde_yml::from_str::<serde_yml::Value>(&request.compose_yaml).is_err() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "invalid compose YAML"})),

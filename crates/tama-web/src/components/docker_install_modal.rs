@@ -122,7 +122,7 @@ pub fn DockerInstallModal(
                         Ok(es) => {
                             // Open event — install completed successfully
                             if let Some(ref cb) = on_success {
-                                let cb = cb.clone();
+                                let cb = *cb;
                                 let on_open = Closure::<dyn Fn(web_sys::Event)>::new(move |_| {
                                     installing_sig.set(false);
                                     cb.run(());
@@ -139,7 +139,7 @@ pub fn DockerInstallModal(
                                 installing.set(false);
                                 error.set(Some("Install failed".to_string()));
                             });
-                            let _ = es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+                            es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
                             on_error.forget();
 
                             // Log event

@@ -155,7 +155,7 @@ pub fn PullQuantWizard(
 
             wasm_bindgen_futures::spawn_local(async move {
                 // Fetch all files (not just GGUF) to detect Docker-compatible repos
-                let url = format!("/tama/v1/hf/{}/all", repo);
+                let url = format!("/tama/v1/hf/all/{}", repo);
                 match gloo_net::http::Request::get(&url).send().await {
                     Ok(resp) => match resp.json::<serde_json::Value>().await {
                         Ok(data) => {

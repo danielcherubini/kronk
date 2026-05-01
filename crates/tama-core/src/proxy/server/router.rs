@@ -50,10 +50,11 @@ pub fn build_router(state: Arc<ProxyState>) -> Router {
         .route("/tama/v1/pulls", post(handle_tama_pull_model))
         .route("/tama/v1/pulls/:job_id", get(handle_tama_get_pull_job))
         .route("/tama/v1/pulls/:job_id/stream", get(handle_pull_job_stream))
+        // HuggingFace all-files listing (for Docker-compatible repo detection)
+        // Wildcard must be at end of route, so prefix with /all/
+        .route("/tama/v1/hf/all/*repo_id", get(handle_hf_list_all))
         // HuggingFace quant listing — wildcard captures `owner/repo` with embedded slash
         .route("/tama/v1/hf/*repo_id", get(handle_hf_list_quants))
-        // HuggingFace all-files listing (for Docker-compatible repo detection)
-        .route("/tama/v1/hf/*repo_id/all", get(handle_hf_list_all))
         // System
         .route("/tama/v1/system/health", get(handle_tama_system_health))
         .route(

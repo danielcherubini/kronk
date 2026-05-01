@@ -1,7 +1,7 @@
-/// Built-in Docker compose templates for common inference backends.
-///
-/// Templates include vLLM (ROCm/AITER), vLLM (CUDA), llama.cpp, and a
-/// custom blank template.
+//! Built-in Docker compose templates for common inference backends.
+//!
+//! Templates include vLLM (ROCm/AITER), vLLM (CUDA), llama.cpp, and a
+//! custom blank template.
 
 /// A built-in Docker template.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
