@@ -129,9 +129,9 @@ pub async fn handle_docker_install(
             let conn = tama_core::db::open(&db_dir)?;
             let record = tama_core::db::queries::BackendInstallationRecord {
                 id: 0,
-                name: name.clone(),
+                name: "docker".to_string(),
                 backend_type: "docker".to_string(),
-                version: version.clone().unwrap_or("latest".to_string()),
+                version: name.clone(),
                 path: save_dir.to_string_lossy().to_string(),
                 installed_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

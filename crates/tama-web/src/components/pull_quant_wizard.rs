@@ -272,21 +272,48 @@ pub fn PullQuantWizard(
                             selected_filenames.set(std::collections::HashSet::new());
                             context_length.set(32768);
                             available_quants.set(Vec::new());
+                            is_docker_compatible.set(false);
                             wizard_step.set(WizardStep::LoadingQuants);
                             wasm_bindgen_futures::spawn_local(async move {
-                                let url = format!("/tama/v1/hf/{}", rid);
+                                let url = format!("/tama/v1/hf/all/{}", rid);
                                 match gloo_net::http::Request::get(&url).send().await {
-                                    Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
-                                        Ok(quants) => {
-                                            if quants.is_empty() {
-                                                error_msg.set(Some(
-                                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
-                                                ));
-                                                wizard_step.set(WizardStep::RepoInput);
-                                            } else {
+                                    Ok(resp) => match resp.json::<serde_json::Value>().await {
+                                        Ok(data) => {
+                                            let docker_compatible = data.get("docker_compatible")
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(false);
+                                            let files = data.get("files")
+                                                .and_then(|v| v.as_array())
+                                                .map(|arr| {
+                                                    arr.iter()
+                                                        .filter_map(|f| {
+                                                            let filename = f.get("filename")?.as_str()?.to_string();
+                                                            let size_bytes = f.get("size_bytes")?.as_i64();
+                                                            Some(QuantEntry {
+                                                                filename,
+                                                                quant: None,
+                                                                size_bytes,
+                                                                kind: QuantKind::Model,
+                                                            })
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+
+                                            let ggufs: Vec<QuantEntry> = files.iter()
+                                                .filter(|f| f.filename.ends_with(".gguf"))
+                                                .cloned()
+                                                .collect();
+
+                                            if docker_compatible {
+                                                is_docker_compatible.set(true);
+                                                available_quants.set(files);
+                                                available_mmprojs.set(Vec::new());
+                                                wizard_step.set(WizardStep::SelectQuants);
+                                            } else if !ggufs.is_empty() {
                                                 let mut model_quants: Vec<QuantEntry> = Vec::new();
                                                 let mut mmprojs: Vec<QuantEntry> = Vec::new();
-                                                for q in quants {
+                                                for q in ggufs {
                                                     if q.kind == QuantKind::Mmproj {
                                                         mmprojs.push(q);
                                                     } else {
@@ -296,6 +323,11 @@ pub fn PullQuantWizard(
                                                 available_quants.set(model_quants);
                                                 available_mmprojs.set(mmprojs);
                                                 wizard_step.set(WizardStep::SelectQuants);
+                                            } else {
+                                                error_msg.set(Some(
+                                                    "No GGUF files found for this repo. Check the repo ID and try again.".to_string(),
+                                                ));
+                                                wizard_step.set(WizardStep::RepoInput);
                                             }
                                         }
                                         Err(e) => {
