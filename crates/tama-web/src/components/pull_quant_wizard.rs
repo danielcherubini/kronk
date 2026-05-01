@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::utils::post_request;
 
@@ -52,7 +52,7 @@ pub fn PullQuantWizard(
     let available_mmprojs = RwSignal::new(Vec::<QuantEntry>::new());
     let selected_filenames = RwSignal::new(HashSet::<String>::new());
     let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
-    let context_lengths = RwSignal::new(HashMap::<String, u32>::new());
+    let context_length = RwSignal::new(32768u32);
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
@@ -80,7 +80,7 @@ pub fn PullQuantWizard(
 
             let jobs = download_jobs.get_untracked();
             let quants_listing = available_quants.get_untracked();
-            let ctx_map = context_lengths.get_untracked();
+            let ctx = context_length.get_untracked();
             let repo = repo_id.get_untracked();
 
             let completed: Vec<CompletedQuant> = jobs
@@ -91,13 +91,12 @@ pub fn PullQuantWizard(
                     let quant = entry
                         .and_then(|e| e.quant.clone())
                         .or_else(|| infer_quant_from_filename(&j.filename));
-                    let context_length = ctx_map.get(&j.filename).copied().unwrap_or(32768);
                     CompletedQuant {
                         repo_id: repo.clone(),
                         filename: j.filename.clone(),
                         quant,
                         size_bytes: Some(j.bytes_downloaded),
-                        context_length,
+                        context_length: ctx,
                     }
                 })
                 .collect();
@@ -141,7 +140,7 @@ pub fn PullQuantWizard(
             }
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
-            context_lengths.set(std::collections::HashMap::new());
+            context_length.set(32768);
             download_jobs.set(Vec::new());
             error_msg.set(None);
             did_complete.set(false);
@@ -271,7 +270,7 @@ pub fn PullQuantWizard(
                         on_search=Callback::new(move |rid| {
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
-                            context_lengths.set(std::collections::HashMap::new());
+                            context_length.set(32768);
                             available_quants.set(Vec::new());
                             wizard_step.set(WizardStep::LoadingQuants);
                             wasm_bindgen_futures::spawn_local(async move {
@@ -325,8 +324,7 @@ pub fn PullQuantWizard(
                             <SelectionStepDocker
                                 repo_id=repo_id.into()
                                 on_next=Callback::new(move |_| {
-                                    // For Docker-compatible repos, skip context step and go straight to download
-                                    wizard_step.set(WizardStep::Downloading);
+                                    wizard_step.set(WizardStep::SetContext);
                                 })
                                 on_back=Callback::new(move |_| {
                                     wizard_step.set(WizardStep::RepoInput);
@@ -342,12 +340,6 @@ pub fn PullQuantWizard(
                                 selected_filenames=selected_filenames
                                 selected_mmproj_filenames=selected_mmproj_filenames
                                 on_next=Callback::new(move |_| {
-                                    let sel = selected_filenames.get();
-                                    let mut ctx = HashMap::new();
-                                    for fname in &sel {
-                                        ctx.insert(fname.clone(), 32768u32);
-                                    }
-                                    context_lengths.set(ctx);
                                     wizard_step.set(WizardStep::SetContext);
                                 })
                                 on_back=Callback::new(move |_| {
@@ -360,51 +352,50 @@ pub fn PullQuantWizard(
 
                 WizardStep::SetContext => view! {
                     <ContextStep
-                        selected_filenames=selected_filenames.into()
-                        available_quants=available_quants.into()
-                        context_lengths=context_lengths
+                        context_length=context_length
                         on_next=Callback::new(move |_| {
                             let rid = repo_id.get();
-                            let sel = selected_filenames.get();
-                            let quants_list = available_quants.get();
-                            let ctx_map = context_lengths.get();
-
-                            let mut quants: Vec<QuantRequest> = sel.iter()
-                                .filter_map(|fname| {
-                                    let entry = quants_list.iter().find(|q| &q.filename == fname)?;
-                                    let ctx = ctx_map.get(fname).copied().unwrap_or(32768);
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: ctx,
-                                    })
-                                })
-                                .collect();
-
-                            let available_mmprojs_list = available_mmprojs.get();
-                            let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
-                                .get()
-                                .iter()
-                                .filter_map(|fname| {
-                                    let entry = available_mmprojs_list.iter().find(|q| &q.filename == fname)?;
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: 32768,
-                                    })
-                                })
-                                .collect();
-
-                            quants.extend(selected_mmprojs);
-
+                            let ctx = context_length.get();
                             let is_dc = is_docker_compatible.get();
+
                             let body = if is_dc {
                                 // For Docker-compatible repos, use pull_all mode
                                 serde_json::json!({
                                     "repo_id": rid,
-                                    "pull_all": true
+                                    "pull_all": true,
+                                    "context_length": ctx,
                                 })
                             } else {
+                                let sel = selected_filenames.get();
+                                let quants_list = available_quants.get();
+
+                                let mut quants: Vec<QuantRequest> = sel.iter()
+                                    .filter_map(|fname| {
+                                        let entry = quants_list.iter().find(|q| &q.filename == fname)?;
+                                        Some(QuantRequest {
+                                            filename: fname.clone(),
+                                            quant: entry.quant.clone(),
+                                            context_length: ctx,
+                                        })
+                                    })
+                                    .collect();
+
+                                let available_mmprojs_list = available_mmprojs.get();
+                                let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
+                                    .get()
+                                    .iter()
+                                    .filter_map(|fname| {
+                                        let entry = available_mmprojs_list.iter().find(|q| &q.filename == fname)?;
+                                        Some(QuantRequest {
+                                            filename: fname.clone(),
+                                            quant: entry.quant.clone(),
+                                            context_length: ctx,
+                                        })
+                                    })
+                                    .collect();
+
+                                quants.extend(selected_mmprojs);
+
                                 let pr = PullRequest { repo_id: rid, quants };
                                 serde_json::to_value(&pr).unwrap_or(serde_json::Value::Null)
                             };
