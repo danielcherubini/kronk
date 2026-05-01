@@ -154,7 +154,7 @@ pub struct General {
     pub update_check_interval: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
     #[serde(default)]
     pub path: Option<String>,

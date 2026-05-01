@@ -43,12 +43,22 @@ impl Config {
                 .with_context(|| format!("Model '{}' not found in config", name))?
         };
 
-        let backend = self.backends.get(&server.backend).with_context(|| {
-            format!(
-                "Backend '{}' referenced by model not found in config",
-                server.backend
-            )
-        })?;
+        let backend = match self.backends.get(&server.backend) {
+            Some(b) => b,
+            None => {
+                // Docker backends live in the DB, not the config file.
+                if server.backend == "docker" {
+                    static DOCKER_DEFAULT: std::sync::OnceLock<BackendConfig> =
+                        std::sync::OnceLock::new();
+                    DOCKER_DEFAULT.get_or_init(BackendConfig::default)
+                } else {
+                    anyhow::bail!(
+                        "Backend '{}' referenced by model not found in config",
+                        server.backend
+                    );
+                }
+            }
+        };
 
         Ok((server, backend))
     }
@@ -66,7 +76,18 @@ impl Config {
             }
             let backend = match self.backends.get(&server.backend) {
                 Some(b) => b,
-                None => continue,
+                None => {
+                    // Docker backends live in the DB, not the config file.
+                    // Return a default BackendConfig so downstream can still
+                    // match on server.backend and route to Docker.
+                    if server.backend == "docker" {
+                        static DOCKER_DEFAULT: std::sync::OnceLock<BackendConfig> =
+                            std::sync::OnceLock::new();
+                        DOCKER_DEFAULT.get_or_init(BackendConfig::default)
+                    } else {
+                        continue;
+                    }
+                }
             };
 
             // Match on api_name (highest priority), then config key, then model field.
