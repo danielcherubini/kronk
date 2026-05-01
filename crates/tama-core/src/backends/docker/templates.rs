@@ -21,7 +21,7 @@ pub fn available_templates() -> &'static [Template] {
     &[
         Template {
             name: "vLLM (ROCm/AITER)",
-            description: "vLLM with AMD ROCm/AITER optimized attention backends for AMD GPUs.",
+            description: "vLLM with AMD ROCm/AITER optimized attention for RDNA3/4 and MI-series GPUs.",
             default_port: 8000,
             compose_yaml: VLLM_ROCM_TEMPLATE,
         },
@@ -46,7 +46,7 @@ pub fn available_templates() -> &'static [Template] {
     ]
 }
 
-/// vLLM ROCm/AITER template with placeholders.
+/// vLLM ROCm template with placeholders.
 const VLLM_ROCM_TEMPLATE: &str = r#"services:
   vllm:
     image: aml731/vllm-aiter:v0.19.1
