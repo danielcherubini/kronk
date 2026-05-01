@@ -1,5 +1,6 @@
 //! Docker backend API endpoints.
 
+use anyhow::Context;
 use async_stream::stream;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -109,20 +110,19 @@ pub async fn handle_docker_install(
             let config_dir = tama_core::config::Config::base_dir()
                 .map_err(|e| anyhow::anyhow!("Failed to get config dir: {}", e))?;
 
-            // Create DockerBackend
-            let docker_backend = tama_core::backends::docker::DockerBackend {
-                name: name.clone(),
-                compose_yaml: compose_yaml.clone(),
-                dockerfile: dockerfile.clone(),
-                target_port,
-                config_dir: config_dir.clone(),
-            };
+            // Save compose YAML template (placeholders resolved at model load time)
+            let save_dir = config_dir.join("docker").join(&name);
+            std::fs::create_dir_all(&save_dir)
+                .with_context(|| format!("Failed to create directory: {}", save_dir.display()))?;
+            std::fs::write(save_dir.join("docker-compose.yaml"), &compose_yaml).with_context(
+                || format!("Failed to write compose YAML to {}", save_dir.display()),
+            )?;
 
-            // Start container
-            let _container_id =
-                tama_core::backends::docker::install::start_container(&docker_backend)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to start container: {}", e))?;
+            // Save Dockerfile if provided
+            if let Some(ref df) = dockerfile {
+                std::fs::write(save_dir.join("Dockerfile"), df)
+                    .context("Failed to write Dockerfile")?;
+            }
 
             // Insert into backend_installations table
             let db_dir = config_dir.join("db");
@@ -145,11 +145,6 @@ pub async fn handle_docker_install(
                 target_port: target_port.map(|p| p as i32),
             };
             tama_core::db::queries::insert_backend_installation(&conn.conn, &record)?;
-
-            // Save compose YAML
-            let save_dir = config_dir.join("docker").join(&name);
-            std::fs::create_dir_all(&save_dir).ok();
-            std::fs::write(save_dir.join("docker-compose.yaml"), &compose_yaml).ok();
 
             // Save Dockerfile if provided
             if let Some(ref df) = dockerfile {
