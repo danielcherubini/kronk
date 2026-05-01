@@ -21,7 +21,8 @@ pub fn available_templates() -> &'static [Template] {
     &[
         Template {
             name: "vLLM (ROCm/AITER)",
-            description: "vLLM with AMD ROCm/AITER optimized attention for RDNA3/4 and MI-series GPUs.",
+            description:
+                "vLLM with AMD ROCm/AITER optimized attention for RDNA3/4 and MI-series GPUs.",
             default_port: 8000,
             compose_yaml: VLLM_ROCM_TEMPLATE,
         },

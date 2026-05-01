@@ -78,41 +78,23 @@ pub async fn start_download_from_queue(
 
     // Validate filename and repo_id to prevent path traversal.
     if !is_safe_path_component(&filename_clone) {
-        let mut jobs = pull_jobs_arc.write().await;
-        if let Some(job) = jobs.get_mut(&job_id_clone) {
-            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-            job.error = Some("Invalid filename".to_string());
-        }
-        drop(jobs);
-        if let Some(ref svc) = state_clone.download_queue {
-            let _ = svc.update_status(
-                &job_id_clone,
-                "failed",
-                0,
-                None,
-                Some("Invalid filename"),
-                None,
-            );
-        }
+        fail_job(
+            &pull_jobs_arc,
+            &state_clone.download_queue,
+            &job_id_clone,
+            "Invalid filename",
+        )
+        .await;
         return;
     }
     if !repo_id_clone.split('/').all(is_safe_path_component) {
-        let mut jobs = pull_jobs_arc.write().await;
-        if let Some(job) = jobs.get_mut(&job_id_clone) {
-            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-            job.error = Some("Invalid repo_id".to_string());
-        }
-        drop(jobs);
-        if let Some(ref svc) = state_clone.download_queue {
-            let _ = svc.update_status(
-                &job_id_clone,
-                "failed",
-                0,
-                None,
-                Some("Invalid repo_id"),
-                None,
-            );
-        }
+        fail_job(
+            &pull_jobs_arc,
+            &state_clone.download_queue,
+            &job_id_clone,
+            "Invalid repo_id",
+        )
+        .await;
         return;
     }
 
@@ -120,7 +102,7 @@ pub async fn start_download_from_queue(
     {
         let mut jobs = pull_jobs_arc.write().await;
         if let Some(job) = jobs.get_mut(&job_id_clone) {
-            job.status = crate::proxy::pull_jobs::PullJobStatus::Running;
+            job.status = PullJobStatus::Running;
             tracing::info!(job_id = %job_id_clone, "Job transitioned to Running");
         } else {
             tracing::warn!(job_id = %job_id_clone, "Job not found when setting Running");
@@ -128,25 +110,21 @@ pub async fn start_download_from_queue(
         }
     }
 
+    // Mark as running in DB queue
+    if let Some(ref svc) = state_clone.download_queue {
+        let _ = svc.update_status(&job_id_clone, "running", 0, None, None, None);
+    }
+
     let models_dir = match state_clone.config.read().await.models_dir() {
         Ok(d) => d,
         Err(e) => {
-            let mut jobs = pull_jobs_arc.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_clone) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                job.error = Some(format!("Failed to get models dir: {}", e));
-            }
-            drop(jobs);
-            if let Some(ref svc) = state_clone.download_queue {
-                let _ = svc.update_status(
-                    &job_id_clone,
-                    "failed",
-                    0,
-                    None,
-                    Some(&format!("Failed to get models dir: {}", e)),
-                    None,
-                );
-            }
+            fail_job(
+                &pull_jobs_arc,
+                &state_clone.download_queue,
+                &job_id_clone,
+                &format!("Failed to get models dir: {}", e),
+            )
+            .await;
             return;
         }
     };
@@ -154,55 +132,32 @@ pub async fn start_download_from_queue(
     // to match the convention expected by ModelRegistry (models_dir/org/repo).
     let dest_dir = repo_path(&models_dir, &repo_id_clone);
     if let Err(e) = std::fs::create_dir_all(&dest_dir) {
-        let mut jobs = pull_jobs_arc.write().await;
-        if let Some(job) = jobs.get_mut(&job_id_clone) {
-            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-            job.error = Some(format!("Failed to create dest dir: {}", e));
-        }
-        drop(jobs);
-        if let Some(ref svc) = state_clone.download_queue {
-            let _ = svc.update_status(
-                &job_id_clone,
-                "failed",
-                0,
-                None,
-                Some(&format!("Failed to create dest dir: {}", e)),
-                None,
-            );
-        }
+        fail_job(
+            &pull_jobs_arc,
+            &state_clone.download_queue,
+            &job_id_clone,
+            &format!("Failed to create dest dir: {}", e),
+        )
+        .await;
         return;
     }
 
     let dest_path = dest_dir.join(&filename_clone);
 
-    // In-flight dedup guard: reject if another task is already downloading this path.
-    // This prevents two concurrent tasks from writing to the same temp part files,
-    // which would silently corrupt the assembled output.
+    // In-flight dedup guard
     {
         let mut inflight = in_flight_clone.lock().await;
         if !inflight.insert(dest_path.clone()) {
-            let mut jobs = pull_jobs_arc.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_clone) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                job.error = Some(format!(
+            fail_job(
+                &pull_jobs_arc,
+                &state_clone.download_queue,
+                &job_id_clone,
+                &format!(
                     "Another download of '{}' is already in progress",
                     filename_clone
-                ));
-            }
-            drop(jobs);
-            if let Some(ref svc) = state_clone.download_queue {
-                let _ = svc.update_status(
-                    &job_id_clone,
-                    "failed",
-                    0,
-                    None,
-                    Some(&format!(
-                        "Another download of '{}' is already in progress",
-                        filename_clone
-                    )),
-                    None,
-                );
-            }
+                ),
+            )
+            .await;
             return;
         }
     }
@@ -272,43 +227,16 @@ pub async fn start_download_from_queue(
         }
     });
 
-    // Get hf-hub API (configured with max_files=8 for parallel downloads)
-    let api = match crate::models::pull::hf_api().await {
-        Ok(api) => api,
-        Err(e) => {
-            let mut jobs = pull_jobs_arc.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_clone) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                job.error = Some(format!("Failed to get hf-hub API client: {}", e));
-            }
-            drop(jobs);
-            poll_handle.abort();
-            in_flight_clone.lock().await.remove(&dest_path);
-            if let Some(ref svc) = state_clone.download_queue {
-                let _ = svc.update_status(
-                    &job_id_clone,
-                    "failed",
-                    0,
-                    None,
-                    Some(&format!("Failed to get hf-hub API client: {}", e)),
-                    None,
-                );
-            }
-            return;
-        }
-    };
-
     // Create progress callback that updates job status directly
     let progress_jobs = Arc::clone(&pull_jobs_arc);
     let progress_job_id = job_id_clone.clone();
-    let progress_callback: crate::models::download::ProgressCallback =
-        Arc::new(move |downloaded: u64, total: u64| {
+    let progress_callback: crate::models::hf_cli::HfProgressCallback =
+        Arc::new(move |downloaded: u64, total: u64, _desc: &str| {
             let job_id = progress_job_id.clone();
-            // Use try_write to avoid blocking the download task
             if let Ok(mut jobs) = progress_jobs.try_write() {
                 if let Some(job) = jobs.get_mut(&job_id) {
                     job.bytes_downloaded = downloaded;
-                    if total > 0 && job.total_bytes.is_none() {
+                    if total > 0 {
                         job.total_bytes = Some(total);
                     }
                 }
@@ -319,26 +247,31 @@ pub async fn start_download_from_queue(
         job_id = %job_id_clone,
         repo = %repo_id_clone,
         file = %filename_clone,
-        "Beginning file download via hf-hub"
+        "Beginning file download via hf CLI"
     );
 
-    // Use hf-hub's downloader with progress adapter
-    let repo = api.model(repo_id_clone.clone());
-    let progress_adapter = crate::models::pull::ProgressAdapter::new(Some(progress_callback));
+    // Use hf CLI to download the file directly to the models directory.
+    // No HF cache intermediary — files land directly in dest_dir.
+    let download_result = crate::models::hf_cli::hf_download_gguf(
+        &repo_id_clone,
+        &filename_clone,
+        &dest_dir,
+        Some(progress_callback),
+    )
+    .await;
 
-    let cached_path = match repo
-        .download_with_progress(&filename_clone, progress_adapter)
-        .await
-    {
-        Ok(path) => path,
+    // Stop the file size polling task.
+    poll_handle.abort();
+
+    let bytes = match download_result {
+        Ok(result) => result.total_bytes,
         Err(e) => {
             let mut jobs = pull_jobs_arc.write().await;
             if let Some(job) = jobs.get_mut(&job_id_clone) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
+                job.status = PullJobStatus::Failed;
                 job.error = Some(format!("Download failed: {}", e));
             }
             drop(jobs);
-            poll_handle.abort();
             in_flight_clone.lock().await.remove(&dest_path);
             if let Some(ref svc) = state_clone.download_queue {
                 let _ = svc.update_status(
@@ -354,32 +287,6 @@ pub async fn start_download_from_queue(
         }
     };
 
-    // Get file size from cached file
-    let bytes = match tokio::fs::metadata(&cached_path).await {
-        Ok(meta) => meta.len(),
-        Err(e) => {
-            let mut jobs = pull_jobs_arc.write().await;
-            if let Some(job) = jobs.get_mut(&job_id_clone) {
-                job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                job.error = Some(format!("Failed to get file size: {}", e));
-            }
-            drop(jobs);
-            poll_handle.abort();
-            in_flight_clone.lock().await.remove(&dest_path);
-            if let Some(ref svc) = state_clone.download_queue {
-                let _ = svc.update_status(
-                    &job_id_clone,
-                    "failed",
-                    0,
-                    None,
-                    Some(&format!("Failed to get file size: {}", e)),
-                    None,
-                );
-            }
-            return;
-        }
-    };
-
     let download_duration = download_start.elapsed();
     tracing::info!(
         job_id = %job_id_clone,
@@ -387,9 +294,6 @@ pub async fn start_download_from_queue(
         duration = ?download_duration,
         "Download phase complete, entering verify phase"
     );
-
-    // Stop the file size polling task.
-    poll_handle.abort();
 
     // Record final downloaded byte count.
     {
@@ -400,9 +304,8 @@ pub async fn start_download_from_queue(
         }
     }
 
-    // Verify the file while it is still in the HF cache, then move/copy it
-    // to the destination only if verification passes. On failure the cache
-    // file is deleted so no corrupt data lingers.
+    // Verify the downloaded file at its final location.
+    // hf CLI downloads directly to dest_dir, so there's no cache-to-dest move.
     let outcome = run_verification(
         Arc::clone(&pull_jobs_arc),
         state_clone.db_dir.clone(),
@@ -411,7 +314,7 @@ pub async fn start_download_from_queue(
         repo_id_clone.clone(),
         filename_clone.clone(),
         spec_clone.quant.clone(),
-        cached_path.clone(),
+        dest_path.clone(), // verify at final location (no cache intermediary)
         dest_path.clone(),
         bytes,
     )
@@ -607,9 +510,8 @@ async fn run_verification(
         );
     }
 
-    // Step 3: hash the cached file in a blocking thread.
-    // cached_path is an hf-hub snapshot symlink → blob; the OS follows it
-    // automatically so we hash the real blob content without resolving manually.
+    // Step 3: hash the downloaded file in a blocking thread.
+    // With hf CLI, the file is already at its final location (dest_path).
     let progress = Arc::new(AtomicU64::new(0));
     let poll_progress = Arc::clone(&progress);
     let poll_jobs = Arc::clone(&pull_jobs);
@@ -630,7 +532,7 @@ async fn run_verification(
     });
 
     let hash_progress = Arc::clone(&progress);
-    let hash_src = cached_path.clone(); // hash the cache file, not dest
+    let hash_src = cached_path.clone(); // hash the downloaded file at its final location
     let hash_expected = expected_sha.clone();
 
     let blocking_result = tokio::task::spawn_blocking(move || -> (Option<bool>, Option<String>) {
@@ -676,60 +578,15 @@ async fn run_verification(
     let passed = ok != Some(false);
 
     if passed {
-        // Verification passed — move the blob to its final destination.
-        // Canonicalise to resolve hf-hub's internal snapshot→blob symlink so
-        // we rename/copy the real file, not the symlink entry.
-        let blob = tokio::fs::canonicalize(&cached_path)
-            .await
-            .unwrap_or_else(|_| cached_path.clone());
-
-        if blob != dest_path {
-            if dest_path.exists() {
-                tokio::fs::remove_file(&dest_path).await.ok();
-            }
-            if let Err(e) = tokio::fs::rename(&blob, &dest_path).await {
-                tracing::debug!(job_id=%job_id, "rename failed ({}), falling back to copy", e);
-                match tokio::fs::copy(&blob, &dest_path).await {
-                    Ok(_) => {
-                        tokio::fs::remove_file(&blob).await.ok();
-                    }
-                    Err(e2) => {
-                        tracing::error!(job_id=%job_id, "copy to dest failed: {}", e2);
-                        // Treat as failure — clean up cache and bail.
-                        tokio::fs::remove_file(&blob).await.ok();
-                        tokio::fs::remove_file(&cached_path).await.ok();
-                        let mut jobs = pull_jobs.write().await;
-                        if let Some(job) = jobs.get_mut(&job_id) {
-                            job.verify_bytes_hashed = bytes;
-                            job.verified_ok = Some(false);
-                            job.verify_error =
-                                Some(format!("failed to move file to destination: {}", e2));
-                            job.error = job.verify_error.clone();
-                            job.completed_at = Some(Instant::now());
-                            job.status = crate::proxy::pull_jobs::PullJobStatus::Failed;
-                        }
-                        return VerificationOutcome {
-                            passed: false,
-                            expected_sha: expected_sha.clone(),
-                            ok,
-                            err,
-                        };
-                    }
-                }
-            }
-            // Remove the snapshot symlink if it still exists (now dead after rename).
-            if cached_path != blob {
-                tokio::fs::remove_file(&cached_path).await.ok();
-            }
-        }
-
+        // File is already at its final location (hf CLI downloads directly
+        // to dest_dir). No move/copy needed — just update the job status.
         let mut jobs = pull_jobs.write().await;
         if let Some(job) = jobs.get_mut(&job_id) {
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = None;
             job.completed_at = Some(Instant::now());
-            job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
+            job.status = PullJobStatus::Completed;
             tracing::info!(job_id = %job_id, verified_ok = ?ok, "Job completed");
         }
         VerificationOutcome {
@@ -739,16 +596,10 @@ async fn run_verification(
             err,
         }
     } else {
-        // Verification failed — delete the corrupt/mismatched cache file so it
-        // cannot be mistaken for a good download on the next attempt.
-        let blob = tokio::fs::canonicalize(&cached_path)
-            .await
-            .unwrap_or_else(|_| cached_path.clone());
-        tokio::fs::remove_file(&blob).await.ok();
-        if cached_path != blob {
-            tokio::fs::remove_file(&cached_path).await.ok();
-        }
-        tracing::error!(job_id = %job_id, error = ?err, "Verification failed — cache deleted");
+        // Verification failed — delete the corrupt file so it cannot be
+        // mistaken for a good download on the next attempt.
+        tokio::fs::remove_file(&dest_path).await.ok();
+        tracing::error!(job_id = %job_id, error = ?err, "Verification failed — file deleted");
 
         let mut jobs = pull_jobs.write().await;
         if let Some(job) = jobs.get_mut(&job_id) {
@@ -1061,6 +912,24 @@ pub(crate) async fn setup_model_after_pull(
     saved_id
     // _guard dropped here, releasing the lock
     // config write guard also dropped here, making the new model entry visible immediately
+}
+
+/// Helper to mark a download job as failed in both PullJob and DB queue.
+async fn fail_job(
+    pull_jobs: &Arc<tokio::sync::RwLock<std::collections::HashMap<String, PullJob>>>,
+    download_queue: &Option<Arc<DownloadQueueService>>,
+    job_id: &str,
+    error: &str,
+) {
+    let mut jobs = pull_jobs.write().await;
+    if let Some(job) = jobs.get_mut(job_id) {
+        job.status = PullJobStatus::Failed;
+        job.error = Some(error.to_string());
+    }
+    drop(jobs);
+    if let Some(ref svc) = download_queue {
+        let _ = svc.update_status(job_id, "failed", 0, None, Some(error), None);
+    }
 }
 
 /// Handle pulling an entire HuggingFace repo (for Docker-compatible models).

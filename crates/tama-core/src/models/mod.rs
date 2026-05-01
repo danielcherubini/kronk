@@ -1,5 +1,6 @@
 pub mod card;
 pub mod download;
+pub mod hf_cli;
 pub mod pull;
 pub mod registry;
 pub mod search;
