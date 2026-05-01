@@ -64,13 +64,11 @@ pub async fn handle_docker_install(
         )
     })?;
     let save_dir = config_dir.join("docker").join(&request.name);
+
+    // If directory exists, treat as leftover from a failed install and clean it up.
+    // (Docker backends are identified by name in the model_config table, not by this directory alone.)
     if save_dir.exists() {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(
-                serde_json::json!({"error": format!("backend '{}' already exists", request.name)}),
-            ),
-        ));
+        let _ = std::fs::remove_dir_all(&save_dir);
     }
 
     let job_manager = state.jobs.as_ref().ok_or_else(|| {
