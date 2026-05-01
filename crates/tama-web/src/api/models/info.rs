@@ -131,7 +131,15 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
         Ok(Ok((cfg, config_dir))) => {
             let configs_dir = config_dir.join("configs");
-            let backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            let mut backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            // Add "docker" to available backends if any Docker backends are installed
+            if let Ok(Some(_)) = tama_core::backends::BackendRegistry::open(&config_dir)
+                .and_then(|r| r.list_all_versions("docker"))
+            {
+                if !backends.iter().any(|b| b == "docker") {
+                    backends.push("docker".to_string());
+                }
+            }
 
             // Load models from DB — get records with integer ids
             let models = match tama_core::db::open(&config_dir) {
@@ -201,7 +209,15 @@ pub async fn get_model(
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
         Ok(Ok((cfg, config_dir))) => {
             let configs_dir = config_dir.join("configs");
-            let backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            let mut backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            // Add "docker" to available backends if any Docker backends are installed
+            if let Ok(Some(_)) = tama_core::backends::BackendRegistry::open(&config_dir)
+                .and_then(|r| r.list_all_versions("docker"))
+            {
+                if !backends.iter().any(|b| b == "docker") {
+                    backends.push("docker".to_string());
+                }
+            }
 
             // Resolve id (integer or config_key) to model_id
             let open = match tama_core::db::open(&config_dir) {
