@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 79
+- **Total Plans**: 80
 - **Completed**: 79 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 0
+- **In Progress**: 1 🚧
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -116,6 +116,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [Fix Dashboard Stale Stats](2026-05-02-fix-dashboard-stale-stats.md) | Backfill metrics on SSE lag, tab visibility change, and SSE reconnect to prevent stale stats after browser idle | 🚧 IN PROGRESS |
 | [System Metrics](2026-04-04-system-metrics.md) | CPU%, RAM, GPU metrics with background collection task | `67029b2`, `2465a4d`, `11d9287` |
 | [Persist Dashboard Metrics](2026-04-06-persist-dashboard-metrics.md) | SQLite persistence + SSE streaming for dashboard | `b657e22`, `8e6a5b5`, `fd12bf8`, `4c6d6e2`, `2892764` |
 | [Dashboard Time Series Graphs](2026-04-06-dashboard-time-series-graphs.md) | Sparkline SVG charts for metrics visualization | `404f3be`, `6b651cf`, `9dc78d3`, `502e2f6` |
