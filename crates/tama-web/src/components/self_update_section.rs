@@ -18,8 +18,11 @@ pub fn SelfUpdateSection() -> impl IntoView {
     let show_update_confirm = RwSignal::new(false);
     let check_error = RwSignal::new(Option::<String>::None);
 
-    // Initial check for updates on mount
+    let checking = RwSignal::new(false);
+
+    // Check for updates (manual, user-triggered only)
     let check_for_updates = move || {
+        checking.set(true);
         spawn_local(async move {
             match Request::get("/tama/v1/self-update/check").send().await {
                 Ok(resp) if resp.ok() => {
@@ -50,13 +53,11 @@ pub fn SelfUpdateSection() -> impl IntoView {
                     check_error.set(Some(format!("Unable to check for updates: {}", e)));
                 }
             }
+            checking.set(false);
         });
     };
 
-    // Run initial check on mount
-    Effect::new(move |_| {
-        check_for_updates();
-    });
+
 
     let retry_check = move || {
         check_error.set(None);
@@ -108,12 +109,20 @@ pub fn SelfUpdateSection() -> impl IntoView {
         <div class="self-update-section">
             <h2 class="section__title">"Tama"</h2>
 
-            // Loading state (initial check in flight)
-            {move || (current_version.with(|v| v.is_empty()) && check_error.get().is_none() && !update_in_progress.get()).then(|| view! {
+            // Loading state (check in flight)
+            {move || checking.get().then(|| view! {
                 <div class="self-update-progress">
                     <div class="self-update-spinner"></div>
                     <span>"Checking for updates…"</span>
                 </div>
+            })}
+
+            // Initial state — show "Check for updates" button
+            {move || (!checking.get() && !update_in_progress.get() && check_error.get().is_none() && current_version.with(|v| v.is_empty())).then(|| view! {
+                <button class="btn btn-primary"
+                    on:click=move |_| check_for_updates()>
+                    "Check for updates"
+                </button>
             })}
 
             // Inline progress during update
@@ -132,7 +141,7 @@ pub fn SelfUpdateSection() -> impl IntoView {
                 </div>
             })}
 
-            // Normal state (no error, not in progress, not loading)
+            // Normal state (check completed, no error, not in progress)
             {move || (!update_in_progress.get() && check_error.get().is_none() && !current_version.with(|v| v.is_empty())).then(|| view! {
                 <div class="self-update-info">
                     <span class="self-update-version">
@@ -151,6 +160,10 @@ pub fn SelfUpdateSection() -> impl IntoView {
                             "Update"
                         </button>
                     })}
+                    <button class="btn btn-ghost" disabled=move || update_in_progress.get()
+                        on:click=move |_| check_for_updates()>
+                        "Check again"
+                    </button>
                 </div>
             })}
         </div>

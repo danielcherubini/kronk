@@ -54,7 +54,7 @@ pub async fn check_for_update(current_version: &str) -> Result<UpdateInfo> {
         tokio::task::spawn_blocking(move || check_for_update_sync(&current)),
     )
     .await
-    .context("Update check timed out after {}s — check network connectivity and firewall rules")?
+    .with_context(|| format!("Update check timed out after {UPDATE_CHECK_TIMEOUT_SECS}s — check network connectivity and firewall rules"))?
     .context("spawn_blocking panicked")?
 }
 
@@ -123,7 +123,7 @@ pub async fn perform_update(
         tokio::task::spawn_blocking(move || perform_update_sync(&current, on_progress)),
     )
     .await
-    .context("Update timed out after {}s — check network connectivity")?
+    .with_context(|| format!("Update timed out after {UPDATE_PERFORM_TIMEOUT_SECS}s — check network connectivity"))?
     .context("spawn_blocking panicked")?
 }
 

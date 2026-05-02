@@ -112,47 +112,11 @@ pub fn InstallModal(
     let can_build = capabilities.git_available
         && capabilities.cmake_available
         && capabilities.compiler_available;
-    let submit_disabled = Memo::new(move |_| effective_build_from_source.get() && !can_build);
 
-    let supported_versions = capabilities.supported_cuda_versions.clone();
-
+    let supported_versions = RwSignal::new(capabilities.supported_cuda_versions.clone());
     let backend_type_submit = backend_type.clone();
-    let on_submit_handler = move |_| {
-        let kind = gpu_kind.get();
-        let gpu_type = match kind.as_str() {
-            "cuda" => GpuTypeDto::Cuda {
-                version: cuda_version.get(),
-            },
-            "vulkan" => GpuTypeDto::Vulkan,
-            "metal" => GpuTypeDto::Metal,
-            "rocm" => GpuTypeDto::Rocm {
-                version: "7.2".to_string(),
-            },
-            _ => GpuTypeDto::CpuOnly,
-        };
-        let v = version.get();
-        let request = InstallRequest {
-            backend_type: backend_type_submit.clone(),
-            version: if v.is_empty() || v == "latest" {
-                None
-            } else {
-                Some(v)
-            },
-            gpu_type,
-            build_from_source: effective_build_from_source.get(),
-            force: force_overwrite.get(),
-        };
-        if let Some(cb) = on_submit {
-            cb.run(request);
-        }
-    };
 
-    let on_cancel_handler = move |_| {
-        if let Some(cb) = on_cancel {
-            cb.run(());
-        }
-    };
-    let on_cancel_overlay = on_cancel_handler;
+
 
     let display_name = match backend_type.as_str() {
         "llama_cpp" => "llama.cpp",
@@ -162,47 +126,36 @@ pub fn InstallModal(
     let title = format!("Install {display_name}");
 
     view! {
-        <div
-            class="modal-overlay"
-            style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;"
-            on:click=on_cancel_overlay
-        >
-            <div
-                class="modal"
-                style="background:var(--bg,white);padding:1.5rem;border-radius:8px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto;"
-                on:click=|e: leptos::ev::MouseEvent| e.stop_propagation()
-            >
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                    <h2 style="margin:0;font-size:1.25rem;font-weight:600;">{title}</h2>
+        <div class="modal-backdrop modal-backdrop--open">
+            <div class="modal" on:click=|e: leptos::ev::MouseEvent| e.stop_propagation()>
+                <div class="modal-header">
+                    <h2 class="modal-title">{title}</h2>
                     <button
                         type="button"
-                        class="btn btn-sm"
-                        style="background:none;border:none;font-size:1.5rem;cursor:pointer;"
-                        on:click=on_cancel_handler
-                    >
-                        "×"
-                    </button>
+                        class="modal-close"
+                        on:click=move |_| { if let Some(cb) = &on_cancel { cb.run(()); } }
+                        aria-label="Close"
+                    >"✕"</button>
                 </div>
+                <div class="modal-body">
+                    {/* Build prerequisites warning */}
+                    {if !can_build {
+                        view! {
+                            <div class="alert alert--warning">
+                                <span class="alert__icon">"⚠"</span>
+                                "Build prerequisites missing (git/cmake/compiler). Source builds will fail."
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <span/> }.into_any()
+                    }}
 
-                {if !can_build {
-                    view! {
-                        <div style="background:#fef3c7;border:1px solid #f59e0b;padding:0.75rem;border-radius:4px;margin-bottom:1rem;font-size:0.875rem;">
-                            "⚠ Build prerequisites missing (git/cmake/compiler). Source builds will fail."
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <span/> }.into_any()
-                }}
-
-                <div style="display:flex;flex-direction:column;gap:1rem;">
                     {/* GPU Type */}
-                    <div>
-                        <label style="display:block;font-weight:500;margin-bottom:0.25rem;font-size:0.875rem;">
-                            "GPU Acceleration"
-                        </label>
+                    <div class="form-group">
+                        <label class="form-label">"GPU Acceleration"</label>
                         <select
                             on:change=move |e| gpu_kind.set(event_target_value(&e))
-                            style="width:100%;padding:0.5rem;border:1px solid var(--border,#ccc);border-radius:4px;"
+                            class="form-select"
                         >
                             <option value="cpu" selected=move || gpu_kind.get() == "cpu">"CPU Only"</option>
                             <option value="cuda" selected=move || gpu_kind.get() == "cuda">"CUDA (NVIDIA)"</option>
@@ -215,22 +168,19 @@ pub fn InstallModal(
                     {/* CUDA version */}
                     {move || {
                         if gpu_kind.get() == "cuda" {
-                            let versions = supported_versions.clone();
+                            let versions = supported_versions.get();
                             view! {
-                                <div>
-                                    <label style="display:block;font-weight:500;margin-bottom:0.25rem;font-size:0.875rem;">
-                                        "CUDA Version"
-                                    </label>
+                                <div class="form-group">
+                                    <label class="form-label">"CUDA Version"</label>
                                     <select
                                         on:change=move |e| cuda_version.set(event_target_value(&e))
-                                        style="width:100%;padding:0.5rem;border:1px solid var(--border,#ccc);border-radius:4px;"
+                                        class="form-select"
                                     >
-                                        {versions.into_iter().map(|v| {
+                                        {versions.iter().cloned().map(|v| {
                                             let v_for_selected = v.clone();
-                                            let v_for_value = v.clone();
                                             view! {
                                                 <option
-                                                    value=v_for_value
+                                                    value=v_for_selected.clone()
                                                     selected=move || cuda_version.get() == v_for_selected
                                                 >
                                                     {v}
@@ -248,41 +198,39 @@ pub fn InstallModal(
                     {/* Version */}
                     {if !is_ik_llama {
                         view! {
-                            <div>
-                                <label style="display:block;font-weight:500;margin-bottom:0.25rem;font-size:0.875rem;">
-                                    "Version"
-                                </label>
+                            <div class="form-group">
+                                <label class="form-label">"Version"</label>
                                 <input
                                     type="text"
                                     placeholder="latest"
                                     prop:value=move || version.get()
                                     on:input=move |e| version.set(event_target_value(&e))
-                                    style="width:100%;padding:0.5rem;border:1px solid var(--border,#ccc);border-radius:4px;"
+                                    class="form-input"
                                 />
-                                <p style="font-size:0.75rem;color:var(--muted,#666);margin-top:0.25rem;">
+                                <p class="form-hint">
                                     "Use 'latest' or a specific tag like 'b8407'."
                                 </p>
                             </div>
                         }.into_any()
                     } else {
                         view! {
-                            <div style="background:#dbeafe;border:1px solid #3b82f6;padding:0.75rem;border-radius:4px;font-size:0.875rem;">
+                            <div class="alert alert--info">
                                 "ik_llama is built from the latest main branch commit."
                             </div>
                         }.into_any()
                     }}
 
                     {/* Build from source */}
-                    <div>
-                        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem;">
+                    <div class="form-group">
+                        <div class="form-check">
                             <input
                                 type="checkbox"
                                 prop:checked=move || effective_build_from_source.get()
                                 prop:disabled=move || force_source.get()
                                 on:change=move |e| user_build_from_source.set(event_target_checked(&e))
                             />
-                            <span>"Build from source"</span>
-                        </label>
+                            <span class="form-check-label">"Build from source"</span>
+                        </div>
                         {move || {
                             if force_source.get() {
                                 let reason = if is_ik_llama {
@@ -291,7 +239,7 @@ pub fn InstallModal(
                                     "No prebuilt CUDA binary for Linux — source build required"
                                 };
                                 view! {
-                                    <p style="font-size:0.75rem;color:var(--muted,#666);margin-top:0.25rem;margin-left:1.5rem;">
+                                    <p class="form-hint" style="margin-left: 1.5rem;">
                                         {format!("Forced: {reason}")}
                                     </p>
                                 }.into_any()
@@ -302,34 +250,53 @@ pub fn InstallModal(
                     </div>
 
                     {/* Force overwrite */}
-                    <div>
-                        <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.875rem;">
+                    <div class="form-group">
+                        <div class="form-check">
                             <input
                                 type="checkbox"
                                 prop:checked=move || force_overwrite.get()
                                 on:change=move |e| force_overwrite.set(event_target_checked(&e))
                             />
-                            <span>"Force overwrite existing installation"</span>
-                        </label>
+                            <span class="form-check-label">"Force overwrite existing installation"</span>
+                        </div>
                     </div>
-                </div>
 
-                <div style="display:flex;gap:0.5rem;margin-top:1.5rem;justify-content:flex-end;">
-                    <button
-                        type="button"
-                        class="btn btn-secondary"
-                        on:click=on_cancel_handler
-                    >
-                        "Cancel"
-                    </button>
-                    <button
-                        type="button"
-                        class="btn btn-primary"
-                        prop:disabled=move || submit_disabled.get()
-                        on:click=on_submit_handler
-                    >
-                        "Install"
-                    </button>
+                    {/* Actions */}
+                    <div class="form-actions">
+                        <button
+                            type="button"
+                            class="btn btn-secondary"
+                            on:click=move |_| { if let Some(cb) = &on_cancel { cb.run(()); } }
+                        >
+                            "Cancel"
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-primary"
+                            on:click=move |_| {
+                                let kind = gpu_kind.get();
+                                let gpu_type = match kind.as_str() {
+                                    "cuda" => GpuTypeDto::Cuda { version: cuda_version.get() },
+                                    "vulkan" => GpuTypeDto::Vulkan,
+                                    "metal" => GpuTypeDto::Metal,
+                                    "rocm" => GpuTypeDto::Rocm { version: "7.2".to_string() },
+                                    _ => GpuTypeDto::CpuOnly,
+                                };
+                                let request = InstallRequest {
+                                    backend_type: backend_type_submit.clone(),
+                                    version: None,
+                                    gpu_type,
+                                    build_from_source: effective_build_from_source.get(),
+                                    force: force_overwrite.get(),
+                                };
+                                if let Some(cb) = &on_submit {
+                                    cb.run(request);
+                                }
+                            }
+                        >
+                            "Install"
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
