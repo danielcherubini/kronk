@@ -116,8 +116,6 @@ pub fn InstallModal(
     let supported_versions = RwSignal::new(capabilities.supported_cuda_versions.clone());
     let backend_type_submit = backend_type.clone();
 
-
-
     let display_name = match backend_type.as_str() {
         "llama_cpp" => "llama.cpp",
         "ik_llama" => "ik_llama.cpp",

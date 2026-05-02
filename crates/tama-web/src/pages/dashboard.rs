@@ -393,11 +393,18 @@ pub fn Dashboard() -> impl IntoView {
     let fetch_failed = RwSignal::new(false);
     // Incrementing this signal re-runs the Effect that opens the EventSource.
     let connect_trigger = RwSignal::new(0u32);
+    // Tracks the last backfill timestamp to enforce a cooldown (prevents redundant fetches
+    // when SSE lagged, visibilitychange, and reconnect fire together).
+    let last_backfill = RwSignal::new(0u64);
+    // Set to true when the SSE connection errors, cleared on the next sample event.
+    // Used to detect reconnection after a disconnect and trigger backfill.
+    let reconnect_pending = RwSignal::new(false);
 
     // Fetch historical metrics on mount, before connecting to SSE.
     // This populates the chart with up to 450 recent data points (15 minutes at 2s intervals).
     {
         let history_signal = history;
+        let last_backfill_signal = last_backfill;
         spawn_local(async move {
             if let Ok(resp) =
                 gloo_net::http::Request::get("/tama/v1/system/metrics/history?limit=450")
@@ -411,6 +418,8 @@ pub fn Dashboard() -> impl IntoView {
                         history_signal.update(|buf| {
                             *buf = samples;
                         });
+                        // Prevent immediate redundant backfill on the first SSE lagged/visibility event
+                        last_backfill_signal.set(js_sys::Date::now() as u64);
                     }
                 }
             }
@@ -441,15 +450,38 @@ pub fn Dashboard() -> impl IntoView {
                                 buf.drain(..buf.len() - 450);
                             }
                         });
+                        // If the SSE connection was lost and reconnected, backfill the gap
+                        if reconnect_pending.get() {
+                            reconnect_pending.set(false);
+                            log::info!("SSE reconnected, backfilling metrics");
+                            let history_copy = history;
+                            let last_backfill_copy = last_backfill;
+                            spawn_local(backfill_metrics(history_copy, last_backfill_copy));
+                        }
                     }
                 }
             });
         let _ = es.add_event_listener_with_callback("sample", on_sample.as_ref().unchecked_ref());
         on_sample.forget();
 
-        // Error handler — flag for the empty-history retry UI.
+        // Handler for "lagged" events — the broadcast channel dropped messages.
+        // Fetch recent history to fill the gap.
+        let on_lagged =
+            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if let Some(data_str) = evt.data().as_string() {
+                    log::info!("SSE lagged event received: {}", data_str);
+                    let history_copy = history;
+                    let last_backfill_copy = last_backfill;
+                    spawn_local(backfill_metrics(history_copy, last_backfill_copy));
+                }
+            });
+        let _ = es.add_event_listener_with_callback("lagged", on_lagged.as_ref().unchecked_ref());
+        on_lagged.forget();
+
+        // Error handler — flag for the empty-history retry UI and track disconnect for backfill.
         let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
             fetch_failed.set(true);
+            reconnect_pending.set(true);
         });
         es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
         on_error.forget();
@@ -460,9 +492,45 @@ pub fn Dashboard() -> impl IntoView {
         });
     });
 
+    // When the browser tab becomes visible again, backfill metrics that were missed
+    // while the SSE connection was throttled or disconnected by the browser.
+    Effect::new(move |_| {
+        let history_sig = history;
+        let last_backfill_sig = last_backfill;
+        let on_visibility = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            // Use js_sys::Reflect to check document.hidden (avoids extra web-sys feature flags).
+            // When hidden is false (or missing), the tab is visible.
+            let is_hidden = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|doc| js_sys::Reflect::get(&doc, &"hidden".into()).ok())
+                .and_then(|v| v.as_bool());
+            if is_hidden == Some(false) {
+                spawn_local(backfill_metrics(history_sig, last_backfill_sig));
+            }
+        });
+        // Clone the JS function reference (cheap, not the Closure itself) for both add and remove.
+        // Closure does not implement Clone, so we extract the underlying js_sys::Function.
+        let js_fn: js_sys::Function = on_visibility
+            .as_ref()
+            .unchecked_ref::<js_sys::Function>()
+            .clone();
+        let doc = web_sys::window()
+            .expect("window")
+            .document()
+            .expect("document");
+        let _ = doc.add_event_listener_with_callback("visibilitychange", &js_fn);
+
+        // on_cleanup owns on_visibility — it stays alive until cleanup runs,
+        // then the Closure is dropped and WASM memory is freed.
+        on_cleanup(move || {
+            let _ = doc.remove_event_listener_with_callback("visibilitychange", &js_fn);
+        });
+    });
+
     // Manual retry: close and re-open the EventSource.
     let manual_refresh = move |_| {
         fetch_failed.set(false);
+        reconnect_pending.set(false);
         connect_trigger.update(|n| *n += 1);
     };
 
