@@ -1,8 +1,8 @@
-use js_sys;
+use js_sys::{Date, Function, Reflect};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-use log;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -278,7 +278,7 @@ fn merge_samples(buf: &mut Vec<MetricSample>, new: Vec<MetricSample>, max_len: u
 /// `visibilitychange` handler so both paths behave identically.
 async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: RwSignal<u64>) {
     // Cooldown: skip if backfilled in the last 5 seconds
-    let now = js_sys::Date::now() as u64;
+    let now = Date::now() as u64;
     if (now - last_backfill.get()) < 5000 {
         return;
     }
@@ -297,10 +297,10 @@ async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: R
                         });
                     }
                 }
-                Err(e) => log::warn!("backfill: failed to parse history JSON: {}", e),
+                Err(e) => warn!("backfill: failed to parse history JSON: {}", e),
             }
         }
-        Err(e) => log::warn!("backfill: failed to fetch /metrics/history: {}", e),
+        Err(e) => warn!("backfill: failed to fetch /metrics/history: {}", e),
     }
 }
 
@@ -419,7 +419,7 @@ pub fn Dashboard() -> impl IntoView {
                             *buf = samples;
                         });
                         // Prevent immediate redundant backfill on the first SSE lagged/visibility event
-                        last_backfill_signal.set(js_sys::Date::now() as u64);
+                        last_backfill_signal.set(Date::now() as u64);
                     }
                 }
             }
@@ -453,7 +453,7 @@ pub fn Dashboard() -> impl IntoView {
                         // If the SSE connection was lost and reconnected, backfill the gap
                         if reconnect_pending.get() {
                             reconnect_pending.set(false);
-                            log::info!("SSE reconnected, backfilling metrics");
+                            info!("SSE reconnected, backfilling metrics");
                             let history_copy = history;
                             let last_backfill_copy = last_backfill;
                             spawn_local(backfill_metrics(history_copy, last_backfill_copy));
@@ -469,7 +469,7 @@ pub fn Dashboard() -> impl IntoView {
         let on_lagged =
             Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
                 if let Some(data_str) = evt.data().as_string() {
-                    log::info!("SSE lagged event received: {}", data_str);
+                    info!("SSE lagged event received: {}", data_str);
                     let history_copy = history;
                     let last_backfill_copy = last_backfill;
                     spawn_local(backfill_metrics(history_copy, last_backfill_copy));
@@ -498,22 +498,19 @@ pub fn Dashboard() -> impl IntoView {
         let history_sig = history;
         let last_backfill_sig = last_backfill;
         let on_visibility = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            // Use js_sys::Reflect to check document.hidden (avoids extra web-sys feature flags).
+            // Use Reflect to check document.hidden (avoids extra web-sys feature flags).
             // When hidden is false (or missing), the tab is visible.
             let is_hidden = web_sys::window()
                 .and_then(|w| w.document())
-                .and_then(|doc| js_sys::Reflect::get(&doc, &"hidden".into()).ok())
+                .and_then(|doc| Reflect::get(&doc, &"hidden".into()).ok())
                 .and_then(|v| v.as_bool());
             if is_hidden == Some(false) {
                 spawn_local(backfill_metrics(history_sig, last_backfill_sig));
             }
         });
         // Clone the JS function reference (cheap, not the Closure itself) for both add and remove.
-        // Closure does not implement Clone, so we extract the underlying js_sys::Function.
-        let js_fn: js_sys::Function = on_visibility
-            .as_ref()
-            .unchecked_ref::<js_sys::Function>()
-            .clone();
+        // Closure does not implement Clone, so we extract the underlying Function.
+        let js_fn: Function = on_visibility.as_ref().unchecked_ref::<Function>().clone();
         let doc = web_sys::window()
             .expect("window")
             .document()
