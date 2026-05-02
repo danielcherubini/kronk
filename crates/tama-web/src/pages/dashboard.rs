@@ -1,6 +1,8 @@
+use js_sys;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
+use log;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -251,6 +253,55 @@ fn normalize_models(models: &[ModelStatus]) -> Vec<ModelDisplayData> {
             }
         })
         .collect()
+}
+
+/// Merge new metric samples into the buffer.
+/// Combines, sorts by timestamp, deduplicates (keeping the FIRST entry for each timestamp),
+/// and trims to the last `max_len` samples.
+///
+/// Keeping the first entry is intentional: SSE entries (which include `models` data)
+/// are already in the buffer, and backfill entries (which have `models: vec![]`)
+/// are extended after. Keeping the first preserves the richer SSE entry.
+fn merge_samples(buf: &mut Vec<MetricSample>, new: Vec<MetricSample>, max_len: usize) {
+    buf.extend(new);
+    buf.sort_by_key(|s| s.ts_unix_ms);
+    buf.dedup_by(|a, b| a.ts_unix_ms == b.ts_unix_ms); // keeps a (first), removes b (subsequent)
+    if buf.len() > max_len {
+        buf.drain(..buf.len() - max_len);
+    }
+}
+
+/// Fetch metric history from the backend and merge into the history signal.
+///
+/// Applies a 5-second cooldown (tracked by `last_backfill`) to avoid
+/// redundant requests. Used by both the SSE `lagged` handler and the
+/// `visibilitychange` handler so both paths behave identically.
+async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: RwSignal<u64>) {
+    // Cooldown: skip if backfilled in the last 5 seconds
+    let now = js_sys::Date::now() as u64;
+    if (now - last_backfill.get()) < 5000 {
+        return;
+    }
+    last_backfill.set(now);
+
+    let url = "/tama/v1/system/metrics/history?limit=200";
+    match gloo_net::http::Request::get(url).send().await {
+        Ok(resp) => {
+            extract_and_store_csrf_token(&resp);
+            match resp.json::<Vec<MetricsHistoryEntry>>().await {
+                Ok(entries) => {
+                    let new: Vec<MetricSample> = entries.into_iter().map(Into::into).collect();
+                    if !new.is_empty() {
+                        history.update(|buf| {
+                            merge_samples(buf, new, 450);
+                        });
+                    }
+                }
+                Err(e) => log::warn!("backfill: failed to parse history JSON: {}", e),
+            }
+        }
+        Err(e) => log::warn!("backfill: failed to fetch /metrics/history: {}", e),
+    }
 }
 
 /// Renders a single model row. Isolated component so only changed rows rebuild
@@ -1465,5 +1516,300 @@ mod tests {
         assert_eq!(sample.models[1].api_name, Some("org/beta".to_string()));
         assert_eq!(sample.models[1].backend, "ik_llama");
         assert_eq!(sample.models[1].state, "idle");
+    }
+
+    /// Two non-overlapping buffers merge, sort by timestamp, and preserve order.
+    #[test]
+    fn test_merge_samples_combines_two_buffers() {
+        let mut buf = vec![
+            MetricSample {
+                ts_unix_ms: 100,
+                cpu_usage_pct: 10.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 200,
+                cpu_usage_pct: 20.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+        let new = vec![
+            MetricSample {
+                ts_unix_ms: 50,
+                cpu_usage_pct: 5.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 300,
+                cpu_usage_pct: 30.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+
+        merge_samples(&mut buf, new, 100);
+
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf[0].ts_unix_ms, 50);
+        assert_eq!(buf[1].ts_unix_ms, 100);
+        assert_eq!(buf[2].ts_unix_ms, 200);
+        assert_eq!(buf[3].ts_unix_ms, 300);
+    }
+
+    /// Overlapping timestamps keep the first entry (SSE entry with models data).
+    #[test]
+    fn test_merge_samples_dedupes_by_timestamp_keeps_first() {
+        let sse_entry = MetricSample {
+            ts_unix_ms: 100,
+            cpu_usage_pct: 50.0,
+            ram_used_mib: 1024,
+            ram_total_mib: 16384,
+            gpu_utilization_pct: None,
+            vram: None,
+            models_loaded: 1,
+            models: vec![ModelStatus {
+                id: "alpha".into(),
+                db_id: None,
+                api_name: None,
+                display_name: None,
+                backend: "llama_cpp".into(),
+                state: "ready".into(),
+                ..Default::default()
+            }],
+        };
+        let backfill_entry = MetricSample {
+            ts_unix_ms: 100,
+            cpu_usage_pct: 50.0,
+            ram_used_mib: 1024,
+            ram_total_mib: 16384,
+            gpu_utilization_pct: None,
+            vram: None,
+            models_loaded: 0,
+            models: vec![],
+        };
+
+        let mut buf = vec![sse_entry];
+        merge_samples(&mut buf, vec![backfill_entry], 100);
+
+        // Should keep the SSE entry (first) with models data
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0].ts_unix_ms, 100);
+        assert_eq!(buf[0].models_loaded, 1);
+        assert_eq!(buf[0].models.len(), 1);
+        assert_eq!(buf[0].models[0].id, "alpha");
+    }
+
+    /// Buffer exceeding max_len is trimmed from the front (oldest entries removed).
+    #[test]
+    fn test_merge_samples_trims_to_max_len() {
+        let mut buf = vec![
+            MetricSample {
+                ts_unix_ms: 1,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 2,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 3,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+        let new = vec![
+            MetricSample {
+                ts_unix_ms: 4,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 5,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+
+        merge_samples(&mut buf, new, 3);
+
+        assert_eq!(buf.len(), 3);
+        // Oldest entries (ts 1, 2) should be trimmed; keep ts 3, 4, 5
+        assert_eq!(buf[0].ts_unix_ms, 3);
+        assert_eq!(buf[1].ts_unix_ms, 4);
+        assert_eq!(buf[2].ts_unix_ms, 5);
+    }
+
+    /// Empty new leaves buffer unchanged.
+    #[test]
+    fn test_merge_samples_empty_new_does_nothing() {
+        let mut buf = vec![
+            MetricSample {
+                ts_unix_ms: 100,
+                cpu_usage_pct: 10.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 200,
+                cpu_usage_pct: 20.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+
+        merge_samples(&mut buf, vec![], 100);
+
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf[0].ts_unix_ms, 100);
+        assert_eq!(buf[1].ts_unix_ms, 200);
+    }
+
+    /// Empty buffer gets populated from new entries.
+    #[test]
+    fn test_merge_samples_empty_buf_populates_from_new() {
+        let mut buf: Vec<MetricSample> = vec![];
+        let new = vec![
+            MetricSample {
+                ts_unix_ms: 200,
+                cpu_usage_pct: 20.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 100,
+                cpu_usage_pct: 10.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+
+        merge_samples(&mut buf, new, 100);
+
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf[0].ts_unix_ms, 100);
+        assert_eq!(buf[1].ts_unix_ms, 200);
+    }
+
+    /// When new has the same timestamps as buf but different data values,
+    /// the existing (first) entries survive dedup.
+    #[test]
+    fn test_merge_samples_all_timestamps_overlap_keeps_existing() {
+        let mut buf = vec![
+            MetricSample {
+                ts_unix_ms: 100,
+                cpu_usage_pct: 50.0,
+                ram_used_mib: 1024,
+                ram_total_mib: 16384,
+                gpu_utilization_pct: Some(80),
+                vram: None,
+                models_loaded: 2,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 200,
+                cpu_usage_pct: 60.0,
+                ram_used_mib: 2048,
+                ram_total_mib: 16384,
+                gpu_utilization_pct: Some(90),
+                vram: None,
+                models_loaded: 2,
+                models: vec![],
+            },
+        ];
+        let new = vec![
+            MetricSample {
+                ts_unix_ms: 100,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+            MetricSample {
+                ts_unix_ms: 200,
+                cpu_usage_pct: 0.0,
+                ram_used_mib: 0,
+                ram_total_mib: 0,
+                gpu_utilization_pct: None,
+                vram: None,
+                models_loaded: 0,
+                models: vec![],
+            },
+        ];
+
+        merge_samples(&mut buf, new, 100);
+
+        assert_eq!(buf.len(), 2);
+        // Original values preserved (first entry wins)
+        assert_eq!(buf[0].ts_unix_ms, 100);
+        assert_eq!(buf[0].cpu_usage_pct, 50.0);
+        assert_eq!(buf[0].models_loaded, 2);
+        assert_eq!(buf[1].ts_unix_ms, 200);
+        assert_eq!(buf[1].cpu_usage_pct, 60.0);
+        assert_eq!(buf[1].models_loaded, 2);
     }
 }

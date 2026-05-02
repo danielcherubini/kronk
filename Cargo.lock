@@ -3779,6 +3779,7 @@ dependencies = [
  "js-sys",
  "leptos",
  "leptos_router",
+ "log",
  "mime_guess",
  "nix",
  "reqwest 0.12.28",
