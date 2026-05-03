@@ -284,7 +284,7 @@ async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: R
     }
     last_backfill.set(now);
 
-    let url = "/tama/v1/system/metrics/history?limit=200";
+    let url = "/tama/v1/system/metrics/history?limit=450";
     match gloo_net::http::Request::get(url).send().await {
         Ok(resp) => {
             extract_and_store_csrf_token(&resp);
