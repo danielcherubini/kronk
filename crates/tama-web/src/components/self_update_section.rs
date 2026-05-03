@@ -57,8 +57,6 @@ pub fn SelfUpdateSection() -> impl IntoView {
         });
     };
 
-
-
     let retry_check = move || {
         check_error.set(None);
         check_for_updates();

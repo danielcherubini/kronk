@@ -21,7 +21,7 @@ Both mechanisms are currently **unused by the frontend**. This plan wires them t
 ### Task 1: Add shared backfill function and merge helper
 
 **Context:**
-Both the SSE `lagged` handler and the `visibilitychange` handler need to fetch history and merge it into the `history` buffer. Extracting this into a shared async function avoids code duplication and ensures both paths behave identically. The merge logic must deduplicate by timestamp (keeping the latest sample) and trim to 450 entries.
+Both the SSE `lagged` handler and the `visibilitychange` handler need to fetch history and merge it into the `history` buffer. Extracting this into a shared async function avoids code duplication and ensures both paths behave identically. The merge logic must deduplicate by timestamp (keeping the **first** sample) and trim to 450 entries. Keeping the first is intentional: SSE entries (which include `models` data) are already in the buffer, and backfill entries (which have `models: vec![]`) are extended after, so keeping the first preserves the richer SSE entry.
 
 **Files:**
 - Modify: `crates/tama-web/src/pages/dashboard.rs`
