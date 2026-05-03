@@ -223,6 +223,8 @@ pub async fn check_health(url: &str, timeout: Option<u64>) -> Result<reqwest::Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_kill_process_group_nonexistent_pid_returns_ok() {
         // Use a PID that definitely doesn't exist.
@@ -235,6 +237,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_force_kill_process_group_nonexistent_pid_returns_ok() {
         // Same for SIGKILL variant.
