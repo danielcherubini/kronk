@@ -1,12 +1,12 @@
 use js_sys::{Date, Function, Reflect};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::components::modal::Modal;
+use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::components::sparkline::SparklineChart;
 use crate::utils::{
@@ -140,54 +140,6 @@ fn inactive_models(models: &[ModelStatus]) -> Vec<ModelStatus> {
         .collect()
 }
 
-/// CSS class string used for the per-model status badge in the
-/// "Active Models" grid. Maps lifecycle states to colour classes.
-fn model_status_badge_class(state: &str) -> &'static str {
-    match state {
-        "ready" => "badge badge-success",
-        "loading" => "badge badge-info",
-        "unloading" => "badge badge-warning",
-        "failed" => "badge badge-error",
-        _ => "badge badge-muted",
-    }
-}
-
-/// Human-readable label that pairs with [`model_status_badge_class`].
-fn model_status_badge_label(state: &str) -> &'static str {
-    match state {
-        "ready" => "Loaded",
-        "loading" => "Loading",
-        "unloading" => "Unloading",
-        "failed" => "Failed",
-        _ => "Idle",
-    }
-}
-
-/// CSS class string for the load/unload action button in a model card.
-/// Ready models render an "Unload" button (btn-danger),
-/// loading/unloading/failed show muted buttons,
-/// idle shows a "Load" button (btn-success).
-fn model_action_button_class(state: &str) -> &'static str {
-    match state {
-        "ready" => "btn btn-danger btn-sm",
-        "loading" => "btn btn-secondary btn-sm",
-        "unloading" => "btn btn-secondary btn-sm",
-        "failed" => "btn btn-warning btn-sm",
-        _ => "btn btn-success btn-sm",
-    }
-}
-
-/// Human-readable label that pairs with [`model_action_button_class`].
-fn model_action_button_label(state: &str) -> &'static str {
-    match state {
-        "ready" => "Unload",
-        "loading" => "Loading…",
-        "unloading" => "Unloading…",
-        "failed" => "Retry",
-        _ => "Load",
-    }
-}
-
 /// Returns the preferred display name for a model, preferring `display_name`,
 /// then `api_name`, falling back to the model `id` otherwise.
 fn model_display_name(m: &ModelStatus) -> String {
@@ -196,63 +148,6 @@ fn model_display_name(m: &ModelStatus) -> String {
         .or(m.api_name.as_deref())
         .unwrap_or(m.id.as_str())
         .to_string()
-}
-
-/// Pre-computed display values for a model row, used to deduplicate
-/// the Active and Inactive model section rendering logic.
-struct ModelDisplayData {
-    id: String,
-    db_id: Option<i64>,
-    display_name: String,
-    quant_display: String,
-    context_display: String,
-    backend_name: String,
-    state: String,
-}
-
-/// Format context length in human-readable form (e.g., 8192 → "8k", 32768 → "32k").
-/// Uses 1024 for binary kilobytes (KiB) and 1000 for decimal kilobytes (kB)
-/// to handle both conventions used by different backends.
-fn format_context_length(n: u32) -> String {
-    const BINARY_K: u32 = 1024;
-    const DECIMAL_K: u32 = 1000;
-    if n >= BINARY_K && n.is_multiple_of(BINARY_K) {
-        format!("{}k", n / BINARY_K)
-    } else if n >= DECIMAL_K && n.is_multiple_of(DECIMAL_K) {
-        format!("{}k", n / DECIMAL_K)
-    } else {
-        n.to_string()
-    }
-}
-
-/// Normalize a slice of models: sort by id and compute display values.
-///
-/// Used by both the Active and Inactive model sections to deduplicate
-/// the rendering logic. Returns models sorted by id in stable order.
-fn normalize_models(models: &[ModelStatus]) -> Vec<ModelDisplayData> {
-    let mut sorted: Vec<_> = models.iter().collect();
-    sorted.sort_by(|a, b| a.id.cmp(&b.id));
-    sorted
-        .into_iter()
-        .map(|m: &ModelStatus| {
-            let display_name = model_display_name(m);
-            let quant_display: String = m.quant.as_deref().unwrap_or("\u{2014}").into();
-            let context_display = m
-                .context_length
-                .map(format_context_length)
-                .unwrap_or_else(|| "—".to_string());
-            let backend_name = format!("{}_{}", m.backend, m.id);
-            ModelDisplayData {
-                id: m.id.clone(),
-                db_id: m.db_id,
-                display_name,
-                quant_display,
-                context_display,
-                backend_name,
-                state: m.state.clone(),
-            }
-        })
-        .collect()
 }
 
 /// Merge new metric samples into the buffer.
@@ -301,89 +196,6 @@ async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: R
             }
         }
         Err(e) => warn!("backfill: failed to fetch /metrics/history: {}", e),
-    }
-}
-
-/// Renders a single model row. Isolated component so only changed rows rebuild
-/// when metrics update — prevents the entire list from being destroyed/recreated.
-#[component]
-fn ModelRow(
-    id: String,
-    db_id: Option<i64>,
-    display_name: String,
-    quant_display: String,
-    context_display: String,
-    backend_name: String,
-    state: String,
-    load_pending: RwSignal<bool>,
-    unload_pending: RwSignal<bool>,
-    on_load: Callback<String>,
-    on_unload: Callback<String>,
-) -> impl IntoView {
-    let badge_class = model_status_badge_class(&state);
-    let badge_label = model_status_badge_label(&state);
-    let button_class = model_action_button_class(&state);
-    let button_label = model_action_button_label(&state);
-    // Clone values needed in closures before they're consumed by the view!
-    let id_for_load = id.clone();
-    let id_for_edit = id.clone();
-    let id_for_unload = id.clone();
-    let backend_for_logs = backend_name.clone();
-
-    view! {
-        <div class="model-row card">
-            <span class="model-row__name">{display_name}</span>
-            <span class="model-row__meta">{quant_display}</span>
-            <span class="model-row__meta">{context_display}</span>
-            <span class="model-row__backend text-mono">{backend_name}</span>
-            <div class="model-row__actions">
-                <span class={badge_class}>{badge_label}</span>
-                {if matches!(state.as_str(), "ready") {
-                    view! {
-                        <button
-                            class={button_class}
-                            prop:disabled=move || unload_pending.get()
-                            on:click=move |_| { on_unload.run(id_for_unload.clone()); }
-                        >
-                            {button_label}
-                        </button>
-                    }.into_any()
-                } else if matches!(state.as_str(), "loading" | "unloading") {
-                    view! {
-                        <button
-                            class={button_class}
-                            prop:disabled=true
-                        >
-                            {button_label}
-                        </button>
-                    }.into_any()
-                } else {
-                    // idle, failed → Load or Retry
-                    view! {
-                        <button
-                            class={button_class}
-                            prop:disabled=move || load_pending.get()
-                            on:click=move |_| { on_load.run(id_for_load.clone()); }
-                        >
-                            {button_label}
-                        </button>
-                    }.into_any()
-                }}
-                <A
-                    href=format!("/logs?source={}", backend_for_logs)
-                    attr:class="btn btn-secondary btn-sm"
-                    attr:title="View backend logs"
-                >
-                    "Logs"
-                </A>
-                <A
-                    href=format!("/models/{}/edit", db_id.map(|n| n.to_string()).unwrap_or_else(|| id_for_edit.clone()))
-                    attr:class="btn btn-secondary btn-sm"
-                >
-                    "Edit"
-                </A>
-            </div>
-        </div>
     }
 }
 
@@ -881,10 +693,11 @@ pub fn Dashboard() -> impl IntoView {
                                 </div>
                             }.into_any()
                         } else {
-                            let sorted = normalize_models(&active);
+                            let mut active_sorted = active.clone();
+                            active_sorted.sort_by(|a, b| a.id.cmp(&b.id));
                             view! {
                                 <div class="models-list">
-                                    {sorted.into_iter().map(|m| {
+                                    {active_sorted.into_iter().map(|m| {
                                         let on_load_cb = Callback::new(move |id: String| {
                                             load_action.dispatch(id);
                                         });
@@ -892,18 +705,21 @@ pub fn Dashboard() -> impl IntoView {
                                             unload_action.dispatch(id);
                                         });
                                         view! {
-                                            <ModelRow
-                                                id=m.id
+                                            <ModelCard
+                                                id=m.id.clone()
                                                 db_id=m.db_id
-                                                display_name=m.display_name
-                                                quant_display=m.quant_display
-                                                context_display=m.context_display
-                                                backend_name=m.backend_name
-                                                state=m.state
-                                                load_pending=load_busy
-                                                unload_pending=unload_busy
+                                                display_name=model_display_name(&m)
+                                                quant=m.quant.clone()
+                                                context_length=m.context_length
+                                                backend=m.backend.clone()
+                                                log_source=Some(format!("{}_{}", m.backend, m.id))
+                                                state=m.state.clone()
+                                                loaded=None
+                                                enabled=None
                                                 on_load=on_load_cb
                                                 on_unload=on_unload_cb
+                                                load_busy=load_busy
+                                                unload_busy=unload_busy
                                             />
                                         }
                                     }).collect::<Vec<_>>()}
@@ -933,10 +749,11 @@ pub fn Dashboard() -> impl IntoView {
                                         </div>
                                     }.into_any()
                                 } else {
-                                    let sorted = normalize_models(&inactive);
+                                    let mut inactive_sorted = inactive.clone();
+                                    inactive_sorted.sort_by(|a, b| a.id.cmp(&b.id));
                                     view! {
                                         <div class="models-list">
-                                            {sorted.into_iter().map(|m| {
+                                            {inactive_sorted.into_iter().map(|m| {
                                                 let on_load_cb = Callback::new(move |id: String| {
                                                     load_action.dispatch(id);
                                                 });
@@ -944,18 +761,21 @@ pub fn Dashboard() -> impl IntoView {
                                                     unload_action.dispatch(id);
                                                 });
                                                 view! {
-                                                    <ModelRow
-                                                        id=m.id
+                                                    <ModelCard
+                                                        id=m.id.clone()
                                                         db_id=m.db_id
-                                                        display_name=m.display_name
-                                                        quant_display=m.quant_display
-                                                        context_display=m.context_display
-                                                        backend_name=m.backend_name
-                                                        state=m.state
-                                                        load_pending=load_busy
-                                                        unload_pending=unload_busy
+                                                        display_name=model_display_name(&m)
+                                                        quant=m.quant.clone()
+                                                        context_length=m.context_length
+                                                        backend=m.backend.clone()
+                                                        log_source=Some(format!("{}_{}", m.backend, m.id))
+                                                        state=m.state.clone()
+                                                        loaded=None
+                                                        enabled=None
                                                         on_load=on_load_cb
                                                         on_unload=on_unload_cb
+                                                        load_busy=load_busy
+                                                        unload_busy=unload_busy
                                                     />
                                                 }
                                             }).collect::<Vec<_>>()}
@@ -1167,100 +987,6 @@ mod tests {
         assert_eq!(active[1].state, "loading");
         assert_eq!(active[2].id, "e");
         assert_eq!(active[2].state, "unloading");
-    }
-
-    /// Loaded (ready) models must use the success badge class so they visually pop
-    /// against idle entries in the Active Models grid.
-    #[test]
-    fn model_status_badge_class_uses_success_when_ready() {
-        assert_eq!(model_status_badge_class("ready"), "badge badge-success");
-    }
-
-    /// Idle models must use the muted badge class so they recede compared to
-    /// loaded entries — matching the convention used elsewhere on the
-    /// `/models` page.
-    #[test]
-    fn model_status_badge_class_uses_muted_when_idle() {
-        assert_eq!(model_status_badge_class("idle"), "badge badge-muted");
-    }
-
-    /// Badge text mirrors the badge colour: "Loaded" for ready models,
-    /// "Idle" for everything else. Tests both branches so a future renaming
-    /// can't silently drift one of them.
-    #[test]
-    fn model_status_badge_label_distinguishes_ready_and_idle() {
-        assert_eq!(model_status_badge_label("ready"), "Loaded");
-        assert_eq!(model_status_badge_label("idle"), "Idle");
-    }
-
-    /// Ready models surface an Unload action — destructive styling so the
-    /// user understands clicking it tears down a running server.
-    #[test]
-    fn model_action_button_class_uses_danger_when_ready() {
-        assert_eq!(model_action_button_class("ready"), "btn btn-danger btn-sm");
-    }
-
-    /// Idle models surface a Load action — affirmative styling so the user
-    /// understands clicking it spins up a server.
-    #[test]
-    fn model_action_button_class_uses_success_when_idle() {
-        assert_eq!(model_action_button_class("idle"), "btn btn-success btn-sm");
-    }
-
-    /// Loading models get a disabled secondary button.
-    #[test]
-    fn model_action_button_class_uses_secondary_when_loading() {
-        assert_eq!(
-            model_action_button_class("loading"),
-            "btn btn-secondary btn-sm"
-        );
-    }
-
-    /// Unloading models get a disabled secondary button.
-    #[test]
-    fn model_action_button_class_uses_secondary_when_unloading() {
-        assert_eq!(
-            model_action_button_class("unloading"),
-            "btn btn-secondary btn-sm"
-        );
-    }
-
-    /// Failed models get a warning button (Retry).
-    #[test]
-    fn model_action_button_class_uses_warning_when_failed() {
-        assert_eq!(
-            model_action_button_class("failed"),
-            "btn btn-warning btn-sm"
-        );
-    }
-
-    /// Action button labels must match their visual styling.
-    #[test]
-    fn model_action_button_label_distinguishes_states() {
-        assert_eq!(model_action_button_label("ready"), "Unload");
-        assert_eq!(model_action_button_label("idle"), "Load");
-        assert_eq!(model_action_button_label("loading"), "Loading…");
-        assert_eq!(model_action_button_label("unloading"), "Unloading…");
-        assert_eq!(model_action_button_label("failed"), "Retry");
-    }
-
-    /// Status badge class and label helpers map states correctly.
-    #[test]
-    fn model_status_badge_class_and_label_map_all_states() {
-        assert_eq!(model_status_badge_class("ready"), "badge badge-success");
-        assert_eq!(model_status_badge_label("ready"), "Loaded");
-
-        assert_eq!(model_status_badge_class("loading"), "badge badge-info");
-        assert_eq!(model_status_badge_label("loading"), "Loading");
-
-        assert_eq!(model_status_badge_class("unloading"), "badge badge-warning");
-        assert_eq!(model_status_badge_label("unloading"), "Unloading");
-
-        assert_eq!(model_status_badge_class("failed"), "badge badge-error");
-        assert_eq!(model_status_badge_label("failed"), "Failed");
-
-        assert_eq!(model_status_badge_class("idle"), "badge badge-muted");
-        assert_eq!(model_status_badge_label("idle"), "Idle");
     }
 
     /// `active_models` includes ready, loading, and unloading models.
