@@ -61,6 +61,8 @@ pub struct LlamaBenchConfig {
 
 /// Run a benchmark using llama-bench and return the report.
 ///
+/// `quant` is an optional quant label (e.g. "Q6_K") that overrides the model
+/// config's default quant when resolving the GGUF file path.
 /// `backend_name` is an optional override — if provided, llama-bench is
 /// resolved from that backend's installation path instead of the model's
 /// configured backend.
@@ -70,6 +72,7 @@ pub struct LlamaBenchConfig {
 pub async fn run_llama_bench(
     config: &Config,
     model_id: &str,
+    quant: Option<&str>,
     backend_name: Option<&str>,
     bench_config: &LlamaBenchConfig,
     progress: &dyn ProgressSink,
@@ -95,7 +98,8 @@ pub async fn run_llama_bench(
         .resolve_server(&model_configs, resolved_id)
         .context("Failed to resolve server config for benchmark")?;
 
-    let model_path = resolve_model_path(config, &db_dir, &conn, &model_configs, resolved_id)?;
+    let model_path =
+        resolve_model_path(config, &db_dir, &conn, &model_configs, resolved_id, quant)?;
 
     let target_backend = backend_name.unwrap_or(&server_config.backend);
     let backend_path = {
@@ -179,7 +183,7 @@ pub async fn run_llama_bench(
     let model_info = ModelInfo {
         name: display_name,
         model_id: server_config.model.clone(),
-        quant: server_config.quant.clone(),
+        quant: quant.map(String::from).or(server_config.quant.clone()),
         backend: server_config.backend.clone(),
         gpu_type: discovery::detect_gpu_type(&backend_path),
         context_length: bench_config.ctx_override.or(server_config.context_length),
@@ -218,6 +222,7 @@ pub async fn run_llama_bench(
 
 /// Resolve the on-disk GGUF path for a model config.
 ///
+/// `quant_override` takes priority over `mc.quant` when resolving the target file.
 /// Falls back to the legacy `<db_dir>/models/` location if the configured
 /// `models_dir` doesn't hold the file.
 fn resolve_model_path(
@@ -226,6 +231,7 @@ fn resolve_model_path(
     conn: &rusqlite::Connection,
     model_configs: &std::collections::HashMap<String, crate::config::ModelConfig>,
     resolved_id: &str,
+    quant_override: Option<&str>,
 ) -> Result<std::path::PathBuf> {
     let mc = model_configs
         .get(resolved_id)
@@ -234,10 +240,24 @@ fn resolve_model_path(
     let record = crate::db::queries::get_model_config(conn, rec_id)?
         .with_context(|| format!("Model config record (id={}) not found in database", rec_id))?;
     let files = crate::db::queries::get_model_files(conn, record.id)?;
+
+    // Resolve the target filename: prefer quant_override, then mc.quant from config,
+    // falling back to the first .gguf if quants map is empty (legacy configs).
+    let first_gguf = files
+        .iter()
+        .find(|f| f.filename.ends_with(".gguf"))
+        .map(|f| f.filename.clone());
+
+    let target_filename = quant_override
+        .or(mc.quant.as_deref())
+        .and_then(|quant_label| mc.quants.get(quant_label).map(|qe| qe.file.clone()))
+        .or(first_gguf)
+        .context("No model file found for this config")?;
+
     let model_file = files
         .into_iter()
-        .find(|f| f.filename.ends_with(".gguf"))
-        .context("No .gguf model file found for this config")?;
+        .find(|f| f.filename == target_filename)
+        .context("Resolved model file not found in database")?;
 
     let model_data_dir = config.models_dir()?;
     let candidate = model_data_dir

@@ -314,7 +314,16 @@ pub fn Benchmarks() -> impl IntoView {
 
     // Submit benchmark and connect SSE
     let submit_benchmark = move || {
-        let model_id = selected_model.get();
+        // selected_model holds "id:quant" — split to extract both parts.
+        let raw_model = selected_model.get();
+        let (model_id, quant) = if let Some(colon) = raw_model.find(':') {
+            (
+                raw_model[..colon].to_string(),
+                Some(raw_model[colon + 1..].to_string()),
+            )
+        } else {
+            (raw_model, None)
+        };
         let pp = parse_sizes(&pp_sizes_str.get());
         let tg = parse_sizes(&tg_sizes_str.get());
         let runs_val = runs.get();
@@ -352,6 +361,7 @@ pub fn Benchmarks() -> impl IntoView {
             };
             let body = serde_json::json!({
                 "model_id": model_id,
+                "quant": quant,
                 "backend_name": backend_name,
                 "benchmark_type": Some(selected_bench_type.get()),
                 "pp_sizes": pp,
@@ -408,12 +418,16 @@ pub fn Benchmarks() -> impl IntoView {
     });
 
     // When the display_name changes, auto-select the first quant so the id is
-    // always populated.
+    // always populated. Value format is "id:quant".
     Effect::new(move |_| {
         let dn = selected_display_name.get();
         let models = available_models.get();
-        if let Some((id, _, _)) = models.iter().find(|(_, name, _)| name == &dn) {
-            selected_model.set(id.clone());
+        if let Some((id, _, quants)) = models.iter().find(|(_, name, _)| name == &dn) {
+            if let Some(first_quant) = quants.first() {
+                selected_model.set(format!("{}:{}", id, first_quant));
+            } else {
+                selected_model.set(id.clone());
+            }
         } else {
             selected_model.set(String::new());
         }
@@ -542,9 +556,10 @@ pub fn Benchmarks() -> impl IntoView {
                                     quants.iter().map(move |quant| (id.clone(), quant.clone()))
                                 })
                                 .map(|(id_clone, quant)| {
-                                    let is_selected = id_clone == selected_id;
+                                    let value = format!("{}:{}", id_clone, quant);
+                                    let is_selected = value == selected_id;
                                     view! {
-                                        <option value=id_clone selected=is_selected>{quant}</option>
+                                        <option value=value selected=is_selected>{quant}</option>
                                     }.into_any()
                                 }).collect::<Vec<_>>()
                         }}

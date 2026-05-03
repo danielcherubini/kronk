@@ -26,6 +26,10 @@ use tama_core::bench::llama_cli_spec::{SpecBenchConfig, SpecType};
 #[derive(Debug, Clone, Deserialize)]
 pub struct BenchmarkRunRequest {
     pub model_id: String,
+    /// Optional quant label (e.g. "Q6_K"). When provided, the benchmark uses
+    /// the GGUF file for this specific quant instead of the default.
+    #[serde(default)]
+    pub quant: Option<String>,
     /// Optional backend name to use for llama-bench. If not provided, the
     /// backend is resolved from the model config.
     #[serde(default)]
@@ -63,6 +67,10 @@ pub struct BenchmarkRunResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpecBenchmarkRunRequest {
     pub model_id: String,
+    /// Optional quant label (e.g. "Q6_K"). When provided, the benchmark uses
+    /// the GGUF file for this specific quant instead of the default.
+    #[serde(default)]
+    pub quant: Option<String>,
     #[serde(default)]
     pub backend_name: Option<String>,
     pub spec_types: Vec<SpecType>,
@@ -153,10 +161,21 @@ pub async fn run_benchmark(
     let job_id = job.id.clone();
     let req_clone = req.clone();
     let config_path = state.config_path.clone();
+    let proxy_base_url = state.proxy_base_url.clone();
+    let client = state.client.clone();
 
     // Spawn the benchmark in the background
     tokio::spawn(async move {
-        if let Err(e) = run_benchmark_inner(jobs.clone(), &job, &req_clone, config_path).await {
+        if let Err(e) = run_benchmark_inner(
+            jobs.clone(),
+            &job,
+            &req_clone,
+            config_path,
+            proxy_base_url,
+            client,
+        )
+        .await
+        {
             jobs.finish(&job, JobStatus::Failed, Some(e.to_string()))
                 .await;
         } else {
@@ -172,8 +191,14 @@ async fn run_benchmark_inner(
     job: &Arc<crate::jobs::Job>,
     req: &BenchmarkRunRequest,
     config_path: Option<std::path::PathBuf>,
+    proxy_base_url: String,
+    client: reqwest::Client,
 ) -> Result<()> {
     use tama_core::bench::llama_bench::{self, LlamaBenchConfig};
+
+    // Unload any active server for this model before running the benchmark.
+    // This prevents GPU memory conflicts when the model is already loaded.
+    unload_model_before_benchmark(&client, &proxy_base_url, &req.model_id, &job.id).await;
 
     // Load config - clone config_dir for the blocking task
     let config_dir = config_path
@@ -260,6 +285,7 @@ async fn run_benchmark_inner(
     let report = llama_bench::run_llama_bench(
         &config,
         &req.model_id,
+        req.quant.as_deref(),
         req.backend_name.as_deref(),
         &bench_config,
         &sink,
@@ -414,10 +440,20 @@ pub async fn run_spec_benchmark(
     let job_id = job.id.clone();
     let req_clone = req.clone();
     let config_path = state.config_path.clone();
+    let proxy_base_url = state.proxy_base_url.clone();
+    let client = state.client.clone();
 
     // Spawn the benchmark in the background
     tokio::spawn(async move {
-        if let Err(e) = run_spec_benchmark_inner(jobs.clone(), &job, &req_clone, config_path).await
+        if let Err(e) = run_spec_benchmark_inner(
+            jobs.clone(),
+            &job,
+            &req_clone,
+            config_path,
+            proxy_base_url,
+            client,
+        )
+        .await
         {
             tracing::error!(job_id = %job.id, error = %e, "Spec benchmark failed");
             jobs.finish(&job, JobStatus::Failed, Some(e.to_string()))
@@ -440,8 +476,13 @@ async fn run_spec_benchmark_inner(
     job: &Arc<crate::jobs::Job>,
     req: &SpecBenchmarkRunRequest,
     config_path: Option<std::path::PathBuf>,
+    proxy_base_url: String,
+    client: reqwest::Client,
 ) -> Result<()> {
     use tama_core::bench::llama_cli_spec;
+
+    // Unload any active server for this model before running the benchmark.
+    unload_model_before_benchmark(&client, &proxy_base_url, &req.model_id, &job.id).await;
 
     // Load config
     let config_dir = config_path
@@ -474,7 +515,14 @@ async fn run_spec_benchmark_inner(
         .resolve_server(&model_configs, resolved_id)
         .context("Failed to resolve server config for benchmark")?;
 
-    let model_path = resolve_model_path(&config, &db_dir, &conn, &model_configs, resolved_id)?;
+    let model_path = resolve_model_path(
+        &config,
+        &db_dir,
+        &conn,
+        &model_configs,
+        resolved_id,
+        req.quant.as_deref(),
+    )?;
 
     // Get model display name from config
     let display_name = model_configs.get(resolved_id).and_then(|mc| {
@@ -599,7 +647,7 @@ async fn run_spec_benchmark_inner(
         &tama_core::db::queries::BenchmarkInsertParams {
             model_id: &req.model_id,
             display_name: display_name.as_deref(),
-            quant: None,
+            quant: req.quant.as_deref(),
             backend: target_backend.to_string().as_str(),
             engine: "llama_cli_spec",
             pp_sizes_json,
@@ -628,13 +676,47 @@ async fn run_spec_benchmark_inner(
     Ok(())
 }
 
+/// Best-effort unload of any active proxy server for the given model.
+/// Used before benchmarks to prevent GPU memory conflicts. Errors are logged
+/// at debug level and never block the benchmark — the model may not be loaded,
+/// or the proxy may be unreachable.
+async fn unload_model_before_benchmark(
+    client: &reqwest::Client,
+    proxy_base_url: &str,
+    model_id: &str,
+    job_id: &str,
+) {
+    let unload_url = format!("{}/tama/v1/models/{}/unload", proxy_base_url, model_id);
+    match client.post(&unload_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(job_id = %job_id, "Unloaded active model before benchmark");
+        }
+        Ok(resp) => {
+            tracing::debug!(
+                job_id = %job_id,
+                status = %resp.status(),
+                "Model unload returned non-success (model may not be loaded)"
+            );
+        }
+        Err(e) => {
+            tracing::debug!(
+                job_id = %job_id,
+                error = %e,
+                "Failed to call model unload (may not be reachable)"
+            );
+        }
+    }
+}
+
 /// Resolve a model's file path from config and database.
+/// `quant_override` takes priority over `mc.quant` when resolving the target file.
 fn resolve_model_path(
     config: &tama_core::config::Config,
     db_dir: &std::path::Path,
     conn: &rusqlite::Connection,
     model_configs: &std::collections::HashMap<String, tama_core::config::ModelConfig>,
     resolved_id: &str,
+    quant_override: Option<&str>,
 ) -> Result<std::path::PathBuf> {
     let mc = model_configs
         .get(resolved_id)
@@ -644,22 +726,18 @@ fn resolve_model_path(
         .with_context(|| format!("Model config record (id={}) not found in database", rec_id))?;
     let files = tama_core::db::queries::get_model_files(conn, record.id)?;
 
-    // Resolve the target filename: use the selected quant's file from mc.quants,
+    // Resolve the target filename: prefer quant_override, then mc.quant from config,
     // falling back to the first .gguf if quants map is empty (legacy configs).
     let first_gguf = files
         .iter()
         .find(|f| f.filename.ends_with(".gguf"))
         .map(|f| f.filename.clone());
 
-    let target_filename = if let Some(ref quant_label) = mc.quant {
-        mc.quants
-            .get(quant_label)
-            .map(|qe| qe.file.clone())
-            .or(first_gguf.clone())
-    } else {
-        first_gguf
-    }
-    .context("No model file found for this config")?;
+    let target_filename = quant_override
+        .or(mc.quant.as_deref())
+        .and_then(|quant_label| mc.quants.get(quant_label).map(|qe| qe.file.clone()))
+        .or(first_gguf)
+        .context("No model file found for this config")?;
 
     let model_file = files
         .into_iter()
