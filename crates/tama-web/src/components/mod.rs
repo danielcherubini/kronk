@@ -1,4 +1,5 @@
 pub mod backend_card;
+pub mod model_card;
 
 pub mod context_length_selector;
 // pub mod backup_section; // TODO: Fix compilation
