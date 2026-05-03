@@ -92,8 +92,16 @@ pub fn Logs() -> impl IntoView {
         });
     });
 
-    // Check for ?source= query parameter on mount and pre-select it
+    // Pre-select source from ?source= query parameter once sources are loaded.
+    // Depends on sources.get() so it runs after the <option> elements are rendered,
+    // but only applies once (guard prevents overwriting user's manual selection on polls).
+    let url_param_applied = RwSignal::new(false);
     Effect::new(move |_| {
+        let _ = sources.get(); // depend on sources to re-run when data arrives
+        if url_param_applied.get() {
+            return; // already applied, don't overwrite user's manual selection
+        }
+        url_param_applied.set(true);
         if let Some(href) = web_sys::window().and_then(|w| w.location().href().ok()) {
             if let Some(query_start) = href.find('?') {
                 let query = &href[query_start + 1..];
