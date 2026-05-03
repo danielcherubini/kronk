@@ -744,6 +744,7 @@ label {
   margin-bottom: 0.25rem;
   border-radius: 0.5rem;
   border-left: 3px solid #374151;
+  background-color: var(--bg-secondary);
   transition:
     border-color var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -837,7 +838,7 @@ label {
   justify-content: center;
   width: 28px;
   height: 28px;
-  padding: 0;
+  padding: 4px;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   background: transparent;
@@ -847,6 +848,11 @@ label {
     color var(--transition-fast),
     border-color var(--transition-fast),
     background var(--transition-fast);
+}
+
+.model-list-card .btn-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .model-list-card .btn-icon:hover {

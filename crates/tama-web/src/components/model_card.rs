@@ -21,24 +21,24 @@ fn server_icon() -> impl IntoView {
     }
 }
 
-/// A clipboard/document glyph, 14×14.
+/// A clipboard/document glyph.
 fn logs_icon() -> impl IntoView {
     view! {
         <svg viewBox="0 0 14 14" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-            <rect x="3" y="1" width="8" height="12" rx="1" stroke="currentColor" stroke-width="1.1" fill="none" />
-            <line x1="5" y1="4" x2="9" y2="4" stroke="currentColor" stroke-width="1.1" />
-            <line x1="5" y1="6" x2="9" y2="6" stroke="currentColor" stroke-width="1.1" />
-            <line x1="5" y1="8" x2="7" y2="8" stroke="currentColor" stroke-width="1.1" />
+            <rect x="3" y="1" width="8" height="12" rx="1" stroke="currentColor" stroke-width="1.2" fill="none" />
+            <line x1="5" y1="4" x2="9" y2="4" stroke="currentColor" stroke-width="1.2" />
+            <line x1="5" y1="6" x2="9" y2="6" stroke="currentColor" stroke-width="1.2" />
+            <line x1="5" y1="8" x2="7" y2="8" stroke="currentColor" stroke-width="1.2" />
         </svg>
     }
 }
 
-/// A pencil glyph, 14×14.
+/// A pencil glyph.
 fn edit_icon() -> impl IntoView {
     view! {
         <svg viewBox="0 0 14 14" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 2l2 2-7 7-3 1 1-3z" stroke="currentColor" stroke-width="1.1" fill="none" />
-            <line x1="9" y1="3" x2="11" y2="5" stroke="currentColor" stroke-width="1.1" />
+            <path d="M10 2l2 2-7 7-3 1 1-3z" stroke="currentColor" stroke-width="1.2" fill="none" />
+            <line x1="9" y1="3" x2="11" y2="5" stroke="currentColor" stroke-width="1.2" />
         </svg>
     }
 }
