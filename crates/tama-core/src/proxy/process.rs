@@ -223,8 +223,6 @@ pub async fn check_health(url: &str, timeout: Option<u64>) -> Result<reqwest::Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
     #[tokio::test]
     async fn test_kill_process_group_nonexistent_pid_returns_ok() {
         // Use a PID that definitely doesn't exist.
@@ -252,9 +250,8 @@ mod tests {
     #[allow(unused_imports)]
     #[tokio::test]
     async fn test_process_group_kills_children() {
-        // Spawn a shell that forks a child (sleep 100) then exits immediately.
-        // The shell runs in its own process group (we set it up).
         use std::os::unix::process::CommandExt;
+        use std::time::Duration;
         let mut child = TokioCommand::new("/bin/sh");
         child.process_group(0);
         child.arg("-c").arg("sleep 100 & exit 0");
