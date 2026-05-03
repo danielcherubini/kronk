@@ -123,7 +123,11 @@ pub async fn perform_update(
         tokio::task::spawn_blocking(move || perform_update_sync(&current, on_progress)),
     )
     .await
-    .with_context(|| format!("Update timed out after {UPDATE_PERFORM_TIMEOUT_SECS}s — check network connectivity"))?
+    .with_context(|| {
+        format!(
+            "Update timed out after {UPDATE_PERFORM_TIMEOUT_SECS}s — check network connectivity"
+        )
+    })?
     .context("spawn_blocking panicked")?
 }
 
