@@ -12,6 +12,7 @@ pub enum ModelState {
         model_name: String,
         backend: String,
         backend_url: String,
+        backend_pid: u32,
         last_accessed: Instant,
         start_time: Instant,
         consecutive_failures: Arc<std::sync::atomic::AtomicU32>,
@@ -91,6 +92,7 @@ impl ModelState {
 
     pub fn backend_pid(&self) -> Option<u32> {
         match self {
+            ModelState::Starting { backend_pid, .. } => Some(*backend_pid),
             ModelState::Ready { backend_pid, .. } => Some(*backend_pid),
             ModelState::Unloading { backend_pid, .. } => Some(*backend_pid),
             _ => None,

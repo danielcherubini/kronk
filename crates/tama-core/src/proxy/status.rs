@@ -449,6 +449,7 @@ mod tests {
                     model_name: "alpha".to_string(),
                     backend: "llama_cpp".to_string(),
                     backend_url: "http://127.0.0.1:8000".to_string(),
+                    backend_pid: 0,
                     last_accessed: Instant::now(),
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(AtomicU32::new(0)),

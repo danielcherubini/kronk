@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 use tracing::{debug, info, warn};
 
-use super::process::{force_kill_process, is_process_alive, kill_process, override_arg};
+use super::process::{
+    configure_process_group, force_kill_process, force_kill_process_group, is_process_alive,
+    is_process_group_alive, kill_process, kill_process_group, override_arg,
+};
 use super::types::{ModelState, ProxyState};
 use crate::backends::BackendRegistry;
 use crate::logging;
@@ -53,6 +56,7 @@ impl ProxyState {
                     model_name: model_name.to_string(),
                     backend: server_config.backend.clone(),
                     backend_url: String::new(),
+                    backend_pid: 0,
                     last_accessed: Instant::now(),
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -96,6 +100,7 @@ impl ProxyState {
 
         let mut child = tokio::process::Command::new(&backend_path);
         crate::process::configure_backend_command(&mut child, &backend_path);
+        configure_process_group(&mut child);
         child
             .args(&args)
             .env("MODEL_NAME", model_name)
@@ -122,6 +127,14 @@ impl ProxyState {
             "Backend '{}' started for server '{}' (pid: {:?})",
             server_config.backend, server_name, pid
         );
+
+        // Update the PID in the Starting state so cleanup paths can find it
+        {
+            let mut models = self.models.write().await;
+            if let Some(ModelState::Starting { backend_pid, .. }) = models.get_mut(&server_name) {
+                *backend_pid = pid;
+            }
+        }
 
         // Get the backend log stream for SSE broadcasting — use same key as
         // the dashboard constructs: {backend}_{server_name}.
@@ -196,22 +209,48 @@ impl ProxyState {
         // Wait for health check to pass
         let timeout = Duration::from_secs(self.config.read().await.proxy.startup_timeout_secs);
         let start = Instant::now();
+        let mut consecutive_successes: u32 = 0;
         let mut health_ok = false;
 
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
             if start.elapsed() >= timeout {
-                // Kill the process on timeout to prevent orphan
-                let _ = kill_process(pid).await;
+                warn!(
+                    "Startup health check timeout for server '{}' after {}s, killing process group",
+                    server_name,
+                    timeout.as_secs()
+                );
+                // Kill entire process group, not just parent
+                let _ = kill_process_group(pid).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                if is_process_group_alive(pid) {
+                    warn!("Process group {} still alive, sending SIGKILL", pid);
+                    let _ = force_kill_process_group(pid).await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
                 break;
             }
 
             if let Ok(response) = super::process::check_health(&health_url, Some(30)).await {
                 if response.status().is_success() {
-                    debug!("Health check passed for server: {}", server_name);
-                    health_ok = true;
-                    break;
+                    consecutive_successes += 1;
+                    if consecutive_successes >= 2 {
+                        debug!(
+                            "Health check confirmed for server '{}' ({} consecutive successes)",
+                            server_name, consecutive_successes
+                        );
+                        health_ok = true;
+                        break;
+                    }
+                    debug!(
+                        "Health check passed for server '{}' ({}/2 consecutive)",
+                        server_name, consecutive_successes
+                    );
+                } else {
+                    consecutive_successes = 0;
                 }
+            } else {
+                consecutive_successes = 0;
             }
         }
 
@@ -463,8 +502,8 @@ impl ProxyState {
         let mut failed_to_remove = Vec::new();
         // (server_name, model_name, backend, restart_count, pid, backend_url)
         let mut dead_pid_candidates: Vec<(String, String, String, u32, u32, String)> = Vec::new();
-        // (server_name, model_name, backend, start_time)
-        let mut stuck_starting_servers: Vec<(String, String, String, Instant)> = Vec::new();
+        // (server_name, model_name, backend, start_time, pid)
+        let mut stuck_starting_servers: Vec<(String, String, String, Instant, u32)> = Vec::new();
 
         let (auto_unload, idle_timeout_secs, startup_timeout_secs, max_restarts, restart_delay_ms) = {
             let cfg = self.config.read().await;
@@ -497,6 +536,7 @@ impl ProxyState {
                         state.model_name().to_string(),
                         state.backend().to_string(),
                         *start_time,
+                        state.backend_pid().unwrap_or(0),
                     ));
                 }
                 continue;
@@ -599,37 +639,58 @@ impl ProxyState {
             }
         }
 
-        // Handle stuck Starting — transition to Failed
+        // Handle stuck Starting — transition to Failed and kill orphaned process groups
         if !stuck_starting_servers.is_empty() {
-            let mut models = self.models.write().await;
-            for (server_name, model_name, backend, observed_start) in &stuck_starting_servers {
-                // Revalidate: only transition if still in Starting state with matching start_time
-                // (could have become Ready between Phase 1 and Phase 3)
-                if let Some(existing) = models.get(server_name) {
-                    let still_starting = matches!(existing, ModelState::Starting { start_time, .. } if start_time == observed_start);
-                    if !still_starting {
-                        debug!(
-                            "Server '{}' state or start_time changed, skipping stuck transition",
-                            server_name
-                        );
-                        continue;
+            let mut pids_to_clean: Vec<(String, u32)> = Vec::new();
+            {
+                let mut models = self.models.write().await;
+                for (server_name, model_name, backend, observed_start, observed_pid) in
+                    &stuck_starting_servers
+                {
+                    // Revalidate: only transition if still in Starting state with matching start_time
+                    // (could have become Ready between Phase 1 and Phase 3)
+                    if let Some(existing) = models.get(server_name) {
+                        let still_starting = matches!(existing, ModelState::Starting { start_time, .. } if start_time == observed_start);
+                        if !still_starting {
+                            debug!(
+                                "Server '{}' state or start_time changed, skipping stuck transition",
+                                server_name
+                            );
+                            continue;
+                        }
+                    }
+                    models.insert(
+                        server_name.clone(),
+                        ModelState::Failed {
+                            model_name: model_name.clone(),
+                            backend: backend.clone(),
+                            error: format!(
+                                "Stuck in Starting state for {}s — backend failed to initialize",
+                                startup_timeout_secs
+                            ),
+                        },
+                    );
+                    warn!(
+                        "Transitioned '{}' to Failed (stuck in Starting)",
+                        server_name
+                    );
+                    pids_to_clean.push((server_name.clone(), *observed_pid));
+                }
+            }
+            // Kill orphaned process groups outside the write lock
+            for (server_name, pid) in pids_to_clean {
+                if pid > 0 {
+                    warn!(
+                        "Killing orphaned process group {} for stuck server '{}'",
+                        pid, server_name
+                    );
+                    let _ = super::process::kill_process_group(pid).await;
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if super::process::is_process_group_alive(pid) {
+                        let _ = super::process::force_kill_process_group(pid).await;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
                 }
-                models.insert(
-                    server_name.clone(),
-                    ModelState::Failed {
-                        model_name: model_name.clone(),
-                        backend: backend.clone(),
-                        error: format!(
-                            "Stuck in Starting state for {}s — backend failed to initialize",
-                            startup_timeout_secs
-                        ),
-                    },
-                );
-                warn!(
-                    "Transitioned '{}' to Failed (stuck in Starting)",
-                    server_name
-                );
             }
         }
 
@@ -758,7 +819,11 @@ impl ProxyState {
         // Build return value
         let mut cleaned = Vec::new();
         cleaned.extend(failed_to_remove);
-        cleaned.extend(stuck_starting_servers.iter().map(|(n, _, _, _)| n.clone()));
+        cleaned.extend(
+            stuck_starting_servers
+                .iter()
+                .map(|(n, _, _, _, _)| n.clone()),
+        );
         cleaned.extend(confirmed_dead.iter().map(|(n, _, _, _, _)| n.clone()));
         cleaned.extend(to_unload);
         cleaned
@@ -809,6 +874,7 @@ impl ProxyState {
                     model_name: backend_name.to_string(),
                     backend: info.name.clone(),
                     backend_url: String::new(),
+                    backend_pid: 0,
                     last_accessed: Instant::now(),
                     start_time: Instant::now(),
                     consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -829,6 +895,7 @@ impl ProxyState {
 
         // Spawn the uvicorn server process
         let mut child = tokio::process::Command::new(&python_bin);
+        configure_process_group(&mut child);
         child
             .args([
                 "-m",
@@ -856,6 +923,14 @@ impl ProxyState {
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID for Kokoro-FastAPI"))?;
         info!("Kokoro-FastAPI started (pid: {:?})", pid);
 
+        // Update the PID in the Starting state so cleanup paths can find it
+        {
+            let mut models = self.models.write().await;
+            if let Some(ModelState::Starting { backend_pid, .. }) = models.get_mut(backend_name) {
+                *backend_pid = pid;
+            }
+        }
+
         // Spawn a reaper task so the child process is waited on
         let reaper_backend = backend_name.to_string();
         tokio::spawn(async move {
@@ -875,24 +950,50 @@ impl ProxyState {
             }
         });
 
-        // Health check: poll every 2s, use configured startup timeout
+        // Health check: poll every 500ms, require 2 consecutive successes
         let timeout = Duration::from_secs(self.config.read().await.proxy.startup_timeout_secs);
         let start = Instant::now();
+        let mut consecutive_successes: u32 = 0;
         let mut health_ok = false;
 
         loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
             if start.elapsed() >= timeout {
-                let _ = kill_process(pid).await;
+                warn!(
+                    "Startup health check timeout for TTS backend '{}' after {}s, killing process group",
+                    backend_name, timeout.as_secs()
+                );
+                // Kill entire process group, not just parent
+                let _ = kill_process_group(pid).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                if is_process_group_alive(pid) {
+                    warn!("Process group {} still alive, sending SIGKILL", pid);
+                    let _ = force_kill_process_group(pid).await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
                 break;
             }
 
             if let Ok(response) = super::process::check_health(&health_url, Some(30)).await {
                 if response.status().is_success() {
-                    debug!("Health check passed for TTS backend: {}", backend_name);
-                    health_ok = true;
-                    break;
+                    consecutive_successes += 1;
+                    if consecutive_successes >= 2 {
+                        debug!(
+                            "Health check confirmed for TTS backend '{}' ({} consecutive successes)",
+                            backend_name, consecutive_successes
+                        );
+                        health_ok = true;
+                        break;
+                    }
+                    debug!(
+                        "Health check passed for TTS backend '{}' ({}/2 consecutive)",
+                        backend_name, consecutive_successes
+                    );
+                } else {
+                    consecutive_successes = 0;
                 }
+            } else {
+                consecutive_successes = 0;
             }
         }
 
@@ -1043,6 +1144,7 @@ mod tests {
             model_name: model_name.to_string(),
             backend: backend.to_string(),
             backend_url: String::new(),
+            backend_pid: 0,
             last_accessed: Instant::now(),
             start_time: Instant::now(),
             consecutive_failures: Arc::new(AtomicU32::new(0)),
@@ -1152,7 +1254,7 @@ mod tests {
         assert_eq!(ready.backend_pid(), Some(12345));
 
         let starting = make_starting_state("m", "llama-cpp");
-        assert!(starting.backend_pid().is_none());
+        assert_eq!(starting.backend_pid(), Some(0));
 
         let failed = make_failed_state();
         assert!(failed.backend_pid().is_none());
