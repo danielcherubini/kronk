@@ -222,6 +222,7 @@ pub async fn check_health(url: &str, timeout: Option<u64>) -> Result<reqwest::Re
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[cfg(unix)]
