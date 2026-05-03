@@ -1,8 +1,8 @@
 use leptos::prelude::*;
-use leptos_router::components::A;
 use serde::{Deserialize, Serialize};
 
 use crate::components::modal::Modal;
+use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::utils::{post_request, rw_signal_to_signal, CheckAllModelsApiResponse};
 
@@ -36,19 +36,6 @@ fn model_display_name(m: &ModelEntry) -> String {
         .clone()
         .or(m.api_name.clone())
         .unwrap_or_else(|| m.id.to_string())
-}
-
-/// Map a model's state string to (display label, CSS badge class).
-/// Falls back to `loaded` flag when `state` is empty (API doesn't always return it).
-fn model_state_badge(state: &str, loaded: bool) -> (&'static str, &'static str) {
-    match state {
-        "ready" => ("Loaded", "badge-success"),
-        "loading" => ("Loading", "badge-info"),
-        "unloading" => ("Unloading", "badge-warning"),
-        "failed" => ("Failed", "badge-error"),
-        _ if loaded => ("Loaded", "badge-success"),
-        _ => ("Idle", "badge-muted"),
-    }
 }
 
 #[component]
@@ -211,52 +198,27 @@ pub fn Models() -> impl IntoView {
                             view! {
                                 <div class="models-list">
                                     {data.models.into_iter().map(|m| {
-                                        let id_load = m.id.to_string();
-                                        let id_unload = m.id.to_string();
-                                        let id_edit = m.id.to_string();
-                                        let enabled_class = if m.enabled { "badge badge-success" } else { "badge badge-warning" };
-                                        let (state_label, state_class) = model_state_badge(&m.state, m.loaded);
+                                        let on_load_cb = Callback::new(move |id: String| {
+                                            load_action.dispatch(id);
+                                        });
+                                        let on_unload_cb = Callback::new(move |id: String| {
+                                            unload_action.dispatch(id);
+                                        });
                                         view! {
-                                            <div class="model-row card">
-                                                <span class="model-row__name">{model_display_name(&m)}</span>
-                                                <span class="model-row__meta">{m.quant.clone().unwrap_or_else(|| "\u{2014}".to_string())}</span>
-                                                <span class="model-row__backend text-mono">{m.backend}</span>
-                                                <div class="model-row__actions">
-                                                    <span class=enabled_class>
-                                                        {if m.enabled { "Enabled" } else { "Disabled" }}
-                                                    </span>
-                                                    <span class={format!("badge {}", state_class)}>{state_label}</span>
-                                                    {if m.loaded {
-                                                        view! {
-                                                            <button
-                                                                class="btn btn-danger btn-sm"
-                                                                on:click=move |_| {
-                                                                    unload_action.dispatch(id_unload.clone());
-                                                                }
-                                                            >
-                                                                "Unload"
-                                                            </button>
-                                                        }.into_any()
-                                                    } else {
-                                                        view! {
-                                                            <button
-                                                                class="btn btn-success btn-sm"
-                                                                on:click=move |_| {
-                                                                    load_action.dispatch(id_load.clone());
-                                                                }
-                                                            >
-                                                                "Load"
-                                                            </button>
-                                                        }.into_any()
-                                                    }}
-                                                    <A
-                                                        href=format!("/models/{}/edit", id_edit)
-                                                        attr:class="btn btn-secondary btn-sm"
-                                                    >
-                                                        "Edit"
-                                                    </A>
-                                                </div>
-                                            </div>
+                                            <ModelCard
+                                                id=m.id.to_string()
+                                                db_id=Some(m.id)
+                                                display_name=model_display_name(&m)
+                                                quant=m.quant.clone()
+                                                context_length=None
+                                                backend=m.backend.clone()
+                                                log_source=Some(m.backend.clone())
+                                                state=m.state.clone()
+                                                loaded=Some(m.loaded)
+                                                enabled=Some(m.enabled)
+                                                on_load=on_load_cb
+                                                on_unload=on_unload_cb
+                                            />
                                         }
                                     }).collect::<Vec<_>>()}
                                 </div>
