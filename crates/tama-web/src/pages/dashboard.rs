@@ -10,7 +10,7 @@ use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::components::sparkline::SparklineChart;
 use crate::utils::{
-    extract_and_store_csrf_token, post_request, rw_signal_to_signal, CheckAllModelsApiResponse,
+    extract_and_store_csrf_token, post_request, rw_signal_to_signal,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,10 +375,6 @@ pub fn Dashboard() -> impl IntoView {
     // Pull Model modal
     let pull_modal_open = RwSignal::new(false);
 
-    // Check all for updates
-    let check_all_busy = RwSignal::new(false);
-    let check_all_status = RwSignal::new(Option::<(bool, String)>::None);
-
     let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
         let id = id.clone();
         async move {
@@ -404,107 +400,7 @@ pub fn Dashboard() -> impl IntoView {
         }
     });
 
-    let check_all_action: Action<(), (), LocalStorage> =
-        Action::new_unsync(move |_: &()| async move {
-            check_all_busy.set(true);
-            check_all_status.set(None);
 
-            // Fetch the list of models
-            let resp = match gloo_net::http::Request::get("/tama/v1/models").send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    check_all_status.set(Some((false, format!("Failed to list models: {}", e))));
-                    check_all_busy.set(false);
-                    return;
-                }
-            };
-
-            // Store CSRF token from response for subsequent POST requests
-            extract_and_store_csrf_token(&resp);
-
-            // Surface non-2xx HTTP responses
-            if !resp.ok() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                check_all_status.set(Some((
-                    false,
-                    format!("Failed to list models: HTTP {} {}", status, body),
-                )));
-                check_all_busy.set(false);
-                return;
-            }
-
-            // Parse using typed struct (NOT serde_json::Value::as_str() — that returns None for JSON numbers)
-            let list: CheckAllModelsApiResponse = match resp.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    check_all_status
-                        .set(Some((false, format!("Failed to parse models list: {}", e))));
-                    check_all_busy.set(false);
-                    return;
-                }
-            };
-
-            let ids: Vec<i64> = list.models.iter().map(|m| m.id).collect();
-            let total = ids.len();
-
-            // Safety valve: abort if there are too many models to prevent
-            // the UI from being blocked indefinitely. Sequential refresh of
-            // 100+ models would take minutes with no timeout mechanism in WASM.
-            if total > 100 {
-                check_all_status.set(Some((
-                    false,
-                    format!(
-                        "Check all skipped: {} models exceeds the 100-model limit.\n\
-                         Consider refreshing models in smaller batches.",
-                        total
-                    ),
-                )));
-                check_all_busy.set(false);
-                return;
-            }
-
-            let mut ok_count = 0usize;
-            let mut failed = Vec::<String>::new();
-            for (index, id) in ids.into_iter().enumerate() {
-                // Update progress for better UX during long operations
-                if total > 5 && index % 5 == 0 {
-                    check_all_status.set(Some((
-                        false,
-                        format!("Refreshing models... {}/{}", index.saturating_add(1), total),
-                    )));
-                }
-                let url = format!("/tama/v1/models/{}/refresh", id);
-                match post_request(&url).send().await {
-                    Ok(r) if r.status() == 200 => ok_count += 1,
-                    Ok(r) => {
-                        let text = r.text().await.unwrap_or_default();
-                        failed.push(format!("{}: {}", id, text));
-                    }
-                    Err(e) => failed.push(format!("{}: {}", id, e)),
-                }
-            }
-
-            if failed.is_empty() {
-                check_all_status.set(Some((
-                    true,
-                    format!("Refreshed {}/{} models successfully.", ok_count, total),
-                )));
-            } else {
-                check_all_status.set(Some((
-                    false,
-                    format!(
-                        "Refreshed {}/{} models. Failures: {}",
-                        ok_count,
-                        total,
-                        failed.join("; ")
-                    ),
-                )));
-            }
-            check_all_busy.set(false);
-            // Reconnect EventSource to pick up fresh model data from SSE stream
-            connect_trigger.update(|n| *n += 1);
-        });
 
     view! {
         <div class="page-header">
@@ -518,7 +414,7 @@ pub fn Dashboard() -> impl IntoView {
                         view! {
                             <div class="flex-between gap-1">
                                 <span class={badge_class}>{badge_text}</span>
-                                <button class="btn btn-secondary btn-sm" on:click=move |_| { restart.dispatch(()); }>
+                                <button class="btn btn-secondary" on:click=move |_| { restart.dispatch(()); }>
                                     "Restart"
                                 </button>
                             </div>
@@ -527,33 +423,11 @@ pub fn Dashboard() -> impl IntoView {
                 }}
                 // New buttons (always visible, outside conditional)
                 <button class="btn btn-secondary" on:click=move |_| pull_modal_open.set(true)>"Pull Model"</button>
-                <button
-                    class="btn btn-secondary"
-                    prop:disabled=move || check_all_busy.get()
-                    on:click=move |_| { check_all_action.dispatch(()); }
-                    title="Check HuggingFace for updated metadata on every model"
-                >
-                    {move || if check_all_busy.get() { "Checking..." } else { "Check all for updates" }}
-                </button>
+
             </div>
         </div>
 
-        // Alert banner — always visible, outside reactive closure
-        {move || check_all_status.get().map(|(ok, msg)| {
-            let cls = if ok { "alert alert--success" } else { "alert alert--error" };
-            view! {
-                <div class=cls>
-                    <span>{msg}</span>
-                    <button
-                        class="btn btn-sm btn-link alert__dismiss"
-                        on:click=move |_| { check_all_status.set(None); }
-                        attr:aria-label="Dismiss alert"
-                    >
-                        "×"
-                    </button>
-                </div>
-            }
-        })}
+
 
         {move || {
             let buf = history.get();
