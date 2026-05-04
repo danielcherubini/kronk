@@ -22,6 +22,7 @@ use crate::backends::ProgressSink;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Speculative decoding type (maps to --spec-type CLI flag).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -352,7 +353,7 @@ async fn execute_server_runs(
     }
 
     let (mean, stddev) = compute_mean_stddev(&timings);
-    let acceptance_rate = handle.parse_acceptance_rate();
+    let acceptance_rate = handle.parse_acceptance_rate().await;
     progress.log(&format!(
         "[{}] completed: {:.2} ± {:.2} tokens/s (acceptance: {:?})",
         label, mean, stddev, acceptance_rate
@@ -577,6 +578,8 @@ pub async fn run_spec_bench(
     // Step 3: Build sweep matrix.
     // Drop the baseline server now so GPU memory is available for spec-type servers.
     drop(baseline_handle);
+    // Brief pause to let GPU memory fully free before spawning new servers.
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let sweep_matrix = build_sweep_matrix(config).context("Failed to build sweep matrix")?;
     progress.log(&format!(
         "Sweep matrix: {} configurations across {} spec-types",
@@ -614,6 +617,10 @@ pub async fn run_spec_bench(
         }
 
         let mut entry = run_single_config(&binary, cfg, config, progress).await;
+
+        // Brief pause between configs to let GPU memory be freed
+        // before the next server starts loading the model.
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         if entry.status == "skipped_oom" {
             oom_detected = true;

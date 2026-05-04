@@ -221,8 +221,12 @@ impl ServerHandle {
     /// `draft acceptance rate = 0.57576 (  171 accepted /   297 generated)`
     ///
     /// Returns `Some(rate)` if found, `None` otherwise.
-    pub fn parse_acceptance_rate(&self) -> Option<f64> {
-        let lines = self.stderr_lines.blocking_lock();
+    ///
+    /// Uses `lock().await` (not `blocking_lock()`) to avoid deadlocking
+    /// the tokio runtime when called from async context while the stderr
+    /// reader task holds the lock.
+    pub async fn parse_acceptance_rate(&self) -> Option<f64> {
+        let lines = self.stderr_lines.lock().await;
         for line in lines.iter() {
             if let Some(start) = line.find("draft acceptance rate = ") {
                 let after_eq = &line[start + "draft acceptance rate = ".len()..];
