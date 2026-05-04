@@ -296,6 +296,35 @@ fn compute_mean_stddev(values: &[f64]) -> (f64, f64) {
     (mean, stddev)
 }
 
+/// Format a SweepConfig as CLI-style label for log output.
+/// e.g. `--spec-type ngram-mod --spec-draft-n-max 8 --spec-ngram-mod-n-match 16 --spec-ngram-mod-n-min 3 --spec-ngram-mod-n-max 48`
+fn format_config_label(cfg: &SweepConfig) -> String {
+    let (flag_n, flag_m, _flag_hits) = cfg.spec_type.spec_ngram_flags();
+    let mut parts = vec![
+        format!("--spec-type {}", cfg.spec_type.as_str()),
+        format!("--spec-draft-n-max {}", cfg.draft_max),
+    ];
+    if !flag_n.is_empty() {
+        if let Some(n) = cfg.ngram_n {
+            parts.push(format!("{} {}", flag_n, n));
+        }
+    }
+    if !flag_m.is_empty() {
+        if let Some(m) = cfg.ngram_m {
+            parts.push(format!("{} {}", flag_m, m));
+        }
+    }
+    if matches!(cfg.spec_type, SpecType::NgramMod) {
+        if let Some(nmin) = cfg.ngram_min {
+            parts.push(format!("--spec-ngram-mod-n-min {}", nmin));
+        }
+        if let Some(nmax) = cfg.ngram_max {
+            parts.push(format!("--spec-ngram-mod-n-max {}", nmax));
+        }
+    }
+    parts.join(" ")
+}
+
 /// Find an available port by binding to port 0.
 async fn find_available_port() -> Result<u16> {
     use std::net::TcpListener;
@@ -314,14 +343,7 @@ async fn execute_server_runs(
     bench_cfg: &SpecBenchConfig,
     progress: &dyn ProgressSink,
 ) -> SpecEntry {
-    let label = format!(
-        "{} draft_max={} n-match={:?} n-min={:?} n-max={:?}",
-        sweep_cfg.spec_type.as_str(),
-        sweep_cfg.draft_max,
-        sweep_cfg.ngram_n,
-        sweep_cfg.ngram_min,
-        sweep_cfg.ngram_max,
-    );
+    let label = format_config_label(sweep_cfg);
     let prompt = crate::bench::build_prompt(512);
     let mut timings = Vec::new();
 
@@ -385,14 +407,7 @@ async fn run_single_config(
     bench_cfg: &SpecBenchConfig,
     progress: &dyn ProgressSink,
 ) -> SpecEntry {
-    let label = format!(
-        "{} draft_max={} n-match={:?} n-min={:?} n-max={:?}",
-        cfg.spec_type.as_str(),
-        cfg.draft_max,
-        cfg.ngram_n,
-        cfg.ngram_min,
-        cfg.ngram_max,
-    );
+    let label = format_config_label(cfg);
 
     let port = match find_available_port().await {
         Ok(p) => p,
