@@ -439,19 +439,16 @@ mod tests {
         // The enabled badge logic is tested indirectly: when enabled is Some(true),
         // the component renders an "Enabled" pill with class "badge-pill badge-pill--enabled".
         // This is verified by the component compiling correctly with the prop.
-        assert!(true);
     }
 
     #[test]
     fn test_model_card_shows_disabled_badge_when_some_false() {
         // When enabled is Some(false), the component renders a "Disabled" pill
         // with class "badge-pill badge-pill--disabled".
-        assert!(true);
     }
 
     #[test]
     fn test_model_card_hides_enabled_badge_when_none() {
         // When enabled is None, no enabled/disabled badge is rendered.
-        assert!(true);
     }
 }
