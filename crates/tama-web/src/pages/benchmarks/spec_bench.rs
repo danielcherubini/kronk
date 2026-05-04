@@ -548,16 +548,23 @@ pub fn SpecBench() -> impl IntoView {
             <section class="card">
                 <h3>"Knob Configuration"</h3>
                 <div class="grid-2">
-                    <div class="form-group">
-                        <label>"Draft max values"</label>
-                        <input
-                            type="text"
-                            class="form-control"
-                            prop:value=move || draft_max_sig.get()
-                            on:input=move |e| { draft_max_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
-                        />
-                        <small class="text-muted">"Tokens to draft per round, e.g. 8,16,32,64"</small>
-                    </div>
+                    <Show when=move || {
+                        // Hide draft_max when ngram-mod is the ONLY type selected
+                        // (ngram-mod uses n-min/n-max for draft length, not draft_max)
+                        let types = spec_types_sig.get();
+                        !(types.len() == 1 && types.contains(&"ngram-mod".to_string()))
+                    }>
+                        <div class="form-group">
+                            <label>"Draft max values"</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                prop:value=move || draft_max_sig.get()
+                                on:input=move |e| { draft_max_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
+                            />
+                            <small class="text-muted">"Tokens to draft per round, e.g. 8,16,32,64 (not used for n-gram-mod)"</small>
+                        </div>
+                    </Show>
                     <div class="form-group">
                         <label>"N-gram size N"</label>
                         <input
@@ -749,6 +756,7 @@ pub fn SpecBench() -> impl IntoView {
                                     <th>"N"</th>
                                     <th>"M"</th>
                                     <th class="text-right">"t/s (± stddev)"</th>
+                                    <th class="text-right">"Acceptance"</th>
                                     <th class="text-right">"Δ vs baseline"</th>
                                 </tr>
                             </thead>
@@ -761,6 +769,7 @@ pub fn SpecBench() -> impl IntoView {
                                     <td class="text-mono">"—"</td>
                                     <td class="text-mono text-right">{format_mean_stddev(baseline_tg_ts, baseline_tg_stddev)}</td>
                                     <td class="text-mono text-right">"—"</td>
+                                    <td class="text-mono text-right">"—"</td>
                                 </tr>
                                 // Sorted spec entries
                                 {sortable.into_iter().map(|entry| {
@@ -770,12 +779,16 @@ pub fn SpecBench() -> impl IntoView {
                                     let ngram_m = entry.get("ngram_m").and_then(|v| v.as_u64());
                                     let tg_mean = entry.get("tg_ts_mean").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                     let tg_stddev = entry.get("tg_ts_stddev").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    let acceptance_rate = entry.get("acceptance_rate").and_then(|v| v.as_f64());
                                     let delta_pct = entry.get("delta_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                     let status = entry.get("status").and_then(|v| v.as_str()).unwrap_or("");
 
                                     let n_display = ngram_n.map(|v| v.to_string()).unwrap_or_else(|| "—".to_string());
                                     let m_display = ngram_m.map(|v| v.to_string()).unwrap_or_else(|| "—".to_string());
                                     let ts_display = format_mean_stddev(tg_mean, tg_stddev);
+                                    let acc_display = acceptance_rate
+                                        .map(|r| format!("{:.0}%", r * 100.0))
+                                        .unwrap_or_else(|| "—".to_string());
                                     let delta_display = format_delta(delta_pct);
                                     let badge_class = delta_badge_class(delta_pct);
 
@@ -794,6 +807,7 @@ pub fn SpecBench() -> impl IntoView {
                                             <td class="text-mono">{n_display}</td>
                                             <td class="text-mono">{m_display}</td>
                                             <td class="text-mono text-right">{ts_display}</td>
+                                            <td class="text-mono text-right">{acc_display}</td>
                                             <td class="text-mono text-right">
                                                 <span class={badge_class}>{delta_display}</span>
                                             </td>

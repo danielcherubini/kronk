@@ -2,13 +2,16 @@
 //!
 //! Spawns a `llama-server` process with the given args, waits for it to load
 //! the model and become ready, then provides a `ServerHandle` that can be used
-//! to make HTTP completion requests. Dropping the handle kills the server.
+//! to make HTTP completion requests. Captures stderr for parsing spec-decoding
+//! statistics (draft acceptance rate). Dropping the handle kills the server.
 
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 
 /// Arguments for starting a llama-server instance.
 #[derive(Debug, Clone)]
@@ -55,9 +58,6 @@ impl ServerArgs {
 
         // Disable web UI — we only need the API.
         args.push("--no-webui".to_string());
-
-        // Disable logging to keep stderr clean.
-        args.push("--log-disable".to_string());
 
         // Speculative decoding flags.
         if let Some(spec_type) = &self.spec_type {
@@ -115,6 +115,8 @@ impl ServerArgs {
 pub struct ServerHandle {
     child: Child,
     port: u16,
+    /// Collected stderr lines for parsing spec-decoding statistics.
+    stderr_lines: Arc<Mutex<Vec<String>>>,
 }
 
 impl ServerHandle {
@@ -212,6 +214,27 @@ impl ServerHandle {
 
         Ok(completion.timings.predicted_per_second)
     }
+
+    /// Parse the draft acceptance rate from collected stderr lines.
+    ///
+    /// llama-server prints statistics like:
+    /// `draft acceptance rate = 0.57576 (  171 accepted /   297 generated)`
+    ///
+    /// Returns `Some(rate)` if found, `None` otherwise.
+    pub fn parse_acceptance_rate(&self) -> Option<f64> {
+        let lines = self.stderr_lines.blocking_lock();
+        for line in lines.iter() {
+            if let Some(start) = line.find("draft acceptance rate = ") {
+                let after_eq = &line[start + "draft acceptance rate = ".len()..];
+                if let Some(end) = after_eq.find(' ') {
+                    if let Ok(rate) = after_eq[..end].parse::<f64>() {
+                        return Some(rate);
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Drop for ServerHandle {
@@ -228,7 +251,7 @@ impl Drop for ServerHandle {
 pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<ServerHandle> {
     let arg_vec = args.to_args();
 
-    let child = Command::new(&args.binary)
+    let mut child = Command::new(&args.binary)
         .args(&arg_vec)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -236,9 +259,25 @@ pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<Server
         .spawn()
         .with_context(|| format!("Failed to spawn {}", args.binary.display()))?;
 
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+
+    // Extract stderr before moving child into ServerHandle.
+    let stderr = child.stderr.take();
+    if let Some(stderr) = stderr {
+        let lines = stderr_lines.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                lines.lock().await.push(line);
+            }
+        });
+    }
+
     let handle = ServerHandle {
         child,
         port: args.port,
+        stderr_lines,
     };
 
     handle

@@ -144,6 +144,8 @@ pub struct SpecEntry {
     /// Percentage delta vs baseline. Positive = faster, negative = slower.
     /// Formula: ((tg_ts_mean - baseline_tg_ts) / baseline_tg_ts) * 100
     pub delta_pct: f64,
+    /// Draft acceptance rate from server statistics (0.0–1.0). None if not available.
+    pub acceptance_rate: Option<f64>,
     /// Status: "success", "failed", or "skipped_oom".
     pub status: String,
     /// Error message if failed. None on success.
@@ -216,46 +218,55 @@ fn build_sweep_matrix(config: &SpecBenchConfig) -> Result<Vec<SweepConfig>> {
     let mut matrix = Vec::new();
 
     for &st in spec_types {
-        for &dm in &config.draft_max_values {
-            match st {
-                SpecType::NgramSimple => {
-                    matrix.push(SweepConfig {
-                        spec_type: st,
-                        draft_max: dm,
-                        ngram_n: None,
-                        ngram_m: None,
-                        ngram_min: None,
-                        ngram_max: None,
-                    });
-                }
-                SpecType::NgramMod => {
-                    for &nn in &config.ngram_n_values {
-                        for &nm in &config.ngram_min_values {
-                            for &nxm in &config.ngram_max_values {
-                                matrix.push(SweepConfig {
-                                    spec_type: st,
-                                    draft_max: dm,
-                                    ngram_n: Some(nn),
-                                    ngram_m: None,
-                                    ngram_min: Some(nm),
-                                    ngram_max: Some(nxm),
-                                });
-                            }
-                        }
-                    }
-                }
-                SpecType::NgramMapK | SpecType::NgramMapK4v => {
-                    for &nn in &config.ngram_n_values {
-                        for &nm in &config.ngram_m_values {
+        match st {
+            SpecType::NgramMod => {
+                // ngram-mod draft length is controlled by n-min/n-max,
+                // not --spec-draft-n-max. Sweep only n-match/n-min/n-max.
+                // (Use first draft_max value as a non-binding ceiling.)
+                let dm = config.draft_max_values.first().copied().unwrap_or(16);
+                for &nn in &config.ngram_n_values {
+                    for &nm in &config.ngram_min_values {
+                        for &nxm in &config.ngram_max_values {
                             matrix.push(SweepConfig {
                                 spec_type: st,
                                 draft_max: dm,
                                 ngram_n: Some(nn),
-                                ngram_m: Some(nm),
+                                ngram_m: None,
+                                ngram_min: Some(nm),
+                                ngram_max: Some(nxm),
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {
+                for &dm in &config.draft_max_values {
+                    match st {
+                        SpecType::NgramSimple => {
+                            matrix.push(SweepConfig {
+                                spec_type: st,
+                                draft_max: dm,
+                                ngram_n: None,
+                                ngram_m: None,
                                 ngram_min: None,
                                 ngram_max: None,
                             });
                         }
+                        SpecType::NgramMapK | SpecType::NgramMapK4v => {
+                            for &nn in &config.ngram_n_values {
+                                for &nm in &config.ngram_m_values {
+                                    matrix.push(SweepConfig {
+                                        spec_type: st,
+                                        draft_max: dm,
+                                        ngram_n: Some(nn),
+                                        ngram_m: Some(nm),
+                                        ngram_min: None,
+                                        ngram_max: None,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -295,6 +306,7 @@ async fn find_available_port() -> Result<u16> {
 /// Execute benchmark runs against a running llama-server.
 ///
 /// Makes `config.runs` completion requests and returns timing stats.
+/// Parses draft acceptance rate from server stderr statistics.
 async fn execute_server_runs(
     handle: &server::ServerHandle,
     sweep_cfg: &SweepConfig,
@@ -302,11 +314,12 @@ async fn execute_server_runs(
     progress: &dyn ProgressSink,
 ) -> SpecEntry {
     let label = format!(
-        "{} draft_max={} n={:?} m={:?}",
+        "{} draft_max={} n-match={:?} n-min={:?} n-max={:?}",
         sweep_cfg.spec_type.as_str(),
         sweep_cfg.draft_max,
         sweep_cfg.ngram_n,
-        sweep_cfg.ngram_m,
+        sweep_cfg.ngram_min,
+        sweep_cfg.ngram_max,
     );
     let prompt = crate::bench::build_prompt(512);
     let mut timings = Vec::new();
@@ -330,6 +343,7 @@ async fn execute_server_runs(
                     tg_ts_mean: 0.0,
                     tg_ts_stddev: 0.0,
                     delta_pct: 0.0,
+                    acceptance_rate: None,
                     status: "failed".to_string(),
                     error: Some(e.to_string()),
                 };
@@ -338,9 +352,10 @@ async fn execute_server_runs(
     }
 
     let (mean, stddev) = compute_mean_stddev(&timings);
+    let acceptance_rate = handle.parse_acceptance_rate();
     progress.log(&format!(
-        "[{}] completed: {:.2} ± {:.2} tokens/s",
-        label, mean, stddev
+        "[{}] completed: {:.2} ± {:.2} tokens/s (acceptance: {:?})",
+        label, mean, stddev, acceptance_rate
     ));
 
     SpecEntry {
@@ -353,48 +368,53 @@ async fn execute_server_runs(
         tg_ts_mean: mean,
         tg_ts_stddev: stddev,
         delta_pct: 0.0,
+        acceptance_rate,
         status: "success".to_string(),
         error: None,
     }
 }
 
-/// Spawn a server for the given spec type and execute all configs sharing it.
-async fn run_spec_type_group(
+/// Spawn a server for a single config, execute benchmark runs, and return results.
+///
+/// Each config gets its own server to ensure correct parameters (ngram params
+/// and draft_max are server startup flags that can't be changed mid-session).
+async fn run_single_config(
     binary: &Path,
-    spec_type: SpecType,
-    configs: &[SweepConfig],
+    cfg: &SweepConfig,
     bench_cfg: &SpecBenchConfig,
     progress: &dyn ProgressSink,
-) -> Vec<SpecEntry> {
+) -> SpecEntry {
+    let label = format!(
+        "{} draft_max={} n-match={:?} n-min={:?} n-max={:?}",
+        cfg.spec_type.as_str(),
+        cfg.draft_max,
+        cfg.ngram_n,
+        cfg.ngram_min,
+        cfg.ngram_max,
+    );
+
     let port = match find_available_port().await {
         Ok(p) => p,
         Err(e) => {
             progress.log(&format!("Failed to find available port: {}", e));
-            return configs
-                .iter()
-                .map(|cfg| SpecEntry {
-                    spec_type: cfg.spec_type.as_str().to_string(),
-                    draft_max: cfg.draft_max,
-                    ngram_n: cfg.ngram_n,
-                    ngram_m: cfg.ngram_m,
-                    ngram_min: cfg.ngram_min,
-                    ngram_max: cfg.ngram_max,
-                    tg_ts_mean: 0.0,
-                    tg_ts_stddev: 0.0,
-                    delta_pct: 0.0,
-                    status: "failed".to_string(),
-                    error: Some(format!("Port allocation failed: {}", e)),
-                })
-                .collect();
+            return SpecEntry {
+                spec_type: cfg.spec_type.as_str().to_string(),
+                draft_max: cfg.draft_max,
+                ngram_n: cfg.ngram_n,
+                ngram_m: cfg.ngram_m,
+                ngram_min: cfg.ngram_min,
+                ngram_max: cfg.ngram_max,
+                tg_ts_mean: 0.0,
+                tg_ts_stddev: 0.0,
+                delta_pct: 0.0,
+                acceptance_rate: None,
+                status: "failed".to_string(),
+                error: Some(format!("Port allocation failed: {}", e)),
+            };
         }
     };
 
-    let first = configs.first().expect("config group is empty");
-    let draft_min = (first.draft_max / 2).max(1);
-    let spec_ngram_n = configs.iter().find_map(|c| c.ngram_n);
-    let spec_ngram_m = configs.iter().find_map(|c| c.ngram_m);
-    let spec_ngram_min = configs.iter().find_map(|c| c.ngram_min);
-    let spec_ngram_max = configs.iter().find_map(|c| c.ngram_max);
+    let draft_min = (cfg.draft_max / 2).max(1);
 
     let server_args = server::ServerArgs {
         binary: binary.to_path_buf(),
@@ -402,20 +422,19 @@ async fn run_spec_type_group(
         port,
         ngl: bench_cfg.ngl,
         flash_attn: bench_cfg.flash_attn,
-        spec_type: Some(spec_type),
-        spec_ngram_n,
-        spec_ngram_m,
+        spec_type: Some(cfg.spec_type),
+        spec_ngram_n: cfg.ngram_n,
+        spec_ngram_m: cfg.ngram_m,
         spec_ngram_min_hits: (bench_cfg.ngram_min_hits > 1).then_some(bench_cfg.ngram_min_hits),
-        spec_ngram_min,
-        spec_ngram_max,
-        draft_max: Some(first.draft_max),
+        spec_ngram_min: cfg.ngram_min,
+        spec_ngram_max: cfg.ngram_max,
+        draft_max: Some(cfg.draft_max),
         draft_min: Some(draft_min),
     };
 
     progress.log(&format!(
-        "Starting llama-server on port {} (spec_type={})",
-        port,
-        spec_type.as_str()
+        "Starting llama-server on port {} ({})",
+        port, label
     ));
 
     let timeout_secs = std::env::var("LLAMA_SERVER_TIMEOUT_SECS")
@@ -428,41 +447,28 @@ async fn run_spec_type_group(
         Err(e) => {
             progress.log(&format!(
                 "Failed to start llama-server for {}: {}",
-                spec_type.as_str(),
-                e
+                label, e
             ));
-            return configs
-                .iter()
-                .map(|cfg| SpecEntry {
-                    spec_type: cfg.spec_type.as_str().to_string(),
-                    draft_max: cfg.draft_max,
-                    ngram_n: cfg.ngram_n,
-                    ngram_m: cfg.ngram_m,
-                    ngram_min: cfg.ngram_min,
-                    ngram_max: cfg.ngram_max,
-                    tg_ts_mean: 0.0,
-                    tg_ts_stddev: 0.0,
-                    delta_pct: 0.0,
-                    status: "failed".to_string(),
-                    error: Some(format!("Server start failed: {}", e)),
-                })
-                .collect();
+            return SpecEntry {
+                spec_type: cfg.spec_type.as_str().to_string(),
+                draft_max: cfg.draft_max,
+                ngram_n: cfg.ngram_n,
+                ngram_m: cfg.ngram_m,
+                ngram_min: cfg.ngram_min,
+                ngram_max: cfg.ngram_max,
+                tg_ts_mean: 0.0,
+                tg_ts_stddev: 0.0,
+                delta_pct: 0.0,
+                acceptance_rate: None,
+                status: "failed".to_string(),
+                error: Some(format!("Server start failed: {}", e)),
+            };
         }
     };
 
-    progress.log(&format!(
-        "llama-server ready on port {} ({})",
-        port,
-        spec_type.as_str()
-    ));
+    progress.log(&format!("llama-server ready on port {} ({})", port, label));
 
-    let mut entries = Vec::with_capacity(configs.len());
-    for cfg in configs {
-        let entry = execute_server_runs(&handle, cfg, bench_cfg, progress).await;
-        entries.push(entry);
-    }
-
-    entries
+    execute_server_runs(&handle, cfg, bench_cfg, progress).await
 }
 
 /// Run a speculative decoding benchmark sweep using llama-server.
@@ -578,53 +584,68 @@ pub async fn run_spec_bench(
         config.spec_types.len()
     ));
 
-    // Step 4: Group configs by spec_type (each group = one server).
-    use std::collections::HashMap;
-    let mut groups: HashMap<SpecType, Vec<SweepConfig>> = HashMap::new();
-    for cfg in sweep_matrix {
-        groups.entry(cfg.spec_type).or_default().push(cfg);
-    }
-
-    // Step 5: Execute each spec-type group.
+    // Step 4: Execute each config with its own server.
+    // Each config gets a dedicated server because ngram params and draft_max
+    // are server startup flags that can't be changed mid-session.
     let mut all_entries = Vec::new();
     let mut oom_detected = false;
 
-    for (&spec_type, configs) in &groups {
+    for cfg in &sweep_matrix {
         if oom_detected {
-            for cfg in configs {
-                progress.log(&format!(
-                    "[{}] skipping due to prior OOM",
-                    spec_type.as_str()
-                ));
-                all_entries.push(SpecEntry {
-                    spec_type: cfg.spec_type.as_str().to_string(),
-                    draft_max: cfg.draft_max,
-                    ngram_n: cfg.ngram_n,
-                    ngram_m: cfg.ngram_m,
-                    ngram_min: cfg.ngram_min,
-                    ngram_max: cfg.ngram_max,
-                    tg_ts_mean: 0.0,
-                    tg_ts_stddev: 0.0,
-                    delta_pct: 0.0,
-                    status: "skipped_oom".to_string(),
-                    error: Some("Skipped due to OOM in earlier config".to_string()),
-                });
-            }
+            progress.log(&format!(
+                "[{}] skipping due to prior OOM",
+                cfg.spec_type.as_str()
+            ));
+            all_entries.push(SpecEntry {
+                spec_type: cfg.spec_type.as_str().to_string(),
+                draft_max: cfg.draft_max,
+                ngram_n: cfg.ngram_n,
+                ngram_m: cfg.ngram_m,
+                ngram_min: cfg.ngram_min,
+                ngram_max: cfg.ngram_max,
+                tg_ts_mean: 0.0,
+                tg_ts_stddev: 0.0,
+                delta_pct: 0.0,
+                acceptance_rate: None,
+                status: "skipped_oom".to_string(),
+                error: Some("Skipped due to OOM in earlier config".to_string()),
+            });
             continue;
         }
 
-        let entries = run_spec_type_group(&binary, spec_type, configs, config, progress).await;
+        let mut entry = run_single_config(&binary, cfg, config, progress).await;
 
-        for mut entry in entries {
-            if entry.status == "skipped_oom" {
-                oom_detected = true;
-            }
-            // Compute delta vs baseline.
-            if entry.tg_ts_mean > 0.0 && baseline_mean > 0.0 {
-                entry.delta_pct = ((entry.tg_ts_mean - baseline_mean) / baseline_mean) * 100.0;
-            }
-            all_entries.push(entry);
+        if entry.status == "skipped_oom" {
+            oom_detected = true;
         }
+
+        // Compute delta vs baseline.
+        if entry.tg_ts_mean > 0.0 && baseline_mean > 0.0 {
+            entry.delta_pct = ((entry.tg_ts_mean - baseline_mean) / baseline_mean) * 100.0;
+
+            // Sanity check: speculative decoding can never produce results
+            // that are impossibly fast (>10x baseline would require >1000%
+            // acceptance rate, which is physically impossible). Mark as failed.
+            if entry.delta_pct > 1000.0 {
+                progress.log(&format!(
+                    "[{}] impossible result: {:.2} tokens/s is {:.0}% over baseline ({:.2}) — marked as failed",
+                    entry.spec_type,
+                    entry.tg_ts_mean,
+                    entry.delta_pct,
+                    baseline_mean
+                ));
+                entry.status = "failed".to_string();
+                entry.error = Some(format!(
+                    "Result {:.2} tokens/s is {:.0}% faster than baseline {:.2} — impossible for speculative decoding",
+                    entry.tg_ts_mean, entry.delta_pct, baseline_mean
+                ));
+                entry.tg_ts_mean = 0.0;
+                entry.tg_ts_stddev = 0.0;
+                entry.delta_pct = 0.0;
+            }
+        }
+
+        all_entries.push(entry);
     }
 
     Ok(SpecBenchResult {
@@ -680,8 +701,9 @@ mod tests {
         };
 
         let matrix = build_sweep_matrix(&config).unwrap();
-        // 1 spec_type × 2 draft_max × 2 ngram_n = 4
-        assert_eq!(matrix.len(), 4);
+        // 1 spec_type × 2 n-match × 1 n-min × 1 n-max = 2
+        // (draft_max is NOT swept for ngram-mod)
+        assert_eq!(matrix.len(), 2);
     }
 
     /// Verifies that the sweep matrix produces correct entries for ngram-map-k (includes ngram_m dimension).
@@ -726,10 +748,10 @@ mod tests {
         };
 
         let matrix = build_sweep_matrix(&config).unwrap();
-        // NgramSimple: 1 × 3 = 3
-        // NgramMod: 1 × 3 × 2 = 6
-        // Total: 9
-        assert_eq!(matrix.len(), 9);
+        // NgramSimple: 1 × 3 draft_max = 3
+        // NgramMod: 1 × 2 n-match × 1 n-min × 1 n-max = 2 (no draft_max sweep)
+        // Total: 5
+        assert_eq!(matrix.len(), 5);
     }
 
     /// Verifies that build_sweep_matrix returns an error when ngram_n_values is empty but required.
@@ -837,8 +859,9 @@ mod tests {
         };
 
         let matrix = build_sweep_matrix(&config).unwrap();
-        // 1 spec_type × 2 draft_max × 3 n-match × 2 n-min × 2 n-max = 24
-        assert_eq!(matrix.len(), 24);
+        // 1 spec_type × 3 n-match × 2 n-min × 2 n-max = 12
+        // (draft_max is NOT swept for ngram-mod — controlled by n-min/n-max)
+        assert_eq!(matrix.len(), 12);
 
         // Verify the first entry has all fields set.
         let first = &matrix[0];
