@@ -99,6 +99,10 @@ struct ModelStatus {
     quant: Option<String>,
     #[serde(default)]
     context_length: Option<u32>,
+    #[serde(default)]
+    hf_architecture_type: Option<String>,
+    #[serde(default)]
+    hf_base_model: Option<String>,
 }
 
 /// Format a number with comma separators (e.g. `8460` → `"8,460"`).
@@ -148,6 +152,16 @@ fn model_display_name(m: &ModelStatus) -> String {
         .or(m.api_name.as_deref())
         .unwrap_or(m.id.as_str())
         .to_string()
+}
+
+/// Sort models by base model, then by display name as a tiebreaker.
+fn model_sort_key(m: &ModelStatus) -> (String, String) {
+    let primary = m
+        .hf_base_model
+        .clone()
+        .unwrap_or_else(|| model_display_name(m));
+    let secondary = model_display_name(m);
+    (primary, secondary)
 }
 
 /// Merge new metric samples into the buffer.
@@ -694,7 +708,7 @@ pub fn Dashboard() -> impl IntoView {
                             }.into_any()
                         } else {
                             let mut active_sorted = active.clone();
-                            active_sorted.sort_by(|a, b| a.id.cmp(&b.id));
+                            active_sorted.sort_by_key(model_sort_key);
                             view! {
                                 <div class="models-list">
                                     {active_sorted.into_iter().map(|m| {
@@ -711,6 +725,8 @@ pub fn Dashboard() -> impl IntoView {
                                                 display_name=model_display_name(&m)
                                                 quant=m.quant.clone()
                                                 context_length=m.context_length
+                                                hf_architecture_type=m.hf_architecture_type.clone()
+                                                hf_base_model=m.hf_base_model.clone()
                                                 backend=m.backend.clone()
                                                 log_source=Some(format!("{}_{}", m.backend, m.id))
                                                 state=m.state.clone()
@@ -750,7 +766,7 @@ pub fn Dashboard() -> impl IntoView {
                                     }.into_any()
                                 } else {
                                     let mut inactive_sorted = inactive.clone();
-                                    inactive_sorted.sort_by(|a, b| a.id.cmp(&b.id));
+                                    inactive_sorted.sort_by_key(model_sort_key);
                                     view! {
                                         <div class="models-list">
                                             {inactive_sorted.into_iter().map(|m| {
@@ -767,6 +783,8 @@ pub fn Dashboard() -> impl IntoView {
                                                         display_name=model_display_name(&m)
                                                         quant=m.quant.clone()
                                                         context_length=m.context_length
+                                                        hf_architecture_type=m.hf_architecture_type.clone()
+                                                        hf_base_model=m.hf_base_model.clone()
                                                         backend=m.backend.clone()
                                                         log_source=Some(format!("{}_{}", m.backend, m.id))
                                                         state=m.state.clone()

@@ -23,6 +23,15 @@ pub struct ModelConfigRecord {
     pub profile: Option<String>,
     pub api_name: Option<String>,
     pub health_check: Option<String>, // raw JSON string
+    pub hf_format: Option<String>,
+    pub hf_base_model: Option<String>,
+    pub hf_pipeline_tag: Option<String>,
+    pub hf_total_params: Option<String>,
+    pub hf_active_params: Option<String>,
+    pub hf_architecture_type: Option<String>,
+    pub hf_context_length: Option<u32>,
+    pub hf_num_layers: Option<u32>,
+    pub hf_last_modified: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

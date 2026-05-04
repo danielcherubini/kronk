@@ -22,7 +22,7 @@ use crate::db::queries::{
     get_model_config_by_repo_id, get_model_files, get_model_pull, upsert_model_file,
     upsert_model_pull, ModelFileRecord,
 };
-use crate::models::pull::{self, BlobInfo};
+use crate::models::pull::{self, BlobInfo, HfModelMetadata};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -304,6 +304,55 @@ pub async fn refresh_metadata(conn: &Connection, models_dir: &Path, repo_id: &st
         )?;
     }
 
+    // Fetch HF metadata (API + README) and persist to DB
+    match pull::fetch_hf_metadata(&listing.repo_id).await {
+        Ok(meta) => {
+            update_model_config_hf_metadata(conn, model_record.id, &meta)?;
+        }
+        Err(e) => {
+            tracing::debug!(
+                "Failed to fetch HF metadata for '{}': {}",
+                listing.repo_id,
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Update the HF metadata columns on a model_config row.
+/// Uses COALESCE to preserve existing DB values when a new value is NULL.
+pub(crate) fn update_model_config_hf_metadata(
+    conn: &Connection,
+    model_id: i64,
+    meta: &HfModelMetadata,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE model_configs SET \
+            hf_format = COALESCE(?1, hf_format), \
+            hf_base_model = COALESCE(?2, hf_base_model), \
+            hf_pipeline_tag = COALESCE(?3, hf_pipeline_tag), \
+            hf_total_params = COALESCE(?4, hf_total_params), \
+            hf_active_params = COALESCE(?5, hf_active_params), \
+            hf_architecture_type = COALESCE(?6, hf_architecture_type), \
+            hf_context_length = COALESCE(?7, hf_context_length), \
+            hf_num_layers = COALESCE(?8, hf_num_layers), \
+            hf_last_modified = COALESCE(?9, hf_last_modified) \
+         WHERE id=?10",
+        rusqlite::params![
+            meta.hf_format,
+            meta.hf_base_model,
+            meta.hf_pipeline_tag,
+            meta.hf_total_params,
+            meta.hf_active_params,
+            meta.hf_architecture_type,
+            meta.hf_context_length,
+            meta.hf_num_layers,
+            meta.hf_last_modified,
+            model_id,
+        ],
+    )?;
     Ok(())
 }
 

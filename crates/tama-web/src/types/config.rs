@@ -543,6 +543,15 @@ impl From<ModelConfig> for CoreModelConfig {
             kv_unified: m.kv_unified,
             cache_type_k: m.cache_type_k,
             cache_type_v: m.cache_type_v,
+            hf_format: None, // DB-only metadata, not carried through mirror types
+            hf_base_model: None,
+            hf_pipeline_tag: None,
+            hf_total_params: None,
+            hf_active_params: None,
+            hf_architecture_type: None,
+            hf_context_length: None,
+            hf_num_layers: None,
+            hf_last_modified: None,
             db_id: None, // not carried through mirror types
         }
     }

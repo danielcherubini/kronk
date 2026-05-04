@@ -157,6 +157,15 @@ pub async fn cmd_server_add(
         kv_unified: true,
         cache_type_k: None,
         cache_type_v: None,
+        hf_format: None,
+        hf_base_model: None,
+        hf_pipeline_tag: None,
+        hf_total_params: None,
+        hf_active_params: None,
+        hf_architecture_type: None,
+        hf_context_length: None,
+        hf_num_layers: None,
+        hf_last_modified: None,
         db_id: None,
     };
 

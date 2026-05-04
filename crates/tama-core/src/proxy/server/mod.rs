@@ -57,6 +57,28 @@ impl ProxyServer {
                 Ok(_) => {}
                 Err(e) => tracing::error!("Failed to load model configs from database: {}", e),
             }
+
+            // Check if any models need HF metadata backfill (after migration v19).
+            // If so, spawn a background task to fetch and populate the columns.
+            let needs_backfill = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM model_configs WHERE hf_format IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0);
+            if needs_backfill > 0 {
+                let db_dir = state.db_dir.clone();
+                // Fire-and-forget background task — doesn't block startup.
+                // JoinHandle is intentionally dropped; backfill errors are logged internally.
+                let _handle = tokio::spawn(async move {
+                    if let Some(dir) = db_dir {
+                        if let Err(e) = crate::db::backfill::backfill_hf_metadata(&dir).await {
+                            tracing::warn!("HF metadata backfill failed: {}", e);
+                        }
+                    }
+                });
+            }
         }
 
         Self::cleanup_stale_processes(&state).await;
@@ -425,6 +447,7 @@ mod tests {
                     modalities: None,
                     display_name: None,
                     db_id: None,
+                    ..Default::default()
                 },
             );
         }
@@ -592,6 +615,7 @@ mod tests {
                     modalities: None,
                     display_name: None,
                     db_id: None,
+                    ..Default::default()
                 },
             );
         }

@@ -239,6 +239,33 @@ pub struct ModelConfig {
     /// KV cache data type for V head (e.g., "f16", "q8_0"). Passed as --cache-type-v.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_type_v: Option<String>,
+    /// HuggingFace model format (e.g., "transformers", "gguf").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_format: Option<String>,
+    /// HuggingFace base model id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_base_model: Option<String>,
+    /// HuggingFace pipeline tag (e.g., "text-generation").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_pipeline_tag: Option<String>,
+    /// HuggingFace total parameters as display string (e.g., "35B").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_total_params: Option<String>,
+    /// HuggingFace active parameters for MoE models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_active_params: Option<String>,
+    /// HuggingFace architecture type (e.g., "MoE", "Dense").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_architecture_type: Option<String>,
+    /// HuggingFace context length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_context_length: Option<u32>,
+    /// HuggingFace number of layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_num_layers: Option<u32>,
+    /// HuggingFace last modified timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_last_modified: Option<String>,
     /// Available quantizations
     #[serde(default, skip_serializing_if = "is_btreemap_empty")]
     pub quants: BTreeMap<String, QuantEntry>,
@@ -291,6 +318,15 @@ impl ModelConfig {
                 .health_check
                 .as_ref()
                 .and_then(|s| serde_json::to_string(s).ok()),
+            hf_format: self.hf_format.clone(),
+            hf_base_model: self.hf_base_model.clone(),
+            hf_pipeline_tag: self.hf_pipeline_tag.clone(),
+            hf_total_params: self.hf_total_params.clone(),
+            hf_active_params: self.hf_active_params.clone(),
+            hf_architecture_type: self.hf_architecture_type.clone(),
+            hf_context_length: self.hf_context_length,
+            hf_num_layers: self.hf_num_layers,
+            hf_last_modified: self.hf_last_modified.clone(),
             created_at: now.clone(),
             updated_at: now,
         }
@@ -335,6 +371,18 @@ impl ModelConfig {
                 .health_check
                 .as_ref()
                 .and_then(|s| serde_json::from_str(s).ok()),
+            hf_format: record.hf_format.clone().filter(|s| !s.is_empty()),
+            hf_base_model: record.hf_base_model.clone().filter(|s| !s.is_empty()),
+            hf_pipeline_tag: record.hf_pipeline_tag.clone().filter(|s| !s.is_empty()),
+            hf_total_params: record.hf_total_params.clone().filter(|s| !s.is_empty()),
+            hf_active_params: record.hf_active_params.clone().filter(|s| !s.is_empty()),
+            hf_architecture_type: record
+                .hf_architecture_type
+                .clone()
+                .filter(|s| !s.is_empty()),
+            hf_context_length: record.hf_context_length,
+            hf_num_layers: record.hf_num_layers,
+            hf_last_modified: record.hf_last_modified.clone().filter(|s| !s.is_empty()),
             profile: record.profile.clone(),
             quants: BTreeMap::new(), // Not stored in DB record
             db_id: Some(record.id),
@@ -604,6 +652,8 @@ host = "0.0.0.0"
             gpu_layers: Some(32),
             cache_type_k: None,
             cache_type_v: None,
+            hf_architecture_type: Some("MoE".to_string()),
+            hf_total_params: Some("35B".to_string()),
             modalities: Some(ModelModalities {
                 input: vec!["text".to_string(), "image".to_string()],
                 output: vec!["text".to_string()],
@@ -634,6 +684,8 @@ host = "0.0.0.0"
         assert_eq!(round_trip.modalities, mc.modalities);
         assert_eq!(round_trip.display_name, mc.display_name);
         assert_eq!(round_trip.kv_unified, mc.kv_unified);
+        assert_eq!(round_trip.hf_architecture_type, mc.hf_architecture_type);
+        assert_eq!(round_trip.hf_total_params, mc.hf_total_params);
 
         // quants should be empty as it's not persisted
         assert!(round_trip.quants.is_empty());

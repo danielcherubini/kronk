@@ -735,6 +735,16 @@ label {
   color: var(--accent-yellow);
 }
 
+.badge-pill--architecture {
+  background: rgba(139, 148, 158, 0.08);
+  color: #6e7681;
+}
+
+.badge-pill--base-model {
+  background: rgba(139, 148, 158, 0.08);
+  color: #6e7681;
+}
+
 /* Model list card — horizontal two-line card for dashboard and models page */
 .model-list-card {
   display: flex;

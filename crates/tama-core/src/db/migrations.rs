@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 18;
+pub const LATEST_VERSION: i32 = 19;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -458,6 +458,20 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 ALTER TABLE model_configs ADD COLUMN cache_type_v TEXT;
             "#,
         ),
+        (
+            19,
+            r#"
+                ALTER TABLE model_configs ADD COLUMN hf_format TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_base_model TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_pipeline_tag TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_total_params TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_active_params TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_architecture_type TEXT;
+                ALTER TABLE model_configs ADD COLUMN hf_context_length INTEGER;
+                ALTER TABLE model_configs ADD COLUMN hf_num_layers INTEGER;
+                ALTER TABLE model_configs ADD COLUMN hf_last_modified TEXT;
+            "#,
+        ),
     ];
 
     let current_version: i32 =
@@ -853,5 +867,38 @@ mod tests {
             .unwrap();
         assert_eq!(k_exists, 1);
         assert_eq!(v_exists, 1);
+    }
+
+    /// Regression test: migration v19 must add 9 HF metadata columns to model_configs.
+    #[test]
+    fn test_migration_v19_adds_hf_metadata_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        let columns = [
+            "hf_format",
+            "hf_base_model",
+            "hf_pipeline_tag",
+            "hf_total_params",
+            "hf_active_params",
+            "hf_architecture_type",
+            "hf_context_length",
+            "hf_num_layers",
+            "hf_last_modified",
+        ];
+        for col in &columns {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('model_configs') WHERE name=?",
+                    [col],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                exists, 1,
+                "column '{}' should exist after migration v19",
+                col
+            );
+        }
     }
 }

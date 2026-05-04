@@ -137,6 +137,8 @@ pub fn ModelCard(
     display_name: String,
     quant: Option<String>,
     context_length: Option<u32>,
+    #[prop(default = None)] hf_architecture_type: Option<String>,
+    #[prop(default = None)] hf_base_model: Option<String>,
     backend: String,
     log_source: Option<String>,
     state: String,
@@ -305,6 +307,22 @@ pub fn ModelCard(
                 }}
 
                 <span class="badge-pill badge-pill--backend">{backend}</span>
+
+                {if let Some(arch) = hf_architecture_type {
+                    view! {
+                        <span class="badge-pill badge-pill--architecture">{arch}</span>
+                    }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }}
+
+                {if let Some(base) = hf_base_model {
+                    view! {
+                        <span class="badge-pill badge-pill--base-model">{base}</span>
+                    }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }}
             </div>
         </div>
     }

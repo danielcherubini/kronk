@@ -58,6 +58,12 @@ pub struct ModelStatus {
     /// Model's configured context length in tokens. Display-only on dashboard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<u32>,
+    /// Architecture type from HF metadata (e.g. "MoE", "Dense"). Display-only on dashboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_architecture_type: Option<String>,
+    /// Base model from HF metadata (e.g. "Qwen/Qwen3.6-27B"). Display-only on dashboard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hf_base_model: Option<String>,
 }
 
 /// Collect a snapshot of system metrics using a caller-owned `System`.

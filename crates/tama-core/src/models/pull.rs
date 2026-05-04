@@ -57,6 +57,21 @@ pub struct BlobInfo {
     pub lfs_sha256: Option<String>,
 }
 
+/// Metadata extracted from HuggingFace API and README for a model.
+/// Internal data-transfer type between the fetcher and the DB update helper.
+#[derive(Debug, Clone, Default)]
+pub struct HfModelMetadata {
+    pub hf_format: Option<String>,
+    pub hf_base_model: Option<String>,
+    pub hf_pipeline_tag: Option<String>,
+    pub hf_total_params: Option<String>,
+    pub hf_active_params: Option<String>,
+    pub hf_architecture_type: Option<String>,
+    pub hf_context_length: Option<u32>,
+    pub hf_num_layers: Option<u32>,
+    pub hf_last_modified: Option<String>,
+}
+
 /// List GGUF files available in a HuggingFace model repository.
 /// Returns a `RepoGgufListing` with the resolved repo_id, commit SHA, and file list.
 ///
@@ -149,6 +164,104 @@ pub async fn fetch_blob_metadata(repo_id: &str) -> Result<HashMap<String, BlobIn
         .with_context(|| format!("Failed to parse blob metadata response for '{}'", repo_id))?;
 
     Ok(parse_blob_siblings(&response))
+}
+
+/// Fetch comprehensive metadata for a model from the HuggingFace API and README.
+///
+/// Calls the HF models API for repo-level info (tags, pipeline_tag, lastModified)
+/// and then fetches the README to parse architecture details.
+///
+/// The API call and README fetch are independent — if the API call succeeds but
+/// the README fetch fails, the API-level metadata is still returned.
+pub async fn fetch_hf_metadata(repo_id: &str) -> Result<HfModelMetadata> {
+    let api = hf_api().await?;
+    let endpoint =
+        std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+
+    // ── Fetch model info from HF API ────────────────────────────────────────
+    let url = format!("{}/api/models/{}", endpoint, repo_id);
+    let response = api
+        .client()
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch model metadata for '{}'", repo_id))?
+        .error_for_status()
+        .with_context(|| {
+            format!(
+                "HuggingFace returned an error for model metadata request for '{}'",
+                repo_id
+            )
+        })?
+        .json::<serde_json::Value>()
+        .await
+        .with_context(|| format!("Failed to parse model metadata response for '{}'", repo_id))?;
+
+    let mut meta = HfModelMetadata {
+        hf_format: Some("gguf".to_string()),
+        ..Default::default()
+    };
+
+    // Extract base_model from tags
+    if let Some(tags) = response.get("tags").and_then(|t| t.as_array()) {
+        for tag in tags {
+            if let Some(tag_str) = tag.as_str() {
+                if tag_str.starts_with("base_model:")
+                    && !tag_str.starts_with("base_model:quantized:")
+                {
+                    meta.hf_base_model = tag_str.strip_prefix("base_model:").map(|s| s.to_string());
+                }
+            }
+        }
+    }
+
+    // Extract pipeline_tag
+    meta.hf_pipeline_tag = response
+        .get("pipeline_tag")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Extract lastModified
+    meta.hf_last_modified = response
+        .get("lastModified")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // ── Fetch and parse README ──────────────────────────────────────────────
+    // Try `main` first, fall back to `master` (some older repos use master)
+    let readme_url = format!("{}/{}/raw/main/README.md", endpoint, repo_id);
+    let readme_fallback = format!("{}/{}/raw/master/README.md", endpoint, repo_id);
+    let readme_text = match api.client().get(&readme_url).send().await {
+        Ok(resp) if resp.status().is_success() => resp.text().await.ok(),
+        _ => {
+            // Fallback to master branch
+            match api.client().get(&readme_fallback).send().await {
+                Ok(resp) if resp.status().is_success() => resp.text().await.ok(),
+                _ => None,
+            }
+        }
+    };
+    if let Some(markdown) = readme_text {
+        let readme_meta = parse_readme_metadata(&markdown);
+        // Merge README metadata into the main struct (only fill None fields)
+        if meta.hf_total_params.is_none() {
+            meta.hf_total_params = readme_meta.hf_total_params;
+        }
+        if meta.hf_active_params.is_none() {
+            meta.hf_active_params = readme_meta.hf_active_params;
+        }
+        if meta.hf_architecture_type.is_none() {
+            meta.hf_architecture_type = readme_meta.hf_architecture_type;
+        }
+        if meta.hf_context_length.is_none() {
+            meta.hf_context_length = readme_meta.hf_context_length;
+        }
+        if meta.hf_num_layers.is_none() {
+            meta.hf_num_layers = readme_meta.hf_num_layers;
+        }
+    }
+
+    Ok(meta)
 }
 
 /// Fetch the pipeline_tag from HuggingFace model metadata API.
@@ -507,6 +620,318 @@ pub async fn download_gguf(
 
 const MODELCARDS_BASE_URL: &str =
     "https://raw.githubusercontent.com/danielcherubini/tama/main/modelcards";
+
+/// Parse a HuggingFace README markdown to extract model metadata.
+///
+/// This is a pure function — no I/O. Returns a `HfModelMetadata` with fields
+/// populated from whatever could be extracted. Missing values are `None`.
+///
+/// # Patterns recognised
+///
+/// - **Total parameters**: "Number of Parameters: 35B", "Total Parameters | 25.2B"
+/// - **Active parameters**: "3B activated", "Active Parameters | 3.8B"
+/// - **Context length**: "Context Length: 262,144", "128K tokens" (K → ×1024)
+/// - **Number of layers**: "Number of Layers: 40", "Layers | 30"
+/// - **Architecture type**: inferred from active_params (MoE), Mamba text (Mamba2-Transformer MoE), or Dense
+pub fn parse_readme_metadata(markdown: &str) -> HfModelMetadata {
+    let mut meta = HfModelMetadata::default();
+
+    // ── Total Parameters ────────────────────────────────────────────────────
+    // Patterns: "Number of Parameters: 35B", "Total Parameters | 25.2B"
+    let total_params = extract_param_value(markdown, &["Number of Parameters", "Total Parameters"]);
+    meta.hf_total_params = total_params;
+
+    // ── Active Parameters ───────────────────────────────────────────────────
+    // Patterns: "3B activated", "Active Parameters | 3.8B"
+    let active_params = extract_param_value(markdown, &["Active Parameters"]);
+    if active_params.is_none() {
+        // Also try the "X B/Y B activated" pattern (e.g. "3B/35B activated")
+        if let Some(s) = markdown.lines().find_map(|line| {
+            let lower = line.to_lowercase();
+            if lower.contains("activated") || lower.contains("active parameters") {
+                // Try to find a number before "activated"
+                for word in line.split_whitespace() {
+                    if let Some(val) = parse_param_shorthand(word) {
+                        return Some(val);
+                    }
+                }
+            }
+            None
+        }) {
+            meta.hf_active_params = Some(s);
+        }
+    } else {
+        meta.hf_active_params = active_params;
+    }
+
+    // ── Context Length ──────────────────────────────────────────────────────
+    // Patterns: "Context Length: 262,144", "128K tokens", "4096"
+    if meta.hf_context_length.is_none() {
+        for line in markdown.lines() {
+            let lower = line.to_lowercase();
+            if lower.contains("context length") || lower.contains("context size") {
+                // Strip the label and look for a number
+                let after_colon = line.split(':').nth(1);
+                if let Some(rest) = after_colon {
+                    if let Some(val) = parse_context_length(rest.trim()) {
+                        meta.hf_context_length = Some(val);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    // Also try table-style: "Context Length | 131072"
+    if meta.hf_context_length.is_none() {
+        for line in markdown.lines() {
+            let lower = line.to_lowercase();
+            if (lower.contains("context length") || lower.contains("context size"))
+                && line.contains('|')
+            {
+                let parts: Vec<&str> = line.split('|').collect();
+                // Find the label column, then take the next one for the value
+                for i in 0..parts.len() {
+                    let part_lower = parts[i].to_lowercase();
+                    if (part_lower.contains("context length")
+                        || part_lower.contains("context size"))
+                        && i + 1 < parts.len()
+                    {
+                        if let Some(val) = parse_context_length(parts[i + 1].trim()) {
+                            meta.hf_context_length = Some(val);
+                            break;
+                        }
+                    }
+                }
+                if meta.hf_context_length.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // ── Number of Layers ────────────────────────────────────────────────────
+    // Patterns: "Number of Layers: 40", "Layers | 30"
+    for line in markdown.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("number of layers") || lower.contains("num layers") {
+            if let Some(rest) = line.split(':').nth(1) {
+                if let Some(val) = parse_u32(rest.trim()) {
+                    meta.hf_num_layers = Some(val);
+                    break;
+                }
+            }
+            // Also try pipe-separated for table rows
+            if line.contains('|') && meta.hf_num_layers.is_none() {
+                let parts: Vec<&str> = line.split('|').collect();
+                for i in 0..parts.len() {
+                    let part_lower = parts[i].to_lowercase();
+                    if (part_lower.contains("number of layers")
+                        || part_lower.contains("num layers"))
+                        && i + 1 < parts.len()
+                    {
+                        if let Some(val) = parse_u32(parts[i + 1].trim()) {
+                            meta.hf_num_layers = Some(val);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if (lower.contains("layers") || lower.contains("depth")) && line.contains('|') {
+            // Table row: "Layers | 30"
+            let parts: Vec<&str> = line.split('|').collect();
+            // Find the label column, then take the next one for the value
+            for i in 0..parts.len() {
+                let part_lower = parts[i].to_lowercase();
+                if (part_lower.contains("layers") || part_lower.contains("depth"))
+                    && i + 1 < parts.len()
+                {
+                    if let Some(val) = parse_u32(parts[i + 1].trim()) {
+                        meta.hf_num_layers = Some(val);
+                        break;
+                    }
+                }
+            }
+            if meta.hf_num_layers.is_some() {
+                break;
+            }
+        }
+    }
+
+    // ── Architecture Type (inferred) ────────────────────────────────────────
+    if meta.hf_active_params.is_some() {
+        meta.hf_architecture_type = Some("MoE".to_string());
+    } else if markdown.to_lowercase().contains("mamba") {
+        meta.hf_architecture_type = Some("Mamba2-Transformer MoE".to_string());
+    } else if markdown.to_lowercase().contains("dense") {
+        meta.hf_architecture_type = Some("Dense".to_string());
+    }
+    // Otherwise leave as None — we can't infer the architecture type
+
+    meta
+}
+
+/// Extract a parameter value like "35B" or "25.2B" from lines containing one of the given labels.
+fn extract_param_value(markdown: &str, labels: &[&str]) -> Option<String> {
+    for line in markdown.lines() {
+        let lower = line.to_lowercase();
+        for label in labels {
+            let label_lower = label.to_lowercase();
+            if lower.contains(&label_lower) {
+                // Try colon-separated first: "Label: 35B"
+                if let Some(rest) = line.split(':').nth(1) {
+                    if let Some(val) = extract_first_param_shorthand(rest.trim()) {
+                        return Some(val);
+                    }
+                }
+                // Try pipe-separated: "Label | 35B" (skip the label column itself)
+                if line.contains('|') {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    // Find the part that matches the label, then take the next one
+                    for i in 0..parts.len() {
+                        if parts[i].to_lowercase().contains(&label_lower) && i + 1 < parts.len() {
+                            if let Some(val) = extract_first_param_shorthand(parts[i + 1].trim()) {
+                                return Some(val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the first valid param shorthand from a string, handling trailing text.
+/// E.g., "35B" → "35B", "128K tokens" → "128K", "262,144" → "262144"
+fn extract_first_param_shorthand(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Try to find a number (possibly with decimal) followed by an optional suffix
+    // Patterns: "35B", "25.2B", "1T", "128K tokens", "262,144"
+
+    // Check for suffix patterns (B, K, M, T) possibly followed by other text.
+    // Iterate over the original string `s` and uppercase individual characters
+    // for comparison — using byte indices from `s.to_uppercase()` would be
+    // unsound since to_uppercase() can change string length for some Unicode chars.
+    if let Some((i, ch)) = s.char_indices().find(|(_, c)| {
+        let upper = c.to_ascii_uppercase();
+        !(upper.is_ascii_digit() || upper == '.' || upper == ',')
+    }) {
+        if i > 0 {
+            // Digits found at start
+            let num_str = &s[..i];
+            if (ch == 'B' || ch == 'b') && num_str.replace(',', "").trim().parse::<f64>().is_ok() {
+                return Some(format!("{}B", num_str.trim()));
+            } else if (ch == 'K' || ch == 'k')
+                && num_str.replace(',', "").trim().parse::<f64>().is_ok()
+            {
+                return Some(format!("{}K", num_str.trim()));
+            } else if (ch == 'M' || ch == 'm')
+                && num_str.replace(',', "").trim().parse::<f64>().is_ok()
+            {
+                return Some(format!("{}M", num_str.trim()));
+            } else if (ch == 'T' || ch == 't')
+                && num_str.replace(',', "").trim().parse::<f64>().is_ok()
+            {
+                return Some(format!("{}T", num_str.trim()));
+            }
+        }
+    }
+
+    // Try plain number (possibly comma-separated)
+    let cleaned = s.split_whitespace().next().unwrap_or(s).replace(',', "");
+    if let Ok(n) = cleaned.parse::<u64>() {
+        return Some(n.to_string());
+    }
+
+    None
+}
+
+/// Parse a shorthand parameter value like "35B", "25.2B", "3.8B", "1T".
+fn parse_param_shorthand(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Check if it ends with a known suffix
+    let (num_str, suffix) = if s.ends_with('T') || s.ends_with('t') {
+        (&s[..s.len() - 1], "T")
+    } else if s.ends_with('B') || s.ends_with('b') {
+        (&s[..s.len() - 1], "B")
+    } else if s.ends_with('M') || s.ends_with('m') {
+        // Be careful: "262,144" doesn't end with m but "256M" does
+        // Only match if it looks like a number + M
+        let candidate = &s[..s.len() - 1];
+        if candidate.parse::<f64>().is_ok() {
+            (candidate, "M")
+        } else {
+            return None;
+        }
+    } else if s.ends_with('K') || s.ends_with('k') {
+        let candidate = &s[..s.len() - 1];
+        if candidate.parse::<f64>().is_ok() {
+            (candidate, "K")
+        } else {
+            return None;
+        }
+    } else {
+        // Plain number
+        return s.parse::<u64>().ok().map(|n| n.to_string());
+    };
+
+    // Validate the numeric part
+    if num_str.trim().parse::<f64>().is_ok() {
+        Some(format!("{}{}", num_str.trim(), suffix))
+    } else {
+        None
+    }
+}
+
+/// Parse a context length string like "262,144", "131072", "128K", "2M".
+/// Handles trailing text like "128K tokens".
+fn parse_context_length(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Extract the first token (number possibly with suffix)
+    let first_token = s.split_whitespace().next().unwrap_or(s);
+    let first_token = first_token.trim();
+
+    // Handle K suffix: 128K → 131072
+    if first_token.ends_with('K') || first_token.ends_with('k') {
+        let num_str = &first_token[..first_token.len() - 1];
+        if let Ok(n) = num_str.trim().parse::<u32>() {
+            return Some(n * 1024);
+        }
+    }
+
+    // Handle M suffix: 2M → 2097152
+    if first_token.ends_with('M') || first_token.ends_with('m') {
+        let num_str = &first_token[..first_token.len() - 1];
+        if let Ok(n) = num_str.trim().parse::<u32>() {
+            return Some(n * 1024 * 1024);
+        }
+    }
+
+    // Handle comma-separated: "262,144"
+    let cleaned = first_token.replace(',', "");
+    if let Ok(n) = cleaned.parse::<u32>() {
+        return Some(n);
+    }
+
+    None
+}
+
+/// Parse a u32 from a trimmed string (handles commas).
+fn parse_u32(s: &str) -> Option<u32> {
+    let cleaned = s.replace(',', "");
+    cleaned.trim().parse::<u32>().ok()
+}
 
 /// Try to fetch a community model card from the tama repository.
 ///
@@ -1097,5 +1522,172 @@ mod tests {
             result.is_ok(),
             "Cleanup should succeed when source is already gone"
         );
+    }
+
+    // ── README metadata parsing tests ────────────────────────────────────────
+
+    /// Test MoE model parsing (Qwen3.6-35B-A3B style)
+    #[test]
+    fn test_parse_readme_moe_model() {
+        let readme = r#"
+---
+tags:
+  - qwen3.6
+  - generative-models
+pipeline_tag: text-generation
+---
+
+# Qwen3.6-35B-A3B
+
+## Model Info
+
+| Parameter | Value |
+|-----------|-------|
+| Number of Parameters | 35B |
+| Active Parameters | 3.8B |
+| Context Length | 262,144 |
+| Number of Layers | 40 |
+"#;
+        let meta = parse_readme_metadata(readme);
+
+        assert_eq!(meta.hf_total_params, Some("35B".to_string()));
+        assert_eq!(meta.hf_active_params, Some("3.8B".to_string()));
+        assert_eq!(meta.hf_architecture_type, Some("MoE".to_string()));
+        assert_eq!(meta.hf_context_length, Some(262144));
+        assert_eq!(meta.hf_num_layers, Some(40));
+    }
+
+    /// Test Dense model parsing (Gemma 4 26B A4B style)
+    #[test]
+    fn test_parse_readme_dense_model() {
+        let readme = r#"
+---
+tags:
+  - gemma-4
+pipeline_tag: text-generation
+---
+
+# Gemma 4 26B A4B
+
+## Model Description
+
+This is a dense model with 26 billion parameters.
+
+Number of Parameters: 26B
+Context Length: 8192
+Number of Layers: 46
+"#;
+        let meta = parse_readme_metadata(readme);
+
+        assert_eq!(meta.hf_total_params, Some("26B".to_string()));
+        assert_eq!(meta.hf_active_params, None);
+        assert_eq!(meta.hf_architecture_type, Some("Dense".to_string()));
+        assert_eq!(meta.hf_context_length, Some(8192));
+        assert_eq!(meta.hf_num_layers, Some(46));
+    }
+
+    /// Test Mamba model detection (Nemotron 3 Nano style)
+    #[test]
+    fn test_parse_readme_mamba_model() {
+        let readme = r#"
+---
+tags:
+  - nemotron
+pipeline_tag: text-generation
+---
+
+# Nemotron 3 Nano
+
+This model uses Mamba2 architecture for efficient sequence modeling.
+
+Number of Parameters: 1.2B
+Context Length: 256K tokens
+Layers | 30
+"#;
+        let meta = parse_readme_metadata(readme);
+
+        assert_eq!(meta.hf_total_params, Some("1.2B".to_string()));
+        assert_eq!(meta.hf_active_params, None);
+        assert_eq!(
+            meta.hf_architecture_type,
+            Some("Mamba2-Transformer MoE".to_string())
+        );
+        assert_eq!(meta.hf_context_length, Some(262144)); // 256 * 1024
+        assert_eq!(meta.hf_num_layers, Some(30));
+    }
+
+    /// Test "K tokens" context length parsing
+    #[test]
+    fn test_parse_readme_context_k_tokens() {
+        let readme = r#"
+Context Length: 128K tokens
+"#;
+        let meta = parse_readme_metadata(readme);
+        assert_eq!(meta.hf_context_length, Some(131072)); // 128 * 1024
+    }
+
+    /// Test comma-separated context length
+    #[test]
+    fn test_parse_readme_context_comma() {
+        let readme = r#"
+Context Length: 262,144
+"#;
+        let meta = parse_readme_metadata(readme);
+        assert_eq!(meta.hf_context_length, Some(262144));
+    }
+
+    /// Test table-style parsing for all fields
+    #[test]
+    fn test_parse_readme_table_style() {
+        let readme = r#"
+| Parameter | Value |
+|-----------|-------|
+| Total Parameters | 25.2B |
+| Active Parameters | 3B |
+| Context Length | 131072 |
+| Layers | 30 |
+"#;
+        let meta = parse_readme_metadata(readme);
+
+        assert_eq!(meta.hf_total_params, Some("25.2B".to_string()));
+        assert_eq!(meta.hf_active_params, Some("3B".to_string()));
+        assert_eq!(meta.hf_architecture_type, Some("MoE".to_string()));
+        assert_eq!(meta.hf_context_length, Some(131072));
+        assert_eq!(meta.hf_num_layers, Some(30));
+    }
+
+    /// Test empty/unknown README returns defaults
+    #[test]
+    fn test_parse_readme_empty() {
+        let meta = parse_readme_metadata("");
+        assert_eq!(meta.hf_total_params, None);
+        assert_eq!(meta.hf_active_params, None);
+        assert_eq!(meta.hf_architecture_type, None); // empty README can't infer architecture
+        assert_eq!(meta.hf_context_length, None);
+        assert_eq!(meta.hf_num_layers, None);
+    }
+
+    /// Test "activated" shorthand pattern for active params
+    #[test]
+    fn test_parse_readme_activated_pattern() {
+        let readme = r#"
+Number of Parameters: 35B
+3B activated
+Context Length: 4096
+"#;
+        let meta = parse_readme_metadata(readme);
+        assert_eq!(meta.hf_total_params, Some("35B".to_string()));
+        assert_eq!(meta.hf_active_params, Some("3B".to_string()));
+        assert_eq!(meta.hf_architecture_type, Some("MoE".to_string()));
+    }
+
+    /// Test M suffix for context length
+    #[test]
+    fn test_parse_readme_context_m_suffix() {
+        let readme = r#"
+Context Length: 2M
+"#;
+        let meta = parse_readme_metadata(readme);
+        assert_eq!(meta.hf_context_length, Some(2097152)); // 2 * 1024 * 1024
     }
 }

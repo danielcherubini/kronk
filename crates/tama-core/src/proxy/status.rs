@@ -56,6 +56,8 @@ impl ProxyState {
                 state: state_str,
                 quant: model_cfg.quant.clone(),
                 context_length: model_cfg.context_length,
+                hf_architecture_type: model_cfg.hf_architecture_type.clone(),
+                hf_base_model: model_cfg.hf_base_model.clone(),
             });
         }
         // Stable order so dashboard rows don't shuffle between samples.
@@ -280,6 +282,7 @@ mod tests {
             modalities: None,
             display_name: None,
             db_id: None,
+            ..Default::default()
         }
     }
 
