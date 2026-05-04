@@ -80,6 +80,12 @@ pub struct SpecBenchmarkRunRequest {
     pub ngram_n_values: Vec<u32>,
     #[serde(default)]
     pub ngram_m_values: Vec<u32>,
+    /// N-gram minimum match values for n-gram-mod.
+    #[serde(default)]
+    pub ngram_min_values: Vec<u32>,
+    /// N-gram maximum match values for n-gram-mod.
+    #[serde(default)]
+    pub ngram_max_values: Vec<u32>,
     #[serde(default = "default_min_hits")]
     pub ngram_min_hits: u32,
     #[serde(default = "default_gen_tokens")]
@@ -409,6 +415,8 @@ pub async fn run_spec_benchmark(
         draft_max_values: req.draft_max_values.clone(),
         ngram_n_values: req.ngram_n_values.clone(),
         ngram_m_values: req.ngram_m_values.clone(),
+        ngram_min_values: req.ngram_min_values.clone(),
+        ngram_max_values: req.ngram_max_values.clone(),
         ngram_min_hits: req.ngram_min_hits,
         gen_tokens,
         runs,
@@ -543,6 +551,8 @@ async fn run_spec_benchmark_inner(
         draft_max_values: req.draft_max_values.clone(),
         ngram_n_values: req.ngram_n_values.clone(),
         ngram_m_values: req.ngram_m_values.clone(),
+        ngram_min_values: req.ngram_min_values.clone(),
+        ngram_max_values: req.ngram_max_values.clone(),
         ngram_min_hits: req.ngram_min_hits,
         gen_tokens,
         runs,

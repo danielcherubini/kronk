@@ -1,8 +1,9 @@
 //! llama-server speculative decoding benchmark module.
 //!
 //! Spawns a `llama-server` process with the appropriate speculative decoding
-//! flags (`--spec-type`, `--draft-max`, `--spec-ngram-size-*`) and makes
-//! HTTP completion requests to the running server to measure throughput.
+//! flags (`--spec-type`, `--spec-draft-n-max`, `--spec-draft-n-min`, and
+//! type-specific `--spec-ngram-*-size-n/m` / `--spec-ngram-mod-n-match/min/max`)
+//! and makes HTTP completion requests to the running server to measure throughput.
 //!
 //! Split into:
 //! - [`server`] — llama-server process lifecycle and HTTP API client.
@@ -42,6 +43,37 @@ impl SpecType {
             SpecType::NgramMapK4v => "ngram-map-k4v",
         }
     }
+
+    /// Returns the type-specific n-gram CLI flags (llama.cpp PR #22397).
+    ///
+    /// Each spec type has its own set of parameter flags:
+    /// - `ngram-simple`: `--spec-ngram-simple-size-n`, `--spec-ngram-simple-size-m`, `--spec-ngram-simple-min-hits`
+    /// - `ngram-mod`: `--spec-ngram-mod-n-match` (no size-m or min-hits)
+    /// - `ngram-map-k`: `--spec-ngram-map-k-size-n`, `--spec-ngram-map-k-size-m`, `--spec-ngram-map-k-min-hits`
+    /// - `ngram-map-k4v`: `--spec-ngram-map-k4v-size-n`, `--spec-ngram-map-k4v-size-m`, `--spec-ngram-map-k4v-min-hits`
+    ///
+    /// Returns `(size_n_flag, size_m_flag, min_hits_flag)` — empty strings for flags
+    /// that don't apply to this spec type (e.g., ngram-mod has no size-m or min-hits).
+    pub fn spec_ngram_flags(&self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            SpecType::NgramSimple => (
+                "--spec-ngram-simple-size-n",
+                "--spec-ngram-simple-size-m",
+                "--spec-ngram-simple-min-hits",
+            ),
+            SpecType::NgramMod => ("--spec-ngram-mod-n-match", "", ""),
+            SpecType::NgramMapK => (
+                "--spec-ngram-map-k-size-n",
+                "--spec-ngram-map-k-size-m",
+                "--spec-ngram-map-k-min-hits",
+            ),
+            SpecType::NgramMapK4v => (
+                "--spec-ngram-map-k4v-size-n",
+                "--spec-ngram-map-k4v-size-m",
+                "--spec-ngram-map-k4v-min-hits",
+            ),
+        }
+    }
 }
 
 /// Configuration for a speculative decoding benchmark sweep.
@@ -57,6 +89,12 @@ pub struct SpecBenchConfig {
     pub ngram_n_values: Vec<u32>,
     /// N-gram draft size M values for ngram-map-* types.
     pub ngram_m_values: Vec<u32>,
+    /// N-gram minimum match values for n-gram-mod (e.g. [3, 5]).
+    #[serde(default)]
+    pub ngram_min_values: Vec<u32>,
+    /// N-gram maximum match values for n-gram-mod (e.g. [48, 64]).
+    #[serde(default)]
+    pub ngram_max_values: Vec<u32>,
     /// Minimum hits for ngram-map-* types (default 1).
     #[serde(default = "default_min_hits")]
     pub ngram_min_hits: u32,
@@ -126,6 +164,8 @@ struct SweepConfig {
     draft_max: u32,
     ngram_n: Option<u32>,
     ngram_m: Option<u32>,
+    ngram_min: Option<u32>,
+    ngram_max: Option<u32>,
 }
 
 /// Validate a [`SpecBenchConfig`] would produce at least one sweep entry.
@@ -157,12 +197,16 @@ fn build_sweep_matrix(config: &SpecBenchConfig) -> Result<Vec<SweepConfig>> {
     let needs_m = spec_types
         .iter()
         .any(|t| matches!(t, SpecType::NgramMapK | SpecType::NgramMapK4v));
+    let needs_minmax = spec_types.iter().any(|t| matches!(t, SpecType::NgramMod));
 
     if needs_n && config.ngram_n_values.is_empty() {
         bail!("ngram_n_values is required when testing ngram-mod or ngram-map-* types");
     }
     if needs_m && config.ngram_m_values.is_empty() {
         bail!("ngram_m_values is required when testing ngram-map-k or ngram-map-k4v types");
+    }
+    if needs_minmax && (config.ngram_min_values.is_empty() || config.ngram_max_values.is_empty()) {
+        bail!("ngram_min_values and ngram_max_values are required when testing n-gram-mod");
     }
 
     let mut matrix = Vec::new();
@@ -176,16 +220,24 @@ fn build_sweep_matrix(config: &SpecBenchConfig) -> Result<Vec<SweepConfig>> {
                         draft_max: dm,
                         ngram_n: None,
                         ngram_m: None,
+                        ngram_min: None,
+                        ngram_max: None,
                     });
                 }
                 SpecType::NgramMod => {
                     for &nn in &config.ngram_n_values {
-                        matrix.push(SweepConfig {
-                            spec_type: st,
-                            draft_max: dm,
-                            ngram_n: Some(nn),
-                            ngram_m: None,
-                        });
+                        for &nm in &config.ngram_min_values {
+                            for &nxm in &config.ngram_max_values {
+                                matrix.push(SweepConfig {
+                                    spec_type: st,
+                                    draft_max: dm,
+                                    ngram_n: Some(nn),
+                                    ngram_m: None,
+                                    ngram_min: Some(nm),
+                                    ngram_max: Some(nxm),
+                                });
+                            }
+                        }
                     }
                 }
                 SpecType::NgramMapK | SpecType::NgramMapK4v => {
@@ -196,6 +248,8 @@ fn build_sweep_matrix(config: &SpecBenchConfig) -> Result<Vec<SweepConfig>> {
                                 draft_max: dm,
                                 ngram_n: Some(nn),
                                 ngram_m: Some(nm),
+                                ngram_min: None,
+                                ngram_max: None,
                             });
                         }
                     }
@@ -329,6 +383,8 @@ async fn run_spec_type_group(
     let draft_min = (first.draft_max / 2).max(1);
     let spec_ngram_n = configs.iter().find_map(|c| c.ngram_n);
     let spec_ngram_m = configs.iter().find_map(|c| c.ngram_m);
+    let spec_ngram_min = configs.iter().find_map(|c| c.ngram_min);
+    let spec_ngram_max = configs.iter().find_map(|c| c.ngram_max);
 
     let server_args = server::ServerArgs {
         binary: binary.to_path_buf(),
@@ -340,6 +396,8 @@ async fn run_spec_type_group(
         spec_ngram_n,
         spec_ngram_m,
         spec_ngram_min_hits: (bench_cfg.ngram_min_hits > 1).then_some(bench_cfg.ngram_min_hits),
+        spec_ngram_min,
+        spec_ngram_max,
         draft_max: Some(first.draft_max),
         draft_min: Some(draft_min),
     };
@@ -452,6 +510,8 @@ pub async fn run_spec_bench(
         spec_ngram_n: None,
         spec_ngram_m: None,
         spec_ngram_min_hits: None,
+        spec_ngram_min: None,
+        spec_ngram_max: None,
         draft_max: None,
         draft_min: None,
     };
@@ -573,6 +633,8 @@ mod tests {
             draft_max_values: vec![8, 16, 32],
             ngram_n_values: vec![],
             ngram_m_values: vec![],
+            ngram_min_values: vec![],
+            ngram_max_values: vec![],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -594,6 +656,8 @@ mod tests {
             draft_max_values: vec![8, 16],
             ngram_n_values: vec![3, 5],
             ngram_m_values: vec![],
+            ngram_min_values: vec![3],
+            ngram_max_values: vec![48],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -615,6 +679,8 @@ mod tests {
             draft_max_values: vec![8, 16],
             ngram_n_values: vec![3, 5],
             ngram_m_values: vec![2, 4],
+            ngram_min_values: vec![],
+            ngram_max_values: vec![],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -636,6 +702,8 @@ mod tests {
             draft_max_values: vec![8, 16, 32],
             ngram_n_values: vec![3, 5],
             ngram_m_values: vec![],
+            ngram_min_values: vec![3],
+            ngram_max_values: vec![48],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -659,6 +727,8 @@ mod tests {
             draft_max_values: vec![8, 16],
             ngram_n_values: vec![],
             ngram_m_values: vec![],
+            ngram_min_values: vec![3],
+            ngram_max_values: vec![48],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -668,10 +738,8 @@ mod tests {
 
         let result = build_sweep_matrix(&config);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("ngram_n_values is required"));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("ngram_n_values is required"));
     }
 
     /// Verifies that build_sweep_matrix returns an error when ngram_m_values is empty but required.
@@ -683,6 +751,8 @@ mod tests {
             draft_max_values: vec![8, 16],
             ngram_n_values: vec![3, 5],
             ngram_m_values: vec![],
+            ngram_min_values: vec![],
+            ngram_max_values: vec![],
             ngram_min_hits: 1,
             gen_tokens: 256,
             runs: 3,
@@ -692,10 +762,8 @@ mod tests {
 
         let result = build_sweep_matrix(&config);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("ngram_m_values is required"));
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("ngram_m_values is required"));
     }
 
     /// Verifies that compute_mean_stddev returns correct values for a known set.
@@ -733,5 +801,87 @@ mod tests {
         assert_eq!(SpecType::NgramMod.as_str(), "ngram-mod");
         assert_eq!(SpecType::NgramMapK.as_str(), "ngram-map-k");
         assert_eq!(SpecType::NgramMapK4v.as_str(), "ngram-map-k4v");
+    }
+
+    /// Verifies that the sweep matrix produces 3D n-gram-mod entries
+    /// (draft_max × n-match × n-min × n-max).
+    #[test]
+    fn test_sweep_matrix_ngram_mod_3d() {
+        let config = SpecBenchConfig {
+            model_path: PathBuf::from("/test/model.gguf"),
+            spec_types: vec![SpecType::NgramMod],
+            draft_max_values: vec![8, 16],
+            ngram_n_values: vec![3, 5, 8],
+            ngram_m_values: vec![],
+            ngram_min_hits: 1,
+            gen_tokens: 256,
+            runs: 3,
+            ngl: None,
+            flash_attn: true,
+            ngram_min_values: vec![3, 5],
+            ngram_max_values: vec![48, 64],
+        };
+
+        let matrix = build_sweep_matrix(&config).unwrap();
+        // 1 spec_type × 2 draft_max × 3 n-match × 2 n-min × 2 n-max = 24
+        assert_eq!(matrix.len(), 24);
+
+        // Verify the first entry has all fields set.
+        let first = &matrix[0];
+        assert_eq!(first.spec_type, SpecType::NgramMod);
+        assert_eq!(first.draft_max, 8);
+        assert_eq!(first.ngram_n, Some(3));
+        assert_eq!(first.ngram_min, Some(3));
+        assert_eq!(first.ngram_max, Some(48));
+    }
+
+    /// Verifies that build_sweep_matrix returns an error when nmin/nmax values
+    /// are empty but required for n-gram-mod.
+    #[test]
+    fn test_sweep_matrix_ngram_mod_requires_min_max() {
+        let config = SpecBenchConfig {
+            model_path: PathBuf::from("/test/model.gguf"),
+            spec_types: vec![SpecType::NgramMod],
+            draft_max_values: vec![8, 16],
+            ngram_n_values: vec![3, 5],
+            ngram_m_values: vec![],
+            ngram_min_hits: 1,
+            gen_tokens: 256,
+            runs: 3,
+            ngl: None,
+            flash_attn: true,
+            ngram_min_values: vec![],
+            ngram_max_values: vec![],
+        };
+
+        let result = build_sweep_matrix(&config);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("ngram_min_values") || err_msg.contains("ngram_max_values"));
+    }
+
+    /// Verifies that SpecType::spec_ngram_flags() returns correct type-specific
+    /// flag names (llama.cpp PR #22397).
+    #[test]
+    fn test_spec_type_ngram_flags() {
+        let (sn, sm, mh) = SpecType::NgramSimple.spec_ngram_flags();
+        assert_eq!(sn, "--spec-ngram-simple-size-n");
+        assert_eq!(sm, "--spec-ngram-simple-size-m");
+        assert_eq!(mh, "--spec-ngram-simple-min-hits");
+
+        let (sn, sm, mh) = SpecType::NgramMod.spec_ngram_flags();
+        assert_eq!(sn, "--spec-ngram-mod-n-match");
+        assert_eq!(sm, "");
+        assert_eq!(mh, "");
+
+        let (sn, sm, mh) = SpecType::NgramMapK.spec_ngram_flags();
+        assert_eq!(sn, "--spec-ngram-map-k-size-n");
+        assert_eq!(sm, "--spec-ngram-map-k-size-m");
+        assert_eq!(mh, "--spec-ngram-map-k-min-hits");
+
+        let (sn, sm, mh) = SpecType::NgramMapK4v.spec_ngram_flags();
+        assert_eq!(sn, "--spec-ngram-map-k4v-size-n");
+        assert_eq!(sm, "--spec-ngram-map-k4v-size-m");
+        assert_eq!(mh, "--spec-ngram-map-k4v-min-hits");
     }
 }

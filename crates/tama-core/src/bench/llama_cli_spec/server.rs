@@ -25,6 +25,10 @@ pub struct ServerArgs {
     pub spec_ngram_n: Option<u32>,
     pub spec_ngram_m: Option<u32>,
     pub spec_ngram_min_hits: Option<u32>,
+    /// N-gram minimum match for n-gram-mod (maps to --spec-ngram-mod-n-min).
+    pub spec_ngram_min: Option<u32>,
+    /// N-gram maximum match for n-gram-mod (maps to --spec-ngram-mod-n-max).
+    pub spec_ngram_max: Option<u32>,
     pub draft_max: Option<u32>,
     pub draft_min: Option<u32>,
 }
@@ -60,25 +64,46 @@ impl ServerArgs {
             args.push("--spec-type".to_string());
             args.push(spec_type.as_str().to_string());
 
-            if let Some(n) = self.spec_ngram_n {
-                args.push("--spec-ngram-size-n".to_string());
-                args.push(n.to_string());
+            // Type-specific n-gram flags (llama.cpp PR #22397).
+            let (size_n_flag, size_m_flag, min_hits_flag) = spec_type.spec_ngram_flags();
+
+            if !size_n_flag.is_empty() {
+                if let Some(n) = self.spec_ngram_n {
+                    args.push(size_n_flag.to_string());
+                    args.push(n.to_string());
+                }
             }
-            if let Some(m) = self.spec_ngram_m {
-                args.push("--spec-ngram-size-m".to_string());
-                args.push(m.to_string());
+            if !size_m_flag.is_empty() {
+                if let Some(m) = self.spec_ngram_m {
+                    args.push(size_m_flag.to_string());
+                    args.push(m.to_string());
+                }
             }
-            if let Some(hits) = self.spec_ngram_min_hits {
-                args.push("--spec-ngram-min-hits".to_string());
-                args.push(hits.to_string());
+            if !min_hits_flag.is_empty() {
+                if let Some(hits) = self.spec_ngram_min_hits {
+                    args.push(min_hits_flag.to_string());
+                    args.push(hits.to_string());
+                }
             }
             if let Some(dm) = self.draft_max {
-                args.push("--draft-max".to_string());
+                args.push("--spec-draft-n-max".to_string());
                 args.push(dm.to_string());
             }
             if let Some(dmin) = self.draft_min {
-                args.push("--draft-min".to_string());
+                args.push("--spec-draft-n-min".to_string());
                 args.push(dmin.to_string());
+            }
+
+            // Ngram-mod needs its own n-min and n-max flags (not covered by spec_ngram_flags).
+            if matches!(spec_type, super::SpecType::NgramMod) {
+                if let Some(nmin) = self.spec_ngram_min {
+                    args.push("--spec-ngram-mod-n-min".to_string());
+                    args.push(nmin.to_string());
+                }
+                if let Some(nmax) = self.spec_ngram_max {
+                    args.push("--spec-ngram-mod-n-max".to_string());
+                    args.push(nmax.to_string());
+                }
             }
         }
 

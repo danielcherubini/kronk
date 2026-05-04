@@ -36,6 +36,8 @@ struct SpecPreset {
     draft_max: &'static str,
     ngram_n: &'static str,
     ngram_m: &'static str,
+    ngram_min: &'static str,
+    ngram_max: &'static str,
     gen_tokens: u32,
     runs: u32,
 }
@@ -50,6 +52,8 @@ impl SpecPreset {
                 draft_max: "16",
                 ngram_n: "12",
                 ngram_m: "48",
+                ngram_min: "3,5",
+                ngram_max: "48,64",
                 gen_tokens: 256,
                 runs: 3,
             },
@@ -60,6 +64,8 @@ impl SpecPreset {
                 draft_max: "8,16,32,48,64",
                 ngram_n: "12",
                 ngram_m: "48",
+                ngram_min: "3,5",
+                ngram_max: "48,64",
                 gen_tokens: 256,
                 runs: 3,
             },
@@ -70,6 +76,8 @@ impl SpecPreset {
                 draft_max: "32",
                 ngram_n: "8,12,16,24",
                 ngram_m: "32,48,64",
+                ngram_min: "3,5",
+                ngram_max: "48,64",
                 gen_tokens: 256,
                 runs: 3,
             },
@@ -80,6 +88,8 @@ impl SpecPreset {
                 draft_max: "32",
                 ngram_n: "8,12,16,24",
                 ngram_m: "32,48,64",
+                ngram_min: "3,5",
+                ngram_max: "48,64",
                 gen_tokens: 256,
                 runs: 3,
             },
@@ -148,6 +158,8 @@ pub fn SpecBench() -> impl IntoView {
     let draft_max_str = RwSignal::new("8,16,32,64".to_string());
     let ngram_n_str = RwSignal::new("12,16,24".to_string());
     let ngram_m_str = RwSignal::new("32,48".to_string());
+    let ngram_min_str = RwSignal::new("3,5".to_string());
+    let ngram_max_str = RwSignal::new("48,64".to_string());
 
     // ── Run settings ───────────────────────────────────────────────────
     let gen_tokens = RwSignal::new(256u32);
@@ -257,6 +269,8 @@ pub fn SpecBench() -> impl IntoView {
         draft_max_str.set(preset.draft_max.to_string());
         ngram_n_str.set(preset.ngram_n.to_string());
         ngram_m_str.set(preset.ngram_m.to_string());
+        ngram_min_str.set(preset.ngram_min.to_string());
+        ngram_max_str.set(preset.ngram_max.to_string());
         gen_tokens.set(preset.gen_tokens);
         runs.set(preset.runs);
     };
@@ -286,6 +300,8 @@ pub fn SpecBench() -> impl IntoView {
         let draft_max = parse_sizes(&draft_max_str.get());
         let ngram_n = parse_sizes(&ngram_n_str.get());
         let ngram_m = parse_sizes(&ngram_m_str.get());
+        let ngram_min = parse_sizes(&ngram_min_str.get());
+        let ngram_max = parse_sizes(&ngram_max_str.get());
         let gen_tok = gen_tokens.get();
         let runs_val = runs.get();
 
@@ -303,6 +319,8 @@ pub fn SpecBench() -> impl IntoView {
                 "draft_max_values": draft_max,
                 "ngram_n_values": ngram_n,
                 "ngram_m_values": ngram_m,
+                "ngram_min_values": ngram_min,
+                "ngram_max_values": ngram_max,
                 "gen_tokens": gen_tok,
                 "runs": runs_val,
             });
@@ -367,6 +385,8 @@ pub fn SpecBench() -> impl IntoView {
     let (draft_max_sig, _) = draft_max_str.split();
     let (ngram_n_sig, _) = ngram_n_str.split();
     let (ngram_m_sig, _) = ngram_m_str.split();
+    let (ngram_min_sig, _) = ngram_min_str.split();
+    let (ngram_max_sig, _) = ngram_max_str.split();
     let (gen_tokens_sig, _) = gen_tokens.split();
     let (runs_sig, _) = runs.split();
     let (is_running_sig, _) = is_running.split();
@@ -558,6 +578,38 @@ pub fn SpecBench() -> impl IntoView {
                         />
                         <small class="text-muted">"Draft pattern length (for ngram-map-k/k4v only), e.g. 32,48"</small>
                     </div>
+                </div>
+
+                // ── N-gram min/max (n-gram-mod only) ───────────────────────
+                <div class="grid-2">
+                    {move || {
+                        let has_ngram_mod = spec_types_sig.get().contains(&"ngram-mod".to_string());
+                        if !has_ngram_mod {
+                            return view! { <div></div> }.into_any();
+                        }
+                        view! {
+                            <div class="form-group">
+                                <label>"N-gram min"</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    prop:value=move || ngram_min_sig.get()
+                                    on:input=move |e| { ngram_min_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
+                                />
+                                <small class="text-muted">"Minimum n-gram matches (n-gram-mod only), e.g. 3,5"</small>
+                            </div>
+                            <div class="form-group">
+                                <label>"N-gram max"</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    prop:value=move || ngram_max_sig.get()
+                                    on:input=move |e| { ngram_max_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
+                                />
+                                <small class="text-muted">"Maximum n-gram matches (n-gram-mod only), e.g. 48,64"</small>
+                            </div>
+                        }.into_any()
+                    }}
                 </div>
             </section>
 
