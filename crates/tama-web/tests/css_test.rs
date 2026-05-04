@@ -1,15 +1,42 @@
-//! CSS contract tests for `style.css`.
+//! CSS contract tests for `style.css` (which @imports from `css/`).
 //!
 //! These tests don't run a browser — they assert that specific selectors are
 //! present in the stylesheet so that visual contracts depended on by the
 //! Leptos templates (e.g. `dashboard.rs`'s "Active Models" section) can't be
 //! silently dropped.
 //!
-//! Each test reads `style.css` via `include_str!` so it runs as a normal
-//! Rust integration test (`cargo test --package tama-web`) without needing
-//! a WASM toolchain.
+//! Each test reads all CSS partials from the `css/` directory via `include_str!`
+//! and concatenates them in import order so it runs as a normal Rust integration
+//! test (`cargo test --package tama-web`) without needing a WASM toolchain.
 
-const STYLE_CSS: &str = include_str!("../style.css");
+// Import all CSS partials in the same order as style.css @imports.
+const CSS_01: &str = include_str!("../css/01-custom-properties.css");
+const CSS_02: &str = include_str!("../css/02-reset-base.css");
+const CSS_03: &str = include_str!("../css/03-layout.css");
+const CSS_04: &str = include_str!("../css/04-cards-grid-tables.css");
+const CSS_05: &str = include_str!("../css/05-buttons-forms-progress.css");
+const CSS_06: &str = include_str!("../css/06-badges-model-list.css");
+const CSS_07: &str = include_str!("../css/07-gauges-charts.css");
+const CSS_08: &str = include_str!("../css/08-updates.css");
+const CSS_09: &str = include_str!("../css/09-utilities.css");
+const CSS_10: &str = include_str!("../css/10-page-components.css");
+const CSS_11: &str = include_str!("../css/11-models.css");
+const CSS_12: &str = include_str!("../css/12-forms-alerts.css");
+const CSS_13: &str = include_str!("../css/13-downloads.css");
+const CSS_14: &str = include_str!("../css/14-model-editor.css");
+const CSS_15: &str = include_str!("../css/15-dashboard.css");
+const CSS_16: &str = include_str!("../css/16-benchmarks.css");
+const CSS_17: &str = include_str!("../css/17-api-docs.css");
+
+/// Concatenate all CSS partials in import order.
+fn combined_css() -> String {
+    [
+        CSS_01, CSS_02, CSS_03, CSS_04, CSS_05, CSS_06, CSS_07, CSS_08,
+        CSS_09, CSS_10, CSS_11, CSS_12, CSS_13, CSS_14, CSS_15, CSS_16,
+        CSS_17,
+    ]
+    .join("\n")
+}
 
 /// Strip C-style block comments (`/* ... */`) from a CSS source. We use this
 /// so that selector-presence assertions can't be satisfied accidentally by
@@ -85,7 +112,7 @@ fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
 /// cards directly above it.
 #[test]
 fn style_css_defines_dashboard_models_section_spacing() {
-    let css = strip_css_comments(STYLE_CSS);
+    let css = strip_css_comments(&combined_css());
     let body = rule_body(&css, ".dashboard-models")
         .expect("style.css must define a `.dashboard-models` rule");
     assert!(
@@ -99,7 +126,7 @@ fn style_css_defines_dashboard_models_section_spacing() {
 /// header doesn't sit flush against the model cards grid.
 #[test]
 fn style_css_defines_dashboard_models_page_header_spacing() {
-    let css = strip_css_comments(STYLE_CSS);
+    let css = strip_css_comments(&combined_css());
     let body = rule_body(&css, ".dashboard-models .page-header")
         .expect("style.css must define a `.dashboard-models .page-header` rule");
     assert!(
@@ -130,7 +157,7 @@ fn rule_body_finds_top_level_rules_and_ignores_comments() {
 /// It needs vertical spacing (`margin-bottom`) to separate sections visually.
 #[test]
 fn style_css_defines_model_section_spacing() {
-    let css = strip_css_comments(STYLE_CSS);
+    let css = strip_css_comments(&combined_css());
     let body =
         rule_body(&css, ".model-section").expect("style.css must define a `.model-section` rule");
     assert!(
@@ -142,7 +169,7 @@ fn style_css_defines_model_section_spacing() {
 /// The last `.model-section` should not have extra bottom margin.
 #[test]
 fn style_css_defines_model_section_last_child_spacing() {
-    let css = strip_css_comments(STYLE_CSS);
+    let css = strip_css_comments(&combined_css());
     let body = rule_body(&css, ".model-section:last-child")
         .expect("style.css must define a `.model-section:last-child` rule");
     assert!(
@@ -155,7 +182,7 @@ fn style_css_defines_model_section_last_child_spacing() {
 /// It needs appropriate typography and a bottom border for visual separation.
 #[test]
 fn style_css_defines_model_section_title_styling() {
-    let css = strip_css_comments(STYLE_CSS);
+    let css = strip_css_comments(&combined_css());
     let body = rule_body(&css, ".model-section__title")
         .expect("style.css must define a `.model-section__title` rule");
     assert!(

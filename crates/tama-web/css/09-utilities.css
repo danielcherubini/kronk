@@ -1,0 +1,52 @@
+/* Utility classes */
+.text-mono {
+  font-family: var(--font-mono);
+}
+.text-muted {
+  color: var(--text-secondary);
+}
+.text-success {
+  color: var(--accent-green);
+}
+.text-error {
+  color: var(--accent-red);
+}
+.text-warning {
+  color: var(--accent-yellow);
+}
+.mt-1 {
+  margin-top: 0.5rem;
+}
+.mt-2 {
+  margin-top: 1rem;
+}
+.mt-3 {
+  margin-top: 1.5rem;
+}
+.mt-4 {
+  margin-top: 2rem;
+}
+.mb-1 {
+  margin-bottom: 0.5rem;
+}
+.mb-2 {
+  margin-bottom: 1rem;
+}
+.mb-3 {
+  margin-bottom: 1.5rem;
+}
+.mb-4 {
+  margin-bottom: 2rem;
+}
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.gap-1 {
+  gap: 0.5rem;
+}
+.gap-2 {
+  gap: 1rem;
+}
+

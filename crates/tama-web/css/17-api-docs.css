@@ -1,0 +1,52 @@
+/* API Docs page (Redoc embedded) */
+/* ── API Docs page (Redoc embedded) ─────────────────────────────────────── */
+.api-docs-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.api-docs-subtitle {
+    color: var(--text-muted);
+    font-size: 0.9375rem;
+    margin-bottom: 0.5rem;
+}
+
+.api-docs-container {
+    flex: 1;
+    min-height: 60vh;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+}
+
+/* Override Redoc's default styles to fit our app theme */
+.api-docs-container redoc {
+    --main-max-width: 100%;
+    --primary-color: var(--accent-blue);
+    --font-size-base: 14px;
+    --spacing-unit: 12px;
+    --repeat-horizontal-spacing: 32px;
+}
+
+/* Hide Redoc's default top bar since we have our own header */
+.api-docs-container redoc .redoc-wrap > header {
+    display: none !important;
+}
+
+.api-docs-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 2rem;
+    color: var(--text-muted);
+    font-size: 0.9375rem;
+}
+
+/* Redoc responsive tweaks */
+@media (max-width: 768px) {
+    .api-docs-container {
+        min-height: 50vh;
+    }
+}

@@ -1,0 +1,177 @@
+/* Dashboard Active Models */
+/* 24. Dashboard "Active Models" section
+ *
+ * The dashboard renders this section directly below the system metrics
+ * `.grid-stats` block. We need:
+ *   - vertical breathing room above the section so it doesn't collide with
+ *     the cards above (`margin-top`),
+ *   - a tighter bottom margin on the inner `.page-header` than the global
+ *     default (`1.5rem`) so the title row hugs its grid more closely,
+ *   - a slightly smaller heading size than the page-level `<h1>` so the
+ *     section feels subordinate to the page title.
+ *
+ * The grid items themselves reuse `.models-grid` and `.model-card` from
+ * section 17 — no new selectors are needed for the cards.
+ */
+.dashboard-models {
+  margin-top: 2rem;
+}
+
+.dashboard-models .page-header {
+  margin-bottom: 1rem;
+}
+
+.dashboard-models .page-header h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* ── Dashboard model rows — horizontal single-line layout ───────────────── */
+.models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ── Modal overlay ──────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-backdrop--open {
+  display: flex;
+}
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  max-width: 720px;
+  width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-card);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.modal-title {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+.modal-close:hover {
+  color: var(--text-primary);
+}
+.modal-body {
+  padding: 1.5rem;
+}
+
+/* ============================================
+ * Downloads Center & Toast Components
+ * ============================================ */
+
+/* Toast Container */
+.toast-container {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 400px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  box-shadow: var(--shadow-card);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  animation: toast-in 0.3s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.toast__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast__title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast__message {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.toast__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.toast__close:hover {
+  color: var(--text-primary);
+}
+
+.toast--info {
+  border-left: 3px solid var(--accent-blue);
+}
+.toast--success {
+  border-left: 3px solid var(--accent-green);
+}
+.toast--warning {
+  border-left: 3px solid var(--accent-yellow);
+}
+.toast--error {
+  border-left: 3px solid var(--accent-red);
+}
+
