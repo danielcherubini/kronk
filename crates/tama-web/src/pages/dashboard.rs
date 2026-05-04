@@ -9,9 +9,7 @@ use crate::components::modal::Modal;
 use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::components::sparkline::SparklineChart;
-use crate::utils::{
-    extract_and_store_csrf_token, post_request, rw_signal_to_signal,
-};
+use crate::utils::{extract_and_store_csrf_token, post_request, rw_signal_to_signal};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MetricSample {
@@ -399,8 +397,6 @@ pub fn Dashboard() -> impl IntoView {
             unload_busy.set(false);
         }
     });
-
-
 
     view! {
         <div class="page-header">
