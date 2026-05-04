@@ -581,36 +581,30 @@ pub fn SpecBench() -> impl IntoView {
                 </div>
 
                 // ── N-gram min/max (n-gram-mod only) ───────────────────────
-                <div class="grid-2">
-                    {move || {
-                        let has_ngram_mod = spec_types_sig.get().contains(&"ngram-mod".to_string());
-                        if !has_ngram_mod {
-                            return view! { <div></div> }.into_any();
-                        }
-                        view! {
-                            <div class="form-group">
-                                <label>"N-gram min"</label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    prop:value=move || ngram_min_sig.get()
-                                    on:input=move |e| { ngram_min_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
-                                />
-                                <small class="text-muted">"Minimum n-gram matches (n-gram-mod only), e.g. 3,5"</small>
-                            </div>
-                            <div class="form-group">
-                                <label>"N-gram max"</label>
-                                <input
-                                    type="text"
-                                    class="form-control"
-                                    prop:value=move || ngram_max_sig.get()
-                                    on:input=move |e| { ngram_max_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
-                                />
-                                <small class="text-muted">"Maximum n-gram matches (n-gram-mod only), e.g. 48,64"</small>
-                            </div>
-                        }.into_any()
-                    }}
-                </div>
+                <Show when=move || spec_types_sig.get().contains(&"ngram-mod".to_string())>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>"N-gram min"</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                prop:value=move || ngram_min_sig.get()
+                                on:input=move |e| { ngram_min_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
+                            />
+                            <small class="text-muted">"Minimum n-gram matches (n-gram-mod only), e.g. 3,5"</small>
+                        </div>
+                        <div class="form-group">
+                            <label>"N-gram max"</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                prop:value=move || ngram_max_sig.get()
+                                on:input=move |e| { ngram_max_str.set(e.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap().value()); }
+                            />
+                            <small class="text-muted">"Maximum n-gram matches (n-gram-mod only), e.g. 48,64"</small>
+                        </div>
+                    </div>
+                </Show>
             </section>
 
             // ── Run settings ──────────────────────────────────────────

@@ -129,10 +129,14 @@ fn default_flash_attn() -> bool {
 pub struct SpecEntry {
     pub spec_type: String,
     pub draft_max: u32,
-    /// N-gram lookup size (only for ngram-mod and ngram-map-*). None for ngram-simple.
+    /// N-gram lookup size (maps to `--spec-ngram-*-size-n` or `--spec-ngram-mod-n-match`). None for ngram-simple.
     pub ngram_n: Option<u32>,
     /// N-gram draft size (only for ngram-map-*). None for others.
     pub ngram_m: Option<u32>,
+    /// N-gram minimum match (only for n-gram-mod). None for other types.
+    pub ngram_min: Option<u32>,
+    /// N-gram maximum match (only for n-gram-mod). None for other types.
+    pub ngram_max: Option<u32>,
     /// Mean token generation speed (tokens/s).
     pub tg_ts_mean: f64,
     /// Stddev of token generation speed.
@@ -321,6 +325,8 @@ async fn execute_server_runs(
                     draft_max: sweep_cfg.draft_max,
                     ngram_n: sweep_cfg.ngram_n,
                     ngram_m: sweep_cfg.ngram_m,
+                    ngram_min: sweep_cfg.ngram_min,
+                    ngram_max: sweep_cfg.ngram_max,
                     tg_ts_mean: 0.0,
                     tg_ts_stddev: 0.0,
                     delta_pct: 0.0,
@@ -342,6 +348,8 @@ async fn execute_server_runs(
         draft_max: sweep_cfg.draft_max,
         ngram_n: sweep_cfg.ngram_n,
         ngram_m: sweep_cfg.ngram_m,
+        ngram_min: sweep_cfg.ngram_min,
+        ngram_max: sweep_cfg.ngram_max,
         tg_ts_mean: mean,
         tg_ts_stddev: stddev,
         delta_pct: 0.0,
@@ -369,6 +377,8 @@ async fn run_spec_type_group(
                     draft_max: cfg.draft_max,
                     ngram_n: cfg.ngram_n,
                     ngram_m: cfg.ngram_m,
+                    ngram_min: cfg.ngram_min,
+                    ngram_max: cfg.ngram_max,
                     tg_ts_mean: 0.0,
                     tg_ts_stddev: 0.0,
                     delta_pct: 0.0,
@@ -428,6 +438,8 @@ async fn run_spec_type_group(
                     draft_max: cfg.draft_max,
                     ngram_n: cfg.ngram_n,
                     ngram_m: cfg.ngram_m,
+                    ngram_min: cfg.ngram_min,
+                    ngram_max: cfg.ngram_max,
                     tg_ts_mean: 0.0,
                     tg_ts_stddev: 0.0,
                     delta_pct: 0.0,
@@ -589,6 +601,8 @@ pub async fn run_spec_bench(
                     draft_max: cfg.draft_max,
                     ngram_n: cfg.ngram_n,
                     ngram_m: cfg.ngram_m,
+                    ngram_min: cfg.ngram_min,
+                    ngram_max: cfg.ngram_max,
                     tg_ts_mean: 0.0,
                     tg_ts_stddev: 0.0,
                     delta_pct: 0.0,
