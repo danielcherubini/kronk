@@ -15,6 +15,9 @@ pub struct BackendListResponse {
     pub active_job: Option<ActiveJobDto>,
     pub backends: Vec<BackendCardDto>,
     pub custom: Vec<BackendCardDto>,
+    /// Backend type identifiers that are known but not currently installed.
+    #[serde(default)]
+    pub available: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

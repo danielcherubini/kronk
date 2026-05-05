@@ -1,0 +1,16 @@
+import sys
+
+with open('/home/daniel/Coding/Rust/tama/crates/tama-web/src/pages/backends.rs', 'r') as f:
+    lines = f.readlines()
+
+# Find and fix corrupted lines
+out = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if 'on_remove_version=remove_version_cb' in line and i+1 < len(lines) and lines[i+1].strip() == '/>':
+        out.append(line)
+        out.append('                            />\n')
+        i += 2  # Skip broken />
+        out.append('                        }.into_any());\n')
+        out.append('

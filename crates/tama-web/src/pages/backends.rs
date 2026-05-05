@@ -14,6 +14,8 @@ struct BackendListResponse {
     backends: Vec<BackendCardDto>,
     #[serde(default)]
     custom: Vec<BackendCardDto>,
+    #[serde(default)]
+    available: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -35,6 +37,7 @@ pub fn Backends() -> impl IntoView {
         RwSignal::new(std::collections::HashMap::new());
     let save_status: RwSignal<Option<String>> = RwSignal::new(None);
     let saving: RwSignal<bool> = RwSignal::new(false);
+    let show_backend_dropdown = RwSignal::new(false);
 
     // ── Fetch backends list (re-runs on refresh_tick) ────────────────────────
     Effect::new(move |_| {
@@ -272,6 +275,65 @@ pub fn Backends() -> impl IntoView {
                 >
                     "Save Changes"
                 </button>
+                <div style="position:relative;">
+                    <button
+                        class="btn btn-success"
+                        on:click=move |_| {
+                            show_backend_dropdown.update(|v| *v = !*v);
+                        }
+                    >
+                        "+ Add Backend"
+                    </button>
+                    {move || {
+                        if !show_backend_dropdown.get() {
+                            return view! { <span/> }.into_any();
+                        }
+                        let list = backends_list.get();
+                        let all = vec![
+                            ("llama_cpp", "llama.cpp"),
+                            ("ik_llama", "ik_llama.cpp"),
+                            ("tts_kokoro", "Kokoro TTS"),
+                        ];
+                        let available: std::collections::HashSet<String> =
+                            list.available.into_iter().collect();
+
+                        let mut items: Vec<_> = all
+                            .into_iter()
+                            .filter(|(t, _)| available.contains(*t))
+                            .collect();
+                        items.sort_by_key(|(_, d)| *d);
+
+                        if items.is_empty() {
+                            return view! {
+                                <div style="position:absolute;right:0;top:100%;margin-top:4px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:0.5rem 0;z-index:100;width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                    <div style="padding:0.5rem 0.75rem;color:#94a3b8;font-size:0.875rem;">
+                                        "All backends installed"
+                                    </div>
+                                </div>
+                            }.into_any();
+                        }
+
+                        view! {
+                            <div style="position:absolute;right:0;top:100%;margin-top:4px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:0.5rem 0;z-index:100;width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                {items.into_iter().map(|(backend_type, display_name): (&str, &str)| {
+                                    let bt = backend_type.to_string();
+                                    view! {
+                                        <button
+                                            style="width:100%;text-align:left;padding:0.5rem 0.75rem;background:none;border:none;color:#e2e8f0;cursor:pointer;font-size:0.875rem;"
+                                            on:click=move |_| {
+                                                action_error.set(None);
+                                                install_modal_for.set(Some(bt.clone()));
+                                                show_backend_dropdown.set(false);
+                                            }
+                                        >
+                                            {display_name}
+                                        </button>
+                                    }.into_any()
+                                }).collect::<Vec<_>>()}
+                            </div>
+                        }.into_any()
+                    }}
+                </div>
             </div>
         </div>
 
@@ -306,8 +368,25 @@ pub fn Backends() -> impl IntoView {
             <div style="display:flex;flex-direction:column;gap:1rem;margin-top:1rem;">
                 {move || {
                     let list = backends_list.get();
+                    let combined: Vec<_> = list.backends.into_iter()
+                        .chain(list.custom.into_iter())
+                        .collect();
+
+                    if combined.is_empty() {
+                        return view! {
+                            <div style="text-align:center;padding:2.5rem 2rem;color:#64748b;">
+                                <div style="font-size:1.125rem;font-weight:500;margin-bottom:0.5rem;">
+                                    "No backends installed"
+                                </div>
+                                <div style="font-size:0.875rem;margin-bottom:1.5rem;">
+                                    "Click the + Add Backend button to get started."
+                                </div>
+                            </div>
+                        }.into_any();
+                    }
+
                     let mut cards = Vec::new();
-                    for backend in list.backends.into_iter().chain(list.custom.into_iter()) {
+                    for backend in combined {
                         let activate_cb = on_activate_click;
                         let remove_version_cb = on_remove_version_click;
                         cards.push(view! {
@@ -323,7 +402,7 @@ pub fn Backends() -> impl IntoView {
                             />
                         }.into_any());
                     }
-                    cards
+                    view! { <>{cards}</> }.into_any()
                 }}
             </div>
 

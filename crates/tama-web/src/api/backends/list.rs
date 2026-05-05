@@ -74,12 +74,14 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         })
         .unwrap_or_default();
 
+    // Build the response including available backend types
     let mut backends: Vec<BackendCardDto> = Vec::new();
     let mut custom: Vec<BackendCardDto> = Vec::new();
+    let mut available: Vec<String> = Vec::new();
 
     match registry_result {
         Ok(registry) => {
-            // Emit one card per (backend_type, gpu_variant) pair
+            // Emit one card per (backend_type, gpu_variant) pair — only if installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
                 #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
@@ -87,7 +89,6 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     .cloned()
                     .unwrap_or_default();
 
-                // Get ALL versions for this backend type
                 let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
@@ -103,7 +104,6 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
                     // Create one card per variant
                     for (variant, variant_versions) in variant_groups {
-                        // Get active version for this variant
                         let active_version = registry.get(type_, &variant).ok().flatten();
 
                         // Sort versions by installed_at DESC
@@ -144,13 +144,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                         });
                     }
                 } else {
-                    // No versions installed — show uninstalled card
-                    backends.push(BackendCardDto::default_uninstalled(
-                        type_,
-                        display_name,
-                        *release_notes_url,
-                        default_args,
-                    ));
+                    available.push(type_.to_string());
                 }
             }
 
@@ -222,20 +216,6 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         }
         Err(e) => {
             tracing::warn!("Failed to open backend registry: {}", e);
-            // On error, still return known backends as not installed
-            for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                #[allow(clippy::unnecessary_to_owned)]
-                let default_args = default_args_map
-                    .get(&type_.to_string())
-                    .cloned()
-                    .unwrap_or_default();
-                backends.push(BackendCardDto::default_uninstalled(
-                    type_,
-                    display_name,
-                    *release_notes_url,
-                    default_args,
-                ));
-            }
         }
     }
 
@@ -243,6 +223,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         active_job,
         backends,
         custom,
+        available,
     })
     .into_response()
 }
