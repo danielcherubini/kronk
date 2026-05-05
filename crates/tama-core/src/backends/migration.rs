@@ -172,7 +172,7 @@ fn is_new_pattern_path(path: &Path, backends_dir: &Path, backend_type: &BackendT
             .components()
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .collect();
-        if components.first() == Some(&backend_type.to_string()) && components.len() >= 3 {
+        if components.first() == Some(&backend_type.to_string()) && components.len() >= 4 {
             return true;
         }
     }
