@@ -123,13 +123,14 @@ pub async fn check_updates(backend_info: &BackendInfo) -> Result<UpdateCheck> {
 pub async fn update_backend_with_progress(
     registry: &mut BackendRegistry,
     backend_name: &str,
+    gpu_variant: &str,
     options: InstallOptions,
     latest_version: String,
     progress: Option<Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // Validate backend exists before installing to prevent orphaned files
     registry
-        .get(backend_name)?
+        .get(backend_name, gpu_variant)?
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
     // Clone source before install_backend moves options
@@ -153,6 +154,7 @@ pub async fn update_backend_with_progress(
 
     registry.update_version(
         backend_name,
+        gpu_variant,
         resolved_version,
         new_binary_path,
         Some(source),
@@ -169,10 +171,19 @@ pub async fn update_backend_with_progress(
 pub async fn update_backend(
     registry: &mut BackendRegistry,
     backend_name: &str,
+    gpu_variant: &str,
     options: InstallOptions,
     latest_version: String,
 ) -> Result<()> {
-    update_backend_with_progress(registry, backend_name, options, latest_version, None).await
+    update_backend_with_progress(
+        registry,
+        backend_name,
+        gpu_variant,
+        options,
+        latest_version,
+        None,
+    )
+    .await
 }
 
 /// Check if a GitHub API response indicates rate limiting.

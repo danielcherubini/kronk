@@ -156,6 +156,7 @@ mod tests {
             path: outside_path,
             installed_at: 0,
             gpu_type: None,
+            gpu_variant: "cpu".to_string(),
             source: None,
         };
 
@@ -242,6 +243,7 @@ mod tests {
             path: test_base.clone(), // This is a directory, not a binary
             installed_at: 0,
             gpu_type: None,
+            gpu_variant: "cpu".to_string(),
             source: None,
         };
 

@@ -90,7 +90,10 @@ pub struct UpdateChecker {
 }
 
 /// Results from an initial sync of backends and models to check for updates.
-pub type UpdateSyncResults = (Vec<(String, BackendType)>, Vec<(i64, Option<String>)>);
+pub type UpdateSyncResults = (
+    Vec<(String, BackendType, String)>,
+    Vec<(i64, Option<String>)>,
+);
 
 impl UpdateChecker {
     pub fn new() -> Self {
@@ -120,9 +123,15 @@ impl UpdateChecker {
             move || -> anyhow::Result<UpdateSyncResults> {
                 let registry = BackendRegistry::open(&config_dir)?;
                 let active_backends = registry.list().unwrap_or_default();
-                let backends: Vec<(String, BackendType)> = active_backends
+                let backends: Vec<(String, BackendType, String)> = active_backends
                     .iter()
-                    .map(|b| (b.name.clone(), b.backend_type.clone()))
+                    .map(|b| {
+                        (
+                            b.name.clone(),
+                            b.backend_type.clone(),
+                            b.gpu_variant.clone(),
+                        )
+                    })
                     .collect();
 
                 let open = db::open(&config_dir)?;
@@ -138,9 +147,9 @@ impl UpdateChecker {
         .await??;
 
         // Phase 2: Async network - check each backend
-        for (backend_name, backend_type) in &backends {
+        for (backend_name, backend_type, gpu_variant) in &backends {
             if let Err(e) = self
-                .check_backend(config_dir, backend_name, backend_type)
+                .check_backend(config_dir, backend_name, backend_type, gpu_variant)
                 .await
             {
                 tracing::warn!("Failed to check backend {}: {}", backend_name, e);
@@ -167,14 +176,16 @@ impl UpdateChecker {
         config_dir: &std::path::Path,
         backend_name: &str,
         backend_type: &BackendType,
+        gpu_variant: &str,
     ) -> anyhow::Result<()> {
         // Sync: Get current version from DB
         let current_version = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             let backend_name = backend_name.to_string();
+            let gpu_variant = gpu_variant.to_string();
             move || -> anyhow::Result<Option<String>> {
                 let open = db::open(&config_dir)?;
-                let record = get_active_backend(&open.conn, &backend_name)?;
+                let record = get_active_backend(&open.conn, &backend_name, &gpu_variant)?;
                 Ok(record.map(|r| r.version))
             }
         })

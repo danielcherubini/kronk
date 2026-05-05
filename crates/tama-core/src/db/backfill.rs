@@ -149,6 +149,7 @@ pub fn migrate_backend_registry_toml(
             path: info.path.to_string_lossy().to_string(),
             installed_at: info.installed_at,
             gpu_type: gpu_type_json,
+            gpu_variant: "cpu".to_string(), // Legacy data has no gpu_variant; default to cpu
             source: source_json,
             is_active: true,
         };
@@ -465,7 +466,7 @@ installed_at = 1700000000
         migrate_backend_registry_toml(&conn, tmp.path()).unwrap();
 
         // Assert that the backend was inserted correctly
-        let record = crate::db::queries::get_active_backend(&conn, "llama_cpp")
+        let record = crate::db::queries::get_active_backend(&conn, "llama_cpp", "cpu")
             .unwrap()
             .expect("llama_cpp should exist in DB after migration");
         assert_eq!(record.version, "b3456");
@@ -523,6 +524,7 @@ installed_at = 1700000000
                 path: "/opt/backends/llama_cpp/llama-server".to_string(),
                 installed_at: 1700000000,
                 gpu_type: None,
+                gpu_variant: "cpu".to_string(),
                 source: None,
                 is_active: true,
             },

@@ -88,10 +88,11 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     .unwrap_or_default();
 
                 // Get ALL versions for this backend type
-                let versions_opt = registry.list_all_versions(type_).unwrap_or(None);
+                let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(type_).ok().flatten();
+                    // Use "cpu" as default for active version lookup
+                    let active_version = registry.get(type_, "cpu").ok().flatten();
 
                     // Sort versions by installed_at DESC
                     let mut sorted_versions = versions.clone();
@@ -147,10 +148,12 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     continue;
                 }
 
-                let versions_opt = registry.list_all_versions(&active.name).unwrap_or(None);
+                let versions_opt = registry
+                    .list_all_versions(&active.name, None)
+                    .unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(&active.name).ok().flatten();
+                    let active_version = registry.get(&active.name, "cpu").ok().flatten();
                     let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
                     let mut sorted_versions = versions.clone();
@@ -299,10 +302,10 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                     .cloned()
                     .unwrap_or_default();
 
-                let versions_opt = registry.list_all_versions(type_).unwrap_or(None);
+                let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(type_).ok().flatten();
+                    let active_version = registry.get(type_, "cpu").ok().flatten();
 
                     // Check for updates against the active version
                     let update_check = match active_version.as_ref() {
@@ -376,10 +379,12 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                     continue;
                 }
 
-                let versions_opt = registry.list_all_versions(&active.name).unwrap_or(None);
+                let versions_opt = registry
+                    .list_all_versions(&active.name, None)
+                    .unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(&active.name).ok().flatten();
+                    let active_version = registry.get(&active.name, "cpu").ok().flatten();
                     let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
                     let mut sorted_versions = versions.clone();
@@ -491,7 +496,7 @@ pub async fn list_backend_versions(
 
     match registry_result {
         Ok(registry) => {
-            let versions_opt = match registry.list_all_versions(&name) {
+            let versions_opt = match registry.list_all_versions(&name, None) {
                 Ok(v) => v,
                 Err(e) => {
                     return (
@@ -514,7 +519,7 @@ pub async fn list_backend_versions(
             };
 
             // Get the active version for comparison
-            let active_version = registry.get(&name).ok().flatten().map(|a| a.version);
+            let active_version = registry.get(&name, "cpu").ok().flatten().map(|a| a.version);
 
             let dto_versions: Vec<BackendVersionDto> = versions
                 .iter()

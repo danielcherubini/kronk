@@ -203,22 +203,31 @@ pub async fn check_single(
         "backend" => {
             let config_dir_clone = config_dir.clone();
             let item_id_clone = item_id.clone();
-            let bt_result =
-                tokio::task::spawn_blocking(move || -> anyhow::Result<Option<BackendType>> {
+            let bt_result = tokio::task::spawn_blocking(
+                move || -> anyhow::Result<Option<(BackendType, String)>> {
                     let open = tama_core::db::open(&config_dir_clone)?;
-                    let record =
-                        tama_core::db::queries::get_active_backend(&open.conn, &item_id_clone)?;
-                    Ok(record.map(|r| match r.backend_type.as_str() {
-                        "llama_cpp" => BackendType::LlamaCpp,
-                        "ik_llama" => BackendType::IkLlama,
-                        _ => BackendType::Custom,
+                    let record = tama_core::db::queries::get_active_backend(
+                        &open.conn,
+                        &item_id_clone,
+                        "cpu",
+                    )?;
+                    Ok(record.map(|r| {
+                        (
+                            match r.backend_type.as_str() {
+                                "llama_cpp" => BackendType::LlamaCpp,
+                                "ik_llama" => BackendType::IkLlama,
+                                _ => BackendType::Custom,
+                            },
+                            r.gpu_variant,
+                        )
                     }))
-                })
-                .await;
+                },
+            )
+            .await;
 
             match bt_result {
-                Ok(Ok(Some(bt))) => checker
-                    .check_backend(&config_dir, &item_id, &bt)
+                Ok(Ok(Some((bt, gpu_variant)))) => checker
+                    .check_backend(&config_dir, &item_id, &bt, &gpu_variant)
                     .await
                     .map(|_| ()),
                 Ok(Ok(None)) => Err(anyhow::anyhow!("Backend not found")),
@@ -296,7 +305,7 @@ pub async fn apply_backend_update(
         let name = name.clone();
         move || -> anyhow::Result<(Option<BackendType>, Option<String>)> {
             let open = tama_core::db::open(&config_dir)?;
-            let record = tama_core::db::queries::get_active_backend(&open.conn, &name)?;
+            let record = tama_core::db::queries::get_active_backend(&open.conn, &name, "cpu")?;
             Ok(record
                 .map(|r| {
                     let bt = match r.backend_type.as_str() {
@@ -393,7 +402,7 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let backend_info = match registry.get(&name_clone) {
+        let backend_info = match registry.get(&name_clone, "cpu") {
             Ok(Some(info)) => info,
             Ok(None) => {
                 tracing::error!("Backend '{}' not found during update", name_clone);
@@ -431,6 +440,7 @@ pub async fn apply_backend_update(
         match tama_core::backends::update_backend_with_progress(
             &mut registry,
             &name_clone,
+            &backend_info.gpu_variant,
             options,
             latest_version,
             None,

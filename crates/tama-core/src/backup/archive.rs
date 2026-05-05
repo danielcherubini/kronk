@@ -507,7 +507,7 @@ enabled = true
         conn.execute_batch(
             "CREATE TABLE model_pulls (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, commit_sha TEXT NOT NULL, pulled_at TEXT NOT NULL, UNIQUE(repo_id));
              CREATE TABLE model_files (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, filename TEXT NOT NULL, quant TEXT, lfs_oid TEXT, size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL, last_verified_at TEXT, verified_ok INTEGER, verify_error TEXT, UNIQUE(repo_id, filename));
-             CREATE TABLE backend_installations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, backend_type TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, installed_at INTEGER NOT NULL, gpu_type TEXT, source TEXT, is_active INTEGER NOT NULL DEFAULT 0, UNIQUE(name, version));"
+             CREATE TABLE backend_installations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, backend_type TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, installed_at INTEGER NOT NULL, gpu_type TEXT, gpu_variant TEXT NOT NULL DEFAULT 'cpu', source TEXT, is_active INTEGER NOT NULL DEFAULT 0, UNIQUE(name, gpu_variant, version));"
         ).expect("create tables");
         conn.execute(
             "INSERT INTO model_pulls (repo_id, commit_sha, pulled_at) VALUES ('test/repo', 'abc123', '2024-01-01T00:00:00Z');",
@@ -518,7 +518,7 @@ enabled = true
             [],
         ).expect("insert model file");
         conn.execute(
-            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_type, source, is_active) VALUES ('llama_cpp', 'llama_cpp', 'v1.0', '/tmp/llama', 1234567890, NULL, 'prebuilt', 1);",
+            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_type, gpu_variant, source, is_active) VALUES ('llama_cpp', 'llama_cpp', 'v1.0', '/tmp/llama', 1234567890, NULL, 'cpu', 'prebuilt', 1);",
             [],
         ).expect("insert backend");
 
@@ -651,7 +651,7 @@ log_level = "info"
         conn.execute_batch(
             "CREATE TABLE model_pulls (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, commit_sha TEXT NOT NULL, pulled_at TEXT NOT NULL, UNIQUE(repo_id));
              CREATE TABLE model_files (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT NOT NULL, filename TEXT NOT NULL, quant TEXT, lfs_oid TEXT, size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL, last_verified_at TEXT, verified_ok INTEGER, verify_error TEXT, UNIQUE(repo_id, filename));
-             CREATE TABLE backend_installations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, backend_type TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, installed_at INTEGER NOT NULL, gpu_type TEXT, source TEXT, is_active INTEGER NOT NULL DEFAULT 0, UNIQUE(name, version));"
+             CREATE TABLE backend_installations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, backend_type TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, installed_at INTEGER NOT NULL, gpu_type TEXT, gpu_variant TEXT NOT NULL DEFAULT 'cpu', source TEXT, is_active INTEGER NOT NULL DEFAULT 0, UNIQUE(name, gpu_variant, version));"
         ).expect("create tables");
 
         // Create a backup normally

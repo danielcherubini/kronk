@@ -77,7 +77,9 @@ pub async fn update_backend(
         }
     };
 
-    let backend_info = match registry.get(&name) {
+    // Use "cpu" as default gpu_variant for initial lookup.
+    // TODO: Accept gpu_variant as a query parameter for multi-variant support.
+    let backend_info = match registry.get(&name, "cpu") {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -185,6 +187,7 @@ pub async fn update_backend(
     let job_clone = job.clone();
     let name_clone = name.clone();
     let latest_version_clone = latest_version.clone();
+    let gpu_variant_clone = backend_info.gpu_variant.clone();
     tokio::spawn(async move {
         let adapter = Arc::new(JobAdapter {
             jobs: jobs_clone.clone(),
@@ -194,6 +197,7 @@ pub async fn update_backend(
         let result = match tama_core::backends::update_backend_with_progress(
             &mut registry,
             &name_clone,
+            &gpu_variant_clone,
             options,
             latest_version_clone,
             Some(adapter),
@@ -373,7 +377,7 @@ pub async fn remove_backend_version(
 
     // Get the specific version record before deleting
     // Use list_all_versions and find the matching version (conn is private)
-    let versions = match registry.list_all_versions(&name) {
+    let versions = match registry.list_all_versions(&name, None) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return (
@@ -414,6 +418,7 @@ pub async fn remove_backend_version(
         path: std::path::PathBuf::from(&info.path),
         installed_at: info.installed_at,
         gpu_type: None,
+        gpu_variant: info.gpu_variant.clone(),
         source: None,
     };
 
@@ -458,7 +463,7 @@ pub async fn remove_backend_version(
     }
 
     // Remove from registry (DB only — activates another version if this was active)
-    if let Err(e) = registry.remove_version(&name, &version) {
+    if let Err(e) = registry.remove_version(&name, &info.gpu_variant, &version) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Failed to remove version from registry: {}", e)})),
@@ -518,7 +523,7 @@ pub async fn activate_backend_version(
     let registry_result: Result<(tama_core::backends::BackendRegistry, bool), _> =
         tokio::task::spawn_blocking(move || {
             let mut reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
-            let activated = reg.activate(&name_clone, &version_clone)?;
+            let activated = reg.activate(&name_clone, "cpu", &version_clone)?;
             Ok((reg, activated))
         })
         .await
@@ -609,6 +614,7 @@ pub async fn update_backend_default_args(
                 default_args: req.default_args,
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
     }

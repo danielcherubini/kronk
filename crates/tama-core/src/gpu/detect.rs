@@ -34,6 +34,21 @@ pub struct ContextSuggestion {
     pub kv_cache_mib: u64,
 }
 
+impl GpuType {
+    /// Returns the folder name used for this GPU variant.
+    /// e.g. "cpu", "vulkan", "metal", "cuda", "rocm", "custom"
+    pub fn variant_folder(&self) -> &str {
+        match self {
+            GpuType::CpuOnly => "cpu",
+            GpuType::Vulkan => "vulkan",
+            GpuType::Metal => "metal",
+            GpuType::Cuda { .. } => "cuda",
+            GpuType::RocM { .. } => "rocm",
+            GpuType::Custom => "custom",
+        }
+    }
+}
+
 /// Default CUDA version used when auto-detection fails.
 pub const DEFAULT_CUDA_VERSION: &str = "12.4";
 
@@ -481,6 +496,28 @@ mod tests {
             }
         }
         assert_eq!(version, Some("12.4".to_string()));
+    }
+
+    #[test]
+    fn test_variant_folder_all_variants() {
+        assert_eq!(GpuType::CpuOnly.variant_folder(), "cpu");
+        assert_eq!(GpuType::Vulkan.variant_folder(), "vulkan");
+        assert_eq!(GpuType::Metal.variant_folder(), "metal");
+        assert_eq!(
+            GpuType::Cuda {
+                version: "12.4".to_string()
+            }
+            .variant_folder(),
+            "cuda"
+        );
+        assert_eq!(
+            GpuType::RocM {
+                version: "6.0".to_string()
+            }
+            .variant_folder(),
+            "rocm"
+        );
+        assert_eq!(GpuType::Custom.variant_folder(), "custom");
     }
 
     #[test]

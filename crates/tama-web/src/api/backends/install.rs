@@ -385,6 +385,10 @@ pub async fn install_backend(
     let reg_backend_type = backend_type.clone();
     let reg_version = version.clone();
     let reg_gpu_type = gpu_type.clone();
+    let reg_gpu_variant = reg_gpu_type
+        .as_ref()
+        .map(|g| g.variant_folder().to_string())
+        .unwrap_or_else(|| "cpu".to_string());
     let reg_source = source.clone();
     let reg_backend_name = match backend_type {
         tama_core::backends::BackendType::LlamaCpp => "llama_cpp",
@@ -442,6 +446,7 @@ pub async fn install_backend(
                             path: binary_path,
                             installed_at,
                             gpu_type: reg_gpu_type,
+                            gpu_variant: reg_gpu_variant,
                             source: Some(reg_source),
                         })
                     })
@@ -544,7 +549,7 @@ pub async fn remove_backend(
         }
     };
 
-    let backend_info = match registry.get(&name) {
+    let backend_info = match registry.get(&name, "cpu") {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -599,8 +604,8 @@ pub async fn remove_backend(
             .into_response();
     }
 
-    // Remove from registry
-    if let Err(e) = registry.remove(&name) {
+    // Remove from registry (None = remove all variants)
+    if let Err(e) = registry.remove(&name, None) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Failed to remove from registry: {}", e)})),

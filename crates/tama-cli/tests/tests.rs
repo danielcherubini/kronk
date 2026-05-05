@@ -290,6 +290,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
     let result: anyhow::Result<()> = cmd_server_edit(

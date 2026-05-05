@@ -27,6 +27,7 @@ pub async fn install_tts_kokoro(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64),
         gpu_type: None,
+        gpu_variant: "cpu".to_string(),
         source: Some(BackendSource::SourceCode {
             version: paths::KOKORO_FASTAPI_TAG.to_string(),
             git_url: paths::KOKORO_FASTAPI_URL.to_string(),

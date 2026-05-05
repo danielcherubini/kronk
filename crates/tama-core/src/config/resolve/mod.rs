@@ -463,10 +463,15 @@ impl Config {
     /// Resolve the filesystem path for a named backend binary.
     ///
     /// Priority:
-    /// 1. If `config.backends[name].version` is `Some(v)`, look up that exact `(name, version)`
+    /// 1. If `config.backends[name].version` is `Some(v)`, look up that exact `(name, gpu_variant, version)`
     ///    in the DB. If found, return its path. If not found, return a descriptive error.
     /// 2. Otherwise, use the active (latest) installation from the DB.
     /// 3. Fallback to `path` field in `config.toml` [backends] section (for custom/manual installs).
+    ///
+    /// The `gpu_variant` is determined as follows:
+    /// - If `config.backends[name].gpu_variant` is set → use it
+    /// - If not set → discover from DB: use the variant of the first active installation,
+    ///   or the first variant found if multiple exist.
     ///
     /// Returns an error if neither source has a path.
     pub fn resolve_backend_path(
@@ -474,13 +479,36 @@ impl Config {
         name: &str,
         conn: &rusqlite::Connection,
     ) -> Result<std::path::PathBuf> {
+        // Determine the gpu_variant to use
+        let gpu_variant: String = self
+            .backends
+            .get(name)
+            .and_then(|b| b.gpu_variant.as_deref())
+            .map(String::from)
+            .unwrap_or_else(|| {
+                // Discover from DB: use the variant of the first active installation
+                // or the first variant found
+                crate::db::queries::list_backend_versions(conn, name, None)
+                    .ok()
+                    .and_then(|versions| {
+                        // Prefer active versions
+                        versions
+                            .iter()
+                            .find(|v| v.is_active)
+                            .or_else(|| versions.first())
+                            .map(|v| v.gpu_variant.clone())
+                    })
+                    .unwrap_or_else(|| "cpu".to_string())
+            });
+
         // Check if a specific version is pinned in config
         if let Some(pinned_version) = self.backends.get(name).and_then(|b| b.version.as_deref()) {
-            return match crate::db::queries::get_backend_by_version(conn, name, pinned_version)? {
+            return match crate::db::queries::get_backend_by_version(conn, name, &gpu_variant, pinned_version)? {
                 Some(record) => Ok(std::path::PathBuf::from(record.path)),
                 None => anyhow::bail!(
-                    "Backend '{}' version '{}' not found in DB. Run `tama backend install {}` first.",
+                    "Backend '{}' variant '{}' version '{}' not found in DB. Run `tama backend install {}` first.",
                     name,
+                    gpu_variant,
                     pinned_version,
                     name
                 ),
@@ -488,7 +516,7 @@ impl Config {
         }
 
         // No version pin — use the active (latest) installation
-        if let Some(record) = crate::db::queries::get_active_backend(conn, name)? {
+        if let Some(record) = crate::db::queries::get_active_backend(conn, name, &gpu_variant)? {
             return Ok(std::path::PathBuf::from(record.path));
         }
 

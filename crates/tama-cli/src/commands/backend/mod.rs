@@ -353,7 +353,8 @@ async fn cmd_install(
         version: version.clone(),
         path: binary_path.clone(),
         installed_at: current_unix_timestamp(),
-        gpu_type: Some(gpu_type),
+        gpu_type: Some(gpu_type.clone()),
+        gpu_variant: gpu_type.variant_folder().to_string(),
         source: Some(source),
     })?;
 
@@ -375,7 +376,7 @@ async fn cmd_install(
 async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    let backend_info = registry.get(name)?.ok_or_else(|| {
+    let backend_info = registry.get(name, "cpu")?.ok_or_else(|| {
         anyhow!(
             "Backend '{}' not found. Run `tama backend list` to see installed backends.",
             name
@@ -464,7 +465,14 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
         allow_overwrite: true,
     };
 
-    update_backend(&mut registry, name, options, update_check.latest_version).await?;
+    update_backend(
+        &mut registry,
+        name,
+        &backend_info.gpu_variant,
+        options,
+        update_check.latest_version,
+    )
+    .await?;
 
     Ok(())
 }
@@ -486,7 +494,7 @@ async fn cmd_list(_config: &Config) -> Result<()> {
     println!("Installed backends:\n");
     for backend in &backends {
         let name = backend.name.clone();
-        let all_versions = registry.list_all_versions(&name).unwrap_or(None);
+        let all_versions = registry.list_all_versions(&name, None).unwrap_or(None);
 
         if let Some(versions) = all_versions {
             // Show all versions, marking the active one
@@ -536,7 +544,7 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
     let backend = registry
-        .get(name)?
+        .get(name, "cpu")?
         .ok_or_else(|| anyhow!("Backend '{}' not found", name))?;
 
     println!("Removing backend '{}'", name);
@@ -567,7 +575,7 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
     }
 
     // Remove from registry only after successful file deletion
-    registry.remove(name)?;
+    registry.remove(name, None)?;
 
     println!("Backend '{}' removed.", name);
     Ok(())
@@ -626,10 +634,10 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
 
     if let Some(target_name) = name {
         // Show all versions for a specific backend
-        match registry.list_all_versions(target_name)? {
+        match registry.list_all_versions(target_name, None)? {
             Some(versions) => {
                 // Get the active version for comparison
-                let active_version = registry.get(target_name)?.map(|a| a.version);
+                let active_version = registry.get(target_name, "cpu")?.map(|a| a.version);
 
                 for v in versions {
                     entries.push(VersionEntry {
@@ -656,7 +664,7 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
             let active_version = active.version.clone();
 
             // Get all versions for this backend
-            let all_versions = match registry.list_all_versions(&name)? {
+            let all_versions = match registry.list_all_versions(&name, None)? {
                 Some(v) => v,
                 None => vec![active.clone()],
             };
@@ -710,7 +718,7 @@ async fn cmd_switch(_config: &Config, name: &str, version: &str) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
     // Check the version exists
-    let versions = match registry.list_all_versions(name)? {
+    let versions = match registry.list_all_versions(name, None)? {
         Some(v) => v,
         None => anyhow::bail!(
             "Backend '{}' not found. Run `tama backend list` to see installed backends.",
@@ -718,8 +726,8 @@ async fn cmd_switch(_config: &Config, name: &str, version: &str) -> Result<()> {
         ),
     };
 
-    let version_exists = versions.iter().any(|v| v.version == version);
-    if !version_exists {
+    let version_record = versions.iter().find(|v| v.version == version);
+    if version_record.is_none() {
         let available: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
         anyhow::bail!(
             "Version '{}' not found for backend '{}'. Available: {}",
@@ -728,9 +736,10 @@ async fn cmd_switch(_config: &Config, name: &str, version: &str) -> Result<()> {
             available.join(", ")
         );
     }
+    let gpu_variant = &version_record.unwrap().gpu_variant;
 
     // Activate the version
-    let activated = registry.activate(name, version)?;
+    let activated = registry.activate(name, gpu_variant, version)?;
     if !activated {
         anyhow::bail!("Failed to activate version '{}'", version);
     }
@@ -744,7 +753,7 @@ async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Resu
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
     // Get the version info before removing
-    let record = get_backend_by_version(&Config::open_db(), name, version)?
+    let record = get_backend_by_version(&Config::open_db(), name, "cpu", version)?
         .ok_or_else(|| anyhow!("Backend '{}' version '{}' not found", name, version))?;
 
     println!("Removing backend '{}' version '{}'", name, version);
@@ -770,6 +779,7 @@ async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Resu
         path: std::path::PathBuf::from(&record.path),
         installed_at: record.installed_at,
         gpu_type: None,
+        gpu_variant: record.gpu_variant.clone(),
         source: None,
     };
 
@@ -778,7 +788,7 @@ async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Resu
     }
 
     // STEP 2: Remove from registry (activates another version if this was active)
-    registry.remove_version(name, version)?;
+    registry.remove_version(name, &record.gpu_variant, version)?;
 
     println!("Version '{}' removed.", version);
 

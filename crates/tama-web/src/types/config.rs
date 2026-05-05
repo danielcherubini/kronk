@@ -111,6 +111,9 @@ pub struct BackendConfig {
     /// Optional version pin.
     #[serde(default)]
     pub version: Option<String>,
+    /// Optional GPU variant pin (e.g. "cpu", "vulkan", "cuda").
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
 }
 
 /// Model configuration.
@@ -474,6 +477,7 @@ impl From<CoreBackendConfig> for BackendConfig {
             default_args: b.default_args,
             health_check_url: b.health_check_url,
             version: b.version,
+            gpu_variant: b.gpu_variant,
         }
     }
 }
@@ -486,6 +490,7 @@ impl From<BackendConfig> for CoreBackendConfig {
             default_args: b.default_args,
             health_check_url: b.health_check_url,
             version: b.version,
+            gpu_variant: b.gpu_variant,
         }
     }
 }

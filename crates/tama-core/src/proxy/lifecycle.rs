@@ -846,7 +846,7 @@ impl ProxyState {
             BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
 
         let info = registry
-            .get(backend_name)
+            .get(backend_name, "cpu")
             .with_context(|| format!("Backend '{}' not found in registry", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 
