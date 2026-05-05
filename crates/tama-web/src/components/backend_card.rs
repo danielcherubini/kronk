@@ -128,9 +128,9 @@ pub fn BackendCard(
     /// Called with (backend_type, gpu_variant) when "Check for updates" is clicked.
     #[prop(optional)]
     on_check_updates: Option<Callback<(String, String)>>,
-    /// Called with the backend type when "Uninstall" is clicked.
+    /// Called with (backend_type, gpu_variant) when "Uninstall" is clicked.
     #[prop(optional)]
-    on_delete: Option<Callback<String>>,
+    on_delete: Option<Callback<(String, String)>>,
     /// Called when default_args input changes with (backend_type, new_value)
     #[prop(optional)]
     on_default_args_change: Option<Callback<(String, String)>>,
@@ -147,6 +147,7 @@ pub fn BackendCard(
     let type_check = backend.r#type.clone();
     let variant_check = backend.gpu_variant.clone();
     let type_delete = backend.r#type.clone();
+    let variant_delete = backend.gpu_variant.clone();
 
     let installed = backend.installed;
     let display_name = backend.display_name.clone();
@@ -427,6 +428,7 @@ pub fn BackendCard(
                     if installed && is_selected_active() {
                         let cb = on_delete;
                         let bt = type_delete.clone();
+                        let gv = variant_delete.clone();
                         view! {
                             <button
                                 type="button"
@@ -434,7 +436,7 @@ pub fn BackendCard(
                                 style="color:#dc2626;"
                                 on:click=move |_| {
                                     if let Some(c) = cb {
-                                        c.run(bt.clone());
+                                        c.run((bt.clone(), gv.clone()));
                                     }
                                 }
                             >

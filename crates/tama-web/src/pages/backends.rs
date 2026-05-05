@@ -140,10 +140,10 @@ pub fn Backends() -> impl IntoView {
             });
         });
 
-    let on_delete_click = Callback::new(move |backend_type: String| {
+    let on_delete_click = Callback::new(move |(backend_type, gpu_variant): (String, String)| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/tama/v1/backends/{backend_type}");
+            let url = format!("/tama/v1/backends/{backend_type}?gpu_variant={gpu_variant}");
             match gloo_net::http::Request::delete(&url).send().await {
                 Ok(resp) => {
                     if resp.ok() {
