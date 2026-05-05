@@ -62,6 +62,8 @@ pub struct BackendInfoDto {
     pub version: String,
     pub path: String,
     pub installed_at: i64,
+    #[serde(default)]
+    pub gpu_variant: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_type: Option<GpuTypeDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,6 +77,8 @@ pub struct BackendVersionDto {
     pub version: String,
     pub path: String,
     pub installed_at: i64,
+    #[serde(default)]
+    pub gpu_variant: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_type: Option<GpuTypeDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,6 +92,9 @@ pub struct BackendCardDto {
     pub r#type: String,
     pub display_name: String,
     pub installed: bool,
+    /// GPU variant folder for this card (e.g. "cpu", "cuda_12", "vulkan").
+    #[serde(default)]
+    pub gpu_variant: String,
     /// Info for the currently selected version (default: active version).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<BackendInfoDto>,
@@ -141,6 +148,7 @@ pub fn BackendCard(
 
     let installed = backend.installed;
     let display_name = backend.display_name.clone();
+    let gpu_variant = backend.gpu_variant.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
     let bt_input = backend_type.clone();
@@ -176,6 +184,14 @@ pub fn BackendCard(
         <fieldset style="border:1px solid var(--border,#ccc);padding:1rem;border-radius:6px;">
             <legend style="font-weight:600;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
                 <span>{display_name}</span>
+                {if !gpu_variant.is_empty() {
+                    let variant = gpu_variant.clone();
+                    // Format variant for display: "cpu" -> "CPU", "cuda_12" -> "CUDA 12", "vulkan" -> "Vulkan"
+                    let display_variant = variant.replace('_', " ").to_ascii_uppercase();
+                    view! { <span class="badge" style="background:#7c3aed;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">{display_variant}</span> }.into_any()
+                } else {
+                    view! { <span/> }.into_any()
+                }}
                 {if !installed {
                     view! { <span class="badge" style="background:#94a3b8;color:white;padding:0.125rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:500;">"Not installed"</span> }.into_any()
                 } else if is_selected_active() && version_count == 1 {
@@ -470,6 +486,7 @@ mod tests {
             r#type: "llama_cpp".to_string(),
             display_name: "llama.cpp".to_string(),
             installed: false,
+            gpu_variant: String::new(),
             info: None,
             versions: vec![],
             update: UpdateStatusDto::default(),
@@ -488,6 +505,7 @@ mod tests {
             r#type: "llama_cpp".to_string(),
             display_name: "llama.cpp".to_string(),
             installed: true,
+            gpu_variant: "cpu".to_string(),
             info: None,
             versions: vec![],
             update: UpdateStatusDto::default(),
@@ -502,6 +520,7 @@ mod tests {
             r#type: "llama_cpp".to_string(),
             display_name: "llama.cpp".to_string(),
             installed: true,
+            gpu_variant: "cpu".to_string(),
             info: None,
             versions: vec![],
             update: UpdateStatusDto::default(),
@@ -525,6 +544,7 @@ mod tests {
         }"#;
         let dto: BackendCardDto = serde_json::from_str(json).unwrap();
         assert!(!dto.is_active);
+        assert!(dto.gpu_variant.is_empty());
     }
 
     #[test]
@@ -533,11 +553,13 @@ mod tests {
             r#type: "llama_cpp".to_string(),
             display_name: "llama.cpp".to_string(),
             installed: true,
+            gpu_variant: "cuda_12".to_string(),
             info: Some(BackendInfoDto {
                 name: "llama-cpp".to_string(),
                 version: "1.0.0".to_string(),
                 path: "/path/to/backend".to_string(),
                 installed_at: 1700000000,
+                gpu_variant: "cuda_12".to_string(),
                 gpu_type: Some(GpuTypeDto::Cuda {
                     version: "12.4".to_string(),
                 }),
@@ -550,6 +572,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 path: "/path/to/backend".to_string(),
                 installed_at: 1700000000,
+                gpu_variant: "cuda_12".to_string(),
                 gpu_type: Some(GpuTypeDto::Cuda {
                     version: "12.4".to_string(),
                 }),
@@ -571,6 +594,7 @@ mod tests {
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains("llama_cpp"));
         assert!(json.contains("1.0.0"));
+        assert!(json.contains("cuda_12"));
     }
 
     #[test]
@@ -579,6 +603,7 @@ mod tests {
             r#type: "ik_llama".to_string(),
             display_name: "ik_llama".to_string(),
             installed: false,
+            gpu_variant: String::new(),
             info: None,
             versions: vec![],
             update: UpdateStatusDto::default(),
@@ -597,11 +622,13 @@ mod tests {
             r#type: "custom".to_string(),
             display_name: "Custom Backend".to_string(),
             installed: true,
+            gpu_variant: String::new(),
             info: Some(BackendInfoDto {
                 name: "custom-backend".to_string(),
                 version: "custom-1.0".to_string(),
                 path: "/custom/path".to_string(),
                 installed_at: 1700000000,
+                gpu_variant: String::new(),
                 gpu_type: None,
                 source: None,
             }),
@@ -627,11 +654,13 @@ mod tests {
             r#type: "llama_cpp".to_string(),
             display_name: "llama.cpp".to_string(),
             installed: true,
+            gpu_variant: "cuda_12".to_string(),
             info: Some(BackendInfoDto {
                 name: "llama-cpp".to_string(),
                 version: "b8407".to_string(),
                 path: "/home/user/.local/share/tama/backends/llama-cpp/b8407".to_string(),
                 installed_at: 1700000000,
+                gpu_variant: "cuda_12".to_string(),
                 gpu_type: Some(GpuTypeDto::Cuda {
                     version: "12.4".to_string(),
                 }),
@@ -644,6 +673,7 @@ mod tests {
                 version: "b8407".to_string(),
                 path: "/home/user/.local/share/tama/backends/llama-cpp/b8407".to_string(),
                 installed_at: 1700000000,
+                gpu_variant: "cuda_12".to_string(),
                 gpu_type: Some(GpuTypeDto::Cuda {
                     version: "12.4".to_string(),
                 }),
@@ -671,6 +701,7 @@ mod tests {
         assert_eq!(deserialized.display_name, "llama.cpp");
         assert!(deserialized.installed);
         assert!(deserialized.is_active);
+        assert_eq!(deserialized.gpu_variant, "cuda_12");
         assert_eq!(deserialized.update.update_available, Some(true));
         assert_eq!(
             deserialized.update.latest_version,

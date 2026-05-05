@@ -79,7 +79,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     match registry_result {
         Ok(registry) => {
-            // Emit one card per backend type with all versions in a `versions` array
+            // Emit one card per (backend_type, gpu_variant) pair
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
                 #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
@@ -91,43 +91,58 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    // Use "cpu" as default for active version lookup
-                    let active_version = registry.get(type_, "cpu").ok().flatten();
+                    // Group versions by gpu_variant
+                    let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
+                        std::collections::HashMap::new();
+                    for info in &versions {
+                        variant_groups
+                            .entry(info.gpu_variant.clone())
+                            .or_default()
+                            .push(info.clone());
+                    }
 
-                    // Sort versions by installed_at DESC
-                    let mut sorted_versions = versions.clone();
-                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+                    // Create one card per variant
+                    for (variant, variant_versions) in variant_groups {
+                        // Get active version for this variant
+                        let active_version = registry.get(type_, &variant).ok().flatten();
 
-                    // Build version DTOs
-                    let version_dtos: Vec<BackendVersionDto> = sorted_versions
-                        .iter()
-                        .map(|info| BackendVersionDto {
-                            name: info.name.clone(),
-                            version: info.version.clone(),
-                            path: info.path.to_string_lossy().to_string(),
-                            installed_at: info.installed_at,
-                            gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
-                            source: info.source.as_ref().map(|s| s.into()),
-                            is_active: active_version
-                                .as_ref()
-                                .map(|a| a.version == info.version)
-                                .unwrap_or(false),
-                        })
-                        .collect();
+                        // Sort versions by installed_at DESC
+                        let mut sorted_versions = variant_versions;
+                        sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
 
-                    let active_info = active_version.map(BackendInfoDto::from);
+                        // Build version DTOs
+                        let version_dtos: Vec<BackendVersionDto> = sorted_versions
+                            .iter()
+                            .map(|info| BackendVersionDto {
+                                name: info.name.clone(),
+                                version: info.version.clone(),
+                                path: info.path.to_string_lossy().to_string(),
+                                installed_at: info.installed_at,
+                                gpu_variant: info.gpu_variant.clone(),
+                                gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                                source: info.source.as_ref().map(|s| s.into()),
+                                is_active: active_version
+                                    .as_ref()
+                                    .map(|a| a.version == info.version)
+                                    .unwrap_or(false),
+                            })
+                            .collect();
 
-                    backends.push(BackendCardDto {
-                        r#type: type_.to_string(),
-                        display_name: display_name.to_string(),
-                        installed: true,
-                        info: active_info,
-                        versions: version_dtos,
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: release_notes_url.map(String::from),
-                        default_args,
-                        is_active: true,
-                    });
+                        let active_info = active_version.map(BackendInfoDto::from);
+
+                        backends.push(BackendCardDto {
+                            r#type: type_.to_string(),
+                            display_name: display_name.to_string(),
+                            installed: true,
+                            gpu_variant: variant,
+                            info: active_info,
+                            versions: version_dtos,
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: release_notes_url.map(String::from),
+                            default_args: default_args.clone(),
+                            is_active: true,
+                        });
+                    }
                 } else {
                     // No versions installed — show uninstalled card
                     backends.push(BackendCardDto::default_uninstalled(
@@ -139,7 +154,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 }
             }
 
-            // Custom backends — one card per backend with all versions
+            // Custom backends — one card per (name, variant) pair
             let active_backends = registry.list().unwrap_or_default();
 
             for active in &active_backends {
@@ -153,41 +168,55 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     .unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(&active.name, "cpu").ok().flatten();
-                    let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+                    // Group versions by gpu_variant
+                    let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
+                        std::collections::HashMap::new();
+                    for info in &versions {
+                        variant_groups
+                            .entry(info.gpu_variant.clone())
+                            .or_default()
+                            .push(info.clone());
+                    }
 
-                    let mut sorted_versions = versions.clone();
-                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+                    for (variant, variant_versions) in variant_groups {
+                        let active_version = registry.get(&active.name, &variant).ok().flatten();
+                        let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
-                    let version_dtos: Vec<BackendVersionDto> = sorted_versions
-                        .iter()
-                        .map(|info| BackendVersionDto {
-                            name: info.name.clone(),
-                            version: info.version.clone(),
-                            path: info.path.to_string_lossy().to_string(),
-                            installed_at: info.installed_at,
-                            gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
-                            source: info.source.as_ref().map(|s| s.into()),
-                            is_active: active_version
-                                .as_ref()
-                                .map(|a| a.version == info.version)
-                                .unwrap_or(false),
-                        })
-                        .collect();
+                        let mut sorted_versions = variant_versions;
+                        sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
 
-                    let active_info = active_version.map(BackendInfoDto::from);
+                        let version_dtos: Vec<BackendVersionDto> = sorted_versions
+                            .iter()
+                            .map(|info| BackendVersionDto {
+                                name: info.name.clone(),
+                                version: info.version.clone(),
+                                path: info.path.to_string_lossy().to_string(),
+                                installed_at: info.installed_at,
+                                gpu_variant: info.gpu_variant.clone(),
+                                gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                                source: info.source.as_ref().map(|s| s.into()),
+                                is_active: active_version
+                                    .as_ref()
+                                    .map(|a| a.version == info.version)
+                                    .unwrap_or(false),
+                            })
+                            .collect();
 
-                    custom.push(BackendCardDto {
-                        r#type: format!("{}", active.backend_type),
-                        display_name: format!("Custom ({})", active.name),
-                        installed: true,
-                        info: active_info,
-                        versions: version_dtos,
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: None,
-                        default_args,
-                        is_active: true,
-                    });
+                        let active_info = active_version.map(BackendInfoDto::from);
+
+                        custom.push(BackendCardDto {
+                            r#type: format!("{}", active.backend_type),
+                            display_name: format!("Custom ({})", active.name),
+                            installed: true,
+                            gpu_variant: variant,
+                            info: active_info,
+                            versions: version_dtos,
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: None,
+                            default_args,
+                            is_active: true,
+                        });
+                    }
                 }
             }
         }
@@ -294,7 +323,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
     match registry_result {
         Ok(registry) => {
-            // Emit one card per backend type with all versions in a `versions` array
+            // Emit one card per (backend_type, gpu_variant) pair
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
                 #[allow(clippy::unnecessary_to_owned)]
                 let default_args = default_args_map
@@ -305,62 +334,77 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                 let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(type_, "cpu").ok().flatten();
+                    // Group versions by gpu_variant
+                    let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
+                        std::collections::HashMap::new();
+                    for info in &versions {
+                        variant_groups
+                            .entry(info.gpu_variant.clone())
+                            .or_default()
+                            .push(info.clone());
+                    }
 
-                    // Check for updates against the active version
-                    let update_check = match active_version.as_ref() {
-                        Some(info) => match tama_core::backends::check_updates(info).await {
-                            Ok(check) => UpdateStatusDto {
-                                checked: true,
-                                latest_version: Some(check.latest_version),
-                                update_available: Some(check.update_available),
+                    // Create one card per variant
+                    for (variant, variant_versions) in variant_groups {
+                        let active_version = registry.get(type_, &variant).ok().flatten();
+
+                        // Check for updates against the active version
+                        let update_check = match active_version.as_ref() {
+                            Some(info) => match tama_core::backends::check_updates(info).await {
+                                Ok(check) => UpdateStatusDto {
+                                    checked: true,
+                                    latest_version: Some(check.latest_version),
+                                    update_available: Some(check.update_available),
+                                },
+                                Err(_) => UpdateStatusDto {
+                                    checked: true,
+                                    latest_version: None,
+                                    update_available: None,
+                                },
                             },
-                            Err(_) => UpdateStatusDto {
-                                checked: true,
-                                latest_version: None,
-                                update_available: None,
+                            None => UpdateStatusDto::default(),
+                        };
+
+                        // Sort versions by installed_at DESC
+                        let mut sorted_versions = variant_versions;
+                        sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+
+                        let version_dtos: Vec<BackendVersionDto> = sorted_versions
+                            .iter()
+                            .map(|info| BackendVersionDto {
+                                name: info.name.clone(),
+                                version: info.version.clone(),
+                                path: info.path.to_string_lossy().to_string(),
+                                installed_at: info.installed_at,
+                                gpu_variant: info.gpu_variant.clone(),
+                                gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                                source: info.source.as_ref().map(|s| s.into()),
+                                is_active: active_version
+                                    .as_ref()
+                                    .map(|a| a.version == info.version)
+                                    .unwrap_or(false),
+                            })
+                            .collect();
+
+                        let active_info = active_version.map(BackendInfoDto::from);
+
+                        backends.push(BackendCardDto {
+                            r#type: type_.to_string(),
+                            display_name: display_name.to_string(),
+                            installed: true,
+                            gpu_variant: variant,
+                            info: active_info,
+                            versions: version_dtos,
+                            update: UpdateStatusDto {
+                                checked: update_check.checked,
+                                latest_version: update_check.latest_version.clone(),
+                                update_available: update_check.update_available,
                             },
-                        },
-                        None => UpdateStatusDto::default(),
-                    };
-
-                    // Sort versions by installed_at DESC
-                    let mut sorted_versions = versions.clone();
-                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
-
-                    let version_dtos: Vec<BackendVersionDto> = sorted_versions
-                        .iter()
-                        .map(|info| BackendVersionDto {
-                            name: info.name.clone(),
-                            version: info.version.clone(),
-                            path: info.path.to_string_lossy().to_string(),
-                            installed_at: info.installed_at,
-                            gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
-                            source: info.source.as_ref().map(|s| s.into()),
-                            is_active: active_version
-                                .as_ref()
-                                .map(|a| a.version == info.version)
-                                .unwrap_or(false),
-                        })
-                        .collect();
-
-                    let active_info = active_version.map(BackendInfoDto::from);
-
-                    backends.push(BackendCardDto {
-                        r#type: type_.to_string(),
-                        display_name: display_name.to_string(),
-                        installed: true,
-                        info: active_info,
-                        versions: version_dtos,
-                        update: UpdateStatusDto {
-                            checked: update_check.checked,
-                            latest_version: update_check.latest_version.clone(),
-                            update_available: update_check.update_available,
-                        },
-                        release_notes_url: release_notes_url.map(String::from),
-                        default_args,
-                        is_active: true,
-                    });
+                            release_notes_url: release_notes_url.map(String::from),
+                            default_args: default_args.clone(),
+                            is_active: true,
+                        });
+                    }
                 } else {
                     backends.push(BackendCardDto::default_uninstalled(
                         type_,
@@ -371,7 +415,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                 }
             }
 
-            // Custom backends — one card per backend with all versions
+            // Custom backends — one card per (name, variant) pair
             let active_backends = registry.list().unwrap_or_default();
             for active in &active_backends {
                 let bt = active.backend_type.to_string();
@@ -384,41 +428,55 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                     .unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
-                    let active_version = registry.get(&active.name, "cpu").ok().flatten();
-                    let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+                    // Group versions by gpu_variant
+                    let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
+                        std::collections::HashMap::new();
+                    for info in &versions {
+                        variant_groups
+                            .entry(info.gpu_variant.clone())
+                            .or_default()
+                            .push(info.clone());
+                    }
 
-                    let mut sorted_versions = versions.clone();
-                    sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
+                    for (variant, variant_versions) in variant_groups {
+                        let active_version = registry.get(&active.name, &variant).ok().flatten();
+                        let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
-                    let version_dtos: Vec<BackendVersionDto> = sorted_versions
-                        .iter()
-                        .map(|info| BackendVersionDto {
-                            name: info.name.clone(),
-                            version: info.version.clone(),
-                            path: info.path.to_string_lossy().to_string(),
-                            installed_at: info.installed_at,
-                            gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
-                            source: info.source.as_ref().map(|s| s.into()),
-                            is_active: active_version
-                                .as_ref()
-                                .map(|a| a.version == info.version)
-                                .unwrap_or(false),
-                        })
-                        .collect();
+                        let mut sorted_versions = variant_versions;
+                        sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
 
-                    let active_info = active_version.map(BackendInfoDto::from);
+                        let version_dtos: Vec<BackendVersionDto> = sorted_versions
+                            .iter()
+                            .map(|info| BackendVersionDto {
+                                name: info.name.clone(),
+                                version: info.version.clone(),
+                                path: info.path.to_string_lossy().to_string(),
+                                installed_at: info.installed_at,
+                                gpu_variant: info.gpu_variant.clone(),
+                                gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                                source: info.source.as_ref().map(|s| s.into()),
+                                is_active: active_version
+                                    .as_ref()
+                                    .map(|a| a.version == info.version)
+                                    .unwrap_or(false),
+                            })
+                            .collect();
 
-                    custom.push(BackendCardDto {
-                        r#type: format!("{}", active.backend_type),
-                        display_name: format!("Custom ({})", active.name),
-                        installed: true,
-                        info: active_info,
-                        versions: version_dtos,
-                        update: UpdateStatusDto::default(),
-                        release_notes_url: None,
-                        default_args,
-                        is_active: true,
-                    });
+                        let active_info = active_version.map(BackendInfoDto::from);
+
+                        custom.push(BackendCardDto {
+                            r#type: format!("{}", active.backend_type),
+                            display_name: format!("Custom ({})", active.name),
+                            installed: true,
+                            gpu_variant: variant,
+                            info: active_info,
+                            versions: version_dtos,
+                            update: UpdateStatusDto::default(),
+                            release_notes_url: None,
+                            default_args,
+                            is_active: true,
+                        });
+                    }
                 }
             }
         }
@@ -528,6 +586,7 @@ pub async fn list_backend_versions(
                     version: info.version.clone(),
                     path: info.path.to_string_lossy().to_string(),
                     installed_at: info.installed_at,
+                    gpu_variant: info.gpu_variant.clone(),
                     gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
                     source: info.source.as_ref().map(|s| s.into()),
                     is_active: active_version.as_deref() == Some(&info.version),

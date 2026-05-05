@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 
 use super::types::*;
@@ -487,10 +488,19 @@ pub async fn install_backend(
     .into_response()
 }
 
+/// Query params for DELETE /tama/v1/backends/:name
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RemoveQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// DELETE /tama/v1/backends/:name
 pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<RemoveQuery>,
 ) -> impl IntoResponse {
     let jobs = match &state.jobs {
         Some(j) => j,
@@ -536,6 +546,8 @@ pub async fn remove_backend(
             .into_response();
     }
 
+    let gpu_variant = query.gpu_variant;
+
     let config_dir_clone = config_dir.clone();
     let registry_result: Result<tama_core::backends::BackendRegistry, _> =
         tokio::task::spawn_blocking(move || {
@@ -556,7 +568,9 @@ pub async fn remove_backend(
         }
     };
 
-    let backend_info = match registry.get(&name, "cpu") {
+    // If gpu_variant is provided, only remove that variant
+    let lookup_variant = gpu_variant.as_deref().unwrap_or("cpu");
+    let backend_info = match registry.get(&name, lookup_variant) {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -611,8 +625,9 @@ pub async fn remove_backend(
             .into_response();
     }
 
-    // Remove from registry (None = remove all variants)
-    if let Err(e) = registry.remove(&name, None) {
+    // Remove from registry (Some = remove specific variant, None = remove all variants)
+    let variant_to_remove = gpu_variant.as_deref();
+    if let Err(e) = registry.remove(&name, variant_to_remove) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Failed to remove from registry: {}", e)})),

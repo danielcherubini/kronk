@@ -23,6 +23,9 @@ pub struct BackendCardDto {
     pub r#type: String,
     pub display_name: String,
     pub installed: bool,
+    /// GPU variant folder for this card (e.g. "cpu", "cuda_12", "vulkan").
+    #[serde(default)]
+    pub gpu_variant: String,
     /// Info for the currently active version (shown by default in the UI).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub info: Option<BackendInfoDto>,
@@ -51,6 +54,7 @@ impl BackendCardDto {
             r#type: type_.to_string(),
             display_name: display_name.to_string(),
             installed: false,
+            gpu_variant: String::new(),
             info: None,
             versions: vec![],
             update: UpdateStatusDto::default(),
@@ -68,6 +72,8 @@ pub struct BackendInfoDto {
     pub version: String,
     pub path: String,
     pub installed_at: i64,
+    #[serde(default)]
+    pub gpu_variant: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_type: Option<GpuTypeDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,6 +87,7 @@ impl From<tama_core::backends::BackendInfo> for BackendInfoDto {
             version: info.version,
             path: info.path.to_string_lossy().to_string(),
             installed_at: info.installed_at,
+            gpu_variant: info.gpu_variant,
             gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
             source: info.source.as_ref().map(|s| s.into()),
         }
@@ -242,6 +249,8 @@ pub struct BackendVersionDto {
     pub version: String,
     pub path: String,
     pub installed_at: i64,
+    #[serde(default)]
+    pub gpu_variant: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_type: Option<GpuTypeDto>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -10,10 +10,19 @@ use std::sync::Arc;
 use super::types::*;
 use crate::server::AppState;
 
+/// Query params for POST /tama/v1/backends/:name/update
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/backends/:name/update
 pub async fn update_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<UpdateQuery>,
 ) -> impl IntoResponse {
     // Validate path param to prevent path traversal attacks
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -77,9 +86,9 @@ pub async fn update_backend(
         }
     };
 
-    // Use "cpu" as default gpu_variant for initial lookup.
-    // TODO: Accept gpu_variant as a query parameter for multi-variant support.
-    let backend_info = match registry.get(&name, "cpu") {
+    // Use gpu_variant from query param, defaulting to "cpu"
+    let lookup_variant = query.gpu_variant.as_deref().unwrap_or("cpu");
+    let backend_info = match registry.get(&name, lookup_variant) {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -316,10 +325,19 @@ mod tests {
     }
 }
 
+/// Query params for DELETE /tama/v1/backends/:name/versions/:version
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RemoveVersionQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// DELETE /tama/v1/backends/:name/versions/:version
 pub async fn remove_backend_version(
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<RemoveVersionQuery>,
 ) -> impl IntoResponse {
     // Validate path params (prevent path traversal)
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -380,9 +398,11 @@ pub async fn remove_backend_version(
         }
     };
 
+    // Use gpu_variant from query param if provided
+    let gpu_variant_filter = query.gpu_variant.clone();
+
     // Get the specific version record before deleting
-    // Use list_all_versions and find the matching version (conn is private)
-    let versions = match registry.list_all_versions(&name, None) {
+    let versions = match registry.list_all_versions(&name, gpu_variant_filter.as_deref()) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return (
@@ -484,10 +504,19 @@ pub async fn remove_backend_version(
     Json(DeleteResponse { removed: true }).into_response()
 }
 
+/// Query params for POST /tama/v1/backends/:name/activate
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivateQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/backends/:name/activate
 pub async fn activate_backend_version(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ActivateQuery>,
     Json(req): Json<ActivateRequest>,
 ) -> impl IntoResponse {
     // Validate name
@@ -521,14 +550,16 @@ pub async fn activate_backend_version(
         }
     };
 
+    let gpu_variant = query.gpu_variant.as_deref().unwrap_or("cpu");
     let config_dir_clone = config_dir.clone();
     let version_clone = req.version.clone();
     let name_clone = name.clone();
     let version_for_error = version_clone.clone();
+    let gpu_variant_clone = gpu_variant.to_string();
     let registry_result: Result<(tama_core::backends::BackendRegistry, bool), _> =
         tokio::task::spawn_blocking(move || {
             let mut reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
-            let activated = reg.activate(&name_clone, "cpu", &version_clone)?;
+            let activated = reg.activate(&name_clone, &gpu_variant_clone, &version_clone)?;
             Ok((reg, activated))
         })
         .await
