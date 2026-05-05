@@ -207,19 +207,20 @@ pub async fn check_single(
             let bt_result = tokio::task::spawn_blocking(
                 move || -> anyhow::Result<Option<(BackendType, String)>> {
                     let open = tama_core::db::open(&config_dir_clone)?;
-                    let record = tama_core::db::queries::get_active_backend(
+                    let versions = tama_core::db::queries::list_backend_versions(
                         &open.conn,
                         &item_id_clone,
-                        "cpu",
+                        None,
                     )?;
-                    Ok(record.map(|r| {
+                    let active = versions.iter().find(|v| v.is_active).or(versions.first());
+                    Ok(active.map(|r| {
                         (
                             match r.backend_type.as_str() {
                                 "llama_cpp" => BackendType::LlamaCpp,
                                 "ik_llama" => BackendType::IkLlama,
                                 _ => BackendType::Custom,
                             },
-                            r.gpu_variant,
+                            r.gpu_variant.clone(),
                         )
                     }))
                 },
@@ -300,21 +301,22 @@ pub async fn apply_backend_update(
         }
     };
 
-    // Load backend info from DB
+    // Load backend info from DB — discover gpu_variant dynamically
     let bt_result = tokio::task::spawn_blocking({
         let config_dir = config_dir.clone();
         let name = name.clone();
         move || -> anyhow::Result<(Option<BackendType>, Option<String>)> {
             let open = tama_core::db::open(&config_dir)?;
-            let record = tama_core::db::queries::get_active_backend(&open.conn, &name, "cpu")?;
-            Ok(record
+            let versions = tama_core::db::queries::list_backend_versions(&open.conn, &name, None)?;
+            let active = versions.iter().find(|v| v.is_active).or(versions.first());
+            Ok(active
                 .map(|r| {
                     let bt = match r.backend_type.as_str() {
                         "llama_cpp" => BackendType::LlamaCpp,
                         "ik_llama" => BackendType::IkLlama,
                         _ => BackendType::Custom,
                     };
-                    (Some(bt), Some(r.version))
+                    (Some(bt), Some(r.gpu_variant.clone()))
                 })
                 .unwrap_or((None, None)))
         }
@@ -403,14 +405,25 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let backend_info = match registry.get(&name_clone, "cpu") {
-            Ok(Some(info)) => info,
+        let all_versions = match registry.list_all_versions(&name_clone, None) {
+            Ok(Some(versions)) => versions,
             Ok(None) => {
                 tracing::error!("Backend '{}' not found during update", name_clone);
                 return;
             }
             Err(e) => {
-                tracing::error!("Failed to get backend '{}': {}", name_clone, e);
+                tracing::error!(
+                    "Failed to list versions for backend '{}': {}",
+                    name_clone,
+                    e
+                );
+                return;
+            }
+        };
+        let backend_info = match all_versions.first() {
+            Some(info) => info.clone(),
+            None => {
+                tracing::error!("Backend '{}' has no versions during update", name_clone);
                 return;
             }
         };
