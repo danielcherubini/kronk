@@ -180,19 +180,27 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             }
 
             // Custom backends — one card per (name, variant) pair
+            // Collect unique custom backend names to avoid duplicate cards
+            // when multiple variants are active for the same backend
             let active_backends = registry.list().unwrap_or_default();
-
+            let mut custom_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for active in &active_backends {
                 let bt = active.backend_type.to_string();
-                if matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
-                    continue;
+                if !matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
+                    custom_names.insert(active.name.clone());
                 }
+            }
 
-                let versions_opt = registry
-                    .list_all_versions(&active.name, None)
-                    .unwrap_or(None);
+            for name in &custom_names {
+                let versions_opt = registry.list_all_versions(name, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
+                    let bt = versions
+                        .first()
+                        .map(|v| v.backend_type.to_string())
+                        .unwrap_or_default();
+
                     // Group versions by gpu_variant
                     let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
                         std::collections::HashMap::new();
@@ -204,7 +212,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     }
 
                     for (variant, variant_versions) in variant_groups {
-                        let active_version = registry.get(&active.name, &variant).ok().flatten();
+                        let active_version = registry.get(name, &variant).ok().flatten();
                         let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
                         let mut sorted_versions = variant_versions;
@@ -230,7 +238,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                         let active_info = active_version.map(BackendInfoDto::from);
 
                         // Load cached update status from DB (keyed by "name:variant")
-                        let update_key = format!("{}:{}", active.name, variant);
+                        let update_key = format!("{}:{}", name, variant);
                         let update_status = update_checks
                             .get(&update_key)
                             .map(|r| UpdateStatusDto {
@@ -245,8 +253,8 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                             .unwrap_or_default();
 
                         custom.push(BackendCardDto {
-                            r#type: format!("{}", active.backend_type),
-                            display_name: format!("Custom ({})", active.name),
+                            r#type: bt.clone(),
+                            display_name: format!("Custom ({})", name),
                             installed: true,
                             gpu_variant: variant,
                             info: active_info,
@@ -443,18 +451,26 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             }
 
             // Custom backends — one card per (name, variant) pair
+            // Collect unique custom backend names to avoid duplicate cards
             let active_backends = registry.list().unwrap_or_default();
+            let mut custom_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for active in &active_backends {
                 let bt = active.backend_type.to_string();
-                if matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
-                    continue;
+                if !matches!(bt.as_str(), "llama_cpp" | "ik_llama" | "tts_kokoro") {
+                    custom_names.insert(active.name.clone());
                 }
+            }
 
-                let versions_opt = registry
-                    .list_all_versions(&active.name, None)
-                    .unwrap_or(None);
+            for name in &custom_names {
+                let versions_opt = registry.list_all_versions(name, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
+                    let bt = versions
+                        .first()
+                        .map(|v| v.backend_type.to_string())
+                        .unwrap_or_default();
+
                     // Group versions by gpu_variant
                     let mut variant_groups: std::collections::HashMap<String, Vec<_>> =
                         std::collections::HashMap::new();
@@ -466,7 +482,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                     }
 
                     for (variant, variant_versions) in variant_groups {
-                        let active_version = registry.get(&active.name, &variant).ok().flatten();
+                        let active_version = registry.get(name, &variant).ok().flatten();
                         let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
 
                         let mut sorted_versions = variant_versions;
@@ -492,8 +508,8 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                         let active_info = active_version.map(BackendInfoDto::from);
 
                         custom.push(BackendCardDto {
-                            r#type: format!("{}", active.backend_type),
-                            display_name: format!("Custom ({})", active.name),
+                            r#type: bt.clone(),
+                            display_name: format!("Custom ({})", name),
                             installed: true,
                             gpu_variant: variant,
                             info: active_info,

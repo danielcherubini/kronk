@@ -3,7 +3,7 @@ pub mod parse;
 // Re-export parsing utilities for backward compatibility
 pub(crate) use parse::{parse_backend_type, parse_gpu_type};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand};
 use tama_core::backends::{
     backends_dir, check_latest_version, check_updates, get_backend_install_path, install_backend,
@@ -391,16 +391,24 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
 
     // Find the active backend by listing all active backends
     let active_backends = registry.list()?;
-    let backend_info = active_backends
-        .iter()
-        .find(|b| b.name == name)
-        .cloned()
-        .ok_or_else(|| {
-            anyhow!(
-                "Backend '{}' not found. Run `tama backend list` to see installed backends.",
-                name
-            )
-        })?;
+    let matches: Vec<_> = active_backends.iter().filter(|b| b.name == name).collect();
+
+    let backend_info = match matches.len() {
+        0 => Err(anyhow!(
+            "Backend '{}' not found. Run `tama backend list` to see installed backends.",
+            name
+        )),
+        1 => Ok(matches[0].clone()),
+        _ => {
+            // Multiple variants active — show them and ask user to specify
+            let variants: Vec<String> = matches.iter().map(|b| b.gpu_variant.clone()).collect();
+            Err(anyhow!(
+                "Backend '{}' has multiple active variants: {}. Please specify which variant to update.",
+                name,
+                variants.join(", ")
+            ))
+        }
+    }?;
 
     println!("Checking for updates to '{}'...", name);
     let update_check = check_updates(&backend_info).await?;
@@ -631,7 +639,7 @@ async fn cmd_remove(_config: &Config, name: &str, gpu_variant: Option<&str>) -> 
         .prompt()?;
 
     if remove_files {
-        // Iterate all versions and delete each
+        // Iterate all versions and delete each — abort on first failure
         for v in &all_versions {
             if v.path.exists() {
                 let info = BackendInfo {
@@ -648,14 +656,14 @@ async fn cmd_remove(_config: &Config, name: &str, gpu_variant: Option<&str>) -> 
                 // - Path validation (prevents directory traversal attacks)
                 // - Windows PermissionDenied retry logic
                 // - Cross-platform file removal
-                if let Err(e) = safe_remove_installation(&info) {
-                    eprintln!("Warning: Failed to remove files for {}: {}", v.version, e);
-                }
+                safe_remove_installation(&info).with_context(|| {
+                    format!("Failed to remove files for {} version {}", name, v.version)
+                })?;
             }
         }
     }
 
-    // Remove from registry only after successful file deletion
+    // Remove from registry only after all file deletions succeeded
     registry.remove(name, gpu_variant)?;
 
     println!("Backend '{}' removed.", name);
@@ -745,10 +753,14 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
         }
     } else {
         // Show all versions for all backends
+        // Collect unique backend names to avoid duplicates when multiple variants are active
+        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for active in &active_backends {
+            if !seen_names.insert(active.name.clone()) {
+                continue; // Already processed this backend
+            }
+
             let name = active.name.clone();
-            let active_version = active.version.clone();
-            let active_gpu_variant = active.gpu_variant.clone();
 
             // Get all versions for this backend
             let all_versions = match registry.list_all_versions(&name, None)? {
@@ -756,8 +768,15 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
                 None => vec![active.clone()],
             };
 
+            // Build a set of (version, gpu_variant) pairs that are active
+            let active_set: std::collections::HashSet<(String, String)> = active_backends
+                .iter()
+                .filter(|a| a.name == name)
+                .map(|a| (a.version.clone(), a.gpu_variant.clone()))
+                .collect();
+
             for v in all_versions {
-                let is_active = v.version == active_version && v.gpu_variant == active_gpu_variant;
+                let is_active = active_set.contains(&(v.version.clone(), v.gpu_variant.clone()));
                 entries.push(VersionEntry {
                     name: v.name.clone(),
                     version: v.version.clone(),

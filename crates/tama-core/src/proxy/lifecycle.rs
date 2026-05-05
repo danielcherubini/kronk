@@ -853,8 +853,19 @@ impl ProxyState {
         let registry =
             BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
 
+        // Discover variant dynamically - TTS backends typically only have one variant
+        let variants = registry
+            .list_all_versions(backend_name, None)
+            .with_context(|| format!("Failed to list versions for '{}'", backend_name))?
+            .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
+
+        let variant = variants
+            .first()
+            .map(|v| v.gpu_variant.clone())
+            .unwrap_or_else(|| "cpu".to_string());
+
         let info = registry
-            .get(backend_name, "cpu")
+            .get(backend_name, &variant)
             .with_context(|| format!("Backend '{}' not found in registry", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 

@@ -86,9 +86,54 @@ pub async fn update_backend(
         }
     };
 
-    // Use gpu_variant from query param, defaulting to "cpu"
-    let lookup_variant = query.gpu_variant.as_deref().unwrap_or("cpu");
-    let backend_info = match registry.get(&name, lookup_variant) {
+    // Determine gpu_variant: use explicit value or auto-infer from registry
+    let lookup_variant = match query.gpu_variant {
+        Some(v) => v,
+        None => {
+            // Auto-infer: find unique variant for this backend
+            let versions = match registry.list_all_versions(&name, None) {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(
+                            serde_json::json!({"error": format!("Failed to query backend: {}", e)}),
+                        ),
+                    )
+                        .into_response();
+                }
+            };
+            let mut variants: Vec<String> =
+                versions.iter().map(|v| v.gpu_variant.clone()).collect();
+            variants.sort();
+            variants.dedup();
+            match variants.len() {
+                1 => variants.into_iter().next().unwrap(),
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "Backend '{}' has multiple variants. Please specify gpu_variant. Available: {}",
+                                name,
+                                variants.join(", ")
+                            )
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    };
+
+    let backend_info = match registry.get(&name, &lookup_variant) {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -422,13 +467,30 @@ pub async fn remove_backend_version(
         }
     };
 
-    let info = match versions.iter().find(|v| v.version == version) {
-        Some(v) => v.clone(),
-        None => {
+    // Find matching versions and check for ambiguity
+    let matches: Vec<_> = versions.iter().filter(|v| v.version == version).collect();
+    let info = match matches.len() {
+        0 => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({
                     "error": format!("Backend '{}' version '{}' not found", name, version)
+                })),
+            )
+                .into_response();
+        }
+        1 => matches[0].clone(),
+        _ if gpu_variant_filter.is_some() => matches[0].clone(),
+        _ => {
+            // Multiple variants have the same version - require gpu_variant
+            let variant_list: Vec<String> = matches.iter().map(|v| v.gpu_variant.clone()).collect();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "Version '{}' exists in multiple variants for backend '{}'. Please specify gpu_variant. Available: {}",
+                        version, name, variant_list.join(", ")
+                    )
                 })),
             )
                 .into_response();

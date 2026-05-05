@@ -31,7 +31,7 @@ pub async fn install_backend(
             .into_response();
     }
 
-    // Validate version: if provided, must be non-empty and <= 128 chars
+    // Validate version: if provided, must be non-empty, <= 128 chars, and a single path segment
     if let Some(ref version) = req.version {
         if version.is_empty() {
             return (
@@ -44,6 +44,14 @@ pub async fn install_backend(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": "version must be at most 128 characters"})),
+            )
+                .into_response();
+        }
+        // Reject path traversal and multi-segment paths
+        if version.contains('/') || version.contains('\\') || version.contains("..") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "version must be a single path segment (no slashes or '..')"})),
             )
                 .into_response();
         }
@@ -568,13 +576,14 @@ pub async fn remove_backend(
         }
     };
 
-    // If gpu_variant is provided, only remove that variant; otherwise remove all variants.
+    // If gpu_variant is provided, only remove that variant (all its versions);
+    // otherwise remove all variants.
     let backends_to_remove: Vec<tama_core::backends::BackendInfo> =
         if let Some(variant) = &gpu_variant {
-            // Specific variant requested — look it up directly
-            match registry.get(&name, variant.as_str()) {
-                Ok(Some(info)) => vec![info],
-                Ok(None) => {
+            // Specific variant requested — get ALL versions of that variant
+            match registry.list_all_versions(&name, Some(variant.as_str())) {
+                Ok(Some(versions)) if !versions.is_empty() => versions,
+                Ok(Some(_)) | Ok(None) => {
                     return (
                         StatusCode::NOT_FOUND,
                         Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
