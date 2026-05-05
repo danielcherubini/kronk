@@ -11,7 +11,6 @@ use tama_core::backends::{
     BackendSource, BackendType, InstallOptions, NullSink,
 };
 use tama_core::config::Config;
-use tama_core::db::queries::get_backend_by_version;
 use tama_core::gpu;
 
 use crate::commands::backend::parse::{current_unix_timestamp, registry_config_dir};
@@ -75,6 +74,9 @@ pub enum BackendSubcommand {
     Remove {
         /// Name of the backend to remove
         name: String,
+        /// GPU variant to remove (cpu, cuda, vulkan, rocm, metal). Omit to remove all variants.
+        #[arg(long)]
+        gpu: Option<String>,
     },
 
     /// Check for updates to all installed backends
@@ -94,6 +96,9 @@ pub enum BackendSubcommand {
         name: String,
         /// Version to activate
         version: String,
+        /// GPU variant (cpu, cuda, vulkan, rocm, metal). Auto-inferred if only one variant exists.
+        #[arg(long)]
+        gpu: Option<String>,
     },
 
     /// Remove a single version (not all versions)
@@ -102,6 +107,9 @@ pub enum BackendSubcommand {
         name: String,
         /// Version to remove
         version: String,
+        /// GPU variant (cpu, cuda, vulkan, rocm, metal). Auto-inferred if only one variant exists.
+        #[arg(long)]
+        gpu: Option<String>,
     },
 }
 
@@ -130,12 +138,14 @@ pub async fn run(config: &Config, cmd: BackendArgs) -> Result<()> {
         }
         BackendSubcommand::Update { name, force } => cmd_update(config, &name, force).await,
         BackendSubcommand::List => cmd_list(config).await,
-        BackendSubcommand::Remove { name } => cmd_remove(config, &name).await,
+        BackendSubcommand::Remove { name, gpu } => cmd_remove(config, &name, gpu.as_deref()).await,
         BackendSubcommand::CheckUpdates => cmd_check_updates(config).await,
         BackendSubcommand::AllVersions { name } => cmd_all_versions(config, name.as_deref()).await,
-        BackendSubcommand::Switch { name, version } => cmd_switch(config, &name, &version).await,
-        BackendSubcommand::RemoveVersion { name, version } => {
-            cmd_remove_version(config, &name, &version).await
+        BackendSubcommand::Switch { name, version, gpu } => {
+            cmd_switch(config, &name, &version, gpu.as_deref()).await
+        }
+        BackendSubcommand::RemoveVersion { name, version, gpu } => {
+            cmd_remove_version(config, &name, &version, gpu.as_deref()).await
         }
     }
 }
@@ -379,12 +389,18 @@ async fn cmd_install(
 async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    let backend_info = registry.get(name, "cpu")?.ok_or_else(|| {
-        anyhow!(
-            "Backend '{}' not found. Run `tama backend list` to see installed backends.",
-            name
-        )
-    })?;
+    // Find the active backend by listing all active backends
+    let active_backends = registry.list()?;
+    let backend_info = active_backends
+        .iter()
+        .find(|b| b.name == name)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "Backend '{}' not found. Run `tama backend list` to see installed backends.",
+                name
+            )
+        })?;
 
     println!("Checking for updates to '{}'...", name);
     let update_check = check_updates(&backend_info).await?;
@@ -486,9 +502,9 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
 
 async fn cmd_list(_config: &Config) -> Result<()> {
     let registry = BackendRegistry::open(&registry_config_dir()?)?;
-    let backends = registry.list()?;
+    let active_backends = registry.list()?;
 
-    if backends.is_empty() {
+    if active_backends.is_empty() {
         println!("No backends installed.");
         println!("\nTo install one:");
         println!("  tama backend install llama_cpp");
@@ -496,38 +512,55 @@ async fn cmd_list(_config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    // registry.list() only returns active backends, so all shown are active.
-    // Use list_all_versions to show all versions with * active marker.
+    // Group by backend name, then by variant
     println!("Installed backends:\n");
-    for backend in &backends {
-        let name = backend.name.clone();
-        let all_versions = registry.list_all_versions(&name, None).unwrap_or(None);
+
+    // Track unique backend names to avoid duplicates
+    let mut seen_names = std::collections::HashSet::new();
+    for backend in &active_backends {
+        if !seen_names.insert(&backend.name) {
+            continue;
+        }
+
+        // Get all versions for this backend
+        let all_versions = registry
+            .list_all_versions(&backend.name, None)
+            .unwrap_or(None);
 
         if let Some(versions) = all_versions {
-            // Show all versions, marking the active one
-            let active_version = backend.version.clone();
+            // Group versions by gpu_variant
+            let mut variants: std::collections::HashMap<&str, Vec<&BackendInfo>> =
+                std::collections::HashMap::new();
             for v in &versions {
-                let marker = if v.version == active_version {
-                    " * active"
-                } else {
-                    ""
-                };
-                println!(
-                    "  {} [{}]{} (v{})",
-                    v.name, v.backend_type, marker, v.version
-                );
-                println!("    Version:  {}", v.version);
-                println!("    Path:     {}", v.path.display());
-                if let Some(ref gpu) = v.gpu_type {
-                    println!("    GPU:      {:?}", gpu);
+                variants.entry(&v.gpu_variant).or_default().push(v);
+            }
+
+            for (variant, variant_versions) in variants.iter() {
+                let active_version = active_backends
+                    .iter()
+                    .find(|b| b.name == backend.name && b.gpu_variant == *variant)
+                    .map(|b| b.version.as_str());
+
+                for v in variant_versions {
+                    let marker = if active_version == Some(v.version.as_str()) {
+                        " * active"
+                    } else {
+                        ""
+                    };
+                    println!("  {} [{}]{} (v{})", v.name, variant, marker, v.version);
+                    println!("    Version:  {}", v.version);
+                    println!("    Path:     {}", v.path.display());
+                    if let Some(ref gpu) = v.gpu_type {
+                        println!("    GPU:      {:?}", gpu);
+                    }
+                    println!();
                 }
-                println!();
             }
         } else {
             // Fallback if list_all_versions fails
             println!(
-                "  {} [{}] (v{})",
-                backend.name, backend.backend_type, backend.version
+                "  {} [{}] * active (v{})",
+                backend.name, backend.gpu_variant, backend.version
             );
             println!("    Version:  {}", backend.version);
             println!("    Path:     {}", backend.path.display());
@@ -537,8 +570,9 @@ async fn cmd_list(_config: &Config) -> Result<()> {
             println!();
         }
     }
+
     // Tip using first backend as example
-    if let Some(first) = backends.first() {
+    if let Some(first) = active_backends.first() {
         println!("To pin a version in config.toml, add:");
         println!("  [backends.{}]", first.name);
         println!("  version = \"{}\"", first.version);
@@ -547,15 +581,40 @@ async fn cmd_list(_config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
+async fn cmd_remove(_config: &Config, name: &str, gpu_variant: Option<&str>) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    let backend = registry
-        .get(name, "cpu")?
-        .ok_or_else(|| anyhow!("Backend '{}' not found", name))?;
+    // Get all versions to determine what we're removing
+    let all_versions = registry
+        .list_all_versions(name, gpu_variant)?
+        .ok_or_else(|| {
+            anyhow!(
+                "Backend '{}' not found. Run `tama backend list` to see installed backends.",
+                name
+            )
+        })?;
 
-    println!("Removing backend '{}'", name);
-    println!("  Path: {}", backend.path.display());
+    if all_versions.is_empty() {
+        anyhow::bail!("No versions found for backend '{}'", name);
+    }
+
+    // Show what will be removed
+    if let Some(variant) = gpu_variant {
+        println!("Removing backend '{}' [{}]:", name, variant);
+    } else {
+        let variants: std::collections::HashSet<&str> = all_versions
+            .iter()
+            .map(|v| v.gpu_variant.as_str())
+            .collect();
+        println!("Removing backend '{}' (all variants):", name);
+        for variant in &variants {
+            println!("  - [{}]", variant);
+        }
+    }
+
+    for v in &all_versions {
+        println!("  Version: {} ({})", v.version, v.path.display());
+    }
 
     let confirm = inquire::Confirm::new("Are you sure?")
         .with_default(false)
@@ -566,23 +625,38 @@ async fn cmd_remove(_config: &Config, name: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Optionally remove files
-    if backend.path.exists() {
-        let remove_files = inquire::Confirm::new("Also delete the backend files from disk?")
-            .with_default(true)
-            .prompt()?;
+    // Optionally remove files for all variants
+    let remove_files = inquire::Confirm::new("Also delete the backend files from disk?")
+        .with_default(true)
+        .prompt()?;
 
-        if remove_files {
-            // Use the shared safe_remove_installation helper which handles:
-            // - Path validation (prevents directory traversal attacks)
-            // - Windows PermissionDenied retry logic
-            // - Cross-platform file removal
-            safe_remove_installation(&backend)?;
+    if remove_files {
+        // Iterate all versions and delete each
+        for v in &all_versions {
+            if v.path.exists() {
+                let info = BackendInfo {
+                    name: v.name.clone(),
+                    backend_type: v.backend_type.clone(),
+                    version: v.version.clone(),
+                    path: v.path.clone(),
+                    installed_at: v.installed_at,
+                    gpu_type: v.gpu_type.clone(),
+                    gpu_variant: v.gpu_variant.clone(),
+                    source: v.source.clone(),
+                };
+                // Use the shared safe_remove_installation helper which handles:
+                // - Path validation (prevents directory traversal attacks)
+                // - Windows PermissionDenied retry logic
+                // - Cross-platform file removal
+                if let Err(e) = safe_remove_installation(&info) {
+                    eprintln!("Warning: Failed to remove files for {}: {}", v.version, e);
+                }
+            }
         }
     }
 
     // Remove from registry only after successful file deletion
-    registry.remove(name, None)?;
+    registry.remove(name, gpu_variant)?;
 
     println!("Backend '{}' removed.", name);
     Ok(())
@@ -621,10 +695,10 @@ async fn cmd_check_updates(_config: &Config) -> Result<()> {
 
 struct VersionEntry {
     name: String,
-    backend_type: BackendType,
     version: String,
     path: std::path::PathBuf,
     gpu_type: Option<gpu::GpuType>,
+    gpu_variant: String,
     is_active: bool,
 }
 
@@ -643,17 +717,24 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
         // Show all versions for a specific backend
         match registry.list_all_versions(target_name, None)? {
             Some(versions) => {
-                // Get the active version for comparison
-                let active_version = registry.get(target_name, "cpu")?.map(|a| a.version);
+                // Get all active versions for comparison (across all variants)
+                let active_versions: Vec<(String, String)> = active_backends
+                    .iter()
+                    .filter(|b| b.name == target_name)
+                    .map(|b| (b.gpu_variant.clone(), b.version.clone()))
+                    .collect();
 
                 for v in versions {
+                    let is_active = active_versions
+                        .iter()
+                        .any(|(gv, ver)| gv == &v.gpu_variant && ver == &v.version);
                     entries.push(VersionEntry {
                         name: v.name.clone(),
-                        backend_type: v.backend_type.clone(),
                         version: v.version.clone(),
                         path: v.path.clone(),
                         gpu_type: v.gpu_type.clone(),
-                        is_active: active_version.as_deref() == Some(&v.version),
+                        gpu_variant: v.gpu_variant.clone(),
+                        is_active,
                     });
                 }
             }
@@ -666,9 +747,8 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
         // Show all versions for all backends
         for active in &active_backends {
             let name = active.name.clone();
-            let _backend_type = active.backend_type.clone();
-            let _gpu_type = active.gpu_type.clone();
             let active_version = active.version.clone();
+            let active_gpu_variant = active.gpu_variant.clone();
 
             // Get all versions for this backend
             let all_versions = match registry.list_all_versions(&name, None)? {
@@ -677,13 +757,14 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
             };
 
             for v in all_versions {
+                let is_active = v.version == active_version && v.gpu_variant == active_gpu_variant;
                 entries.push(VersionEntry {
                     name: v.name.clone(),
-                    backend_type: v.backend_type.clone(),
                     version: v.version.clone(),
                     path: v.path.clone(),
                     gpu_type: v.gpu_type.clone(),
-                    is_active: v.version == active_version,
+                    gpu_variant: v.gpu_variant.clone(),
+                    is_active,
                 });
             }
         }
@@ -699,7 +780,7 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
         let active_marker = if entry.is_active { " * active" } else { "" };
         println!(
             "  {} [{}]{} (v{})",
-            entry.name, entry.backend_type, active_marker, entry.version
+            entry.name, entry.gpu_variant, active_marker, entry.version
         );
         println!("    Path:     {}", entry.path.display());
         if let Some(ref gpu) = entry.gpu_type {
@@ -721,50 +802,169 @@ async fn cmd_all_versions(_config: &Config, name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_switch(_config: &Config, name: &str, version: &str) -> Result<()> {
+async fn cmd_switch(
+    _config: &Config,
+    name: &str,
+    version: &str,
+    gpu_variant: Option<&str>,
+) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    // Check the version exists
-    let versions = match registry.list_all_versions(name, None)? {
-        Some(v) => v,
-        None => anyhow::bail!(
+    // Get all versions for this backend
+    let all_versions = registry.list_all_versions(name, None)?.ok_or_else(|| {
+        anyhow!(
             "Backend '{}' not found. Run `tama backend list` to see installed backends.",
             name
-        ),
+        )
+    })?;
+
+    // Determine the gpu_variant to use
+    let gpu_variant = match gpu_variant {
+        Some(v) => v.to_string(),
+        None => {
+            // Auto-infer: find unique variants that have the requested version
+            let matching: Vec<&BackendInfo> = all_versions
+                .iter()
+                .filter(|v| v.version == version)
+                .collect();
+            if matching.is_empty() {
+                let available: Vec<String> =
+                    all_versions.iter().map(|v| v.version.clone()).collect();
+                anyhow::bail!(
+                    "Version '{}' not found for backend '{}'. Available: {}",
+                    version,
+                    name,
+                    available.join(", ")
+                );
+            }
+
+            // Get unique variants for this version
+            let variants: std::collections::HashSet<&str> =
+                matching.iter().map(|v| v.gpu_variant.as_str()).collect();
+
+            if variants.len() == 1 {
+                variants.into_iter().next().unwrap().to_string()
+            } else {
+                let variant_list: Vec<&str> = variants.into_iter().collect();
+                anyhow::bail!(
+                    "Multiple variants exist for '{}' version '{}'. Use --gpu to specify ({})",
+                    name,
+                    version,
+                    variant_list.join(", ")
+                );
+            }
+        }
     };
 
-    let version_record = versions.iter().find(|v| v.version == version);
+    // Verify the version exists for the specified variant
+    let version_record = all_versions
+        .iter()
+        .find(|v| v.version == version && v.gpu_variant == gpu_variant);
     if version_record.is_none() {
-        let available: Vec<String> = versions.iter().map(|v| v.version.clone()).collect();
+        let available: Vec<String> = all_versions
+            .iter()
+            .filter(|v| v.gpu_variant == gpu_variant)
+            .map(|v| v.version.clone())
+            .collect();
         anyhow::bail!(
-            "Version '{}' not found for backend '{}'. Available: {}",
+            "Version '{}' not found for backend '{}' [{}]. Available: {}",
             version,
             name,
-            available.join(", ")
+            gpu_variant,
+            if available.is_empty() {
+                "(none)".to_string()
+            } else {
+                available.join(", ")
+            }
         );
     }
-    let gpu_variant = &version_record.unwrap().gpu_variant;
 
     // Activate the version
-    let activated = registry.activate(name, gpu_variant, version)?;
+    let activated = registry.activate(name, &gpu_variant, version)?;
     if !activated {
-        anyhow::bail!("Failed to activate version '{}'", version);
+        anyhow::bail!("Failed to activate version '{}' [{}]", version, gpu_variant);
     }
 
-    println!("Activated backend '{}' version '{}'.", name, version);
+    println!(
+        "Activated backend '{}' [{}] version '{}'.",
+        name, gpu_variant, version
+    );
 
     Ok(())
 }
 
-async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Result<()> {
+async fn cmd_remove_version(
+    _config: &Config,
+    name: &str,
+    version: &str,
+    gpu_variant: Option<&str>,
+) -> Result<()> {
     let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
 
-    // Get the version info before removing
-    let record = get_backend_by_version(&Config::open_db(), name, "cpu", version)?
-        .ok_or_else(|| anyhow!("Backend '{}' version '{}' not found", name, version))?;
+    // Get all versions for this backend
+    let all_versions = registry.list_all_versions(name, None)?.ok_or_else(|| {
+        anyhow!(
+            "Backend '{}' not found. Run `tama backend list` to see installed backends.",
+            name
+        )
+    })?;
 
-    println!("Removing backend '{}' version '{}'", name, version);
-    println!("  Path: {}", record.path);
+    // Determine the gpu_variant to use
+    let gpu_variant = match gpu_variant {
+        Some(v) => v.to_string(),
+        None => {
+            // Auto-infer: find variants that have the requested version
+            let matching: Vec<&BackendInfo> = all_versions
+                .iter()
+                .filter(|v| v.version == version)
+                .collect();
+            if matching.is_empty() {
+                let available: Vec<String> =
+                    all_versions.iter().map(|v| v.version.clone()).collect();
+                anyhow::bail!(
+                    "Version '{}' not found for backend '{}'. Available: {}",
+                    version,
+                    name,
+                    available.join(", ")
+                );
+            }
+
+            // Get unique variants for this version
+            let variants: std::collections::HashSet<&str> =
+                matching.iter().map(|v| v.gpu_variant.as_str()).collect();
+
+            if variants.len() == 1 {
+                variants.into_iter().next().unwrap().to_string()
+            } else {
+                let variant_list: Vec<&str> = variants.into_iter().collect();
+                anyhow::bail!(
+                    "Multiple variants exist for '{}' version '{}'. Use --gpu to specify ({})",
+                    name,
+                    version,
+                    variant_list.join(", ")
+                );
+            }
+        }
+    };
+
+    // Find the specific version record
+    let record = all_versions
+        .iter()
+        .find(|v| v.version == version && v.gpu_variant == gpu_variant)
+        .ok_or_else(|| {
+            anyhow!(
+                "Backend '{}' version '{}' [{}] not found",
+                name,
+                version,
+                gpu_variant
+            )
+        })?;
+
+    println!(
+        "Removing backend '{}' [{}] version '{}'",
+        name, gpu_variant, version
+    );
+    println!("  Path: {}", record.path.display());
 
     let confirm = inquire::Confirm::new("Are you sure? This will delete the backend files.")
         .with_default(false)
@@ -776,28 +976,14 @@ async fn cmd_remove_version(_config: &Config, name: &str, version: &str) -> Resu
     }
 
     // STEP 1: Delete files FIRST (before any DB changes)
-    let info = BackendInfo {
-        name: record.name.clone(),
-        backend_type: record
-            .backend_type
-            .parse()
-            .map_err(|e| anyhow!("Invalid backend type: {}", e))?,
-        version: record.version.clone(),
-        path: std::path::PathBuf::from(&record.path),
-        installed_at: record.installed_at,
-        gpu_type: None,
-        gpu_variant: record.gpu_variant.clone(),
-        source: None,
-    };
-
-    if info.path.exists() {
-        safe_remove_installation(&info)?;
+    if record.path.exists() {
+        safe_remove_installation(record)?;
     }
 
     // STEP 2: Remove from registry (activates another version if this was active)
-    registry.remove_version(name, &record.gpu_variant, version)?;
+    registry.remove_version(name, &gpu_variant, version)?;
 
-    println!("Version '{}' removed.", version);
+    println!("Version '{}' [{}] removed.", version, gpu_variant);
 
     Ok(())
 }
