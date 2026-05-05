@@ -42,7 +42,11 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                     // Resolve backend binary path from DB (priority) or config.path (fallback)
                     let backend_path = {
                         let conn = Config::open_db();
-                        config.resolve_backend_path(&srv.backend, srv.gpu_variant.as_deref(), &conn)?
+                        config.resolve_backend_path(
+                            &srv.backend,
+                            srv.gpu_variant.as_deref(),
+                            &conn,
+                        )?
                     };
                     let backend_path_str = backend_path.to_string_lossy().to_string();
                     tama_core::platform::linux::install_service(

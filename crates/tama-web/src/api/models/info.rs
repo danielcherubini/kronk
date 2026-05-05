@@ -217,13 +217,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                                     },
                                 );
                             }
-                            model_entry_json(
-                                record.id,
-                                record,
-                                &config,
-                                &configs_dir,
-                                Some(&meta),
-                            )
+                            model_entry_json(record.id, record, &config, &configs_dir, Some(&meta))
                         })
                         .collect::<Vec<_>>()
                 }
@@ -311,13 +305,8 @@ pub async fn get_model(
                             },
                         );
                     }
-                    let mut val = model_entry_json(
-                        record.id,
-                        &record,
-                        &config,
-                        &configs_dir,
-                        Some(&meta),
-                    );
+                    let mut val =
+                        model_entry_json(record.id, &record, &config, &configs_dir, Some(&meta));
                     val["backends"] = serde_json::json!(backend_options);
                     Json(val).into_response()
                 }

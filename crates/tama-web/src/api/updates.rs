@@ -15,11 +15,10 @@ use tama_core::backends::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckDto {
-    pub item_type: String, // "backend" or "model"
-    pub item_id: String,   // backend name (e.g. "ingest-worker") or model ID
-    // (e.g. "gpt-4o-mini" or HF repo like
-    // "unsloth/Qwen3.6-35B-A3B-GGUF")
-    pub repo_id: Option<String>, // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
+    pub item_type: String,            // "backend" or "model"
+    pub item_id: String,              // backend: "name:variant" (e.g. "llama_cpp:cpu") or model ID
+    pub variant: Option<String>,      // GPU variant for backends (e.g. "cpu", "vulkan", "cuda")
+    pub repo_id: Option<String>,      // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
     pub display_name: Option<String>, // user-friendly model name from config
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
@@ -126,9 +125,24 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 } else {
                     None
                 };
+                // Parse variant from item_id for backends (format: "name:variant")
+                let (parsed_item_id, variant) = if r.item_type == "backend" {
+                    if let Some(colon_idx) = r.item_id.rfind(':') {
+                        let name = &r.item_id[..colon_idx];
+                        let var = &r.item_id[colon_idx + 1..];
+                        (name.to_string(), Some(var.to_string()))
+                    } else {
+                        // Legacy format — no variant separator
+                        (r.item_id.clone(), None)
+                    }
+                } else {
+                    (r.item_id.clone(), None)
+                };
+
                 let dto = UpdateCheckDto {
                     item_type: r.item_type,
-                    item_id: r.item_id,
+                    item_id: parsed_item_id,
+                    variant,
                     repo_id,
                     display_name,
                     current_version: r.current_version,
@@ -183,10 +197,22 @@ pub async fn trigger_check(State(state): State<Arc<AppState>>) -> impl IntoRespo
     .into_response()
 }
 
+/// Query params for POST /tama/v1/updates/check/:item_type/:item_id
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CheckSingleQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/updates/check/:item_type/:item_id - Check single item
+///
+/// For backends, use `?gpu_variant=xxx` to check a specific variant.
+/// If not provided, checks the active variant (legacy behavior).
 pub async fn check_single(
     State(state): State<Arc<AppState>>,
     Path((item_type, item_id)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -204,6 +230,7 @@ pub async fn check_single(
         "backend" => {
             let config_dir_clone = config_dir.clone();
             let item_id_clone = item_id.clone();
+            let requested_variant = query.gpu_variant.clone();
             let bt_result = tokio::task::spawn_blocking(
                 move || -> anyhow::Result<Option<(BackendType, String)>> {
                     let open = tama_core::db::open(&config_dir_clone)?;
@@ -212,8 +239,16 @@ pub async fn check_single(
                         &item_id_clone,
                         None,
                     )?;
-                    let active = versions.iter().find(|v| v.is_active).or(versions.first());
-                    Ok(active.map(|r| {
+
+                    // If a specific variant is requested, find that variant
+                    // Otherwise, fall back to the active variant (legacy behavior)
+                    let record = if let Some(ref variant) = requested_variant {
+                        versions.iter().find(|v| v.gpu_variant == *variant)
+                    } else {
+                        versions.iter().find(|v| v.is_active).or(versions.first())
+                    };
+
+                    Ok(record.map(|r| {
                         (
                             match r.backend_type.as_str() {
                                 "llama_cpp" => BackendType::LlamaCpp,
@@ -286,9 +321,13 @@ pub async fn check_single(
 }
 
 /// POST /tama/v1/updates/apply/backend/:name - Trigger backend update
+///
+/// Use `?gpu_variant=xxx` to update a specific variant.
+/// If not provided, updates the active variant (legacy behavior).
 pub async fn apply_backend_update(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -302,14 +341,24 @@ pub async fn apply_backend_update(
     };
 
     // Load backend info from DB — discover gpu_variant dynamically
+    let requested_variant = query.gpu_variant.clone();
     let bt_result = tokio::task::spawn_blocking({
         let config_dir = config_dir.clone();
         let name = name.clone();
+        let requested_variant = requested_variant.clone();
         move || -> anyhow::Result<(Option<BackendType>, Option<String>)> {
             let open = tama_core::db::open(&config_dir)?;
             let versions = tama_core::db::queries::list_backend_versions(&open.conn, &name, None)?;
-            let active = versions.iter().find(|v| v.is_active).or(versions.first());
-            Ok(active
+
+            // If a specific variant is requested, find that variant
+            // Otherwise, fall back to the active variant (legacy behavior)
+            let record = if let Some(ref variant) = requested_variant {
+                versions.iter().find(|v| v.gpu_variant == *variant)
+            } else {
+                versions.iter().find(|v| v.is_active).or(versions.first())
+            };
+
+            Ok(record
                 .map(|r| {
                     let bt = match r.backend_type.as_str() {
                         "llama_cpp" => BackendType::LlamaCpp,
@@ -666,6 +715,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "backend".to_string(),
             item_id: "llama-cpp".to_string(),
+            variant: Some("cpu".to_string()),
             repo_id: None,
             display_name: Some("Llama CPP".to_string()),
             current_version: Some("1.0.0".to_string()),
@@ -694,6 +744,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "model".to_string(),
             item_id: "123".to_string(),
+            variant: None,
             repo_id: Some("unsloth/Qwen3.6-35B-A3B-GGUF".to_string()),
             display_name: Some("Qwen 3.6".to_string()),
             current_version: Some("abc123".to_string()),
@@ -721,6 +772,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "backend".to_string(),
             item_id: "custom-backend".to_string(),
+            variant: None,
             repo_id: None,
             display_name: None,
             current_version: Some("1.0.0".to_string()),
@@ -752,6 +804,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "model".to_string(),
             item_id: "456".to_string(),
+            variant: None,
             repo_id: Some("test/repo".to_string()),
             display_name: None,
             current_version: Some("abc123".to_string()),
@@ -779,6 +832,7 @@ mod tests {
             backends: vec![UpdateCheckDto {
                 item_type: "backend".to_string(),
                 item_id: "llama-cpp".to_string(),
+                variant: Some("cpu".to_string()),
                 repo_id: None,
                 display_name: None,
                 current_version: Some("1.0.0".to_string()),
@@ -792,6 +846,7 @@ mod tests {
             models: vec![UpdateCheckDto {
                 item_type: "model".to_string(),
                 item_id: "1".to_string(),
+                variant: None,
                 repo_id: Some("test/model".to_string()),
                 display_name: None,
                 current_version: None,

@@ -122,12 +122,12 @@ pub fn BackendCard(
     /// Called with the backend type when "Install" is clicked.
     #[prop(optional)]
     on_install: Option<Callback<String>>,
-    /// Called with the backend type when "Update" is clicked.
+    /// Called with (backend_type, gpu_variant) when "Update" is clicked.
     #[prop(optional)]
-    on_update: Option<Callback<String>>,
-    /// Called with the backend type when "Check for updates" is clicked.
+    on_update: Option<Callback<(String, String)>>,
+    /// Called with (backend_type, gpu_variant) when "Check for updates" is clicked.
     #[prop(optional)]
-    on_check_updates: Option<Callback<String>>,
+    on_check_updates: Option<Callback<(String, String)>>,
     /// Called with the backend type when "Uninstall" is clicked.
     #[prop(optional)]
     on_delete: Option<Callback<String>>,
@@ -143,7 +143,9 @@ pub fn BackendCard(
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
+    let variant_update = backend.gpu_variant.clone();
     let type_check = backend.r#type.clone();
+    let variant_check = backend.gpu_variant.clone();
     let type_delete = backend.r#type.clone();
 
     let installed = backend.installed;
@@ -379,12 +381,13 @@ pub fn BackendCard(
                 {if installed {
                     if let Some(cb) = on_check_updates {
                         let bt = type_check.clone();
+                        let gv = variant_check.clone();
                         view! {
                             <button
                                 type="button"
                                 class="btn btn-secondary"
                                 on:click=move |_| {
-                                    cb.run(bt.clone());
+                                    cb.run((bt.clone(), gv.clone()));
                                 }
                             >
                                 "Check for updates"
@@ -401,13 +404,14 @@ pub fn BackendCard(
                 {if installed && update_available {
                     let cb = on_update;
                     let bt = type_update.clone();
+                    let gv = variant_update.clone();
                     view! {
                         <button
                             type="button"
                             class="btn btn-primary"
                             on:click=move |_| {
                                 if let Some(c) = cb {
-                                    c.run(bt.clone());
+                                    c.run((bt.clone(), gv.clone()));
                                 }
                             }
                         >

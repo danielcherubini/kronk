@@ -56,7 +56,9 @@ fn test_resolve_backend_path_from_db() {
     insert_backend_installation(&conn, &record).unwrap();
 
     let config = make_test_config(None);
-    let result = config.resolve_backend_path("llama_cpp", None, &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     assert_eq!(
         result,
         std::path::PathBuf::from("/usr/local/bin/llama-server")
@@ -69,7 +71,9 @@ fn test_resolve_backend_path_fallback() {
     // Empty DB — no installed backend
 
     let config = make_test_config(Some("/fallback/llama-server"));
-    let result = config.resolve_backend_path("llama_cpp", None, &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     assert_eq!(result, std::path::PathBuf::from("/fallback/llama-server"));
 }
 
@@ -139,7 +143,9 @@ fn test_resolve_backend_path_version_pin() {
         },
     );
 
-    let result = config.resolve_backend_path("llama_cpp", None, &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     // Should return v1 path, not v2 (which is active)
     assert_eq!(result, std::path::PathBuf::from("/v1/llama-server"));
 }

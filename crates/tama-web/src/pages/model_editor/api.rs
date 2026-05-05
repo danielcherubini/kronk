@@ -14,7 +14,11 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
         let list: ModelListResponse = resp.json().await.ok()?;
         return Some(ModelDetail {
             id: 0,
-            backend: list.backends.first().map(|b| b.name.clone()).unwrap_or_default(),
+            backend: list
+                .backends
+                .first()
+                .map(|b| b.name.clone())
+                .unwrap_or_default(),
             gpu_variant: None,
             model: None,
             quant: None,

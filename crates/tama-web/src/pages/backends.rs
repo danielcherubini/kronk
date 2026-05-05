@@ -85,10 +85,10 @@ pub fn Backends() -> impl IntoView {
         install_modal_for.set(Some(backend_type));
     });
 
-    let on_update_click = Callback::new(move |backend_type: String| {
+    let on_update_click = Callback::new(move |(backend_type, gpu_variant): (String, String)| {
         action_error.set(None);
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/tama/v1/backends/{backend_type}/update");
+            let url = format!("/tama/v1/backends/{backend_type}/update?gpu_variant={gpu_variant}");
             match post_request(&url).send().await {
                 Ok(resp) => {
                     if resp.ok() {
@@ -105,24 +105,40 @@ pub fn Backends() -> impl IntoView {
         });
     });
 
-    let on_check_updates_click = Callback::new(move |_backend_type: String| {
-        action_error.set(None);
-        wasm_bindgen_futures::spawn_local(async move {
-            match post_request("/tama/v1/backends/check-updates").send().await {
-                Ok(resp) => {
-                    if resp.ok() {
-                        if let Ok(list) = resp.json::<BackendListResponse>().await {
-                            backends_list.set(list);
+    let on_check_updates_click =
+        Callback::new(move |(backend_type, gpu_variant): (String, String)| {
+            action_error.set(None);
+            wasm_bindgen_futures::spawn_local(async move {
+                // Check a single backend variant via the updates API
+                let url = format!(
+                    "/tama/v1/updates/check/backend/{}?gpu_variant={}",
+                    backend_type, gpu_variant
+                );
+                match post_request(&url).send().await {
+                    Ok(resp) => {
+                        if resp.ok() {
+                            // After checking, refresh the full backend list to get updated status
+                            match gloo_net::http::Request::get("/tama/v1/backends")
+                                .send()
+                                .await
+                            {
+                                Ok(resp2) => {
+                                    if let Ok(list) = resp2.json::<BackendListResponse>().await {
+                                        backends_list.set(list);
+                                    }
+                                }
+                                Err(e) => action_error
+                                    .set(Some(format!("Failed to refresh backends: {e}"))),
+                            }
+                        } else {
+                            let text = resp.text().await.unwrap_or_default();
+                            action_error.set(Some(format!("Check updates failed: {text}")));
                         }
-                    } else {
-                        let text = resp.text().await.unwrap_or_default();
-                        action_error.set(Some(format!("Check updates failed: {text}")));
                     }
+                    Err(e) => action_error.set(Some(format!("Check updates request failed: {e}"))),
                 }
-                Err(e) => action_error.set(Some(format!("Check updates request failed: {e}"))),
-            }
+            });
         });
-    });
 
     let on_delete_click = Callback::new(move |backend_type: String| {
         action_error.set(None);

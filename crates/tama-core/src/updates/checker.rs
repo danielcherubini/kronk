@@ -118,21 +118,39 @@ impl UpdateChecker {
         tracing::info!("Starting update check for all items");
 
         // Phase 1: Sync DB - fetch all items to check
+        // For backends: iterate ALL installed variants (not just active ones)
         let (backends, models) = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             move || -> anyhow::Result<UpdateSyncResults> {
                 let registry = BackendRegistry::open(&config_dir)?;
-                let active_backends = registry.list().unwrap_or_default();
-                let backends: Vec<(String, BackendType, String)> = active_backends
-                    .iter()
-                    .map(|b| {
-                        (
-                            b.name.clone(),
-                            b.backend_type.clone(),
-                            b.gpu_variant.clone(),
-                        )
-                    })
-                    .collect();
+
+                // Collect all unique (name, backend_type) pairs from all installed backends
+                let all_backends = registry.list().unwrap_or_default();
+                let backend_names: Vec<String> =
+                    all_backends.iter().map(|b| b.name.clone()).collect();
+
+                // For each backend name, get ALL versions and group by variant
+                let mut backend_entries: Vec<(String, BackendType, String)> = Vec::new();
+                for name in &backend_names {
+                    if let Ok(Some(versions)) = registry.list_all_versions(name, None) {
+                        // Collect unique variants for this backend
+                        let mut variants: Vec<String> =
+                            versions.iter().map(|v| v.gpu_variant.clone()).collect();
+                        variants.sort();
+                        variants.dedup();
+
+                        for variant in variants {
+                            // Get the backend type from the first version with this variant
+                            if let Some(info) = versions.iter().find(|v| v.gpu_variant == variant) {
+                                backend_entries.push((
+                                    name.clone(),
+                                    info.backend_type.clone(),
+                                    variant.clone(),
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 let open = db::open(&config_dir)?;
                 let db_model_records = get_all_model_configs(&open.conn)?;
@@ -141,7 +159,7 @@ impl UpdateChecker {
                     .map(|r| (r.id, Some(r.repo_id)))
                     .collect();
 
-                Ok((backends, models))
+                Ok((backend_entries, models))
             }
         })
         .await??;
@@ -171,6 +189,10 @@ impl UpdateChecker {
     }
 
     /// Check a single backend for updates.
+    ///
+    /// The `item_id` stored in the DB is `name:variant` so that multiple variants
+    /// of the same backend (e.g. llama_cpp:cpu and llama_cpp:vulkan) have separate
+    /// update check records and don't overwrite each other.
     pub async fn check_backend(
         &self,
         config_dir: &std::path::Path,
@@ -178,6 +200,9 @@ impl UpdateChecker {
         backend_type: &BackendType,
         gpu_variant: &str,
     ) -> anyhow::Result<()> {
+        // Use "name:variant" as the item_id so each variant has its own record
+        let item_id = format!("{}:{}", backend_name, gpu_variant);
+
         // Sync: Get current version from DB
         let current_version = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
@@ -200,7 +225,7 @@ impl UpdateChecker {
                         self.save_check_result(
                             config_dir,
                             "backend",
-                            backend_name,
+                            &item_id,
                             current_version.as_deref(),
                             None,
                             false,
@@ -232,7 +257,7 @@ impl UpdateChecker {
         self.save_check_result(
             config_dir,
             "backend",
-            backend_name,
+            &item_id,
             current_version.as_deref(),
             latest_version.as_deref(),
             update_available,

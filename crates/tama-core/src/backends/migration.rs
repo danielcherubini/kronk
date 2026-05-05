@@ -68,7 +68,13 @@ pub fn migrate_legacy_backends(conn: &Connection, backends_dir: &Path) -> anyhow
         );
 
         // Try to move files
-        if migrate_files(&old_path, &new_path_dir, &new_binary_path, &backend_type, backends_dir)? {
+        if migrate_files(
+            &old_path,
+            &new_path_dir,
+            &new_binary_path,
+            &backend_type,
+            backends_dir,
+        )? {
             // Update DB record
             update_backend_path_and_variant(
                 conn,
@@ -228,7 +234,11 @@ fn migrate_files(
             // Can't move a dir into its own subdirectory; use a temp first
             let tmp_dir = backends_dir.join("tmp_migrate_tts");
             fs::rename(old_path, &tmp_dir).with_context(|| {
-                format!("Failed to move TTS dir {} to temp {}", old_path.display(), tmp_dir.display())
+                format!(
+                    "Failed to move TTS dir {} to temp {}",
+                    old_path.display(),
+                    tmp_dir.display()
+                )
             })?;
             fs::create_dir_all(new_path_dir).context("Failed to create new path dir")?;
             fs::rename(&tmp_dir, new_binary_path).with_context(|| {

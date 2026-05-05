@@ -47,7 +47,7 @@ pub async fn run_initial_backfill(conn: &Connection, config: &Config) -> Result<
                 // Create a placeholder model_config entry for this repo
                 let mc = crate::config::ModelConfig {
                     backend: "llama_cpp".to_string(),
-            gpu_variant: None,
+                    gpu_variant: None,
                     ..Default::default()
                 };
                 let config_key = repo_id.to_lowercase().replace('/', "--");
@@ -717,7 +717,7 @@ installed_at = 1700000000
                 repo_id: "test/repo".to_string(),
                 display_name: None,
                 backend: "llama_cpp".to_string(),
-            gpu_variant: None,
+                gpu_variant: None,
                 enabled: true,
                 selected_quant: None,
                 selected_mmproj: None,
@@ -801,7 +801,7 @@ installed_at = 1700000000
                 repo_id: "test/repo".to_string(),
                 display_name: None,
                 backend: "llama_cpp".to_string(),
-            gpu_variant: None,
+                gpu_variant: None,
                 enabled: true,
                 selected_quant: None,
                 selected_mmproj: None,

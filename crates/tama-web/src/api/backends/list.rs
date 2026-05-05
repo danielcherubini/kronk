@@ -63,13 +63,29 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         .and_then(|r| r);
 
     // Load config to get default_args
-    let config_result = tama_core::config::Config::load_from(&config_dir);
+    let config_result = tama_core::config::Config::load_from(&config_dir.clone());
     let default_args_map: std::collections::HashMap<String, Vec<String>> = config_result
         .ok()
         .map(|cfg| {
             cfg.backends
                 .iter()
                 .map(|(k, v)| (k.clone(), v.default_args.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Load cached update checks from DB (keyed by "name:variant")
+    let update_checks: std::collections::HashMap<
+        String,
+        tama_core::db::queries::UpdateCheckRecord,
+    > = tama_core::db::open(&config_dir)
+        .ok()
+        .and_then(|open| tama_core::db::queries::get_all_update_checks(&open.conn).ok())
+        .map(|records| {
+            records
+                .into_iter()
+                .filter(|r| r.item_type == "backend")
+                .map(|r| (r.item_id.clone(), r))
                 .collect()
         })
         .unwrap_or_default();
@@ -130,6 +146,21 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
                         let active_info = active_version.map(BackendInfoDto::from);
 
+                        // Load cached update status from DB (keyed by "name:variant")
+                        let update_key = format!("{}:{}", type_, variant);
+                        let update_status = update_checks
+                            .get(&update_key)
+                            .map(|r| UpdateStatusDto {
+                                checked: true,
+                                latest_version: r.latest_version.clone(),
+                                update_available: if r.update_available {
+                                    Some(true)
+                                } else {
+                                    None
+                                },
+                            })
+                            .unwrap_or_default();
+
                         backends.push(BackendCardDto {
                             r#type: type_.to_string(),
                             display_name: display_name.to_string(),
@@ -137,7 +168,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                             gpu_variant: variant,
                             info: active_info,
                             versions: version_dtos,
-                            update: UpdateStatusDto::default(),
+                            update: update_status,
                             release_notes_url: release_notes_url.map(String::from),
                             default_args: default_args.clone(),
                             is_active: true,
@@ -198,6 +229,21 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
                         let active_info = active_version.map(BackendInfoDto::from);
 
+                        // Load cached update status from DB (keyed by "name:variant")
+                        let update_key = format!("{}:{}", active.name, variant);
+                        let update_status = update_checks
+                            .get(&update_key)
+                            .map(|r| UpdateStatusDto {
+                                checked: true,
+                                latest_version: r.latest_version.clone(),
+                                update_available: if r.update_available {
+                                    Some(true)
+                                } else {
+                                    None
+                                },
+                            })
+                            .unwrap_or_default();
+
                         custom.push(BackendCardDto {
                             r#type: format!("{}", active.backend_type),
                             display_name: format!("Custom ({})", active.name),
@@ -205,7 +251,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                             gpu_variant: variant,
                             info: active_info,
                             versions: version_dtos,
-                            update: UpdateStatusDto::default(),
+                            update: update_status,
                             release_notes_url: None,
                             default_args,
                             is_active: true,

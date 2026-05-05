@@ -114,7 +114,11 @@ async fn _start_backend(
     // Resolve the backend binary path: DB takes priority, config.path is fallback.
     let backend_path = {
         let conn = Config::open_db();
-        config.resolve_backend_path(&server_config.backend, server_config.gpu_variant.as_deref(), &conn)?
+        config.resolve_backend_path(
+            &server_config.backend,
+            server_config.gpu_variant.as_deref(),
+            &conn,
+        )?
     };
 
     let health_url = format!("http://127.0.0.1:{}/health", port);
