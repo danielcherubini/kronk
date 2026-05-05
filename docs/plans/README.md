@@ -14,9 +14,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 83
+- **Total Plans**: 84
 - **Completed**: 80 ✅
-- **In Progress**: 3 🚧
+- **In Progress**: 4 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -32,6 +32,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Startup Detection & Orphan Cleanup](2026-05-03-startup-detection-and-orphan-cleanup.md) | Fix startup detection (2-consecutive health checks) and orphaned child process cleanup on startup failure | 🚧 IN PROGRESS |
 | [Model Card Redesign](2026-05-03-model-card-redesign.md) | Shared ModelCard component with accent strip, badge pills, and icon actions; replaces ModelRow and inline rendering | 🚧 IN PROGRESS |
 | [HF Metadata for Models](2026-05-03-hf-metadata.md) | Add 9 HF metadata columns (format, base_model, pipeline_tag, params, architecture, context, layers, last_modified), populate from HF API + README parsing, display architecture on model cards, sort by display name | 🚧 IN PROGRESS |
+| [Backend GPU Variant Restructure](2026-05-04-backend-gpu-variant-restructure.md) | Restructure backend folders to type/variant/version, add gpu_variant to DB and queries, support multiple GPU variants per backend (e.g. llama_cpp vulkan + rocm simultaneously), legacy migration, WebUI updates | 🚧 IN PROGRESS |
 
 ### Completed Plans
 
