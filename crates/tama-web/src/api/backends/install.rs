@@ -568,25 +568,47 @@ pub async fn remove_backend(
         }
     };
 
-    // If gpu_variant is provided, only remove that variant
-    let lookup_variant = gpu_variant.as_deref().unwrap_or("cpu");
-    let backend_info = match registry.get(&name, lookup_variant) {
-        Ok(Some(info)) => info,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
-            )
-                .into_response();
-        }
-    };
+    // If gpu_variant is provided, only remove that variant; otherwise remove all variants.
+    let backends_to_remove: Vec<tama_core::backends::BackendInfo> =
+        if let Some(variant) = &gpu_variant {
+            // Specific variant requested — look it up directly
+            match registry.get(&name, variant.as_str()) {
+                Ok(Some(info)) => vec![info],
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            // No variant specified — iterate ALL variants
+            match registry.list_all_versions(&name, None) {
+                Ok(Some(versions)) => versions,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
+                    )
+                        .into_response();
+                }
+            }
+        };
 
     // Check if a job is running for this backend
     if let Some(active_job) = jobs.active().await {
@@ -595,7 +617,7 @@ pub async fn remove_backend(
             .as_ref()
             .map(|b| b.to_string())
             .unwrap_or_default();
-        if active_type == backend_info.backend_type.to_string() {
+        if active_type == backends_to_remove[0].backend_type.to_string() {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
@@ -606,23 +628,25 @@ pub async fn remove_backend(
         }
     }
 
-    // Remove files
-    if let Err(e) = tama_core::backends::safe_remove_installation(&backend_info) {
-        let err_msg = e.to_string();
-        if err_msg.contains("outside the managed backends directory") {
+    // Remove files for each variant
+    for info in &backends_to_remove {
+        if let Err(e) = tama_core::backends::safe_remove_installation(info) {
+            let err_msg = e.to_string();
+            if err_msg.contains("outside the managed backends directory") {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "path is outside the managed backends directory; remove manually"
+                    })),
+                )
+                    .into_response();
+            }
             return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "path is outside the managed backends directory; remove manually"
-                })),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to remove files: {}", e)})),
             )
                 .into_response();
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to remove files: {}", e)})),
-        )
-            .into_response();
     }
 
     // Remove from registry (Some = remove specific variant, None = remove all variants)

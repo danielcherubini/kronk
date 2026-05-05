@@ -576,26 +576,39 @@ pub async fn list_backend_versions(
                 }
             };
 
-            // Get the active version for this backend across all variants
-            let active_version = registry
+            // Get the active version for this backend, keyed by (name, gpu_variant)
+            let active_backends: Vec<_> = registry
                 .list()
                 .ok()
-                .and_then(|backends| backends.into_iter().find(|b| b.name == name))
-                .map(|b| b.version);
+                .map(|backends| {
+                    backends
+                        .into_iter()
+                        .filter(|b| b.name == name)
+                        .map(|b| (b.gpu_variant, b.version))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
 
             let dto_versions: Vec<BackendVersionDto> = versions
                 .iter()
-                .map(|info| BackendVersionDto {
-                    name: info.name.clone(),
-                    version: info.version.clone(),
-                    path: info.path.to_string_lossy().to_string(),
-                    installed_at: info.installed_at,
-                    gpu_variant: info.gpu_variant.clone(),
-                    gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
-                    source: info.source.as_ref().map(|s| s.into()),
-                    is_active: active_version.as_deref() == Some(&info.version),
+                .map(|info| {
+                    let is_active = active_backends.iter().any(|(variant, version)| {
+                        variant == &info.gpu_variant && version == &info.version
+                    });
+                    BackendVersionDto {
+                        name: info.name.clone(),
+                        version: info.version.clone(),
+                        path: info.path.to_string_lossy().to_string(),
+                        installed_at: info.installed_at,
+                        gpu_variant: info.gpu_variant.clone(),
+                        gpu_type: info.gpu_type.as_ref().map(|g| g.into()),
+                        source: info.source.as_ref().map(|s| s.into()),
+                        is_active,
+                    }
                 })
                 .collect();
+
+            let active_version = active_backends.first().map(|(_, v)| v.clone());
 
             Json(BackendVersionsResponse {
                 versions: dto_versions,
