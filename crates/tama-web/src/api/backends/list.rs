@@ -576,8 +576,12 @@ pub async fn list_backend_versions(
                 }
             };
 
-            // Get the active version for comparison
-            let active_version = registry.get(&name, "cpu").ok().flatten().map(|a| a.version);
+            // Get the active version for this backend across all variants
+            let active_version = registry
+                .list()
+                .ok()
+                .and_then(|backends| backends.into_iter().find(|b| b.name == name))
+                .map(|b| b.version);
 
             let dto_versions: Vec<BackendVersionDto> = versions
                 .iter()
