@@ -83,7 +83,7 @@ pub fn InstallModal(
         GpuTypeDto::Metal => "metal".to_string(),
         GpuTypeDto::Rocm { .. } => "rocm".to_string(),
         GpuTypeDto::CpuOnly => "cpu".to_string(),
-        GpuTypeDto::Custom => "cpu".to_string(),
+        GpuTypeDto::Custom => "custom".to_string(),
     });
 
     let cuda_version = RwSignal::new(
