@@ -124,6 +124,33 @@ pub fn find_backend_binary(dir: &Path) -> Result<PathBuf> {
         None
     }
 
-    walk_for(dir, binary_name)
-        .ok_or_else(|| anyhow!("Could not find {} in extracted archive", binary_name))
+    // List directory contents for debugging
+    fn list_dir(dir: &Path, indent: &str, entries: &mut Vec<String>) {
+        if let Ok(readings) = std::fs::read_dir(dir) {
+            for entry in readings.flatten() {
+                let path = entry.path();
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or("?".to_string());
+                if path.is_dir() {
+                    entries.push(format!("{}/", name));
+                    list_dir(&path, &format!("{}  ", indent), entries);
+                } else {
+                    entries.push(name);
+                }
+            }
+        }
+    }
+
+    walk_for(dir, binary_name).ok_or_else(|| {
+        let mut contents = Vec::new();
+        list_dir(dir, "", &mut contents);
+        anyhow!(
+            "Could not find {} in build output at {}\nContents: {}",
+            binary_name,
+            dir.display(),
+            contents.join(", ")
+        )
+    })
 }

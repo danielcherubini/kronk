@@ -261,11 +261,39 @@ async fn try_clone_latest_tag(
         Ok(output) if output.status.success() => {
             let stdout_str = String::from_utf8_lossy(&output.stdout);
             let lines: Vec<&str> = stdout_str.lines().collect();
-            // Filter out peeled refs (refs/tags/xxx^{}) which can interleave unpredictably
+
+            // Filter to only proper release tags.
+            // Skips peeled refs, empty lines, and auto-generated/CI/dev tags like:
+            // - "master-fff0e0e" (auto-generated dev tags)
+            // - "ci_*" (CI pipeline tags)
+            // - "fix-*" or "gguf-*" (non-release tags)
+            // Keeps tags like "b9033" (llama.cpp releases) or "vX.Y.Z" (semver).
+            let is_release_tag = |tag_name: &str| -> bool {
+                // Skip known non-release prefixes
+                if tag_name.starts_with("master-")
+                    || tag_name.starts_with("ci_")
+                    || tag_name.starts_with("fix-")
+                    || tag_name.starts_with("gguf")
+                    || tag_name == "ggu"
+                {
+                    return false;
+                }
+                // Accept: bXXXX (llama.cpp), vX.Y.Z (semver), or other alphanumeric tags
+                true
+            };
+
             let tag_lines: Vec<&str> = lines
                 .iter()
                 .filter(|l| !l.contains("^{}"))
                 .filter(|l| !l.is_empty())
+                .filter(|l| {
+                    if let Some(ref_field) = l.split('\t').nth(1) {
+                        let tag_name = ref_field.trim_start_matches("refs/tags/");
+                        is_release_tag(tag_name)
+                    } else {
+                        true
+                    }
+                })
                 .copied()
                 .collect();
             if let Some(tag_line) = tag_lines.first() {
