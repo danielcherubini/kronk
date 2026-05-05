@@ -191,13 +191,10 @@ fn compute_new_binary_path(
 
     match backend_type {
         BackendType::TtsKokoro => {
-            // TTS is a directory, not a binary
+            // TTS is a directory, not a binary; preserve the original dir name
             old_path
-                .parent()
-                .map(|p| {
-                    let dir_name = p.file_name().unwrap_or_default();
-                    new_path_dir.join(dir_name)
-                })
+                .file_name()
+                .map(|name| new_path_dir.join(name))
                 .unwrap_or_else(|| new_path_dir.to_path_buf())
         }
         _ => new_path_dir.join(binary_name),
