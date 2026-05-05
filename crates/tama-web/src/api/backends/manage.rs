@@ -550,7 +550,100 @@ pub async fn activate_backend_version(
         }
     };
 
-    let gpu_variant = query.gpu_variant.as_deref().unwrap_or("cpu");
+    // Determine gpu_variant: use explicit value or auto-infer from registry
+    let gpu_variant = match query.gpu_variant {
+        Some(v) => v,
+        None => {
+            let config_dir_clone = config_dir.clone();
+            let name_clone = name.clone();
+            let version_clone = req.version.clone();
+            let infer_result: Result<Option<Vec<tama_core::backends::BackendInfo>>, anyhow::Error> =
+                tokio::task::spawn_blocking(move || {
+                    let reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
+                    reg.list_all_versions(&name_clone, None)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+                .and_then(|r| r);
+
+            let versions = match infer_result {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": format!("Backend '{}' not found", name)
+                        })),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": format!("Failed to query backend: {}", e)
+                        })),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Collect unique variants
+            let mut variants: Vec<String> =
+                versions.iter().map(|v| v.gpu_variant.clone()).collect();
+            variants.sort();
+            variants.dedup();
+
+            if variants.len() == 1 {
+                // Only one variant exists — use it
+                variants.into_iter().next().unwrap()
+            } else {
+                // Multiple variants — find the one that has the requested version
+                let matching: Vec<String> = versions
+                    .iter()
+                    .filter(|v| v.version == version_clone)
+                    .map(|v| v.gpu_variant.clone())
+                    .collect();
+                let mut matching = matching;
+                matching.sort();
+                matching.dedup();
+
+                match matching.len() {
+                    1 => matching.into_iter().next().unwrap(),
+                    0 => {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Version '{}' not found for backend '{}'. Available variants: {}",
+                                    version_clone,
+                                    name,
+                                    variants.join(", ")
+                                )
+                            })),
+                        )
+                            .into_response();
+                    }
+                    _ => {
+                        // Multiple variants have the same version — ambiguous
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Version '{}' exists in multiple variants for backend '{}'. Please specify gpu_variant. Available variants: {}",
+                                    version_clone,
+                                    name,
+                                    matching.join(", ")
+                                )
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    };
+
     let config_dir_clone = config_dir.clone();
     let version_clone = req.version.clone();
     let name_clone = name.clone();

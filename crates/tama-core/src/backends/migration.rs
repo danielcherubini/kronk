@@ -72,8 +72,7 @@ pub fn migrate_legacy_backends(conn: &Connection, backends_dir: &Path) -> anyhow
             // Update DB record
             update_backend_path_and_variant(
                 conn,
-                &record.name,
-                &record.version,
+                record.id,
                 &gpu_variant,
                 &new_binary_path.to_string_lossy(),
             )
@@ -102,7 +101,7 @@ fn list_all_backend_records(conn: &Connection) -> anyhow::Result<Vec<BackendReco
 
     let rows = stmt.query_map([], |row| {
         Ok(BackendRecord {
-            _id: row.get(0)?,
+            id: row.get(0)?,
             name: row.get(1)?,
             backend_type: row.get(2)?,
             version: row.get(3)?,
@@ -123,16 +122,15 @@ fn list_all_backend_records(conn: &Connection) -> anyhow::Result<Vec<BackendReco
 
 fn update_backend_path_and_variant(
     conn: &Connection,
-    name: &str,
-    version: &str,
+    id: i64,
     gpu_variant: &str,
     new_path: &str,
 ) -> anyhow::Result<()> {
     conn.execute(
         "UPDATE backend_installations \
          SET path = ?, gpu_variant = ? \
-         WHERE name = ? AND version = ?",
-        (new_path, gpu_variant, name, version),
+         WHERE id = ?",
+        (new_path, gpu_variant, id),
     )?;
     Ok(())
 }
@@ -312,7 +310,7 @@ fn parse_gpu_type(type_str: &str) -> Option<GpuType> {
 
 #[derive(Debug)]
 struct BackendRecord {
-    _id: i64,
+    id: i64,
     name: String,
     backend_type: String,
     version: String,
