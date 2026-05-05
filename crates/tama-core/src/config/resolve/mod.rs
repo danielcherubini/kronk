@@ -463,28 +463,31 @@ impl Config {
     /// Resolve the filesystem path for a named backend binary.
     ///
     /// Priority:
-    /// 1. If `config.backends[name].version` is `Some(v)`, look up that exact `(name, gpu_variant, version)`
-    ///    in the DB. If found, return its path. If not found, return a descriptive error.
-    /// 2. Otherwise, use the active (latest) installation from the DB.
-    /// 3. Fallback to `path` field in `config.toml` [backends] section (for custom/manual installs).
+    /// 1. Model-level `gpu_variant` (passed as `model_variant`) — most specific
+    /// 2. Global config `[backends.<name>].gpu_variant`
+    /// 3. Discover from DB (first active installation, or first variant found)
+    /// 4. Default "cpu"
     ///
-    /// The `gpu_variant` is determined as follows:
-    /// - If `config.backends[name].gpu_variant` is set → use it
-    /// - If not set → discover from DB: use the variant of the first active installation,
-    ///   or the first variant found if multiple exist.
-    ///
-    /// Returns an error if neither source has a path.
+    /// Then:
+    /// 1. If `config.backends[name].version` is pinned, look up that exact version
+    ///    in the DB for the resolved variant.
+    /// 2. Otherwise, use the active (latest) installation for that variant.
+    /// 3. Fallback to `path` field in `config.toml` [backends] section.
     pub fn resolve_backend_path(
         &self,
         name: &str,
+        model_variant: Option<&str>,
         conn: &rusqlite::Connection,
     ) -> Result<std::path::PathBuf> {
-        // Determine the gpu_variant to use
-        let gpu_variant: String = self
-            .backends
-            .get(name)
-            .and_then(|b| b.gpu_variant.as_deref())
+        // Determine the gpu_variant to use (model > config > db > "cpu")
+        let gpu_variant: String = model_variant
             .map(String::from)
+            .or_else(|| {
+                self.backends
+                    .get(name)
+                    .and_then(|b| b.gpu_variant.as_deref())
+                    .map(String::from)
+            })
             .unwrap_or_else(|| {
                 // Discover from DB: use the variant of the first active installation
                 // or the first variant found

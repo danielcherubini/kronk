@@ -288,30 +288,13 @@ pub fn Backends() -> impl IntoView {
                         if !show_backend_dropdown.get() {
                             return view! { <span/> }.into_any();
                         }
-                        let list = backends_list.get();
                         let all = vec![
                             ("llama_cpp", "llama.cpp"),
                             ("ik_llama", "ik_llama.cpp"),
                             ("tts_kokoro", "Kokoro TTS"),
                         ];
-                        let available: std::collections::HashSet<String> =
-                            list.available.into_iter().collect();
-
-                        let mut items: Vec<_> = all
-                            .into_iter()
-                            .filter(|(t, _)| available.contains(*t))
-                            .collect();
+                        let mut items = all;
                         items.sort_by_key(|(_, d)| *d);
-
-                        if items.is_empty() {
-                            return view! {
-                                <div style="position:absolute;right:0;top:100%;margin-top:4px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:0.5rem 0;z-index:100;width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
-                                    <div style="padding:0.5rem 0.75rem;color:#94a3b8;font-size:0.875rem;">
-                                        "All backends installed"
-                                    </div>
-                                </div>
-                            }.into_any();
-                        }
 
                         view! {
                             <div style="position:absolute;right:0;top:100%;margin-top:4px;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:0.5rem 0;z-index:100;width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.3);">

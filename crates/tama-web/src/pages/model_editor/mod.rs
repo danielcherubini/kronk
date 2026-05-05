@@ -44,7 +44,7 @@ pub fn ModelEditor() -> impl IntoView {
     let form = RwSignal::new(Option::<ModelForm>::None);
 
     // UI-only signals (not part of form)
-    let backends = RwSignal::new(Vec::<String>::new());
+    let backends = RwSignal::new(Vec::<BackendOption>::new());
     let original_id = RwSignal::new(String::new());
     let pull_modal_open_signal = RwSignal::new(false);
 
@@ -171,6 +171,7 @@ pub fn ModelEditor() -> impl IntoView {
                 form.set(Some(ModelForm {
                     id: d.id.to_string(),
                     backend: d.backend.clone(),
+                    gpu_variant: d.gpu_variant.clone(),
                     model: d.model,
                     quant: d.quant,
                     mmproj: d.mmproj,
@@ -343,6 +344,7 @@ pub fn ModelEditor() -> impl IntoView {
             let form_data = ModelForm {
                 id: save_id,
                 backend: initial_form.backend.clone(),
+                gpu_variant: initial_form.gpu_variant.clone(),
                 model: initial_form.model.clone(),
                 quant: initial_form.quant.clone(),
                 mmproj: initial_form.mmproj.clone(),

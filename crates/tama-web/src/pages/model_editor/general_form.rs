@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use super::types::ModelForm;
+use super::types::{BackendOption, ModelForm};
 use crate::components::context_length_selector::ContextLengthSelector;
 use crate::utils::target_value;
 
@@ -83,7 +83,7 @@ enum KvQuantField {
 #[component]
 pub fn ModelEditorGeneralForm(
     form: RwSignal<Option<ModelForm>>,
-    backends: RwSignal<Vec<String>>,
+    backends: RwSignal<Vec<BackendOption>>,
 ) -> impl IntoView {
     // Track the last form ID we've initialized inputs for
     let last_init_id = StoredValue::new(None::<String>);
@@ -149,17 +149,37 @@ pub fn ModelEditorGeneralForm(
                 id="field-backend"
                 class="form-select"
                 on:change=move |e| {
+                    let val = target_value(&e);
                     form.update(|f| {
                         if let Some(form) = f {
-                            form.backend = target_value(&e);
+                            // Parse "name:variant" or just "name"
+                            if let Some((name, variant)) = val.split_once(':') {
+                                form.backend = name.to_string();
+                                form.gpu_variant = Some(variant.to_string());
+                            } else {
+                                form.backend = val;
+                                form.gpu_variant = None;
+                            }
                         }
                     });
                 }
             >
-                {move || backends.get().into_iter().map(|b| {
-                    let selected = form.get().as_ref().map(|f| f.backend.clone()).unwrap_or_default() == b;
-                    let b2 = b.clone();
-                    view! { <option value=b2 selected=selected>{b}</option> }
+                {move || backends.get().into_iter().map(|opt| {
+                    let value = if let Some(ref v) = opt.variant {
+                        format!("{}:{}", opt.name, v)
+                    } else {
+                        opt.name.clone()
+                    };
+                    let selected = form.get().as_ref().map(|f| {
+                        let expected = if let Some(ref v) = f.gpu_variant {
+                            format!("{}:{}", f.backend, v)
+                        } else {
+                            f.backend.clone()
+                        };
+                        expected == value
+                    }).unwrap_or(false);
+                    let value2 = value.clone();
+                    view! { <option value=value2 selected=selected>{opt.label.clone()}</option> }
                 }).collect::<Vec<_>>()}
             </select>
 

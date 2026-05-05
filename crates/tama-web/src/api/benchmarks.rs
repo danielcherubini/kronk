@@ -608,7 +608,7 @@ async fn run_spec_benchmark_inner(
         .unwrap_or(&server_config.backend);
     let backend_path = {
         let conn = tama_core::config::Config::open_db();
-        config.resolve_backend_path(target_backend, &conn)?
+        config.resolve_backend_path(target_backend, None, &conn)?
     };
 
     // Discover llama-server binary

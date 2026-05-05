@@ -121,6 +121,8 @@ pub struct BackendConfig {
 pub struct ModelConfig {
     pub backend: String,
     #[serde(default)]
+    pub gpu_variant: Option<String>,
+    #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub sampling: Option<SamplingParams>,
@@ -500,6 +502,7 @@ impl From<CoreModelConfig> for ModelConfig {
     fn from(m: CoreModelConfig) -> Self {
         Self {
             backend: m.backend,
+            gpu_variant: m.gpu_variant,
             args: m.args,
             sampling: m.sampling.map(Into::into),
             model: m.model,
@@ -529,6 +532,7 @@ impl From<ModelConfig> for CoreModelConfig {
     fn from(m: ModelConfig) -> Self {
         Self {
             backend: m.backend,
+            gpu_variant: m.gpu_variant,
             args: m.args,
             sampling: m.sampling.map(Into::into),
             model: m.model,

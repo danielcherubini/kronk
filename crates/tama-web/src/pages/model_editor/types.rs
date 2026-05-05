@@ -44,10 +44,18 @@ pub struct ModelModalities {
     pub output: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BackendOption {
+    pub name: String,
+    pub variant: Option<String>,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDetail {
     pub id: i64,
     pub backend: String,
+    pub gpu_variant: Option<String>,
     pub model: Option<String>,
     pub quant: Option<String>,
     #[serde(default)]
@@ -68,7 +76,7 @@ pub struct ModelDetail {
     #[serde(default)]
     pub cache_type_v: Option<String>,
     pub quants: BTreeMap<String, QuantInfo>,
-    pub backends: Vec<String>,
+    pub backends: Vec<BackendOption>,
     #[serde(default)]
     pub repo_commit_sha: Option<String>,
     #[serde(default)]
@@ -80,7 +88,7 @@ pub struct ModelDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelListResponse {
     pub models: Vec<serde_json::Value>,
-    pub backends: Vec<String>,
+    pub backends: Vec<BackendOption>,
     pub sampling_templates: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
@@ -94,6 +102,7 @@ pub struct SamplingField {
 pub struct ModelForm {
     pub id: String,
     pub backend: String,
+    pub gpu_variant: Option<String>,
     pub model: Option<String>,
     pub quant: Option<String>,
     pub mmproj: Option<String>,

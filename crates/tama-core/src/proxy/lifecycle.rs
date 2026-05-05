@@ -67,11 +67,11 @@ impl ProxyState {
 
         // Resolve the backend binary path: DB takes priority, config.path is fallback.
         let backend_path = if let Some(db_conn) = self.open_db() {
-            config.resolve_backend_path(&server_config.backend, &db_conn)?
+            config.resolve_backend_path(&server_config.backend, server_config.gpu_variant.as_deref(), &db_conn)?
         } else {
             let fallback_result =
                 crate::db::open_in_memory().context("Failed to open in-memory DB")?;
-            config.resolve_backend_path(&server_config.backend, &fallback_result.conn)?
+            config.resolve_backend_path(&server_config.backend, server_config.gpu_variant.as_deref(), &fallback_result.conn)?
         };
 
         // Find a free port for this backend.

@@ -24,6 +24,8 @@ const MAX_CACHE_TYPE: usize = 32;
 pub struct ModelBody {
     pub backend: String,
     #[serde(default)]
+    pub gpu_variant: Option<String>,
+    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub quant: Option<String>,
@@ -64,6 +66,7 @@ fn apply_model_body(
     existing: Option<tama_core::config::ModelConfig>,
 ) -> tama_core::config::ModelConfig {
     let base = existing.unwrap_or_else(|| tama_core::config::ModelConfig {
+        gpu_variant: None,
         backend: String::new(),
         args: vec![],
         sampling: None,
@@ -101,6 +104,7 @@ fn apply_model_body(
 
     tama_core::config::ModelConfig {
         backend: body.backend,
+        gpu_variant: body.gpu_variant,
         model: body.model,
         quant: body.quant,
         mmproj: body.mmproj,
@@ -829,6 +833,7 @@ mod tests {
     fn body_with_quants(quants: BTreeMap<String, QuantEntry>) -> ModelBody {
         ModelBody {
             backend: "llama".to_string(),
+            gpu_variant: None,
             model: Some("org/repo".to_string()),
             quant: Some("Q4_K_M".to_string()),
             mmproj: None,
@@ -862,6 +867,7 @@ mod tests {
         );
         ModelConfig {
             backend: "llama".into(),
+            gpu_variant: None,
             args: vec![],
             sampling: None,
             model: Some("org/repo".into()),
@@ -1021,6 +1027,7 @@ mod tests {
     fn test_apply_model_body_enabled_override() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1048,6 +1055,7 @@ mod tests {
     fn test_apply_model_body_enabled_default() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1076,6 +1084,7 @@ mod tests {
     fn test_apply_model_body_with_api_name() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1103,6 +1112,7 @@ mod tests {
     fn test_apply_model_body_with_gpu_layers() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1130,6 +1140,7 @@ mod tests {
     fn test_apply_model_body_with_display_name() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1157,6 +1168,7 @@ mod tests {
     fn test_apply_model_body_context_length() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1185,6 +1197,7 @@ mod tests {
     fn test_apply_model_body_num_parallel_passthrough() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1212,6 +1225,7 @@ mod tests {
     fn test_apply_model_body_num_parallel_default() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1239,6 +1253,7 @@ mod tests {
     fn test_apply_model_body_empty_quants() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1271,6 +1286,7 @@ mod tests {
 
         let body = ModelBody {
             backend: "llama".to_string(),
+            gpu_variant: None,
             model: Some("org/repo".to_string()),
             quant: None,
             mmproj: None,
@@ -1303,6 +1319,7 @@ mod tests {
     fn test_apply_model_body_kv_unified_default_true_for_new() {
         let body = ModelBody {
             backend: "llama".to_string(),
+            gpu_variant: None,
             model: Some("org/repo".to_string()),
             quant: None,
             mmproj: None,
@@ -1334,6 +1351,7 @@ mod tests {
     fn test_apply_model_body_cache_type_passthrough() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1363,6 +1381,7 @@ mod tests {
     fn test_validate_cache_type_k_too_long() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1391,6 +1410,7 @@ mod tests {
     fn test_validate_cache_type_v_too_long() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1419,6 +1439,7 @@ mod tests {
     fn test_validate_cache_type_at_limit() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1445,6 +1466,7 @@ mod tests {
     fn test_apply_model_body_cache_type_defaults_none() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1474,6 +1496,7 @@ mod tests {
     fn test_apply_model_body_cache_type_whitespace_only_becomes_none() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,
@@ -1509,6 +1532,7 @@ mod tests {
     fn test_apply_model_body_cache_type_trims_whitespace() {
         let body = ModelBody {
             backend: "llama-cpp".to_string(),
+            gpu_variant: None,
             model: Some("model.gguf".to_string()),
             quant: None,
             mmproj: None,

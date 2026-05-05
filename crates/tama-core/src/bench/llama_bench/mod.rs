@@ -104,7 +104,7 @@ pub async fn run_llama_bench(
     let target_backend = backend_name.unwrap_or(&server_config.backend);
     let backend_path = {
         let conn = Config::open_db();
-        config.resolve_backend_path(target_backend, &conn)?
+        config.resolve_backend_path(target_backend, server_config.gpu_variant.as_deref(), &conn)?
     };
 
     let bench_binary = discovery::find_llama_bench(&backend_path).context(format!(

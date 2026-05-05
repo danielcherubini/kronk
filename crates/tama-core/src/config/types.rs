@@ -189,6 +189,8 @@ pub struct HealthCheck {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     pub backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_variant: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -297,6 +299,7 @@ impl ModelConfig {
             repo_id: repo_id.to_string(),
             display_name: self.display_name.clone(),
             backend: self.backend.clone(),
+            gpu_variant: self.gpu_variant.clone(),
             enabled: self.enabled,
             selected_quant: self.quant.clone(),
             selected_mmproj: self.mmproj.clone(),
@@ -341,6 +344,7 @@ impl ModelConfig {
     pub fn from_db_record(record: &crate::db::queries::ModelConfigRecord) -> Self {
         Self {
             backend: record.backend.clone(),
+            gpu_variant: record.gpu_variant.clone(),
             enabled: record.enabled,
             display_name: record.display_name.clone(),
             api_name: record

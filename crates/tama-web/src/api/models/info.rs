@@ -9,6 +9,67 @@ use std::sync::Arc;
 use crate::api::load_config_from_state;
 use crate::server::AppState;
 
+/// A selectable backend option for the model editor dropdown.
+#[derive(Debug, Clone, serde::Serialize)]
+struct BackendOption {
+    name: String,
+    variant: Option<String>,
+    label: String,
+}
+
+/// Build the list of available backend options by querying installed variants from the DB.
+fn build_backend_options(
+    cfg: &tama_core::config::Config,
+    config_dir: &std::path::Path,
+) -> Vec<BackendOption> {
+    let mut options = Vec::new();
+
+    let db_open = match tama_core::db::open(config_dir) {
+        Ok(o) => o,
+        Err(_) => {
+            for name in cfg.backends.keys() {
+                options.push(BackendOption {
+                    name: name.clone(),
+                    variant: None,
+                    label: name.clone(),
+                });
+            }
+            return options;
+        }
+    };
+    let conn = &db_open.conn;
+
+    for name in cfg.backends.keys() {
+        match tama_core::db::queries::list_backend_versions(conn, name, None) {
+            Ok(versions) if !versions.is_empty() => {
+                let mut seen = std::collections::HashSet::new();
+                for v in &versions {
+                    if seen.insert(v.gpu_variant.clone()) {
+                        options.push(BackendOption {
+                            name: name.clone(),
+                            variant: Some(v.gpu_variant.clone()),
+                            label: if v.gpu_variant == "cpu" {
+                                name.clone()
+                            } else {
+                                format!("{} ({})", name, v.gpu_variant)
+                            },
+                        });
+                    }
+                }
+            }
+            _ => {
+                options.push(BackendOption {
+                    name: name.clone(),
+                    variant: None,
+                    label: name.clone(),
+                });
+            }
+        }
+    }
+
+    options
+}
+
 /// Resolve a model identifier string to an integer id.
 /// Accepts either an integer id or a config_key (double-dash format).
 pub(crate) fn resolve_model_id(
@@ -65,7 +126,6 @@ fn model_entry_json(
     record: &tama_core::db::queries::ModelConfigRecord,
     m: &tama_core::config::ModelConfig,
     _configs_dir: &std::path::Path,
-    backends: Option<&[String]>,
     db_meta: Option<&RepoDbMeta>,
 ) -> serde_json::Value {
     // Build a per-quant JSON map, layering DB metadata onto each entry by filename.
@@ -94,6 +154,7 @@ fn model_entry_json(
         "id": id,
         "repo_id": record.repo_id,
         "backend": record.backend,
+        "gpu_variant": record.gpu_variant,
         "model": m.model,
         "quant": m.quant,
         "mmproj": m.mmproj,
@@ -118,10 +179,6 @@ fn model_entry_json(
         val["repo_pulled_at"] = meta.pulled_at.clone().into();
     }
 
-    if let Some(backends) = backends {
-        val["backends"] = backends.to_vec().into();
-    }
-
     val
 }
 
@@ -131,7 +188,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
         Ok(Ok((cfg, config_dir))) => {
             let configs_dir = config_dir.join("configs");
-            let backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            let backend_options = build_backend_options(&cfg, &config_dir);
 
             // Load models from DB — get records with integer ids
             let models = match tama_core::db::open(&config_dir) {
@@ -165,7 +222,6 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                                 record,
                                 &config,
                                 &configs_dir,
-                                None,
                                 Some(&meta),
                             )
                         })
@@ -178,7 +234,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 serde_json::to_value(&cfg.sampling_templates).unwrap_or_default();
             Json(serde_json::json!({
                 "models": models,
-                "backends": backends,
+                "backends": backend_options,
                 "sampling_templates": sampling_templates
             }))
             .into_response()
@@ -201,7 +257,7 @@ pub async fn get_model(
     match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
         Ok(Ok((cfg, config_dir))) => {
             let configs_dir = config_dir.join("configs");
-            let backends: Vec<String> = cfg.backends.keys().cloned().collect();
+            let backend_options = build_backend_options(&cfg, &config_dir);
 
             // Resolve id (integer or config_key) to model_id
             let open = match tama_core::db::open(&config_dir) {
@@ -260,10 +316,9 @@ pub async fn get_model(
                         &record,
                         &config,
                         &configs_dir,
-                        Some(&backends),
                         Some(&meta),
                     );
-                    val["backends"] = backends.into();
+                    val["backends"] = serde_json::json!(backend_options);
                     Json(val).into_response()
                 }
                 None => (
