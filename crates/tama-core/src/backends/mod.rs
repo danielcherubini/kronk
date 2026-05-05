@@ -1,5 +1,6 @@
 pub mod installer;
 pub mod log_stream;
+pub mod migration;
 pub mod registry;
 pub mod tts_kokoro;
 pub mod updater;

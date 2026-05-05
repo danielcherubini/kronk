@@ -58,6 +58,12 @@ impl BackendRegistry {
     /// Open a BackendRegistry backed by SQLite at `<config_dir>/tama.db`.
     pub fn open(config_dir: &Path) -> Result<Self> {
         let open_result = crate::db::open(config_dir)?;
+
+        // Run legacy backend migration (idempotent, no-op if already done)
+        let backends_dir = config_dir.join("backends");
+        crate::backends::migration::migrate_legacy_backends(&open_result.conn, &backends_dir)
+            .context("Failed to run legacy backend migration")?;
+
         Ok(Self {
             conn: open_result.conn,
             client: Self::make_client(),
@@ -315,7 +321,7 @@ impl BackendRegistry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BackendType {
     LlamaCpp,
     IkLlama,
