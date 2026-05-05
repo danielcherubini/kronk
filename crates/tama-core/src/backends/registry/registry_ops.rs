@@ -263,18 +263,32 @@ impl BackendRegistry {
         });
 
         let gpu_type: Option<GpuType> = match record.gpu_type {
-            Some(ref s) => Some(
-                serde_json::from_str(s)
-                    .with_context(|| format!("Failed to deserialize gpu_type: {}", s))?,
-            ),
+            Some(ref s) => match serde_json::from_str(s) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize gpu_type '{}': {}. Skipping GPU info.",
+                        s,
+                        e
+                    );
+                    None
+                }
+            },
             None => None,
         };
 
         let source: Option<BackendSource> = match record.source {
-            Some(ref s) => Some(
-                serde_json::from_str(s)
-                    .with_context(|| format!("Failed to deserialize source: {}", s))?,
-            ),
+            Some(ref s) => match serde_json::from_str(s) {
+                Ok(src) => Some(src),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize source '{}': {}. Skipping source info.",
+                        s,
+                        e
+                    );
+                    None
+                }
+            },
             None => None,
         };
 
