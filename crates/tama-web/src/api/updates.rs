@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 use tama_core::backends::{
-    check_latest_version, BackendRegistry, BackendSource, BackendType, InstallOptions,
+    check_latest_version, get_backend_install_path, BackendRegistry, BackendSource, BackendType,
+    InstallOptions,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,10 +414,14 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        // Anchor target_dir at backends_dir()/<name> to avoid nesting each
-        // update inside the previous install's directory.
+        // Use versioned path structure for the update target
         let target_dir = match tama_core::backends::backends_dir() {
-            Ok(d) => d.join(&name_clone),
+            Ok(d) => get_backend_install_path(
+                &d,
+                &backend_type,
+                &backend_info.gpu_variant,
+                &latest_version,
+            ),
             Err(e) => {
                 tracing::error!("Failed to resolve backends_dir for update: {}", e);
                 return;
@@ -434,6 +439,7 @@ pub async fn apply_backend_update(
                 }),
             target_dir,
             gpu_type: backend_info.gpu_type,
+            gpu_variant: backend_info.gpu_variant.clone(),
             allow_overwrite: true,
         };
 

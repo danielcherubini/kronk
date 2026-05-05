@@ -138,10 +138,14 @@ pub async fn update_backend(
         }
     };
 
-    // Anchor target_dir at backends_dir()/<name> so repeated updates overwrite
-    // the same directory instead of nesting into the previous install's subdir.
+    // Use versioned path structure for the update target
     let target_dir = match tama_core::backends::backends_dir() {
-        Ok(d) => d.join(&name),
+        Ok(d) => tama_core::backends::get_backend_install_path(
+            &d,
+            &backend_type,
+            &backend_info.gpu_variant,
+            &latest_version,
+        ),
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -179,6 +183,7 @@ pub async fn update_backend(
         }),
         target_dir,
         gpu_type: backend_info.gpu_type,
+        gpu_variant: backend_info.gpu_variant.clone(),
         allow_overwrite: true,
     };
 

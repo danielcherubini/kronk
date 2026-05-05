@@ -360,18 +360,27 @@ pub async fn install_backend(
         }
     };
 
+    // Compute the versioned target directory
+    let gpu_variant = gpu_type
+        .as_ref()
+        .map(|g| g.variant_folder().to_string())
+        .unwrap_or_else(|| "cpu".to_string());
+
     let target_dir = match tama_core::backends::backends_dir() {
-        Ok(d) => d.join(match backend_type {
-            tama_core::backends::BackendType::LlamaCpp => "llama_cpp",
-            tama_core::backends::BackendType::IkLlama => "ik_llama",
-            _ => {
+        Ok(d) => {
+            if !matches!(
+                backend_type,
+                tama_core::backends::BackendType::LlamaCpp
+                    | tama_core::backends::BackendType::IkLlama
+            ) {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({"error": format!("Unsupported backend type: {}", backend_type)})),
                 )
                     .into_response();
             }
-        }),
+            tama_core::backends::get_backend_install_path(&d, &backend_type, &gpu_variant, &version)
+        }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -385,10 +394,7 @@ pub async fn install_backend(
     let reg_backend_type = backend_type.clone();
     let reg_version = version.clone();
     let reg_gpu_type = gpu_type.clone();
-    let reg_gpu_variant = reg_gpu_type
-        .as_ref()
-        .map(|g| g.variant_folder().to_string())
-        .unwrap_or_else(|| "cpu".to_string());
+    let reg_gpu_variant = gpu_variant.clone();
     let reg_source = source.clone();
     let reg_backend_name = match backend_type {
         tama_core::backends::BackendType::LlamaCpp => "llama_cpp",
@@ -406,6 +412,7 @@ pub async fn install_backend(
         source,
         target_dir,
         gpu_type,
+        gpu_variant,
         allow_overwrite: req.force,
     };
 

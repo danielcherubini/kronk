@@ -9,9 +9,13 @@ pub const KOKORO_FASTAPI_TAG: &str = "v0.2.4";
 /// The GitHub URL for the Kokoro-FastAPI repository.
 pub const KOKORO_FASTAPI_URL: &str = "https://github.com/remsky/Kokoro-FastAPI.git";
 
-/// Return the base directory for tts_kokoro: `<backends_dir>/tts_kokoro`.
+/// Return the base directory for tts_kokoro.
+///
+/// In the versioned path structure, `base` is already the versioned path:
+/// `<backends_dir>/tts_kokoro/cpu/<version>/`
+/// This function returns it as-is.
 pub fn base_dir(base: &Path) -> PathBuf {
-    base.join("tts_kokoro")
+    base.to_path_buf()
 }
 
 /// Return the git clone target directory: `<backends_dir>/tts_kokoro/kokoro-fastapi/`.
@@ -59,76 +63,79 @@ pub fn model_file(base: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn test_base() -> PathBuf {
-        PathBuf::from("/tmp/test_backends")
+    /// Simulated versioned base path: <backends_dir>/tts_kokoro/cpu/v0.2.4
+    fn test_versioned_base() -> PathBuf {
+        PathBuf::from("/tmp/test_backends/tts_kokoro/cpu/v0.2.4")
     }
 
     #[test]
-    fn test_base_dir() {
-        let base = test_base();
+    fn test_base_dir_returns_input() {
+        let base = test_versioned_base();
         assert_eq!(
             base_dir(&base),
-            PathBuf::from("/tmp/test_backends/tts_kokoro")
+            PathBuf::from("/tmp/test_backends/tts_kokoro/cpu/v0.2.4")
         );
     }
 
     #[test]
     fn test_install_dir() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert_eq!(
             install_dir(&base),
-            PathBuf::from("/tmp/test_backends/tts_kokoro/kokoro-fastapi")
+            PathBuf::from("/tmp/test_backends/tts_kokoro/cpu/v0.2.4/kokoro-fastapi")
         );
     }
 
     #[test]
     fn test_venv_dir() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert_eq!(
             venv_dir(&base),
-            PathBuf::from("/tmp/test_backends/tts_kokoro/venv")
+            PathBuf::from("/tmp/test_backends/tts_kokoro/cpu/v0.2.4/venv")
         );
     }
 
     #[test]
     fn test_python_bin() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert_eq!(
             python_bin(&base),
-            PathBuf::from("/tmp/test_backends/tts_kokoro/venv/bin/python")
+            PathBuf::from("/tmp/test_backends/tts_kokoro/cpu/v0.2.4/venv/bin/python")
         );
     }
 
     #[test]
     fn test_model_dir() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert_eq!(
             model_dir(&base),
-            PathBuf::from("/tmp/test_backends/tts_kokoro/kokoro-fastapi/api/api/src/models/v1_0")
+            PathBuf::from(
+                "/tmp/test_backends/tts_kokoro/cpu/v0.2.4/kokoro-fastapi/api/api/src/models/v1_0"
+            )
         );
     }
 
     #[test]
     fn test_model_file() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert_eq!(
             model_file(&base),
             PathBuf::from(
-                "/tmp/test_backends/tts_kokoro/kokoro-fastapi/api/api/src/models/v1_0/kokoro-v1_0.pth"
+                "/tmp/test_backends/tts_kokoro/cpu/v0.2.4/kokoro-fastapi/api/api/src/models/v1_0/kokoro-v1_0.pth"
             )
         );
     }
 
     #[test]
     fn test_model_file_is_inside_model_dir() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert!(model_file(&base).starts_with(model_dir(&base)));
     }
 
     #[test]
     fn test_install_dir_contains_venv_dir() {
         // install_dir and venv_dir are siblings under base_dir
-        let base = test_base();
+        let base = test_versioned_base();
         let install = install_dir(&base);
         let venv = venv_dir(&base);
         assert!(install.starts_with(base_dir(&base)));
@@ -138,13 +145,13 @@ mod tests {
 
     #[test]
     fn test_python_bin_is_inside_venv() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert!(python_bin(&base).starts_with(venv_dir(&base)));
     }
 
     #[test]
     fn test_model_dir_is_inside_install_dir() {
-        let base = test_base();
+        let base = test_versioned_base();
         assert!(model_dir(&base).starts_with(install_dir(&base)));
     }
 }

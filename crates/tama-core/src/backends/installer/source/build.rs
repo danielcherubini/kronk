@@ -127,6 +127,7 @@ mod tests {
             },
             target_dir: PathBuf::from("/tmp/test"),
             gpu_type,
+            gpu_variant: "cpu".to_string(),
             allow_overwrite: false,
         }
     }

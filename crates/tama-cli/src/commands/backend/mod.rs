@@ -6,9 +6,9 @@ pub(crate) use parse::{parse_backend_type, parse_gpu_type};
 use anyhow::{anyhow, Result};
 use clap::{Args, Subcommand};
 use tama_core::backends::{
-    backends_dir, check_latest_version, check_updates, install_backend, install_tts_kokoro,
-    safe_remove_installation, update_backend, BackendInfo, BackendRegistry, BackendSource,
-    BackendType, InstallOptions, NullSink,
+    backends_dir, check_latest_version, check_updates, get_backend_install_path, install_backend,
+    install_tts_kokoro, safe_remove_installation, update_backend, BackendInfo, BackendRegistry,
+    BackendSource, BackendType, InstallOptions, NullSink,
 };
 use tama_core::config::Config;
 use tama_core::db::queries::get_backend_by_version;
@@ -295,10 +295,12 @@ async fn cmd_install(
         }
     };
 
-    // Determine install directory
+    // Determine install directory using versioned path structure
     let backend_name = name.unwrap_or_else(|| backend_type.to_string());
+    let gpu_variant = gpu_type.variant_folder().to_string();
 
-    let target_dir = backends_dir()?.join(&backend_name);
+    let target_dir =
+        get_backend_install_path(&backends_dir()?, &backend_type, &gpu_variant, &version);
 
     // Handle TTS backends with dedicated installers (no GPU selection needed)
     if matches!(backend_type, BackendType::TtsKokoro) {
@@ -338,6 +340,7 @@ async fn cmd_install(
         source: source.clone(),
         target_dir,
         gpu_type: Some(gpu_type.clone()),
+        gpu_variant: gpu_variant.clone(),
         allow_overwrite: force,
     };
 
@@ -416,10 +419,13 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
         }
     }
 
-    // Use the base backends directory for the backend name,
-    // rather than the parent of the current binary, to prevent
-    // recursive directory nesting during updates.
-    let target_dir = backends_dir()?.join(name);
+    // Use the versioned path structure for the update target
+    let target_dir = get_backend_install_path(
+        &backends_dir()?,
+        &backend_info.backend_type,
+        &backend_info.gpu_variant,
+        &update_check.latest_version,
+    );
 
     // Preserve the original installation method, but update the version.
     // On update we always go to latest, so we clear any pinned commit.
@@ -462,6 +468,7 @@ async fn cmd_update(_config: &Config, name: &str, force: bool) -> Result<()> {
         source,
         target_dir,
         gpu_type: backend_info.gpu_type.clone(),
+        gpu_variant: backend_info.gpu_variant.clone(),
         allow_overwrite: true,
     };
 
