@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::paths::*;
-use crate::backends::{backends_dir, ProgressSink};
+use crate::backends::ProgressSink;
 
 /// Minimum free disk space warning threshold (10 GB in bytes).
 /// Kokoro-FastAPI + PyTorch CPU needs ~4-6 GB, ROCm needs more.
@@ -486,19 +486,18 @@ fn cleanup_installation(base: &Path, progress: &Arc<dyn ProgressSink>) {
 /// 4. Install dependencies (ROCm or CPU)
 /// 5. Download model files via download_model.py
 ///
+/// `base` is the versioned base directory: `<backends_dir>/tts_kokoro/cpu/<version>/`
 /// On failure at any step, cleans up partial installation.
-pub async fn install_kokoro_fastapi(progress: &Arc<dyn ProgressSink>) -> Result<()> {
-    let base = backends_dir().with_context(|| "Failed to get backends directory")?;
-
+pub async fn install_kokoro_fastapi(base: &Path, progress: &Arc<dyn ProgressSink>) -> Result<()> {
     // Step 1: Check disk space
     progress.log("Checking available disk space...");
-    check_disk_space(&base).with_context(|| "Disk space check failed")?;
+    check_disk_space(base).with_context(|| "Disk space check failed")?;
 
-    let venv_path = venv_dir(&base);
-    let install_path = install_dir(&base);
-    let python_path = python_bin(&base);
-    let model_path = model_dir(&base);
-    let voices_path = super::paths::voices_dir(&base);
+    let venv_path = venv_dir(base);
+    let install_path = install_dir(base);
+    let python_path = python_bin(base);
+    let model_path = model_dir(base);
+    let voices_path = super::paths::voices_dir(base);
     let has_rocm = has_rocm();
 
     // Run the installation steps, cleaning up on any failure.
@@ -537,7 +536,7 @@ pub async fn install_kokoro_fastapi(progress: &Arc<dyn ProgressSink>) -> Result<
     .await;
 
     if let Err(e) = result {
-        cleanup_installation(&base, progress);
+        cleanup_installation(base, progress);
         return Err(e);
     }
 

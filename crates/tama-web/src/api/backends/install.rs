@@ -4,6 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 
 use super::types::*;
@@ -30,7 +31,7 @@ pub async fn install_backend(
             .into_response();
     }
 
-    // Validate version: if provided, must be non-empty and <= 128 chars
+    // Validate version: if provided, must be non-empty, <= 128 chars, and a single path segment
     if let Some(ref version) = req.version {
         if version.is_empty() {
             return (
@@ -43,6 +44,14 @@ pub async fn install_backend(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": "version must be at most 128 characters"})),
+            )
+                .into_response();
+        }
+        // Reject path traversal and multi-segment paths
+        if version.contains('/') || version.contains('\\') || version.contains("..") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "version must be a single path segment (no slashes or '..')"})),
             )
                 .into_response();
         }
@@ -360,18 +369,27 @@ pub async fn install_backend(
         }
     };
 
+    // Compute the versioned target directory
+    let gpu_variant = gpu_type
+        .as_ref()
+        .map(|g| g.variant_folder().to_string())
+        .unwrap_or_else(|| "cpu".to_string());
+
     let target_dir = match tama_core::backends::backends_dir() {
-        Ok(d) => d.join(match backend_type {
-            tama_core::backends::BackendType::LlamaCpp => "llama_cpp",
-            tama_core::backends::BackendType::IkLlama => "ik_llama",
-            _ => {
+        Ok(d) => {
+            if !matches!(
+                backend_type,
+                tama_core::backends::BackendType::LlamaCpp
+                    | tama_core::backends::BackendType::IkLlama
+            ) {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({"error": format!("Unsupported backend type: {}", backend_type)})),
                 )
                     .into_response();
             }
-        }),
+            tama_core::backends::get_backend_install_path(&d, &backend_type, &gpu_variant, &version)
+        }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -385,6 +403,7 @@ pub async fn install_backend(
     let reg_backend_type = backend_type.clone();
     let reg_version = version.clone();
     let reg_gpu_type = gpu_type.clone();
+    let reg_gpu_variant = gpu_variant.clone();
     let reg_source = source.clone();
     let reg_backend_name = match backend_type {
         tama_core::backends::BackendType::LlamaCpp => "llama_cpp",
@@ -402,6 +421,7 @@ pub async fn install_backend(
         source,
         target_dir,
         gpu_type,
+        gpu_variant,
         allow_overwrite: req.force,
     };
 
@@ -442,6 +462,7 @@ pub async fn install_backend(
                             path: binary_path,
                             installed_at,
                             gpu_type: reg_gpu_type,
+                            gpu_variant: reg_gpu_variant,
                             source: Some(reg_source),
                         })
                     })
@@ -475,10 +496,19 @@ pub async fn install_backend(
     .into_response()
 }
 
+/// Query params for DELETE /tama/v1/backends/:name
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RemoveQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// DELETE /tama/v1/backends/:name
 pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<RemoveQuery>,
 ) -> impl IntoResponse {
     let jobs = match &state.jobs {
         Some(j) => j,
@@ -524,6 +554,8 @@ pub async fn remove_backend(
             .into_response();
     }
 
+    let gpu_variant = query.gpu_variant;
+
     let config_dir_clone = config_dir.clone();
     let registry_result: Result<tama_core::backends::BackendRegistry, _> =
         tokio::task::spawn_blocking(move || {
@@ -544,23 +576,48 @@ pub async fn remove_backend(
         }
     };
 
-    let backend_info = match registry.get(&name) {
-        Ok(Some(info)) => info,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
-            )
-                .into_response();
-        }
-    };
+    // If gpu_variant is provided, only remove that variant (all its versions);
+    // otherwise remove all variants.
+    let backends_to_remove: Vec<tama_core::backends::BackendInfo> =
+        if let Some(variant) = &gpu_variant {
+            // Specific variant requested — get ALL versions of that variant
+            match registry.list_all_versions(&name, Some(variant.as_str())) {
+                Ok(Some(versions)) if !versions.is_empty() => versions,
+                Ok(Some(_)) | Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            // No variant specified — iterate ALL variants
+            match registry.list_all_versions(&name, None) {
+                Ok(Some(versions)) => versions,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("Failed to get backend: {}", e)})),
+                    )
+                        .into_response();
+                }
+            }
+        };
 
     // Check if a job is running for this backend
     if let Some(active_job) = jobs.active().await {
@@ -569,7 +626,7 @@ pub async fn remove_backend(
             .as_ref()
             .map(|b| b.to_string())
             .unwrap_or_default();
-        if active_type == backend_info.backend_type.to_string() {
+        if active_type == backends_to_remove[0].backend_type.to_string() {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
@@ -580,27 +637,30 @@ pub async fn remove_backend(
         }
     }
 
-    // Remove files
-    if let Err(e) = tama_core::backends::safe_remove_installation(&backend_info) {
-        let err_msg = e.to_string();
-        if err_msg.contains("outside the managed backends directory") {
+    // Remove files for each variant
+    for info in &backends_to_remove {
+        if let Err(e) = tama_core::backends::safe_remove_installation(info) {
+            let err_msg = e.to_string();
+            if err_msg.contains("outside the managed backends directory") {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "path is outside the managed backends directory; remove manually"
+                    })),
+                )
+                    .into_response();
+            }
             return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "path is outside the managed backends directory; remove manually"
-                })),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to remove files: {}", e)})),
             )
                 .into_response();
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to remove files: {}", e)})),
-        )
-            .into_response();
     }
 
-    // Remove from registry
-    if let Err(e) = registry.remove(&name) {
+    // Remove from registry (Some = remove specific variant, None = remove all variants)
+    let variant_to_remove = gpu_variant.as_deref();
+    if let Err(e) = registry.remove(&name, variant_to_remove) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Failed to remove from registry: {}", e)})),

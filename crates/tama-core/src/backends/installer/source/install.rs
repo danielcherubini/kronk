@@ -74,20 +74,31 @@ pub async fn install_from_source(
     }
     std::fs::create_dir_all(&build_output)?;
 
-    // ik_llama doesn't publish real release tags (only a stale pre-release).
-    // For "latest", always clone main HEAD instead of attempting tag resolution.
-    let use_tag_resolution = !matches!(options.backend_type, BackendType::IkLlama);
+    // Resolve "latest" using the shared check_latest_version function
+    // (uses GitHub releases API, same as the CLI and update checker).
+    // For ik_llama, check_latest_version returns "main@sha" which we handle below.
+    let resolved_version = if version == "latest"
+        && !matches!(options.backend_type, BackendType::TtsKokoro)
+    {
+        match crate::backends::check_latest_version(&options.backend_type).await {
+            Ok(v) => {
+                emit(progress, format!("Resolved 'latest' to: {}", v));
+                v
+            }
+            Err(e) => {
+                emit(
+                    progress,
+                    format!("Warning: Could not resolve latest version: {} — falling back to 'latest' tag", e),
+                );
+                version.to_string()
+            }
+        }
+    } else {
+        version.to_string()
+    };
 
     // Clone repository
-    clone_repository(
-        version,
-        git_url,
-        &source_dir,
-        commit,
-        use_tag_resolution,
-        progress,
-    )
-    .await?;
+    clone_repository(&resolved_version, git_url, &source_dir, commit, progress).await?;
 
     // Configure with CMake
     configure_cmake(options, &source_dir, &build_output, progress).await?;
@@ -115,15 +126,13 @@ pub async fn install_from_source(
 /// When `commit` is `Some`, clones the `main` branch with a sufficient depth
 /// to reach the target commit, then runs `git checkout <commit>`.
 ///
-/// `use_tag_resolution`: when true and `version == "latest"`, try to find the
-/// most recent git tag first. Set to false for backends like ik_llama that do
-/// not publish proper release tags.
+/// Note: "latest" resolution is done by the caller using `check_latest_version`
+/// (GitHub releases API). This function just clones the given version/tag/branch.
 async fn clone_repository(
     version: &str,
     git_url: &str,
     source_dir: &Path,
     commit: Option<&str>,
-    use_tag_resolution: bool,
     progress: Option<&Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // When a specific commit is requested, do a deeper clone of main then checkout.
@@ -175,15 +184,6 @@ async fn clone_repository(
     }
 
     emit(progress, "Cloning repository (shallow)...");
-
-    // For "latest", resolve the most recent tag first before trying branch clone.
-    // Skip tag resolution for backends that don't publish proper release tags (e.g. ik_llama).
-    if version == "latest"
-        && use_tag_resolution
-        && try_clone_latest_tag(git_url, source_dir, progress).await?
-    {
-        return Ok(());
-    }
 
     // Versions like "main@abc12345" mean "clone the main branch"
     let branch = if version.starts_with("main@") {
@@ -243,59 +243,6 @@ async fn clone_repository(
     }
 
     Ok(())
-}
-
-/// Attempt to find and clone the latest tag from a git repository.
-/// Returns true if successfully cloned from a tag.
-async fn try_clone_latest_tag(
-    git_url: &str,
-    source_dir: &Path,
-    progress: Option<&Arc<dyn ProgressSink>>,
-) -> Result<bool> {
-    let tags_output = tokio::process::Command::new("git")
-        .args(["ls-remote", "--tags", "--sort=-v:refname", git_url])
-        .output()
-        .await;
-
-    match tags_output {
-        Ok(output) if output.status.success() => {
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = stdout_str.lines().collect();
-            // Filter out peeled refs (refs/tags/xxx^{}) which can interleave unpredictably
-            let tag_lines: Vec<&str> = lines
-                .iter()
-                .filter(|l| !l.contains("^{}"))
-                .filter(|l| !l.is_empty())
-                .copied()
-                .collect();
-            if let Some(tag_line) = tag_lines.first() {
-                // Parse ref field (second tab-separated value), strip "refs/tags/" prefix
-                let ref_field: &str = tag_line.split('\t').nth(1).unwrap_or("refs/tags/unknown");
-                let tag_name: &str = ref_field
-                    .trim_start_matches("refs/tags/")
-                    .trim_end_matches("^{}");
-                emit(progress, format!("Resolving 'latest' to tag: {}", tag_name));
-                let tag_clone = tokio::process::Command::new("git")
-                    .args([
-                        "clone",
-                        "--depth",
-                        "1",
-                        "--branch",
-                        tag_name,
-                        git_url,
-                        &source_dir.to_string_lossy(),
-                    ])
-                    .status()
-                    .await?;
-                if tag_clone.success() {
-                    return Ok(true);
-                }
-            }
-        }
-        _ => {}
-    }
-
-    Ok(false)
 }
 
 /// Run CMake configuration step.

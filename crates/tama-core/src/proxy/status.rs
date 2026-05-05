@@ -349,6 +349,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
         config.backends.insert(
@@ -358,6 +359,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
         let state = ProxyState::new(config, None);

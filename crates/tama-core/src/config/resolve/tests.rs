@@ -19,6 +19,7 @@ fn make_test_config(llama_cpp_path: Option<&str>) -> Config {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
     } else {
@@ -30,6 +31,7 @@ fn make_test_config(llama_cpp_path: Option<&str>) -> Config {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
     }
@@ -47,13 +49,16 @@ fn test_resolve_backend_path_from_db() {
         path: "/usr/local/bin/llama-server".to_string(),
         installed_at: 1000,
         gpu_type: None,
+        gpu_variant: "cpu".to_string(),
         source: None,
         is_active: false,
     };
     insert_backend_installation(&conn, &record).unwrap();
 
     let config = make_test_config(None);
-    let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     assert_eq!(
         result,
         std::path::PathBuf::from("/usr/local/bin/llama-server")
@@ -66,7 +71,9 @@ fn test_resolve_backend_path_fallback() {
     // Empty DB — no installed backend
 
     let config = make_test_config(Some("/fallback/llama-server"));
-    let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     assert_eq!(result, std::path::PathBuf::from("/fallback/llama-server"));
 }
 
@@ -76,7 +83,7 @@ fn test_resolve_backend_path_error() {
     // Empty DB, path = None
 
     let config = make_test_config(None);
-    let result = config.resolve_backend_path("llama_cpp", &conn);
+    let result = config.resolve_backend_path("llama_cpp", None, &conn);
     assert!(
         result.is_err(),
         "Expected Err when no DB record and no path in config"
@@ -103,6 +110,7 @@ fn test_resolve_backend_path_version_pin() {
         path: "/v1/llama-server".to_string(),
         installed_at: 1000,
         gpu_type: None,
+        gpu_variant: "cpu".to_string(),
         source: None,
         is_active: false,
     };
@@ -116,6 +124,7 @@ fn test_resolve_backend_path_version_pin() {
         path: "/v2/llama-server".to_string(),
         installed_at: 2000,
         gpu_type: None,
+        gpu_variant: "cpu".to_string(),
         source: None,
         is_active: false,
     };
@@ -130,10 +139,13 @@ fn test_resolve_backend_path_version_pin() {
             default_args: vec![],
             health_check_url: None,
             version: Some("v1.0.0".to_string()),
+            gpu_variant: None,
         },
     );
 
-    let result = config.resolve_backend_path("llama_cpp", &conn).unwrap();
+    let result = config
+        .resolve_backend_path("llama_cpp", None, &conn)
+        .unwrap();
     // Should return v1 path, not v2 (which is active)
     assert_eq!(result, std::path::PathBuf::from("/v1/llama-server"));
 }
@@ -151,10 +163,11 @@ fn test_resolve_backend_path_version_pin_not_found() {
             default_args: vec![],
             health_check_url: None,
             version: Some("nonexistent".to_string()),
+            gpu_variant: None,
         },
     );
 
-    let result = config.resolve_backend_path("llama_cpp", &conn);
+    let result = config.resolve_backend_path("llama_cpp", None, &conn);
     assert!(
         result.is_err(),
         "Expected Err when pinned version not in DB"
@@ -226,6 +239,7 @@ fn test_build_full_args_unified() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -310,6 +324,7 @@ fn test_build_full_args_ctx_override() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     // ctx_override should take priority over server.context_length
@@ -377,6 +392,7 @@ fn test_build_full_args_no_sampling() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -428,6 +444,7 @@ fn test_build_full_args_no_quants() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     // Should not crash when quants is empty
@@ -454,6 +471,7 @@ fn test_build_args_dedupes_backend_vs_model_flags() {
             ],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -516,6 +534,7 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -622,6 +641,7 @@ fn test_build_full_args_dedupes_backend_vs_model_flags() {
         ],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -707,6 +727,7 @@ fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -735,6 +756,7 @@ fn test_resolve_by_api_name() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -794,6 +816,7 @@ fn test_api_name_takes_priority() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -853,6 +876,7 @@ fn test_backward_compat_no_api_name() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -915,6 +939,7 @@ fn test_resolve_server_by_api_name() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
 
@@ -1020,6 +1045,7 @@ fn test_build_full_args_context_multiplied_by_num_parallel() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1100,6 +1126,7 @@ fn test_build_full_args_context_saturating_overflow() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     // Should not panic — saturating_mul clamps to u32::MAX
@@ -1173,6 +1200,7 @@ fn test_build_full_args_context_no_num_parallel_defaults_to_one() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1241,6 +1269,7 @@ fn test_build_full_args_injects_np_flag() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1324,6 +1353,7 @@ fn test_build_full_args_no_np_when_default() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1395,6 +1425,7 @@ fn test_build_full_args_skips_np_when_already_present() {
         default_args: vec!["-np 4".to_string()],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1475,6 +1506,7 @@ fn test_build_full_args_unified_n_slots() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1553,6 +1585,7 @@ fn test_build_full_args_non_unified_n_slots() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1616,6 +1649,7 @@ fn test_build_full_args_unified_default() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1694,6 +1728,7 @@ fn test_build_full_args_ctx_override_unified() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     // ctx_override=4096, kv_unified=true → -c 4096 (not 12288)
@@ -1775,6 +1810,7 @@ fn test_build_full_args_kv_unified_not_duplicated_when_in_user_args() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let args = config
@@ -1821,6 +1857,7 @@ fn test_kv_cache_type_args_injected_when_set() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let server = ModelConfig {
@@ -1898,6 +1935,7 @@ fn test_kv_cache_type_args_not_injected_when_none() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let server = ModelConfig {
@@ -1974,6 +2012,7 @@ fn test_kv_cache_type_args_not_injected_for_non_llama_backend() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let server = ModelConfig {
@@ -2050,6 +2089,7 @@ fn test_kv_cache_type_args_no_duplicate_when_in_user_args() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let server = ModelConfig {
@@ -2129,6 +2169,7 @@ fn test_kv_cache_type_args_not_injected_for_empty_string() {
         default_args: vec![],
         health_check_url: None,
         version: None,
+        gpu_variant: None,
     };
 
     let server = ModelConfig {

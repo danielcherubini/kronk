@@ -67,11 +67,19 @@ impl ProxyState {
 
         // Resolve the backend binary path: DB takes priority, config.path is fallback.
         let backend_path = if let Some(db_conn) = self.open_db() {
-            config.resolve_backend_path(&server_config.backend, &db_conn)?
+            config.resolve_backend_path(
+                &server_config.backend,
+                server_config.gpu_variant.as_deref(),
+                &db_conn,
+            )?
         } else {
             let fallback_result =
                 crate::db::open_in_memory().context("Failed to open in-memory DB")?;
-            config.resolve_backend_path(&server_config.backend, &fallback_result.conn)?
+            config.resolve_backend_path(
+                &server_config.backend,
+                server_config.gpu_variant.as_deref(),
+                &fallback_result.conn,
+            )?
         };
 
         // Find a free port for this backend.
@@ -845,8 +853,19 @@ impl ProxyState {
         let registry =
             BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
 
+        // Discover variant dynamically - TTS backends typically only have one variant
+        let variants = registry
+            .list_all_versions(backend_name, None)
+            .with_context(|| format!("Failed to list versions for '{}'", backend_name))?
+            .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
+
+        let variant = variants
+            .first()
+            .map(|v| v.gpu_variant.clone())
+            .unwrap_or_else(|| "cpu".to_string());
+
         let info = registry
-            .get(backend_name)
+            .get(backend_name, &variant)
             .with_context(|| format!("Backend '{}' not found in registry", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 

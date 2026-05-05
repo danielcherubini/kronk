@@ -25,6 +25,9 @@ pub struct InstallOptions {
     pub source: BackendSource,
     pub target_dir: PathBuf,
     pub gpu_type: Option<GpuType>,
+    /// GPU variant string (e.g. "cpu", "cuda", "rocm").
+    /// Used for path computation and registry metadata.
+    pub gpu_variant: String,
     /// When true, skip the target directory existence check.
     /// Used by the update path where the directory already exists.
     pub allow_overwrite: bool,
@@ -177,6 +180,7 @@ mod tests {
                 },
                 target_dir: std::path::PathBuf::from("/tmp/test"),
                 gpu_type: None,
+                gpu_variant: "cpu".to_string(),
                 allow_overwrite: true,
             };
 

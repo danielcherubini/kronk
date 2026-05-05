@@ -174,8 +174,8 @@ pub fn merge_database(
     local_db
         .execute_batch(
             "INSERT OR IGNORE INTO backend_installations \
-         (name, backend_type, version, path, installed_at, gpu_type, source, is_active) \
-         SELECT name, backend_type, version, path, installed_at, gpu_type, source, is_active \
+         (name, backend_type, version, path, installed_at, gpu_type, gpu_variant, source, is_active) \
+         SELECT name, backend_type, version, path, installed_at, gpu_type, gpu_variant, source, is_active \
          FROM backup_db.backend_installations",
         )
         .context("Failed to merge backend_installations")?;
@@ -219,6 +219,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: Some("http://test/health".to_string()),
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -249,6 +250,7 @@ mod tests {
                 default_args: vec!["--local".to_string()],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -260,6 +262,7 @@ mod tests {
                 default_args: vec!["--backup".to_string()],
                 health_check_url: Some("http://backup/health".to_string()),
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -298,6 +301,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -322,6 +326,7 @@ mod tests {
                     default_args: vec![],
                     health_check_url: None,
                     version: None,
+                    gpu_variant: None,
                 },
             );
         }
@@ -347,6 +352,7 @@ mod tests {
                     default_args: vec![],
                     health_check_url: None,
                     version: None,
+                    gpu_variant: None,
                 },
             );
         }
@@ -359,6 +365,7 @@ mod tests {
                     default_args: vec![],
                     health_check_url: None,
                     version: None,
+                    gpu_variant: None,
                 },
             );
         }
@@ -370,6 +377,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
         backup.backends.insert(
@@ -379,6 +387,7 @@ mod tests {
                 default_args: vec![],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
 

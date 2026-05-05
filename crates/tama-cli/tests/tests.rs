@@ -249,6 +249,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             tama_core::db::open(db_dir).expect("Failed to open DB");
         let dummy_model = tama_core::config::ModelConfig {
             backend: "test".to_string(),
+            gpu_variant: None,
             args: vec![],
             profile: None,
             sampling: None,
@@ -290,6 +291,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             default_args: vec![],
             health_check_url: None,
             version: None,
+            gpu_variant: None,
         },
     );
     let result: anyhow::Result<()> = cmd_server_edit(

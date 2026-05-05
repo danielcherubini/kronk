@@ -47,6 +47,7 @@ pub async fn run_initial_backfill(conn: &Connection, config: &Config) -> Result<
                 // Create a placeholder model_config entry for this repo
                 let mc = crate::config::ModelConfig {
                     backend: "llama_cpp".to_string(),
+                    gpu_variant: None,
                     ..Default::default()
                 };
                 let config_key = repo_id.to_lowercase().replace('/', "--");
@@ -149,6 +150,7 @@ pub fn migrate_backend_registry_toml(
             path: info.path.to_string_lossy().to_string(),
             installed_at: info.installed_at,
             gpu_type: gpu_type_json,
+            gpu_variant: "cpu".to_string(), // Legacy data has no gpu_variant; default to cpu
             source: source_json,
             is_active: true,
         };
@@ -465,7 +467,7 @@ installed_at = 1700000000
         migrate_backend_registry_toml(&conn, tmp.path()).unwrap();
 
         // Assert that the backend was inserted correctly
-        let record = crate::db::queries::get_active_backend(&conn, "llama_cpp")
+        let record = crate::db::queries::get_active_backend(&conn, "llama_cpp", "cpu")
             .unwrap()
             .expect("llama_cpp should exist in DB after migration");
         assert_eq!(record.version, "b3456");
@@ -523,6 +525,7 @@ installed_at = 1700000000
                 path: "/opt/backends/llama_cpp/llama-server".to_string(),
                 installed_at: 1700000000,
                 gpu_type: None,
+                gpu_variant: "cpu".to_string(),
                 source: None,
                 is_active: true,
             },
@@ -565,6 +568,7 @@ installed_at = 1700000000
             repo_id: "unsloth/Qwen3.6-35B-A3B-GGUF".to_string(),
             display_name: None,
             backend: "llama_cpp".to_string(),
+            gpu_variant: None,
             enabled: true,
             selected_quant: Some("UD-Q4_K_XL".to_string()),
             selected_mmproj: None,
@@ -651,6 +655,7 @@ installed_at = 1700000000
             repo_id: "u/r".to_string(),
             display_name: None,
             backend: "llama_cpp".to_string(),
+            gpu_variant: None,
             enabled: true,
             selected_quant: Some("Q4_K_M".to_string()),
             selected_mmproj: Some("user-chosen.gguf".to_string()),
@@ -712,6 +717,7 @@ installed_at = 1700000000
                 repo_id: "test/repo".to_string(),
                 display_name: None,
                 backend: "llama_cpp".to_string(),
+                gpu_variant: None,
                 enabled: true,
                 selected_quant: None,
                 selected_mmproj: None,
@@ -795,6 +801,7 @@ installed_at = 1700000000
                 repo_id: "test/repo".to_string(),
                 display_name: None,
                 backend: "llama_cpp".to_string(),
+                gpu_variant: None,
                 enabled: true,
                 selected_quant: None,
                 selected_mmproj: None,

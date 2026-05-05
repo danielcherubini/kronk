@@ -9,16 +9,16 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 use tama_core::backends::{
-    check_latest_version, BackendRegistry, BackendSource, BackendType, InstallOptions,
+    check_latest_version, get_backend_install_path, BackendRegistry, BackendSource, BackendType,
+    InstallOptions,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckDto {
-    pub item_type: String, // "backend" or "model"
-    pub item_id: String,   // backend name (e.g. "ingest-worker") or model ID
-    // (e.g. "gpt-4o-mini" or HF repo like
-    // "unsloth/Qwen3.6-35B-A3B-GGUF")
-    pub repo_id: Option<String>, // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
+    pub item_type: String,            // "backend" or "model"
+    pub item_id: String,              // backend: "name:variant" (e.g. "llama_cpp:cpu") or model ID
+    pub variant: Option<String>,      // GPU variant for backends (e.g. "cpu", "vulkan", "cuda")
+    pub repo_id: Option<String>,      // HF repo_id for models (e.g. "unsloth/Qwen3.6-35B-A3B-GGUF")
     pub display_name: Option<String>, // user-friendly model name from config
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
@@ -125,9 +125,24 @@ pub async fn get_updates(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 } else {
                     None
                 };
+                // Parse variant from item_id for backends (format: "name:variant")
+                let (parsed_item_id, variant) = if r.item_type == "backend" {
+                    if let Some(colon_idx) = r.item_id.rfind(':') {
+                        let name = &r.item_id[..colon_idx];
+                        let var = &r.item_id[colon_idx + 1..];
+                        (name.to_string(), Some(var.to_string()))
+                    } else {
+                        // Legacy format — no variant separator
+                        (r.item_id.clone(), None)
+                    }
+                } else {
+                    (r.item_id.clone(), None)
+                };
+
                 let dto = UpdateCheckDto {
                     item_type: r.item_type,
-                    item_id: r.item_id,
+                    item_id: parsed_item_id,
+                    variant,
                     repo_id,
                     display_name,
                     current_version: r.current_version,
@@ -182,10 +197,22 @@ pub async fn trigger_check(State(state): State<Arc<AppState>>) -> impl IntoRespo
     .into_response()
 }
 
+/// Query params for POST /tama/v1/updates/check/:item_type/:item_id
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CheckSingleQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/updates/check/:item_type/:item_id - Check single item
+///
+/// For backends, use `?gpu_variant=xxx` to check a specific variant.
+/// If not provided, checks the active variant (legacy behavior).
 pub async fn check_single(
     State(state): State<Arc<AppState>>,
     Path((item_type, item_id)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -203,22 +230,41 @@ pub async fn check_single(
         "backend" => {
             let config_dir_clone = config_dir.clone();
             let item_id_clone = item_id.clone();
-            let bt_result =
-                tokio::task::spawn_blocking(move || -> anyhow::Result<Option<BackendType>> {
+            let requested_variant = query.gpu_variant.clone();
+            let bt_result = tokio::task::spawn_blocking(
+                move || -> anyhow::Result<Option<(BackendType, String)>> {
                     let open = tama_core::db::open(&config_dir_clone)?;
-                    let record =
-                        tama_core::db::queries::get_active_backend(&open.conn, &item_id_clone)?;
-                    Ok(record.map(|r| match r.backend_type.as_str() {
-                        "llama_cpp" => BackendType::LlamaCpp,
-                        "ik_llama" => BackendType::IkLlama,
-                        _ => BackendType::Custom,
+                    let versions = tama_core::db::queries::list_backend_versions(
+                        &open.conn,
+                        &item_id_clone,
+                        None,
+                    )?;
+
+                    // If a specific variant is requested, find that variant
+                    // Otherwise, fall back to the active variant (legacy behavior)
+                    let record = if let Some(ref variant) = requested_variant {
+                        versions.iter().find(|v| v.gpu_variant == *variant)
+                    } else {
+                        versions.iter().find(|v| v.is_active).or(versions.first())
+                    };
+
+                    Ok(record.map(|r| {
+                        (
+                            match r.backend_type.as_str() {
+                                "llama_cpp" => BackendType::LlamaCpp,
+                                "ik_llama" => BackendType::IkLlama,
+                                _ => BackendType::Custom,
+                            },
+                            r.gpu_variant.clone(),
+                        )
                     }))
-                })
-                .await;
+                },
+            )
+            .await;
 
             match bt_result {
-                Ok(Ok(Some(bt))) => checker
-                    .check_backend(&config_dir, &item_id, &bt)
+                Ok(Ok(Some((bt, gpu_variant)))) => checker
+                    .check_backend(&config_dir, &item_id, &bt, &gpu_variant)
                     .await
                     .map(|_| ()),
                 Ok(Ok(None)) => Err(anyhow::anyhow!("Backend not found")),
@@ -275,9 +321,13 @@ pub async fn check_single(
 }
 
 /// POST /tama/v1/updates/apply/backend/:name - Trigger backend update
+///
+/// Use `?gpu_variant=xxx` to update a specific variant.
+/// If not provided, updates the active variant (legacy behavior).
 pub async fn apply_backend_update(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
     let config_dir = match state.config_path.as_ref().and_then(|p| p.parent()) {
         Some(d) => d.to_path_buf(),
@@ -290,13 +340,24 @@ pub async fn apply_backend_update(
         }
     };
 
-    // Load backend info from DB
+    // Load backend info from DB — discover gpu_variant dynamically
+    let requested_variant = query.gpu_variant.clone();
     let bt_result = tokio::task::spawn_blocking({
         let config_dir = config_dir.clone();
         let name = name.clone();
+        let requested_variant = requested_variant.clone();
         move || -> anyhow::Result<(Option<BackendType>, Option<String>)> {
             let open = tama_core::db::open(&config_dir)?;
-            let record = tama_core::db::queries::get_active_backend(&open.conn, &name)?;
+            let versions = tama_core::db::queries::list_backend_versions(&open.conn, &name, None)?;
+
+            // If a specific variant is requested, find that variant
+            // Otherwise, fall back to the active variant (legacy behavior)
+            let record = if let Some(ref variant) = requested_variant {
+                versions.iter().find(|v| v.gpu_variant == *variant)
+            } else {
+                versions.iter().find(|v| v.is_active).or(versions.first())
+            };
+
             Ok(record
                 .map(|r| {
                     let bt = match r.backend_type.as_str() {
@@ -304,7 +365,7 @@ pub async fn apply_backend_update(
                         "ik_llama" => BackendType::IkLlama,
                         _ => BackendType::Custom,
                     };
-                    (Some(bt), Some(r.version))
+                    (Some(bt), Some(r.gpu_variant.clone()))
                 })
                 .unwrap_or((None, None)))
         }
@@ -393,21 +454,36 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let backend_info = match registry.get(&name_clone) {
-            Ok(Some(info)) => info,
+        let all_versions = match registry.list_all_versions(&name_clone, None) {
+            Ok(Some(versions)) => versions,
             Ok(None) => {
                 tracing::error!("Backend '{}' not found during update", name_clone);
                 return;
             }
             Err(e) => {
-                tracing::error!("Failed to get backend '{}': {}", name_clone, e);
+                tracing::error!(
+                    "Failed to list versions for backend '{}': {}",
+                    name_clone,
+                    e
+                );
                 return;
             }
         };
-        // Anchor target_dir at backends_dir()/<name> to avoid nesting each
-        // update inside the previous install's directory.
+        let backend_info = match all_versions.first() {
+            Some(info) => info.clone(),
+            None => {
+                tracing::error!("Backend '{}' has no versions during update", name_clone);
+                return;
+            }
+        };
+        // Use versioned path structure for the update target
         let target_dir = match tama_core::backends::backends_dir() {
-            Ok(d) => d.join(&name_clone),
+            Ok(d) => get_backend_install_path(
+                &d,
+                &backend_type,
+                &backend_info.gpu_variant,
+                &latest_version,
+            ),
             Err(e) => {
                 tracing::error!("Failed to resolve backends_dir for update: {}", e);
                 return;
@@ -425,12 +501,14 @@ pub async fn apply_backend_update(
                 }),
             target_dir,
             gpu_type: backend_info.gpu_type,
+            gpu_variant: backend_info.gpu_variant.clone(),
             allow_overwrite: true,
         };
 
         match tama_core::backends::update_backend_with_progress(
             &mut registry,
             &name_clone,
+            &backend_info.gpu_variant,
             options,
             latest_version,
             None,
@@ -637,6 +715,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "backend".to_string(),
             item_id: "llama-cpp".to_string(),
+            variant: Some("cpu".to_string()),
             repo_id: None,
             display_name: Some("Llama CPP".to_string()),
             current_version: Some("1.0.0".to_string()),
@@ -665,6 +744,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "model".to_string(),
             item_id: "123".to_string(),
+            variant: None,
             repo_id: Some("unsloth/Qwen3.6-35B-A3B-GGUF".to_string()),
             display_name: Some("Qwen 3.6".to_string()),
             current_version: Some("abc123".to_string()),
@@ -692,6 +772,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "backend".to_string(),
             item_id: "custom-backend".to_string(),
+            variant: None,
             repo_id: None,
             display_name: None,
             current_version: Some("1.0.0".to_string()),
@@ -723,6 +804,7 @@ mod tests {
         let dto = UpdateCheckDto {
             item_type: "model".to_string(),
             item_id: "456".to_string(),
+            variant: None,
             repo_id: Some("test/repo".to_string()),
             display_name: None,
             current_version: Some("abc123".to_string()),
@@ -750,6 +832,7 @@ mod tests {
             backends: vec![UpdateCheckDto {
                 item_type: "backend".to_string(),
                 item_id: "llama-cpp".to_string(),
+                variant: Some("cpu".to_string()),
                 repo_id: None,
                 display_name: None,
                 current_version: Some("1.0.0".to_string()),
@@ -763,6 +846,7 @@ mod tests {
             models: vec![UpdateCheckDto {
                 item_type: "model".to_string(),
                 item_id: "1".to_string(),
+                variant: None,
                 repo_id: Some("test/model".to_string()),
                 display_name: None,
                 current_version: None,

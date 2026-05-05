@@ -1,5 +1,6 @@
 pub mod installer;
 pub mod log_stream;
+pub mod migration;
 pub mod registry;
 pub mod tts_kokoro;
 pub mod updater;
@@ -11,9 +12,10 @@ pub use updater::{
     check_latest_version, check_updates, update_backend, update_backend_with_progress, UpdateCheck,
 };
 
+use std::path::{Path, PathBuf};
+
 use crate::config::Config;
 use anyhow::{anyhow, Context, Result};
-use std::path::PathBuf;
 
 /// Trait for logging progress during backend installation.
 pub trait ProgressSink: Send + Sync {
@@ -43,6 +45,20 @@ pub fn backends_dir() -> Result<PathBuf> {
         )
     })?;
     Ok(backends_dir)
+}
+
+/// Compute the installation directory for a backend given its type, GPU variant, and version.
+/// Returns: `backends_dir / backend_type / gpu_variant / version`
+pub fn get_backend_install_path(
+    backends_dir: &Path,
+    backend_type: &BackendType,
+    gpu_variant: &str,
+    version: &str,
+) -> PathBuf {
+    backends_dir
+        .join(backend_type.to_string())
+        .join(gpu_variant)
+        .join(version)
 }
 
 /// Safely removes a backend installation by validating the path is within the managed backends directory.
@@ -130,6 +146,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_get_backend_install_path_llama_cpp_cpu() {
+        let base = Path::new("/tmp/backends");
+        let path = get_backend_install_path(base, &BackendType::LlamaCpp, "cpu", "b8407");
+        assert_eq!(path, PathBuf::from("/tmp/backends/llama_cpp/cpu/b8407"));
+    }
+
+    #[test]
+    fn test_get_backend_install_path_llama_cpp_cuda() {
+        let base = Path::new("/tmp/backends");
+        let path = get_backend_install_path(base, &BackendType::LlamaCpp, "cuda", "b9000");
+        assert_eq!(path, PathBuf::from("/tmp/backends/llama_cpp/cuda/b9000"));
+    }
+
+    #[test]
+    fn test_get_backend_install_path_ik_llama_rocm() {
+        let base = Path::new("/tmp/backends");
+        let path = get_backend_install_path(base, &BackendType::IkLlama, "rocm", "main");
+        assert_eq!(path, PathBuf::from("/tmp/backends/ik_llama/rocm/main"));
+    }
+
+    #[test]
+    fn test_get_backend_install_path_tts_kokoro() {
+        let base = Path::new("/tmp/backends");
+        let path = get_backend_install_path(base, &BackendType::TtsKokoro, "cpu", "v0.2.4");
+        assert_eq!(path, PathBuf::from("/tmp/backends/tts_kokoro/cpu/v0.2.4"));
+    }
+
+    #[test]
+    fn test_get_backend_install_path_custom() {
+        let base = Path::new("/tmp/backends");
+        let path = get_backend_install_path(base, &BackendType::Custom, "cpu", "1.0.0");
+        assert_eq!(path, PathBuf::from("/tmp/backends/custom/cpu/1.0.0"));
+    }
+
+    #[test]
     fn test_backends_dir_returns_config_subdir() {
         let path = backends_dir().expect("backends_dir() should succeed");
         assert!(
@@ -156,6 +207,7 @@ mod tests {
             path: outside_path,
             installed_at: 0,
             gpu_type: None,
+            gpu_variant: "cpu".to_string(),
             source: None,
         };
 
@@ -242,6 +294,7 @@ mod tests {
             path: test_base.clone(), // This is a directory, not a binary
             installed_at: 0,
             gpu_type: None,
+            gpu_variant: "cpu".to_string(),
             source: None,
         };
 

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 use reqwest::Client;
 
@@ -33,9 +33,20 @@ fn emit_error(sink: Option<&Arc<dyn ProgressSink>>, line: impl Into<String>) {
 
 /// Prepare the target directory for installation.
 ///
-/// If `allow_overwrite` is false and the directory exists, returns an error.
-/// If `allow_overwrite` is true, removes existing contents and recreates the directory.
+/// With the versioned path structure (`backends/<type>/<variant>/<version>/`):
+/// - Always creates parent directories (`backends/<type>/<variant>/`) if missing.
+/// - Only checks existence of the final version directory (`<version>/`).
+/// - When `allow_overwrite` is true, removes only the version directory.
+/// - When `allow_overwrite` is false and the version directory exists, returns an error.
 pub fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()> {
+    // Always create parent directories (backends/<type>/<variant>/)
+    if let Some(parent) = target_dir.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create parent directories: {}", parent.display())
+        })?;
+    }
+
+    // Only check existence of the final version directory (<version>/)
     if target_dir.exists() {
         if !allow_overwrite {
             let msg = format!(
@@ -51,10 +62,10 @@ pub fn prepare_target_dir(target_dir: &Path, allow_overwrite: bool) -> Result<()
             "Overwriting existing backend directory: {}",
             target_dir.display()
         );
-        // Overwrite: clean and recreate
+        // Overwrite: remove only the version directory
         std::fs::remove_dir_all(target_dir)?;
     }
-    // Always create the directory (fresh install or update)
+    // Create the version directory (fresh install or after overwrite)
     std::fs::create_dir_all(target_dir)?;
     Ok(())
 }

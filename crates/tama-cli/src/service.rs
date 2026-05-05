@@ -344,7 +344,7 @@ pub fn win_service_main(_arguments: Vec<std::ffi::OsString>) {
             // Resolve backend binary path from DB (priority) or config.path (fallback)
             let backend_path_str = {
                 let conn = Config::open_db_from(config_dir.as_deref());
-                match config.resolve_backend_path(&srv.backend, &conn) {
+                match config.resolve_backend_path(&srv.backend, srv.gpu_variant.as_deref(), &conn) {
                     Ok(p) => p.to_string_lossy().to_string(),
                     Err(e) => {
                         tracing::error!("Failed to resolve backend path: {}", e);

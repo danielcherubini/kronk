@@ -138,6 +138,7 @@ pub async fn cmd_server_add(
     // Build ModelConfig
     let model_config = tama_core::config::ModelConfig {
         backend: backend_key.clone(),
+        gpu_variant: None,
         args: extracted.remaining_args.clone(),
         profile: extracted.profile.clone(), // Keep for migration compatibility
         sampling,

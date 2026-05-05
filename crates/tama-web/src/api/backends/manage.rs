@@ -10,10 +10,19 @@ use std::sync::Arc;
 use super::types::*;
 use crate::server::AppState;
 
+/// Query params for POST /tama/v1/backends/:name/update
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/backends/:name/update
 pub async fn update_backend(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<UpdateQuery>,
 ) -> impl IntoResponse {
     // Validate path param to prevent path traversal attacks
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -77,7 +86,54 @@ pub async fn update_backend(
         }
     };
 
-    let backend_info = match registry.get(&name) {
+    // Determine gpu_variant: use explicit value or auto-infer from registry
+    let lookup_variant = match query.gpu_variant {
+        Some(v) => v,
+        None => {
+            // Auto-infer: find unique variant for this backend
+            let versions = match registry.list_all_versions(&name, None) {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({"error": format!("Backend '{}' not found", name)})),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(
+                            serde_json::json!({"error": format!("Failed to query backend: {}", e)}),
+                        ),
+                    )
+                        .into_response();
+                }
+            };
+            let mut variants: Vec<String> =
+                versions.iter().map(|v| v.gpu_variant.clone()).collect();
+            variants.sort();
+            variants.dedup();
+            match variants.len() {
+                1 => variants.into_iter().next().unwrap(),
+                _ => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "Backend '{}' has multiple variants. Please specify gpu_variant. Available: {}",
+                                name,
+                                variants.join(", ")
+                            )
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    };
+
+    let backend_info = match registry.get(&name, &lookup_variant) {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -136,10 +192,14 @@ pub async fn update_backend(
         }
     };
 
-    // Anchor target_dir at backends_dir()/<name> so repeated updates overwrite
-    // the same directory instead of nesting into the previous install's subdir.
+    // Use versioned path structure for the update target
     let target_dir = match tama_core::backends::backends_dir() {
-        Ok(d) => d.join(&name),
+        Ok(d) => tama_core::backends::get_backend_install_path(
+            &d,
+            &backend_type,
+            &backend_info.gpu_variant,
+            &latest_version,
+        ),
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -177,6 +237,7 @@ pub async fn update_backend(
         }),
         target_dir,
         gpu_type: backend_info.gpu_type,
+        gpu_variant: backend_info.gpu_variant.clone(),
         allow_overwrite: true,
     };
 
@@ -185,6 +246,7 @@ pub async fn update_backend(
     let job_clone = job.clone();
     let name_clone = name.clone();
     let latest_version_clone = latest_version.clone();
+    let gpu_variant_clone = backend_info.gpu_variant.clone();
     tokio::spawn(async move {
         let adapter = Arc::new(JobAdapter {
             jobs: jobs_clone.clone(),
@@ -194,6 +256,7 @@ pub async fn update_backend(
         let result = match tama_core::backends::update_backend_with_progress(
             &mut registry,
             &name_clone,
+            &gpu_variant_clone,
             options,
             latest_version_clone,
             Some(adapter),
@@ -307,10 +370,19 @@ mod tests {
     }
 }
 
+/// Query params for DELETE /tama/v1/backends/:name/versions/:version
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RemoveVersionQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// DELETE /tama/v1/backends/:name/versions/:version
 pub async fn remove_backend_version(
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<RemoveVersionQuery>,
 ) -> impl IntoResponse {
     // Validate path params (prevent path traversal)
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -371,9 +443,11 @@ pub async fn remove_backend_version(
         }
     };
 
+    // Use gpu_variant from query param if provided
+    let gpu_variant_filter = query.gpu_variant.clone();
+
     // Get the specific version record before deleting
-    // Use list_all_versions and find the matching version (conn is private)
-    let versions = match registry.list_all_versions(&name) {
+    let versions = match registry.list_all_versions(&name, gpu_variant_filter.as_deref()) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return (
@@ -393,13 +467,30 @@ pub async fn remove_backend_version(
         }
     };
 
-    let info = match versions.iter().find(|v| v.version == version) {
-        Some(v) => v.clone(),
-        None => {
+    // Find matching versions and check for ambiguity
+    let matches: Vec<_> = versions.iter().filter(|v| v.version == version).collect();
+    let info = match matches.len() {
+        0 => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({
                     "error": format!("Backend '{}' version '{}' not found", name, version)
+                })),
+            )
+                .into_response();
+        }
+        1 => matches[0].clone(),
+        _ if gpu_variant_filter.is_some() => matches[0].clone(),
+        _ => {
+            // Multiple variants have the same version - require gpu_variant
+            let variant_list: Vec<String> = matches.iter().map(|v| v.gpu_variant.clone()).collect();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "Version '{}' exists in multiple variants for backend '{}'. Please specify gpu_variant. Available: {}",
+                        version, name, variant_list.join(", ")
+                    )
                 })),
             )
                 .into_response();
@@ -414,6 +505,7 @@ pub async fn remove_backend_version(
         path: std::path::PathBuf::from(&info.path),
         installed_at: info.installed_at,
         gpu_type: None,
+        gpu_variant: info.gpu_variant.clone(),
         source: None,
     };
 
@@ -458,7 +550,7 @@ pub async fn remove_backend_version(
     }
 
     // Remove from registry (DB only — activates another version if this was active)
-    if let Err(e) = registry.remove_version(&name, &version) {
+    if let Err(e) = registry.remove_version(&name, &info.gpu_variant, &version) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": format!("Failed to remove version from registry: {}", e)})),
@@ -474,10 +566,19 @@ pub async fn remove_backend_version(
     Json(DeleteResponse { removed: true }).into_response()
 }
 
+/// Query params for POST /tama/v1/backends/:name/activate
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivateQuery {
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
+}
+
 /// POST /tama/v1/backends/:name/activate
 pub async fn activate_backend_version(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ActivateQuery>,
     Json(req): Json<ActivateRequest>,
 ) -> impl IntoResponse {
     // Validate name
@@ -511,14 +612,109 @@ pub async fn activate_backend_version(
         }
     };
 
+    // Determine gpu_variant: use explicit value or auto-infer from registry
+    let gpu_variant = match query.gpu_variant {
+        Some(v) => v,
+        None => {
+            let config_dir_clone = config_dir.clone();
+            let name_clone = name.clone();
+            let version_clone = req.version.clone();
+            let infer_result: Result<Option<Vec<tama_core::backends::BackendInfo>>, anyhow::Error> =
+                tokio::task::spawn_blocking(move || {
+                    let reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
+                    reg.list_all_versions(&name_clone, None)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+                .and_then(|r| r);
+
+            let versions = match infer_result {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": format!("Backend '{}' not found", name)
+                        })),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": format!("Failed to query backend: {}", e)
+                        })),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Collect unique variants
+            let mut variants: Vec<String> =
+                versions.iter().map(|v| v.gpu_variant.clone()).collect();
+            variants.sort();
+            variants.dedup();
+
+            if variants.len() == 1 {
+                // Only one variant exists — use it
+                variants.into_iter().next().unwrap()
+            } else {
+                // Multiple variants — find the one that has the requested version
+                let matching: Vec<String> = versions
+                    .iter()
+                    .filter(|v| v.version == version_clone)
+                    .map(|v| v.gpu_variant.clone())
+                    .collect();
+                let mut matching = matching;
+                matching.sort();
+                matching.dedup();
+
+                match matching.len() {
+                    1 => matching.into_iter().next().unwrap(),
+                    0 => {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Version '{}' not found for backend '{}'. Available variants: {}",
+                                    version_clone,
+                                    name,
+                                    variants.join(", ")
+                                )
+                            })),
+                        )
+                            .into_response();
+                    }
+                    _ => {
+                        // Multiple variants have the same version — ambiguous
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "Version '{}' exists in multiple variants for backend '{}'. Please specify gpu_variant. Available variants: {}",
+                                    version_clone,
+                                    name,
+                                    matching.join(", ")
+                                )
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    };
+
     let config_dir_clone = config_dir.clone();
     let version_clone = req.version.clone();
     let name_clone = name.clone();
     let version_for_error = version_clone.clone();
+    let gpu_variant_clone = gpu_variant.to_string();
     let registry_result: Result<(tama_core::backends::BackendRegistry, bool), _> =
         tokio::task::spawn_blocking(move || {
             let mut reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
-            let activated = reg.activate(&name_clone, &version_clone)?;
+            let activated = reg.activate(&name_clone, &gpu_variant_clone, &version_clone)?;
             Ok((reg, activated))
         })
         .await
@@ -609,6 +805,7 @@ pub async fn update_backend_default_args(
                 default_args: req.default_args,
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
     }

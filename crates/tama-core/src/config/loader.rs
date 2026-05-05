@@ -176,6 +176,7 @@ impl Default for Config {
                 default_args: vec![],
                 health_check_url: Some("http://localhost:8080/health".to_string()),
                 version: None,
+                gpu_variant: None,
             },
         );
         backends.insert(
@@ -185,6 +186,7 @@ impl Default for Config {
                 default_args: vec![],
                 health_check_url: Some("http://localhost:8080/health".to_string()),
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -263,6 +265,7 @@ mod tests {
                 ],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
 
@@ -326,6 +329,7 @@ mod tests {
                 default_args: vec!["-fa 1".to_string(), "-b 2048".to_string()],
                 health_check_url: None,
                 version: None,
+                gpu_variant: None,
             },
         );
 

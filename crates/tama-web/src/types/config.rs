@@ -111,12 +111,17 @@ pub struct BackendConfig {
     /// Optional version pin.
     #[serde(default)]
     pub version: Option<String>,
+    /// Optional GPU variant pin (e.g. "cpu", "vulkan", "cuda").
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
 }
 
 /// Model configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     pub backend: String,
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -474,6 +479,7 @@ impl From<CoreBackendConfig> for BackendConfig {
             default_args: b.default_args,
             health_check_url: b.health_check_url,
             version: b.version,
+            gpu_variant: b.gpu_variant,
         }
     }
 }
@@ -486,6 +492,7 @@ impl From<BackendConfig> for CoreBackendConfig {
             default_args: b.default_args,
             health_check_url: b.health_check_url,
             version: b.version,
+            gpu_variant: b.gpu_variant,
         }
     }
 }
@@ -495,6 +502,7 @@ impl From<CoreModelConfig> for ModelConfig {
     fn from(m: CoreModelConfig) -> Self {
         Self {
             backend: m.backend,
+            gpu_variant: m.gpu_variant,
             args: m.args,
             sampling: m.sampling.map(Into::into),
             model: m.model,
@@ -524,6 +532,7 @@ impl From<ModelConfig> for CoreModelConfig {
     fn from(m: ModelConfig) -> Self {
         Self {
             backend: m.backend,
+            gpu_variant: m.gpu_variant,
             args: m.args,
             sampling: m.sampling.map(Into::into),
             model: m.model,

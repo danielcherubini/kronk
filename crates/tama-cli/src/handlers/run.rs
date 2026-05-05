@@ -20,7 +20,7 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     // Resolve backend binary path from DB (priority) or config.path (fallback)
     let backend_path = {
         let conn = Config::open_db();
-        config.resolve_backend_path(&server.backend, &conn)?
+        config.resolve_backend_path(&server.backend, server.gpu_variant.as_deref(), &conn)?
     };
     let backend_path_str = backend_path.to_string_lossy().to_string();
 

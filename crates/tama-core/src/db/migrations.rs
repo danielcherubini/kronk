@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 19;
+pub const LATEST_VERSION: i32 = 21;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -44,7 +44,7 @@ pub const LATEST_VERSION: i32 = 19;
 /// actions, and `PRAGMA foreign_keys` is a no-op inside a transaction. The
 /// only safe fix is to toggle `foreign_keys=OFF` around the entire migration
 /// from outside the transaction.
-const FK_OFF_MIGRATIONS: &[i32] = &[9];
+const FK_OFF_MIGRATIONS: &[i32] = &[9, 20];
 
 /// Run all applicable migrations on the database
 ///
@@ -470,6 +470,57 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 ALTER TABLE model_configs ADD COLUMN hf_context_length INTEGER;
                 ALTER TABLE model_configs ADD COLUMN hf_num_layers INTEGER;
                 ALTER TABLE model_configs ADD COLUMN hf_last_modified TEXT;
+            "#,
+        ),
+        (
+            20,
+            r#"
+                -- Rebuild backend_installations with gpu_variant column and
+                -- UNIQUE(name, gpu_variant, version) constraint. This allows
+                -- multiple GPU variants (cpu, vulkan, cuda, rocm, metal) to
+                -- coexist for the same backend name.
+                --
+                -- Uses DROP + RENAME pattern (FK_OFF_MIGRATIONS) because we
+                -- need to change the UNIQUE constraint, which requires recreating
+                -- the table.
+
+                CREATE TABLE backend_installations_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    backend_type TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    installed_at INTEGER NOT NULL,
+                    gpu_type TEXT,
+                    gpu_variant TEXT NOT NULL DEFAULT 'cpu',
+                    source TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(name, gpu_variant, version)
+                );
+
+                INSERT INTO backend_installations_new (
+                    id, name, backend_type, version, path, installed_at,
+                    gpu_type, gpu_variant, source, is_active
+                )
+                SELECT
+                    id, name, backend_type, version, path, installed_at,
+                    gpu_type, 'cpu', source, is_active
+                FROM backend_installations;
+
+                DROP TABLE backend_installations;
+                ALTER TABLE backend_installations_new RENAME TO backend_installations;
+                CREATE INDEX idx_backend_installations_name ON backend_installations(name);
+                CREATE INDEX idx_backend_installations_name_variant ON backend_installations(name, gpu_variant);
+            "#,
+        ),
+        (
+            21,
+            r#"
+                -- Per-model GPU variant selection (e.g. "rocm", "vulkan", "cuda").
+                -- When set, overrides the global [backends.<name>].gpu_variant config.
+                ALTER TABLE model_configs ADD COLUMN gpu_variant TEXT;
+                CREATE INDEX IF NOT EXISTS idx_model_configs_backend_variant
+                    ON model_configs(backend, gpu_variant);
             "#,
         ),
     ];
@@ -900,5 +951,114 @@ mod tests {
                 col
             );
         }
+    }
+
+    /// Regression test: migration v20 must add gpu_variant column to backend_installations
+    /// with UNIQUE(name, gpu_variant, version) constraint.
+    #[test]
+    fn test_migration_v20_adds_gpu_variant() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        // gpu_variant column must exist
+        let variant_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('backend_installations') WHERE name='gpu_variant'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(variant_exists, 1, "gpu_variant column must exist");
+
+        // Index on (name, gpu_variant) must exist
+        let idx_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_backend_installations_name_variant'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            idx_exists, 1,
+            "idx_backend_installations_name_variant must exist"
+        );
+
+        // Test that UNIQUE(name, gpu_variant, version) works: same name + variant + version fails
+        conn.execute(
+            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_variant, is_active) 
+             VALUES ('llama_cpp', 'llama_cpp', 'b8407', '/tmp/a', 1, 'cpu', 1)",
+            [],
+        )
+        .unwrap();
+
+        // Same name + variant + version should fail
+        let err = conn.execute(
+            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_variant, is_active) 
+             VALUES ('llama_cpp', 'llama_cpp', 'b8407', '/tmp/b', 2, 'cpu', 0)",
+            [],
+        );
+        assert!(
+            err.is_err(),
+            "duplicate (name, gpu_variant, version) must fail"
+        );
+
+        // Same name + different variant should succeed
+        conn.execute(
+            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_variant, is_active) 
+             VALUES ('llama_cpp', 'llama_cpp', 'b8407', '/tmp/c', 3, 'vulkan', 0)",
+            [],
+        )
+        .unwrap();
+
+        // Verify both rows exist
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backend_installations WHERE name='llama_cpp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    /// Migration v20 must preserve existing backend_installations rows and set gpu_variant = 'cpu'.
+    #[test]
+    fn test_migration_v20_preserves_existing_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        // Bring DB up to v19 (pre-v20 schema)
+        run_up_to(&conn, 19).unwrap();
+
+        // Insert a backend installation (without gpu_variant column)
+        conn.execute(
+            "INSERT INTO backend_installations (name, backend_type, version, path, installed_at, gpu_type, source, is_active) 
+             VALUES ('llama_cpp', 'llama_cpp', 'b8407', '/tmp/llama', 1000, NULL, NULL, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Apply v20
+        run(&conn).unwrap();
+
+        // The row must survive with gpu_variant = 'cpu'
+        let variant: String = conn
+            .query_row(
+                "SELECT gpu_variant FROM backend_installations WHERE name='llama_cpp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(variant, "cpu");
+
+        // Other fields must be preserved
+        let version: String = conn
+            .query_row(
+                "SELECT version FROM backend_installations WHERE name='llama_cpp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "b8407");
     }
 }
