@@ -499,8 +499,8 @@ impl Config {
                 return Ok(std::path::PathBuf::from(record.path));
             }
             // If not found, try all variants of this backend for the pinned version
-            if let Some(versions) =
-                crate::db::queries::list_backend_versions(conn, name, None).ok()
+            if let Ok(versions) =
+                crate::db::queries::list_backend_versions(conn, name, None)
             {
                 for v in &versions {
                     if v.version == pinned_version {
@@ -524,8 +524,8 @@ impl Config {
         // for this backend. This handles the case where the user selects
         // a backend that's installed for a different GPU variant (e.g.,
         // "rocm" instead of "cpu").
-        if let Some(versions) =
-            crate::db::queries::list_backend_versions(conn, name, None).ok()
+        if let Ok(versions) =
+            crate::db::queries::list_backend_versions(conn, name, None)
         {
             let active_versions: Vec<_> = versions
                 .iter()

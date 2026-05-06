@@ -460,7 +460,7 @@ async fn run_single_config(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    let handle = match server::spawn_server(&server_args, timeout_secs, progress.clone()).await {
+    let handle = match server::spawn_server(&server_args, timeout_secs).await {
         Ok(h) => h,
         Err(e) => {
             progress.log(&format!(
@@ -557,7 +557,7 @@ pub async fn run_spec_bench(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    let baseline_handle = server::spawn_server(&baseline_args, timeout_secs, progress.clone())
+    let baseline_handle = server::spawn_server(&baseline_args, timeout_secs)
         .await
         .with_context(|| "Failed to start baseline llama-server")?;
 

@@ -518,11 +518,9 @@ async fn install_binary(
                         tracing::warn!("Failed to create dir {}: {}", name, e);
                     }
                     copy_all(&entry_path, &dest_path);
-                } else if meta.is_file() {
-                    if !dest_path.exists() {
-                        if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                            tracing::warn!("Failed to copy {}: {}", name, e);
-                        }
+                } else if meta.is_file() && !dest_path.exists() {
+                    if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                        tracing::warn!("Failed to copy {}: {}", name, e);
                     }
                 }
             }

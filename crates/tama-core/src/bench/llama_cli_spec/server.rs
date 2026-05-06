@@ -252,11 +252,7 @@ impl Drop for ServerHandle {
 ///
 /// Waits up to `timeout_secs` for the model to load. Returns a `ServerHandle`
 /// that must be kept alive for the duration of benchmarking.
-pub async fn spawn_server(
-    args: &ServerArgs,
-    timeout_secs: u64,
-    progress: Arc<dyn crate::backends::ProgressSink>,
-) -> Result<ServerHandle> {
+pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<ServerHandle> {
     let arg_vec = args.to_args();
 
     let mut child = Command::new(&args.binary)
@@ -273,14 +269,10 @@ pub async fn spawn_server(
     let stderr = child.stderr.take();
     if let Some(stderr) = stderr {
         let lines = stderr_lines.clone();
-        let prog = progress.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                // Also forward stderr to progress so the user can see
-                // startup errors (e.g. GPU init failures, missing libs).
-                prog.log(&line);
                 lines.lock().await.push(line);
             }
         });
