@@ -79,6 +79,10 @@ pub struct SpecBenchmarkRunRequest {
     pub quant: Option<String>,
     #[serde(default)]
     pub backend_name: Option<String>,
+    /// Optional GPU variant to use for the backend (e.g. "cpu", "cuda", "rocm", "vulkan").
+    /// When provided, overrides config/DB resolution for the backend path.
+    #[serde(default)]
+    pub gpu_variant: Option<String>,
     pub spec_types: Vec<SpecType>,
     #[serde(default)]
     pub draft_max_values: Vec<u32>,

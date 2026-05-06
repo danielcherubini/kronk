@@ -232,7 +232,7 @@ pub async fn run_spec_benchmark_inner(
         .unwrap_or(&server_config.backend);
     let backend_path = {
         let conn = tama_core::config::Config::open_db();
-        config.resolve_backend_path(target_backend, None, &conn)?
+        config.resolve_backend_path(target_backend, req.gpu_variant.as_deref(), &conn)?
     };
 
     // Discover llama-server binary

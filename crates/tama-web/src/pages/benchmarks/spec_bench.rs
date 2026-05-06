@@ -147,8 +147,13 @@ pub fn SpecBench() -> impl IntoView {
     let selected_bench_type = RwSignal::new("spec_scan".to_string());
 
     // ── Backend selection ──────────────────────────────────────────────
+    // Tuple: (backend_name, display_label, gpu_variant)
     let selected_backend = RwSignal::new(String::new());
-    let available_backends = RwSignal::new(Vec::<(String, String)>::new());
+    let selected_gpu_variant = RwSignal::new(String::new());
+    let available_backends = RwSignal::new(Vec::<(String, String, String)>::new());
+
+    // Lookup map: backend_name -> gpu_variant
+    let backend_variant_map = RwSignal::new(std::collections::HashMap::<String, String>::new());
 
     // ── Spec type checkboxes ───────────────────────────────────────────
     let spec_types: RwSignal<Vec<String>> =
@@ -210,7 +215,7 @@ pub fn SpecBench() -> impl IntoView {
                 extract_and_store_csrf_token(&resp);
                 if let Ok(root) = resp.json::<serde_json::Value>().await {
                     if let Some(backends_arr) = root.get("backends").and_then(|v| v.as_array()) {
-                        let backend_list: Vec<(String, String)> = backends_arr
+                        let backend_list: Vec<(String, String, String)> = backends_arr
                             .iter()
                             .filter_map(|b| {
                                 let name = b.get("type")?.as_str()?.to_string();
@@ -219,10 +224,27 @@ pub fn SpecBench() -> impl IntoView {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(&name)
                                     .to_string();
-                                Some((name, display))
+                                let gpu_variant = b
+                                    .get("gpu_variant")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                // Only include backends that have a gpu_variant (i.e. installed)
+                                if !gpu_variant.is_empty() {
+                                    Some((name, display, gpu_variant))
+                                } else {
+                                    None
+                                }
                             })
                             .collect();
-                        available_backends.update(|list| *list = backend_list);
+                        available_backends.update(|list| *list = backend_list.clone());
+
+                        // Build variant lookup map
+                        let mut variant_map = std::collections::HashMap::new();
+                        for (name, _, variant) in &backend_list {
+                            variant_map.insert(name.clone(), variant.clone());
+                        }
+                        backend_variant_map.update(|m| *m = variant_map);
                     }
                 }
             }
@@ -296,6 +318,11 @@ pub fn SpecBench() -> impl IntoView {
         } else {
             Some(selected_backend.get())
         };
+        let gpu_variant = if selected_gpu_variant.get().is_empty() {
+            None
+        } else {
+            Some(selected_gpu_variant.get())
+        };
         let types = spec_types.get();
         let draft_max = parse_sizes(&draft_max_str.get());
         let ngram_n = parse_sizes(&ngram_n_str.get());
@@ -314,6 +341,7 @@ pub fn SpecBench() -> impl IntoView {
                 "model_id": model_id,
                 "quant": quant,
                 "backend_name": backend_name,
+                "gpu_variant": gpu_variant,
                 "benchmark_type": Some(selected_bench_type.get()),
                 "spec_types": types,
                 "draft_max_values": draft_max,
@@ -488,23 +516,31 @@ pub fn SpecBench() -> impl IntoView {
                     class="form-select"
                     on:change=move |e| {
                         let val = e.target().unwrap().dyn_into::<web_sys::HtmlSelectElement>().unwrap().value();
-                        selected_backend.set(val);
+                        selected_backend.set(val.clone());
+                        // Look up the gpu_variant for this backend
+                        let variant_map = backend_variant_map.get();
+                        if let Some(variant) = variant_map.get(&val) {
+                            selected_gpu_variant.set(variant.clone());
+                        } else {
+                            selected_gpu_variant.set(String::new());
+                        }
                     }
                 >
                     <option value="">"Auto (model's backend)"</option>
                     {move || {
                         let backends = available_backends_sig.get();
-                        backends.iter().map(|(name, display)| {
+                        backends.iter().map(|(name, display, variant)| {
                             let name_clone = name.clone();
-                            let display_clone = display.clone();
                             view! {
-                                <option value=name_clone>{display_clone}</option>
+                                <option value=name_clone>
+                                    {format!("{} ({})", display, variant)}
+                                </option>
                             }.into_any()
                         }).collect::<Vec<_>>()
                     }}
                 </select>
                 <small class="bench-hint">
-                    "Select a specific backend's llama-server, or leave empty to use the model's backend."
+                    "Select a specific backend variant (e.g. llama.cpp with CUDA), or leave empty to use the model's backend."
                 </small>
             </section>
 
