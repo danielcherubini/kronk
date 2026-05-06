@@ -261,26 +261,13 @@ pub async fn spawn_server(
 
     let mut child = Command::new(&args.binary)
         .args(&arg_vec)
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("Failed to spawn {}", args.binary.display()))?;
 
     let stderr_lines = Arc::new(Mutex::new(Vec::new()));
-
-    // Forward stdout to progress sink.
-    let stdout = child.stdout.take();
-    if let Some(stdout) = stdout {
-        let prog = progress.clone();
-        tokio::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            let mut reader = tokio::io::BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                prog.log(&line);
-            }
-        });
-    }
 
     // Extract stderr before moving child into ServerHandle.
     let stderr = child.stderr.take();
