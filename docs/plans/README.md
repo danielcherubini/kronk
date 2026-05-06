@@ -15,8 +15,8 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 88
-- **Completed**: 83 ✅
-- **In Progress**: 4 🚧
+- **Completed**: 84 ✅
+- **In Progress**: 3 🚧
 - **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -36,7 +36,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Split pull.rs Into Submodules](2026-05-06-split-pull-module.md) | Split 1,693-line models/pull.rs into 5 focused modules: api.rs, download.rs, metadata.rs, quant.rs | `bb6c8f5` ✅ COMPLETED |
 | [Split config/resolve/tests.rs](2026-05-06-split-resolve-tests.md) | Split 2,214-line test file into 4 topic-grouped modules: path_resolution, args_building, server_resolution, kv_cache_types | `bb6c8f5` ✅ COMPLETED |
 | [Split Remaining Long Files](2026-05-06-split-remaining-files-spec.md) | Split args_building.rs (1,411), pull/download.rs (1,041), crud/mod.rs (1,007) | 📋 DRAFT |
-| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards on the dashboard | 🚧 IN PROGRESS |
+| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards on the dashboard | `4a88d10` ✅ COMPLETED |
 
 ### Completed Plans
 
@@ -129,7 +129,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
-| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards on the dashboard | 🚧 IN PROGRESS |
+| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards on the dashboard | `4a88d10` ✅ COMPLETED |
 | [Fix Dashboard Stale Stats](2026-05-02-fix-dashboard-stale-stats.md) | Backfill metrics on SSE lag, tab visibility change, and SSE reconnect to prevent stale stats after browser idle | #84 `21f1a65` ✅ COMPLETED |
 | [System Metrics](2026-04-04-system-metrics.md) | CPU%, RAM, GPU metrics with background collection task | `67029b2`, `2465a4d`, `11d9287` |
 | [Persist Dashboard Metrics](2026-04-06-persist-dashboard-metrics.md) | SQLite persistence + SSE streaming for dashboard | `b657e22`, `8e6a5b5`, `fd12bf8`, `4c6d6e2`, `2892764` |
