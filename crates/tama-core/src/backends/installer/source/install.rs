@@ -483,73 +483,52 @@ async fn install_binary(
         std::fs::set_permissions(&binary_dest, perms)?;
     }
 
-    // Copy shared libraries so the backend can find them at runtime.
-    // On Unix: .so / .dylib files; on Windows: .dll files (e.g. ggml-cuda.dll).
-    fn copy_shared_libs(src: &std::path::Path, dest: &std::path::Path) {
+    // Copy all files from the build output to the target directory, recursively.
+    // This ensures all shared libraries (including versioned .so symlink chains),
+    // executables, and any other runtime dependencies are available.
+    fn copy_all(src: &std::path::Path, dest: &std::path::Path) {
         if let Ok(entries) = std::fs::read_dir(src) {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
-                if entry_path.is_file() {
-                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                        let is_shared = if cfg!(target_os = "windows") {
-                            name.ends_with(".dll")
-                        } else {
-                            name.contains(".so") || name.ends_with(".dylib")
-                        };
-                        if is_shared {
-                            let dest_path = dest.join(name);
-                            if !dest_path.exists() {
-                                if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                    tracing::warn!("Failed to copy shared library {}: {}", name, e);
-                                }
-                            }
+                let name = match entry_path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                // Skip cmake build metadata and git files
+                if name == "CMakeCache.txt"
+                    || name == "cmake_install.cmake"
+                    || name == "CMakeDirectoryInformation.cmake"
+                    || name.starts_with("CMakeFiles")
+                    || name.starts_with(".git")
+                {
+                    continue;
+                }
+                let dest_path = dest.join(&name);
+                // Use metadata() which follows symlinks, so symlinks to files
+                // resolve as files and get copied by std::fs::copy which
+                // also follows symlinks. Versioned .so.* files in the chain
+                // are regular files (the leaf) and get copied naturally since
+                // read_dir lists every entry in the directory.
+                let meta = match std::fs::metadata(&entry_path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                if meta.is_dir() {
+                    if let Err(e) = std::fs::create_dir_all(&dest_path) {
+                        tracing::warn!("Failed to create dir {}: {}", name, e);
+                    }
+                    copy_all(&entry_path, &dest_path);
+                } else if meta.is_file() {
+                    if !dest_path.exists() {
+                        if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                            tracing::warn!("Failed to copy {}: {}", name, e);
                         }
                     }
-                } else if entry_path.is_dir() {
-                    copy_shared_libs(&entry_path, dest);
                 }
             }
         }
     }
-    copy_shared_libs(build_output, &options.target_dir);
-
-    // Copy all other executables (llama-cli, llama-bench, llama-quantize, etc.)
-    // so that other benchmarks and tools can find them in the same directory.
-    fn copy_executables(src: &std::path::Path, dest: &std::path::Path) {
-        if let Ok(entries) = std::fs::read_dir(src) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                if entry_path.is_file() {
-                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                        // Skip shared libraries (already copied above) and the main binary
-                        let is_shared = if cfg!(target_os = "windows") {
-                            name.ends_with(".dll")
-                        } else {
-                            name.contains(".so") || name.ends_with(".dylib")
-                        };
-                        if !is_shared && !name.contains("cmake") && !name.contains(".git") {
-                            // Check if it looks like an executable (no extension, or .exe)
-                            let is_executable = !name.contains('.')
-                                || name.ends_with(".exe")
-                                || name.starts_with("llama-")
-                                || name.starts_with("ggml-");
-                            if is_executable {
-                                let dest_path = dest.join(name);
-                                if !dest_path.exists() {
-                                    if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                                        tracing::warn!("Failed to copy executable {}: {}", name, e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if entry_path.is_dir() {
-                    copy_executables(&entry_path, dest);
-                }
-            }
-        }
-    }
-    copy_executables(build_output, &options.target_dir);
+    copy_all(build_output, &options.target_dir);
 
     // Set executable permissions on all copied executables (Unix only).
     #[cfg(unix)]
