@@ -483,50 +483,57 @@ async fn install_binary(
         std::fs::set_permissions(&binary_dest, perms)?;
     }
 
-    // Copy all files from the build output to the target directory, recursively.
+    // Copy files from the build output's bin/ subdirectory directly into
+    // the target directory (flattened, no intermediate bin/ folder).
     // This ensures all shared libraries (including versioned .so symlink chains),
-    // executables, and any other runtime dependencies are available.
-    fn copy_all(src: &std::path::Path, dest: &std::path::Path) {
-        if let Ok(entries) = std::fs::read_dir(src) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                let name = match entry_path.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => n.to_string(),
-                    None => continue,
-                };
-                // Skip cmake build metadata and git files
-                if name == "CMakeCache.txt"
-                    || name == "cmake_install.cmake"
-                    || name == "CMakeDirectoryInformation.cmake"
-                    || name.starts_with("CMakeFiles")
-                    || name.starts_with(".git")
-                {
-                    continue;
-                }
-                let dest_path = dest.join(&name);
-                // Use metadata() which follows symlinks, so symlinks to files
-                // resolve as files and get copied by std::fs::copy which
-                // also follows symlinks. Versioned .so.* files in the chain
-                // are regular files (the leaf) and get copied naturally since
-                // read_dir lists every entry in the directory.
-                let meta = match std::fs::metadata(&entry_path) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                if meta.is_dir() {
-                    if let Err(e) = std::fs::create_dir_all(&dest_path) {
-                        tracing::warn!("Failed to create dir {}: {}", name, e);
+    // executables, and any other runtime dependencies are available at the
+    // expected location alongside the main binary.
+    let bin_dir = build_output.join("bin");
+    if bin_dir.is_dir() {
+        fn copy_bin_contents(src_dir: &std::path::Path, dest_dir: &std::path::Path) {
+            if let Ok(entries) = std::fs::read_dir(src_dir) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    let name = match entry_path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    // Skip cmake build metadata and git files
+                    if name == "CMakeCache.txt"
+                        || name == "cmake_install.cmake"
+                        || name == "CMakeDirectoryInformation.cmake"
+                        || name.starts_with("CMakeFiles")
+                        || name.starts_with(".git")
+                    {
+                        continue;
                     }
-                    copy_all(&entry_path, &dest_path);
-                } else if meta.is_file() && !dest_path.exists() {
-                    if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
-                        tracing::warn!("Failed to copy {}: {}", name, e);
+                    let dest_path = dest_dir.join(&name);
+                    // Use metadata() which follows symlinks, so symlinks to files
+                    // resolve as files and get copied by std::fs::copy which
+                    // also follows symlinks. Versioned .so.* files in the chain
+                    // are regular files (the leaf) and get copied naturally since
+                    // read_dir lists every entry in the directory.
+                    let meta = match std::fs::metadata(&entry_path) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+                    if meta.is_dir() {
+                        if let Err(e) = std::fs::create_dir_all(&dest_path) {
+                            tracing::warn!("Failed to create dir {}: {}", name, e);
+                        }
+                        copy_bin_contents(&entry_path, &dest_path);
+                    } else if meta.is_file() && !dest_path.exists() {
+                        if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                            tracing::warn!("Failed to copy {}: {}", name, e);
+                        }
                     }
                 }
             }
         }
+        copy_bin_contents(&bin_dir, &options.target_dir);
+    } else {
+        tracing::warn!("No bin/ directory found in build output at {:?}", bin_dir);
     }
-    copy_all(build_output, &options.target_dir);
 
     // Set executable permissions on all copied executables (Unix only).
     #[cfg(unix)]
