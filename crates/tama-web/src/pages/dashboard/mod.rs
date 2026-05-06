@@ -1,0 +1,501 @@
+use js_sys::{Date, Function, Reflect};
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use log::info;
+use wasm_bindgen::prelude::*;
+
+use crate::components::modal::Modal;
+use crate::components::model_card::ModelCard;
+use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
+use crate::components::sparkline::SparklineChart;
+use crate::utils::{extract_and_store_csrf_token, post_request, rw_signal_to_signal};
+
+mod metrics;
+pub use metrics::*;
+
+#[cfg(test)]
+mod tests;
+
+#[component]
+pub fn Dashboard() -> impl IntoView {
+    let history = RwSignal::new(Vec::<MetricSample>::new());
+    let fetch_failed = RwSignal::new(false);
+    // Incrementing this signal re-runs the Effect that opens the EventSource.
+    let connect_trigger = RwSignal::new(0u32);
+    // Tracks the last backfill timestamp to enforce a cooldown (prevents redundant fetches
+    // when SSE lagged, visibilitychange, and reconnect fire together).
+    let last_backfill = RwSignal::new(0u64);
+    // Set to true when the SSE connection errors, cleared on the next sample event.
+    // Used to detect reconnection after a disconnect and trigger backfill.
+    let reconnect_pending = RwSignal::new(false);
+
+    // Fetch historical metrics on mount, before connecting to SSE.
+    // This populates the chart with up to 450 recent data points (15 minutes at 2s intervals).
+    {
+        let history_signal = history;
+        let last_backfill_signal = last_backfill;
+        spawn_local(async move {
+            if let Ok(resp) =
+                gloo_net::http::Request::get("/tama/v1/system/metrics/history?limit=450")
+                    .send()
+                    .await
+            {
+                extract_and_store_csrf_token(&resp);
+                if let Ok(entries) = resp.json::<Vec<MetricsHistoryEntry>>().await {
+                    let samples: Vec<MetricSample> = entries.into_iter().map(Into::into).collect();
+                    if !samples.is_empty() {
+                        history_signal.update(|buf| {
+                            *buf = samples;
+                        });
+                        // Prevent immediate redundant backfill on the first SSE lagged/visibility event
+                        last_backfill_signal.set(Date::now() as u64);
+                    }
+                }
+            }
+        });
+    }
+
+    // Open (or re-open) an EventSource each time connect_trigger changes.
+    Effect::new(move |_| {
+        let _ = connect_trigger.get(); // track signal
+
+        let es = match web_sys::EventSource::new("/tama/v1/system/metrics/stream") {
+            Ok(es) => es,
+            Err(_) => {
+                fetch_failed.set(true);
+                return;
+            }
+        };
+
+        // Handler for "sample" events.
+        let on_sample =
+            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if let Some(data_str) = evt.data().as_string() {
+                    if let Ok(sample) = serde_json::from_str::<MetricSample>(&data_str) {
+                        fetch_failed.set(false);
+                        history.update(|buf| {
+                            buf.push(sample);
+                            if buf.len() > 450 {
+                                buf.drain(..buf.len() - 450);
+                            }
+                        });
+                        // If the SSE connection was lost and reconnected, backfill the gap
+                        if reconnect_pending.get() {
+                            reconnect_pending.set(false);
+                            info!("SSE reconnected, backfilling metrics");
+                            let history_copy = history;
+                            let last_backfill_copy = last_backfill;
+                            spawn_local(backfill_metrics(history_copy, last_backfill_copy));
+                        }
+                    }
+                }
+            });
+        let _ = es.add_event_listener_with_callback("sample", on_sample.as_ref().unchecked_ref());
+        on_sample.forget();
+
+        // Handler for "lagged" events — the broadcast channel dropped messages.
+        // Fetch recent history to fill the gap.
+        let on_lagged =
+            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if let Some(data_str) = evt.data().as_string() {
+                    info!("SSE lagged event received: {}", data_str);
+                    let history_copy = history;
+                    let last_backfill_copy = last_backfill;
+                    spawn_local(backfill_metrics(history_copy, last_backfill_copy));
+                }
+            });
+        let _ = es.add_event_listener_with_callback("lagged", on_lagged.as_ref().unchecked_ref());
+        on_lagged.forget();
+
+        // Error handler — flag for the empty-history retry UI and track disconnect for backfill.
+        let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            fetch_failed.set(true);
+            reconnect_pending.set(true);
+        });
+        es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        on_error.forget();
+
+        // Close the EventSource when the effect re-runs or the component unmounts.
+        on_cleanup(move || {
+            es.close();
+        });
+    });
+
+    // When the browser tab becomes visible again, backfill metrics that were missed
+    // while the SSE connection was throttled or disconnected by the browser.
+    Effect::new(move |_| {
+        let history_sig = history;
+        let last_backfill_sig = last_backfill;
+        let on_visibility = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
+            // Use Reflect to check document.hidden (avoids extra web-sys feature flags).
+            // When hidden is false (or missing), the tab is visible.
+            let is_hidden = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|doc| Reflect::get(&doc, &"hidden".into()).ok())
+                .and_then(|v| v.as_bool());
+            if is_hidden == Some(false) {
+                spawn_local(backfill_metrics(history_sig, last_backfill_sig));
+            }
+        });
+        // Clone the JS function reference (cheap, not the Closure itself) for both add and remove.
+        // Closure does not implement Clone, so we extract the underlying Function.
+        let js_fn: Function = on_visibility.as_ref().unchecked_ref::<Function>().clone();
+        let doc = web_sys::window()
+            .expect("window")
+            .document()
+            .expect("document");
+        let _ = doc.add_event_listener_with_callback("visibilitychange", &js_fn);
+
+        // on_cleanup owns on_visibility — it stays alive until cleanup runs,
+        // then the Closure is dropped and WASM memory is freed.
+        on_cleanup(move || {
+            let _ = doc.remove_event_listener_with_callback("visibilitychange", &js_fn);
+        });
+    });
+
+    // Manual retry: close and re-open the EventSource.
+    let manual_refresh = move |_| {
+        fetch_failed.set(false);
+        reconnect_pending.set(false);
+        connect_trigger.update(|n| *n += 1);
+    };
+
+    let restart: Action<(), (), LocalStorage> = Action::new_unsync(|_: &()| async move {
+        let _ = post_request("/tama/v1/system/restart").send().await;
+    });
+
+    // Per-model load/unload actions wired to the same REST endpoints used by
+    // the `/models` page. Both actions are unsync because `gloo_net::Request`
+    // returns `!Send` futures in the WASM target.
+    //
+    // We use a manual "busy" signal instead of relying on Action::pending()
+    // because in some WASM error scenarios (e.g. proxy returns 500 with no
+    // backend configured), the pending flag can get stuck and never reset,
+    // leaving buttons permanently disabled with "Loading…" text.
+    let load_busy = RwSignal::new(false);
+    let unload_busy = RwSignal::new(false);
+
+    // Pull Model modal
+    let pull_modal_open = RwSignal::new(false);
+
+    let load_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
+        let id = id.clone();
+        async move {
+            load_busy.set(true);
+            // Ignore errors — the SSE stream will push updated model state.
+            // Even if the request fails (e.g. no backend configured), we set
+            // load_busy to false below so the button becomes clickable again.
+            let _ = post_request(&format!("/tama/v1/models/{}/load", id))
+                .send()
+                .await;
+            load_busy.set(false);
+        }
+    });
+    let unload_action: Action<String, (), LocalStorage> = Action::new_unsync(move |id: &String| {
+        let id = id.clone();
+        async move {
+            unload_busy.set(true);
+            // Same as load — ignore errors, SSE will push the updated state.
+            let _ = post_request(&format!("/tama/v1/models/{}/unload", id))
+                .send()
+                .await;
+            unload_busy.set(false);
+        }
+    });
+
+    view! {
+        <div class="page-header">
+            <h1>"Dashboard"</h1>
+            <div class="page-header-actions">
+                // Existing status badge + Restart (inside conditional, only shown after SSE data arrives)
+                {move || {
+                    history.get().last().cloned().map(|_h| {
+                        let badge_class = if fetch_failed.get() { "badge badge-danger" } else { "badge badge-success" };
+                        let badge_text = if fetch_failed.get() { "error" } else { "ok" };
+                        view! {
+                            <div class="flex-between gap-1">
+                                <span class={badge_class}>{badge_text}</span>
+                                <button class="btn btn-secondary" on:click=move |_| { restart.dispatch(()); }>
+                                    "Restart"
+                                </button>
+                            </div>
+                        }
+                    })
+                }}
+                // New buttons (always visible, outside conditional)
+                <button class="btn btn-secondary" on:click=move |_| pull_modal_open.set(true)>"Pull Model"</button>
+
+            </div>
+        </div>
+
+
+
+        {move || {
+            let buf = history.get();
+            if fetch_failed.get() && buf.is_empty() {
+                // Network error, no data yet — show error with retry button
+                return view! {
+                    <div class="card">
+                        <p class="text-error">"Failed to load metrics stream. Is Tama running?"</p>
+                        <button class="btn btn-secondary btn-sm mt-2" on:click=manual_refresh>"Retry"</button>
+                    </div>
+                }.into_any();
+            }
+
+            // Extract data for sparkline charts
+            let cpu_data: Vec<f32> = buf.iter().map(|s| s.cpu_usage_pct).collect();
+            let mem_data: Vec<f32> = buf.iter().map(|s| s.ram_used_mib as f32).collect();
+            let timestamps: Vec<i64> = buf.iter().map(|s| s.ts_unix_ms).collect();
+            let mem_max = buf.last().map(|h| h.ram_total_mib as f32).unwrap_or(1.0);
+            let cpu_y_refs = vec![0.0, 100.0];
+            let mem_y_refs = vec![mem_max];
+
+            let gpu_data: Vec<f32> = buf.iter().map(|s| s.gpu_utilization_pct.unwrap_or(0) as f32).collect();
+            let vram_data: Vec<f32> = buf.iter().map(|s| s.vram.as_ref().map(|v| v.used_mib as f32).unwrap_or(0.0)).collect();
+            let vram_max = buf.last().and_then(|h| h.vram.as_ref().map(|v| v.total_mib as f32)).unwrap_or(1.0);
+            let vram_y_refs = vec![vram_max];
+
+            let all_models: Vec<ModelStatus> = buf.last().map(|h| h.models.clone()).unwrap_or_default();
+            let active = active_models(&all_models);
+            let inactive = inactive_models(&all_models);
+
+            view! {
+                <div class="grid-stats">
+                    // CPU card
+                    <div class="stat-card">
+                        <div class="card-header">"CPU Usage"</div>
+                        {match buf.last() {
+                            Some(h) => view! {
+                                <div class="card-value">{format!("{:.1}%", h.cpu_usage_pct)}</div>
+                                <div class="card-secondary">"of 100%"</div>
+                            }.into_any(),
+                            None => view! {
+                                <div class="card-value-empty">"—"</div>
+                            }.into_any(),
+                        }}
+                        <div class="sparkline-container">
+                            <SparklineChart
+                                data=cpu_data
+                                max_value=100.0
+                                color="var(--accent-green)".to_string()
+                                height=60.0
+                                timestamps=timestamps.clone()
+                                unit_label="%".to_string()
+                                y_refs=cpu_y_refs
+                            />
+                        </div>
+                    </div>
+
+                    // Memory card
+                    <div class="stat-card">
+                        <div class="card-header">"Memory"</div>
+                        {match buf.last() {
+                            Some(h) => view! {
+                                <div class="card-value">{format_number(h.ram_used_mib)}</div>
+                                <div class="card-secondary">{format!("of {} MiB", format_number(h.ram_total_mib))}</div>
+                            }.into_any(),
+                            None => view! {
+                                <div class="card-value-empty">"—"</div>
+                            }.into_any(),
+                        }}
+                        <div class="sparkline-container">
+                            <SparklineChart
+                                data=mem_data
+                                max_value=mem_max
+                                color="var(--accent-blue)".to_string()
+                                height=60.0
+                                timestamps=timestamps.clone()
+                                unit_label="MiB".to_string()
+                                y_refs=mem_y_refs
+                            />
+                        </div>
+                    </div>
+
+                    // GPU card — only rendered if GPU data is present
+                    {if let Some(gpu_pct) = buf.last().and_then(|h| h.gpu_utilization_pct) {
+                        view! {
+                            <div class="stat-card">
+                                <div class="card-header">"GPU"</div>
+                                <div class="card-value">{format!("{}%", gpu_pct)}</div>
+                                <div class="card-secondary">"of 100%"</div>
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=gpu_data
+                                        max_value=100.0
+                                        color="var(--accent-yellow)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps.clone()
+                                        unit_label="%".to_string()
+                                        y_refs=vec![0.0_f32, 100.0_f32]
+                                    />
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <div></div> }.into_any()
+                    }}
+
+                    // VRAM card — only rendered if VRAM data is present
+                    {if let Some(vram_info) = buf.last().and_then(|h| h.vram.as_ref()) {
+                        view! {
+                            <div class="stat-card">
+                                <div class="card-header">"VRAM"</div>
+                                <div class="card-value">{format_number(vram_info.used_mib)}</div>
+                                <div class="card-secondary">{format!("of {} MiB", format_number(vram_info.total_mib))}</div>
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=vram_data
+                                        max_value=vram_max
+                                        color="var(--accent-purple)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps
+                                        unit_label="MiB".to_string()
+                                        y_refs=vram_y_refs
+                                    />
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <div></div> }.into_any()
+                    }}
+                </div>
+
+                // Active Models section
+                <section class="dashboard-models">
+                    <div class="page-header">
+                        <h2>"Active Models"</h2>
+                        <span class="text-muted">
+                            {format!("{} loaded", active.len())}
+                        </span>
+                    </div>
+                    {
+                        if all_models.is_empty() {
+                            view! {
+                                <div class="card card--centered">
+                                    <p class="text-muted">"No models configured yet."</p>
+                                </div>
+                            }.into_any()
+                        } else if active.is_empty() {
+                            view! {
+                                <div class="card card--centered">
+                                    <p class="text-muted">"No models currently loaded."</p>
+                                </div>
+                            }.into_any()
+                        } else {
+                            let mut active_sorted = active.clone();
+                            active_sorted.sort_by_key(model_sort_key);
+                            view! {
+                                <div class="models-list">
+                                    {active_sorted.into_iter().map(|m| {
+                                        let on_load_cb = Callback::new(move |id: String| {
+                                            load_action.dispatch(id);
+                                        });
+                                        let on_unload_cb = Callback::new(move |id: String| {
+                                            unload_action.dispatch(id);
+                                        });
+                                        view! {
+                                            <ModelCard
+                                                id=m.id.clone()
+                                                db_id=m.db_id
+                                                display_name=model_display_name(&m)
+                                                quant=m.quant.clone()
+                                                context_length=m.context_length
+                                                hf_architecture_type=m.hf_architecture_type.clone()
+                                                hf_base_model=m.hf_base_model.clone()
+                                                backend=m.backend.clone()
+                                                log_source=Some(format!("{}_{}", m.backend, m.id))
+                                                state=m.state.clone()
+                                                loaded=None
+                                                enabled=None
+                                                on_load=on_load_cb
+                                                on_unload=on_unload_cb
+                                                load_busy=load_busy
+                                                unload_busy=unload_busy
+                                            />
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            }.into_any()
+                        }
+                    }
+                </section>
+
+                // Inactive Models section — only render when all_models is non-empty
+                {if all_models.is_empty() {
+                    view! { <div></div> }.into_any()
+                } else {
+                    view! {
+                        <section class="dashboard-models">
+                            <div class="page-header">
+                                <h2>"Inactive Models"</h2>
+                                <span class="text-muted">
+                                    {format!("{} inactive", inactive.len())}
+                                </span>
+                            </div>
+                            {
+                                if inactive.is_empty() {
+                                    view! {
+                                        <div class="card card--centered">
+                                            <p class="text-muted">"No inactive models."</p>
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    let mut inactive_sorted = inactive.clone();
+                                    inactive_sorted.sort_by_key(model_sort_key);
+                                    view! {
+                                        <div class="models-list">
+                                            {inactive_sorted.into_iter().map(|m| {
+                                                let on_load_cb = Callback::new(move |id: String| {
+                                                    load_action.dispatch(id);
+                                                });
+                                                let on_unload_cb = Callback::new(move |id: String| {
+                                                    unload_action.dispatch(id);
+                                                });
+                                                view! {
+                                                    <ModelCard
+                                                        id=m.id.clone()
+                                                        db_id=m.db_id
+                                                        display_name=model_display_name(&m)
+                                                        quant=m.quant.clone()
+                                                        context_length=m.context_length
+                                                        hf_architecture_type=m.hf_architecture_type.clone()
+                                                        hf_base_model=m.hf_base_model.clone()
+                                                        backend=m.backend.clone()
+                                                        log_source=Some(format!("{}_{}", m.backend, m.id))
+                                                        state=m.state.clone()
+                                                        loaded=None
+                                                        enabled=None
+                                                        on_load=on_load_cb
+                                                        on_unload=on_unload_cb
+                                                        load_busy=load_busy
+                                                        unload_busy=unload_busy
+                                                    />
+                                                }
+                                            }).collect::<Vec<_>>()}
+                                        </div>
+                                    }.into_any()
+                                }
+                            }
+                        </section>
+                    }.into_any()
+                }}
+            }.into_any()
+        }}
+
+        <Modal
+            open=rw_signal_to_signal(pull_modal_open)
+            on_close=Callback::new(move |_| pull_modal_open.set(false))
+            title="Pull Model".to_string()
+        >
+            <PullQuantWizard
+                initial_repo=Signal::derive(String::new)
+                is_open=rw_signal_to_signal(pull_modal_open)
+                on_complete=Callback::new(move |_completed: Vec<CompletedQuant>| {
+                    pull_modal_open.set(false);
+                    connect_trigger.update(|n| *n += 1);
+                })
+                on_close=Callback::new(move |_| pull_modal_open.set(false))
+            />
+        </Modal>
+    }
+}
