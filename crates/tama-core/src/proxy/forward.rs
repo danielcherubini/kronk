@@ -1,3 +1,4 @@
+use crate::proxy::types::LatestInferenceStats;
 use crate::proxy::{ModelState, ProxyState};
 use axum::{
     body::Body,
@@ -90,12 +91,28 @@ pub fn build_forward_uri(backend_url: &str, parts: &Parts) -> Option<String> {
 }
 
 /// Process a complete SSE line, rewriting the `model` field in JSON data lines.
-fn process_sse_line(line: &str, model_name: Option<&str>, out: &mut String) {
+/// If `inference_stats` is provided, also extracts `timings` from parsed JSON
+/// and updates the watch channel (streaming responses include timings in a
+/// final data chunk before `[DONE]`).
+fn process_sse_line(
+    line: &str,
+    model_name: Option<&str>,
+    out: &mut String,
+    inference_stats: Option<
+        &std::sync::Arc<tokio::sync::watch::Sender<Option<LatestInferenceStats>>>,
+    >,
+) {
     if let Some(data_content) = line.strip_prefix("data: ") {
         let trimmed = data_content.trim_end();
         if trimmed == "[DONE]" {
             out.push_str(line);
         } else if let Ok(mut json_value) = serde_json::from_str::<JsonValue>(trimmed) {
+            // Extract inference stats from timings if sender is available
+            if let Some(sender) = inference_stats {
+                if let Some(stats) = extract_inference_stats(&json_value, sender) {
+                    sender.send_replace(Some(stats));
+                }
+            }
             if let Some(name) = model_name {
                 if !name.is_empty() {
                     json_value["model"] = JsonValue::String(name.to_string());
@@ -113,6 +130,59 @@ fn process_sse_line(line: &str, model_name: Option<&str>, out: &mut String) {
         // Comments, empty lines, and other lines pass through unchanged
         out.push_str(line);
     }
+}
+
+/// Extract inference stats from a llama_cpp `timings` object in a JSON response.
+///
+/// Returns `None` if the response has no `timings` field or it cannot be parsed.
+/// Returns `Some(LatestInferenceStats)` with computed fields otherwise.
+/// Division by zero (prompt_n == 0, draft_n == 0) produces `None` for that field.
+pub fn extract_inference_stats(
+    json: &serde_json::Value,
+    inference_stats: &tokio::sync::watch::Sender<Option<LatestInferenceStats>>,
+) -> Option<LatestInferenceStats> {
+    let timings = json.get("timings")?;
+
+    let predicted_per_second = timings.get("predicted_per_second")?.as_f64()?;
+    let prompt_per_second = timings.get("prompt_per_second")?.as_f64()?;
+    let cache_n = timings.get("cache_n").and_then(|v| v.as_u64()).unwrap_or(0);
+    let prompt_n = timings
+        .get("prompt_n")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let draft_n = timings.get("draft_n").and_then(|v| v.as_u64()).unwrap_or(0);
+    let draft_n_accepted = timings
+        .get("draft_n_accepted")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let now_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    // Read previous spec_decoding_active flag (sticky: once true, stays true)
+    let prev_active = inference_stats
+        .borrow()
+        .and_then(|s| Some(s.spec_decoding_active))
+        .unwrap_or(false);
+
+    Some(LatestInferenceStats {
+        tps: Some(predicted_per_second as f32),
+        prompt_tps: Some(prompt_per_second as f32),
+        cache_hit_pct: if prompt_n > 0 {
+            Some((cache_n as f32 / prompt_n as f32 * 100.0).clamp(0.0, 100.0))
+        } else {
+            None
+        },
+        spec_accept_pct: if draft_n > 0 {
+            Some((draft_n_accepted as f32 / draft_n as f32 * 100.0).clamp(0.0, 100.0))
+        } else {
+            None
+        },
+        spec_decoding_active: draft_n > 0 || prev_active,
+        last_updated_ms: now_ms,
+    })
 }
 
 pub async fn forward_request(
@@ -329,11 +399,16 @@ pub async fn forward_request(
                 // Streaming response — rewrite the model name in each SSE chunk.
                 // Uses unfold to own the partial-line buffer across chunks (Send-safe).
                 let model_name: Option<String> = model_name.map(|s| s.to_string());
+                // Wrap inference_stats sender in Arc so it can be shared across
+                // async unfold iterations (watch::Sender is Clone but Arc avoids
+                // per-iteration cloning and keeps a single owned reference).
+                let inference_stats = std::sync::Arc::new(state.inference_stats.clone());
                 let byte_stream = response.bytes_stream();
                 let transformed_stream = futures_util::stream::unfold(
                     (byte_stream, String::new()),
                     move |(mut stream, mut line_buf)| {
                         let model_name = model_name.clone();
+                        let inference_stats = inference_stats.clone();
                         async move {
                             let chunk_result = stream.next().await?;
                             let result: Result<Bytes, reqwest::Error> = match chunk_result {
@@ -350,6 +425,7 @@ pub async fn forward_request(
                                                 &line,
                                                 model_name.as_deref(),
                                                 &mut out,
+                                                Some(&inference_stats),
                                             );
                                         }
                                     }
@@ -369,6 +445,10 @@ pub async fn forward_request(
                 // Only attempt JSON rewrite if content is valid JSON
                 let new_body = if let Ok(parsed) = serde_json::from_slice::<JsonValue>(&body_bytes)
                 {
+                    // Extract inference stats from timings (before rewrite — timings unaffected by model name change)
+                    if let Some(stats) = extract_inference_stats(&parsed, &state.inference_stats) {
+                        state.inference_stats.send_replace(Some(stats));
+                    }
                     let rewritten = rewrite_json_model_name(parsed, model_name);
                     serde_json::to_vec(&rewritten).unwrap_or(body_bytes.to_vec())
                 } else {
@@ -451,6 +531,150 @@ pub async fn forward_request(
 mod tests {
     use super::*;
     use axum::http::{header::HeaderName, request::Parts, HeaderMap, HeaderValue};
+    use tokio::sync::watch;
+
+    // ── extract_inference_stats tests ─────────────────────────────────────
+
+    fn make_sender() -> watch::Sender<Option<LatestInferenceStats>> {
+        watch::channel(None).0
+    }
+
+    #[test]
+    fn test_extract_inference_stats_full_timings() {
+        let sender = make_sender();
+        let json = serde_json::json!({
+            "model": "test-model",
+            "choices": [],
+            "timings": {
+                "predicted_per_second": 50.5,
+                "prompt_per_second": 200.0,
+                "cache_n": 80,
+                "prompt_n": 100,
+                "draft_n": 10,
+                "draft_n_accepted": 8
+            }
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_some());
+        let stats = result.unwrap();
+        assert_eq!(stats.tps, Some(50.5f32));
+        assert_eq!(stats.prompt_tps, Some(200.0f32));
+        assert_eq!(stats.cache_hit_pct, Some(80.0f32)); // 80/100 * 100
+        assert_eq!(stats.spec_accept_pct, Some(80.0f32)); // 8/10 * 100
+        assert!(stats.spec_decoding_active);
+        assert!(stats.last_updated_ms > 0);
+    }
+
+    #[test]
+    fn test_extract_inference_stats_missing_timings() {
+        let sender = make_sender();
+        let json = serde_json::json!({
+            "model": "test-model",
+            "choices": []
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_inference_stats_zero_prompt_n() {
+        let sender = make_sender();
+        let json = serde_json::json!({
+            "timings": {
+                "predicted_per_second": 50.0,
+                "prompt_per_second": 100.0,
+                "cache_n": 0,
+                "prompt_n": 0,
+                "draft_n": 5,
+                "draft_n_accepted": 3
+            }
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_some());
+        let stats = result.unwrap();
+        assert_eq!(stats.cache_hit_pct, None); // division by zero
+        let spec = stats.spec_accept_pct.unwrap();
+        assert!((spec - 60.0).abs() < 0.1); // 3/5 * 100 ≈ 60.0
+    }
+
+    #[test]
+    fn test_extract_inference_stats_zero_draft_n() {
+        let sender = make_sender();
+        let json = serde_json::json!({
+            "timings": {
+                "predicted_per_second": 50.0,
+                "prompt_per_second": 100.0,
+                "cache_n": 50,
+                "prompt_n": 100,
+                "draft_n": 0,
+                "draft_n_accepted": 0
+            }
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_some());
+        let stats = result.unwrap();
+        assert_eq!(stats.spec_accept_pct, None); // division by zero
+        assert!(!stats.spec_decoding_active); // draft_n == 0 and no previous active
+    }
+
+    #[test]
+    fn test_extract_inference_stats_partial_timings() {
+        let sender = make_sender();
+        let json = serde_json::json!({
+            "timings": {
+                "predicted_per_second": 30.0,
+                "prompt_per_second": 150.0
+            }
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_some());
+        let stats = result.unwrap();
+        assert_eq!(stats.tps, Some(30.0f32));
+        assert_eq!(stats.prompt_tps, Some(150.0f32));
+        assert_eq!(stats.cache_hit_pct, None); // prompt_n defaults to 0
+        assert_eq!(stats.spec_accept_pct, None); // draft_n defaults to 0
+        assert!(!stats.spec_decoding_active);
+    }
+
+    #[test]
+    fn test_extract_inference_stats_spec_decoding_sticky() {
+        let (sender, _rx) =
+            watch::channel::<Option<LatestInferenceStats>>(Some(LatestInferenceStats {
+                tps: Some(10.0),
+                prompt_tps: None,
+                cache_hit_pct: None,
+                spec_accept_pct: None,
+                spec_decoding_active: true,
+                last_updated_ms: 100,
+            }));
+        let json = serde_json::json!({
+            "timings": {
+                "predicted_per_second": 40.0,
+                "prompt_per_second": 80.0,
+                "cache_n": 0,
+                "prompt_n": 0,
+                "draft_n": 0,
+                "draft_n_accepted": 0
+            }
+        });
+
+        let result = extract_inference_stats(&json, &sender);
+
+        assert!(result.is_some());
+        let stats = result.unwrap();
+        // spec_decoding_active stays true because previous was true (sticky)
+        assert!(stats.spec_decoding_active);
+    }
 
     // ── filter_request_headers tests ──────────────────────────────────────
 
@@ -677,6 +901,7 @@ mod tests {
             "data: {\"model\": \"backend-model\", \"choices\": []}",
             Some("user-model"),
             &mut out,
+            None,
         );
         // serde_json serializes without spaces by default
         assert!(out.contains("\"model\""), "output: {}", out);
@@ -690,6 +915,7 @@ mod tests {
             "data: {\"model\": \"backend-model\", \"choices\": []}",
             None,
             &mut out,
+            None,
         );
         // Model should NOT be rewritten when model_name is None
         assert!(out.contains("backend-model"), "output: {}", out);
@@ -699,7 +925,7 @@ mod tests {
     #[test]
     fn test_process_sse_line_passes_done_unchanged() {
         let mut out = String::new();
-        process_sse_line("data: [DONE]", Some("any-model"), &mut out);
+        process_sse_line("data: [DONE]", Some("any-model"), &mut out, None);
         // DONE is pushed as-is (no trailing newline added by this function)
         assert_eq!(out, "data: [DONE]");
     }
@@ -707,28 +933,28 @@ mod tests {
     #[test]
     fn test_process_sse_line_passes_comment_unchanged() {
         let mut out = String::new();
-        process_sse_line(": heartbeat", Some("any-model"), &mut out);
+        process_sse_line(": heartbeat", Some("any-model"), &mut out, None);
         assert_eq!(out, ": heartbeat");
     }
 
     #[test]
     fn test_process_sse_line_passes_empty_line_unchanged() {
         let mut out = String::new();
-        process_sse_line("", Some("any-model"), &mut out);
+        process_sse_line("", Some("any-model"), &mut out, None);
         assert_eq!(out, "");
     }
 
     #[test]
     fn test_process_sse_line_handles_invalid_json() {
         let mut out = String::new();
-        process_sse_line("data: not valid json {", Some("any-model"), &mut out);
+        process_sse_line("data: not valid json {", Some("any-model"), &mut out, None);
         assert_eq!(out, "data: not valid json {");
     }
 
     #[test]
     fn test_process_sse_line_handles_non_data_lines() {
         let mut out = String::new();
-        process_sse_line("event: message", Some("any-model"), &mut out);
+        process_sse_line("event: message", Some("any-model"), &mut out, None);
         assert_eq!(out, "event: message");
     }
 
@@ -738,8 +964,33 @@ mod tests {
         // Lines without trailing newline are not processed as complete SSE lines.
         let mut out = String::new();
         // First line with newline - should be processed
-        process_sse_line("data: {\"model\": \"a\"}\n", Some("user"), &mut out);
+        process_sse_line("data: {\"model\": \"a\"}\n", Some("user"), &mut out, None);
         assert!(out.contains("user"), "output: {}", out);
+    }
+
+    #[test]
+    fn test_process_sse_line_extracts_inference_stats() {
+        let (sender, mut rx) = watch::channel::<Option<LatestInferenceStats>>(None);
+        let sender = std::sync::Arc::new(sender);
+        let mut out = String::new();
+
+        // Simulate a streaming data line with timings
+        process_sse_line(
+            "data: {\"model\": \"test\", \"choices\": [], \"timings\": {\"predicted_per_second\": 42.5, \"prompt_per_second\": 100.0, \"cache_n\": 50, \"prompt_n\": 100, \"draft_n\": 0, \"draft_n_accepted\": 0}}",
+            Some("user-model"),
+            &mut out,
+            Some(&sender),
+        );
+
+        // Verify the SSE output was rewritten
+        assert!(out.contains("user-model"), "output: {}", out);
+        // Verify inference stats were extracted and sent
+        assert!(rx.has_changed().is_ok());
+        let stats = rx.borrow_and_update();
+        assert!(stats.is_some());
+        let stats = stats.as_ref().unwrap();
+        assert_eq!(stats.tps, Some(42.5f32));
+        assert_eq!(stats.cache_hit_pct, Some(50.0f32)); // 50/100 * 100
     }
 
     // ── Integration: header skip list consistency ─────────────────────────

@@ -97,6 +97,44 @@ pub struct ModelStatus {
     pub hf_base_model: Option<String>,
 }
 
+/// Frontend data structure for inference statistics emitted via SSE.
+///
+/// Stored in a separate history buffer (not mixed into `MetricSample`) so
+/// sparklines plot actual observation points, not repeated poll-driven values.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InferenceStats {
+    #[serde(default)]
+    pub tps: Option<f32>,
+    #[serde(default)]
+    pub prompt_tps: Option<f32>,
+    #[serde(default)]
+    pub cache_hit_pct: Option<f32>,
+    #[serde(default)]
+    pub spec_accept_pct: Option<f32>,
+    #[serde(default)]
+    pub spec_decoding_active: bool,
+    #[serde(default)]
+    pub last_updated_ms: i64,
+}
+
+/// Returns true if the stats are considered stale (>30s old)
+pub fn is_stale(last_updated_ms: i64) -> bool {
+    let now = Date::now() as i64;
+    (now - last_updated_ms) > 30_000
+}
+
+/// Format staleness as "Xs ago" / "Xm ago"
+pub fn format_stale_time(last_updated_ms: i64) -> String {
+    let now = Date::now() as i64;
+    let diff_secs = ((now - last_updated_ms) / 1_000).max(0); // clamp to 0
+    if diff_secs < 60 {
+        format!("{}s ago", diff_secs)
+    } else {
+        format!("{}m ago", diff_secs / 60)
+    }
+}
+
 /// Format a number with comma separators (e.g. `8460` → `"8,460"`).
 pub fn format_number(n: u64) -> String {
     let s = n.to_string();

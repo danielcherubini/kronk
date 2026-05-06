@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -190,6 +191,27 @@ pub struct ProxyMetrics {
     pub models_unloaded: std::sync::atomic::AtomicU64,
 }
 
+/// Latest inference timing stats extracted from llama_cpp response `timings` object.
+///
+/// Stored behind a `watch` channel in `ProxyState`. Updated on each non-streaming
+/// response that includes a `timings` field. Fields are `Option<f32>` — `None` when
+/// the value cannot be computed (e.g. division by zero) or has not been observed yet.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct LatestInferenceStats {
+    /// Token generation speed (predicted_per_second from timings)
+    pub tps: Option<f32>,
+    /// Prompt processing speed in tokens per second (prompt_per_second from timings)
+    pub prompt_tps: Option<f32>,
+    /// Cache hit rate percentage (cache_n / prompt_n * 100), None if prompt_n == 0
+    pub cache_hit_pct: Option<f32>,
+    /// Speculative decoding acceptance rate (draft_n_accepted / draft_n * 100), None if draft_n == 0
+    pub spec_accept_pct: Option<f32>,
+    /// True if draft_n > 0 has ever been observed (spec decoding is active on this backend)
+    pub spec_decoding_active: bool,
+    /// Unix ms timestamp of the last update
+    pub last_updated_ms: i64,
+}
+
 /// Manages proxy state and model lifecycle.
 #[derive(Clone)]
 pub struct ProxyState {
@@ -214,6 +236,9 @@ pub struct ProxyState {
     pub config_write_semaphore: Arc<tokio::sync::Semaphore>,
     /// Backend log stream manager — broadcasts backend stdout/stderr via SSE.
     pub backend_logs: crate::backends::log_stream::BackendLogManager,
+    /// Watch channel for latest inference stats. Single-producer (intercept handler),
+    /// multi-consumer (metrics task). `None` until first stats are received.
+    pub inference_stats: tokio::sync::watch::Sender<Option<LatestInferenceStats>>,
 }
 
 impl ProxyState {
@@ -256,5 +281,134 @@ impl ProxyState {
         // Clear in-flight downloads
         let mut in_flight = self.in_flight_downloads.lock().await;
         in_flight.clear();
+
+        // Clear inference stats
+        let _ = self.inference_stats.send_replace(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_latest_inference_stats_default() {
+        let stats = LatestInferenceStats::default();
+        assert!(stats.tps.is_none());
+        assert!(stats.prompt_tps.is_none());
+        assert!(stats.cache_hit_pct.is_none());
+        assert!(stats.spec_accept_pct.is_none());
+        assert!(!stats.spec_decoding_active);
+        assert_eq!(stats.last_updated_ms, 0);
+    }
+
+    #[test]
+    fn test_latest_inference_stats_clone_copy() {
+        let stats = LatestInferenceStats {
+            tps: Some(50.0),
+            prompt_tps: Some(200.0),
+            cache_hit_pct: Some(85.5),
+            spec_accept_pct: Some(90.0),
+            spec_decoding_active: true,
+            last_updated_ms: 1234567890,
+        };
+        // Test Copy
+        let stats2: LatestInferenceStats = stats;
+        assert_eq!(stats2.tps, Some(50.0));
+        assert!(stats2.spec_decoding_active);
+        // Original is still usable after copy
+        assert_eq!(stats.tps, Some(50.0));
+        // Test Clone
+        let stats3 = stats.clone();
+        assert_eq!(stats3.prompt_tps, Some(200.0));
+    }
+
+    #[test]
+    fn test_latest_inference_stats_serialization() {
+        let stats = LatestInferenceStats {
+            tps: Some(50.0),
+            prompt_tps: Some(200.0),
+            cache_hit_pct: Some(85.5),
+            spec_accept_pct: Some(90.0),
+            spec_decoding_active: true,
+            last_updated_ms: 1700000000000,
+        };
+
+        let json = serde_json::to_string(&stats).expect("serialization failed");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("deserialization failed");
+
+        // All 6 fields must be present
+        assert!(value.get("tps").is_some(), "missing field: tps");
+        assert!(
+            value.get("prompt_tps").is_some(),
+            "missing field: prompt_tps"
+        );
+        assert!(
+            value.get("cache_hit_pct").is_some(),
+            "missing field: cache_hit_pct"
+        );
+        assert!(
+            value.get("spec_accept_pct").is_some(),
+            "missing field: spec_accept_pct"
+        );
+        assert!(
+            value.get("spec_decoding_active").is_some(),
+            "missing field: spec_decoding_active"
+        );
+        assert!(
+            value.get("last_updated_ms").is_some(),
+            "missing field: last_updated_ms"
+        );
+
+        // Correct types: f32 -> number, bool -> bool, i64 -> number
+        assert_eq!(value["tps"], serde_json::json!(50.0));
+        assert_eq!(value["prompt_tps"], serde_json::json!(200.0));
+        assert_eq!(value["cache_hit_pct"], serde_json::json!(85.5));
+        assert_eq!(value["spec_accept_pct"], serde_json::json!(90.0));
+        assert_eq!(value["spec_decoding_active"], serde_json::json!(true));
+        assert_eq!(
+            value["last_updated_ms"],
+            serde_json::json!(1700000000000_i64)
+        );
+
+        // Test with None values (not yet observed)
+        let empty = LatestInferenceStats::default();
+        let json_empty = serde_json::to_string(&empty).expect("serialization failed");
+        let value_empty: serde_json::Value =
+            serde_json::from_str(&json_empty).expect("deserialization failed");
+        assert!(value_empty["tps"].is_null());
+        assert!(value_empty["prompt_tps"].is_null());
+        assert!(value_empty["cache_hit_pct"].is_null());
+        assert!(value_empty["spec_accept_pct"].is_null());
+        assert_eq!(
+            value_empty["spec_decoding_active"],
+            serde_json::json!(false)
+        );
+        assert_eq!(value_empty["last_updated_ms"], serde_json::json!(0_i64));
+    }
+
+    #[test]
+    fn test_inference_stats_watch_round_trip() {
+        let (tx, mut rx) = tokio::sync::watch::channel::<Option<LatestInferenceStats>>(None);
+        // Initial value is None
+        assert!(rx.borrow_and_update().is_none());
+        // Send some stats
+        let stats = Some(LatestInferenceStats {
+            tps: Some(42.0),
+            prompt_tps: Some(100.0),
+            cache_hit_pct: Some(75.0),
+            spec_accept_pct: Some(80.0),
+            spec_decoding_active: true,
+            last_updated_ms: 999,
+        });
+        tx.send_replace(stats);
+        // Subscribe and verify
+        let received = rx.borrow_and_update();
+        assert!(received.is_some());
+        let received = received.as_ref().unwrap();
+        assert_eq!(received.tps, Some(42.0));
+        assert_eq!(received.cache_hit_pct, Some(75.0));
+        assert!(received.spec_decoding_active);
+        assert_eq!(received.last_updated_ms, 999);
     }
 }

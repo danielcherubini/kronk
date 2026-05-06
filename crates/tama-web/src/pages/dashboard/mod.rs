@@ -16,6 +16,9 @@ pub use metrics::*;
 #[cfg(test)]
 mod tests;
 
+/// Maximum number of inference stats entries to keep in the history buffer.
+const INFERENCE_MAX_LEN: usize = 450;
+
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let history = RwSignal::new(Vec::<MetricSample>::new());
@@ -28,6 +31,7 @@ pub fn Dashboard() -> impl IntoView {
     // Set to true when the SSE connection errors, cleared on the next sample event.
     // Used to detect reconnection after a disconnect and trigger backfill.
     let reconnect_pending = RwSignal::new(false);
+    let inference_history = RwSignal::new(Vec::<InferenceStats>::new());
 
     // Fetch historical metrics on mount, before connecting to SSE.
     // This populates the chart with up to 450 recent data points (15 minutes at 2s intervals).
@@ -106,6 +110,28 @@ pub fn Dashboard() -> impl IntoView {
             });
         let _ = es.add_event_listener_with_callback("lagged", on_lagged.as_ref().unchecked_ref());
         on_lagged.forget();
+
+        // Handler for "inference" events — inference statistics from the backend.
+        let on_inference =
+            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
+                if let Some(data_str) = evt.data().as_string() {
+                    if data_str == "null" {
+                        inference_history.set(Vec::new());
+                        return;
+                    }
+                    if let Ok(stats) = serde_json::from_str::<InferenceStats>(&data_str) {
+                        inference_history.update(|buf| {
+                            buf.push(stats);
+                            if buf.len() > INFERENCE_MAX_LEN {
+                                buf.drain(..buf.len() - INFERENCE_MAX_LEN);
+                            }
+                        });
+                    }
+                }
+            });
+        let _ =
+            es.add_event_listener_with_callback("inference", on_inference.as_ref().unchecked_ref());
+        on_inference.forget();
 
         // Error handler — flag for the empty-history retry UI and track disconnect for backfill.
         let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
@@ -359,6 +385,129 @@ pub fn Dashboard() -> impl IntoView {
                         view! { <div></div> }.into_any()
                     }}
                 </div>
+
+                // Inference stats cards — always visible, show "—" until data arrives
+                {move || {
+                    let buf = inference_history.get();
+                    let has_data = !buf.is_empty();
+                    let latest = buf.last().cloned().unwrap_or_default();
+                    let stale = has_data && is_stale(latest.last_updated_ms);
+                    let timestamps: Vec<i64> = buf.iter().map(|s| s.last_updated_ms).collect();
+
+                    // Extract sparkline data (use 0 for None values in the chart, but show "—" in the label)
+                    let tps_data: Vec<f32> = buf.iter().map(|s| s.tps.unwrap_or(0.0)).collect();
+                    let prompt_tps_data: Vec<f32> = buf.iter().map(|s| s.prompt_tps.unwrap_or(0.0)).collect();
+                    let cache_data: Vec<f32> = buf.iter().map(|s| s.cache_hit_pct.unwrap_or(0.0)).collect();
+                    let spec_data: Vec<f32> = buf.iter().map(|s| s.spec_accept_pct.unwrap_or(0.0)).collect();
+
+                    // Determine max values for sparkline scaling
+                    let tps_max = tps_data.iter().cloned().fold(1.0f32, f32::max);
+                    let prompt_tps_max = prompt_tps_data.iter().cloned().fold(1.0f32, f32::max);
+
+                    view! {
+                        <div class="grid-stats grid-stats--inference">
+                            // Processing Speed card
+                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                                <div class="card-header">"Processing Speed"</div>
+                                {match latest.prompt_tps {
+                                    Some(v) => view! {
+                                        <div class="card-value">{format!("{:.1} tok/s", v)}</div>
+                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="card-value-empty">"—"</div>
+                                    }.into_any(),
+                                }}
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=prompt_tps_data
+                                        max_value=prompt_tps_max
+                                        color="var(--accent-orange)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps.clone()
+                                        unit_label="tok/s".to_string()
+                                        y_refs=vec![]
+                                    />
+                                </div>
+                            </div>
+
+                            // Gen Speed card
+                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                                <div class="card-header">"Gen Speed"</div>
+                                {match latest.tps {
+                                    Some(v) => view! {
+                                        <div class="card-value">{format!("{:.1} tok/s", v)}</div>
+                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="card-value-empty">"—"</div>
+                                    }.into_any(),
+                                }}
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=tps_data
+                                        max_value=tps_max
+                                        color="var(--accent-cyan)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps.clone()
+                                        unit_label="tok/s".to_string()
+                                        y_refs=vec![]
+                                    />
+                                </div>
+                            </div>
+
+                            // Cache Hits card
+                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                                <div class="card-header">"Cache Hits"</div>
+                                {match latest.cache_hit_pct {
+                                    Some(v) => view! {
+                                        <div class="card-value">{format!("{:.1}%", v)}</div>
+                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="card-value-empty">"—"</div>
+                                    }.into_any(),
+                                }}
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=cache_data
+                                        max_value=100.0
+                                        color="var(--accent-green)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps.clone()
+                                        unit_label="%".to_string()
+                                        y_refs=vec![0.0, 100.0]
+                                    />
+                                </div>
+                            </div>
+
+                            // Spec Accept card
+                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                                <div class="card-header">"Spec Accept"</div>
+                                {match latest.spec_accept_pct {
+                                    Some(v) => view! {
+                                        <div class="card-value">{format!("{:.1}%", v)}</div>
+                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="card-value-empty">"—"</div>
+                                    }.into_any(),
+                                }}
+                                <div class="sparkline-container">
+                                    <SparklineChart
+                                        data=spec_data
+                                        max_value=100.0
+                                        color="var(--accent-pink)".to_string()
+                                        height=60.0
+                                        timestamps=timestamps
+                                        unit_label="%".to_string()
+                                        y_refs=vec![0.0, 100.0]
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                }}
 
                 // Active Models section
                 <section class="dashboard-models">

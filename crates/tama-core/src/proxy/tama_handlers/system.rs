@@ -161,21 +161,55 @@ pub async fn handle_system_metrics_stream(
     State(state): State<Arc<ProxyState>>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let mut rx = state.metrics_tx.subscribe();
+    let mut inference_rx = state.inference_stats.subscribe();
     let stream = async_stream::stream! {
+        let mut inference_active = true;
         loop {
-            match rx.recv().await {
-                Ok(sample) => {
-                    match serde_json::to_string(&sample) {
-                        Ok(data) => yield Ok(Event::default().event("sample").data(data)),
-                        Err(e) => tracing::warn!("failed to serialize MetricSample: {}", e),
+            tokio::select! {
+                biased;
+                // System metrics samples (broadcast channel) — polled first, gets priority
+                result = rx.recv() => {
+                    match result {
+                        Ok(sample) => {
+                            match serde_json::to_string(&sample) {
+                                Ok(data) => yield Ok(Event::default().event("sample").data(data)),
+                                Err(e) => tracing::warn!("failed to serialize MetricSample: {}", e),
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            let data = format!("{{\"missed\":{}}}", n);
+                            yield Ok(Event::default().event("lagged").data(data));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    let data = format!("{{\"missed\":{}}}", n);
-                    yield Ok(Event::default().event("lagged").data(data));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break;
+                // Inference stats updates (watch channel)
+                // `if inference_active` guard: once the watch channel closes, stop polling it
+                // but keep the broadcast channel alive for system metrics
+                result = inference_rx.changed(), if inference_active => {
+                    match result {
+                        Ok(()) => {
+                            // changed() resolved — read the latest value
+                            let value = *inference_rx.borrow_and_update();
+                            match value {
+                                Some(stats) => {
+                                    match serde_json::to_string(&stats) {
+                                        Ok(data) => yield Ok(Event::default().event("inference").data(data)),
+                                        Err(e) => tracing::warn!("failed to serialize LatestInferenceStats: {}", e),
+                                    }
+                                }
+                                None => {
+                                    // Stats cleared (e.g. shutdown) — emit empty
+                                    yield Ok(Event::default().event("inference").data("null"));
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // Watch channel closed — stop emitting inference events
+                            // System metrics continue via the broadcast channel
+                            inference_active = false;
+                        }
+                    }
                 }
             }
         }

@@ -42,6 +42,7 @@ impl ProxyState {
             download_queue: download_queue.clone(),
             config_write_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
             backend_logs: crate::backends::log_stream::BackendLogManager::default(),
+            inference_stats: tokio::sync::watch::channel(None).0,
         };
 
         // Spawn the queue processor background task if download queue is configured.
