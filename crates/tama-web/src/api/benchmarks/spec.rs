@@ -220,10 +220,10 @@ pub async fn run_spec_benchmark_inner(
         }
     }
 
-    let sink = SpecBenchProgressSink {
+    let sink = Arc::new(SpecBenchProgressSink {
         job: job_clone.clone(),
         jobs: jobs_clone.clone(),
-    };
+    });
 
     // Resolve backend path for llama-server discovery
     let target_backend = req
@@ -259,7 +259,7 @@ pub async fn run_spec_benchmark_inner(
     tracing::info!(job_id = %job.id, llama_server = %server_binary.display(), "Using llama-server binary");
 
     // Run spec benchmark
-    let result = llama_cli_spec::run_spec_bench(&spec_config, Some(server_binary), &sink).await?;
+    let result = llama_cli_spec::run_spec_bench(&spec_config, Some(server_binary), sink.clone()).await?;
 
     // Store results in database
     let db_dir = tama_core::config::Config::config_dir()?;

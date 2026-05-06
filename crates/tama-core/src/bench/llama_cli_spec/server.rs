@@ -252,12 +252,16 @@ impl Drop for ServerHandle {
 ///
 /// Waits up to `timeout_secs` for the model to load. Returns a `ServerHandle`
 /// that must be kept alive for the duration of benchmarking.
-pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<ServerHandle> {
+pub async fn spawn_server(
+    args: &ServerArgs,
+    timeout_secs: u64,
+    progress: Arc<dyn crate::backends::ProgressSink>,
+) -> Result<ServerHandle> {
     let arg_vec = args.to_args();
 
     let mut child = Command::new(&args.binary)
         .args(&arg_vec)
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -265,14 +269,31 @@ pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<Server
 
     let stderr_lines = Arc::new(Mutex::new(Vec::new()));
 
+    // Forward stdout to progress sink.
+    let stdout = child.stdout.take();
+    if let Some(stdout) = stdout {
+        let prog = progress.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                prog.log(&line);
+            }
+        });
+    }
+
     // Extract stderr before moving child into ServerHandle.
     let stderr = child.stderr.take();
     if let Some(stderr) = stderr {
         let lines = stderr_lines.clone();
+        let prog = progress.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
             let mut reader = tokio::io::BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
+                // Also forward stderr to progress so the user can see
+                // startup errors (e.g. GPU init failures, missing libs).
+                prog.log(&line);
                 lines.lock().await.push(line);
             }
         });

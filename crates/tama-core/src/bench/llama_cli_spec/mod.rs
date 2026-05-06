@@ -18,6 +18,8 @@ mod server;
 
 pub use discovery::find_llama_server;
 
+use std::sync::Arc;
+
 use crate::backends::ProgressSink;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -341,7 +343,7 @@ async fn execute_server_runs(
     handle: &server::ServerHandle,
     sweep_cfg: &SweepConfig,
     bench_cfg: &SpecBenchConfig,
-    progress: &dyn ProgressSink,
+    progress: Arc<dyn ProgressSink>,
 ) -> SpecEntry {
     let label = format_config_label(sweep_cfg);
     let prompt = crate::bench::build_prompt(512);
@@ -405,7 +407,7 @@ async fn run_single_config(
     binary: &Path,
     cfg: &SweepConfig,
     bench_cfg: &SpecBenchConfig,
-    progress: &dyn ProgressSink,
+    progress: Arc<dyn ProgressSink>,
 ) -> SpecEntry {
     let label = format_config_label(cfg);
 
@@ -458,7 +460,7 @@ async fn run_single_config(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    let handle = match server::spawn_server(&server_args, timeout_secs).await {
+    let handle = match server::spawn_server(&server_args, timeout_secs, progress.clone()).await {
         Ok(h) => h,
         Err(e) => {
             progress.log(&format!(
@@ -484,7 +486,7 @@ async fn run_single_config(
 
     progress.log(&format!("llama-server ready on port {} ({})", port, label));
 
-    execute_server_runs(&handle, cfg, bench_cfg, progress).await
+    execute_server_runs(&handle, cfg, bench_cfg, progress.clone()).await
 }
 
 /// Run a speculative decoding benchmark sweep using llama-server.
@@ -503,7 +505,7 @@ async fn run_single_config(
 pub async fn run_spec_bench(
     config: &SpecBenchConfig,
     binary_override: Option<PathBuf>,
-    progress: &dyn ProgressSink,
+    progress: Arc<dyn ProgressSink>,
 ) -> Result<SpecBenchResult> {
     // Step 1: Discover or use provided llama-server binary.
     let backend_dir = config
@@ -555,7 +557,7 @@ pub async fn run_spec_bench(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    let baseline_handle = server::spawn_server(&baseline_args, timeout_secs)
+    let baseline_handle = server::spawn_server(&baseline_args, timeout_secs, progress.clone())
         .await
         .with_context(|| "Failed to start baseline llama-server")?;
 
@@ -631,7 +633,7 @@ pub async fn run_spec_bench(
             continue;
         }
 
-        let mut entry = run_single_config(&binary, cfg, config, progress).await;
+        let mut entry = run_single_config(&binary, cfg, config, progress.clone()).await;
 
         // Brief pause between configs to let GPU memory be freed
         // before the next server starts loading the model.
