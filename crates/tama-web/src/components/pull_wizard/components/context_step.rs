@@ -3,11 +3,15 @@ use std::collections::{HashMap, HashSet};
 use crate::components::context_length_selector::ContextLengthSelector;
 use crate::components::pull_wizard::*;
 
+/// Default max context for pull wizard (256K) when hf_context_length is not yet known.
+const DEFAULT_PULL_MAX_CONTEXT: u32 = 262144;
+
 /// Dropdown + conditional custom input for selecting context length for a single file.
 #[component]
 fn ContextFileDropdown(
     filename: String,
     context_lengths: RwSignal<HashMap<String, u32>>,
+    max_context: u32,
 ) -> impl IntoView {
     let filename_val = filename.clone();
     let filename_change = filename.clone();
@@ -23,6 +27,7 @@ fn ContextFileDropdown(
                 });
             })
             reset_key=Signal::derive(move || "wizard-static".to_string())
+            max_context=Signal::stored(Some(max_context))
         />
     }
 }
@@ -32,6 +37,9 @@ pub fn ContextStep(
     selected_filenames: Signal<HashSet<String>>,
     available_quants: Signal<Vec<QuantEntry>>,
     context_lengths: RwSignal<HashMap<String, u32>>,
+    /// Max context length for the repo (from model card). None uses default 256K.
+    #[prop(into, optional)]
+    max_context: Option<u32>,
     on_next: Callback<()>,
     on_back: Callback<()>,
 ) -> impl IntoView {
@@ -68,6 +76,7 @@ pub fn ContextStep(
                                         <ContextFileDropdown
                                             filename=fname
                                             context_lengths
+                                            max_context= max_context.unwrap_or(DEFAULT_PULL_MAX_CONTEXT)
                                         />
                                     </td>
                                 </tr>

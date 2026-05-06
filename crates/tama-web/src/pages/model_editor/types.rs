@@ -75,6 +75,8 @@ pub struct ModelDetail {
     pub cache_type_k: Option<String>,
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    #[serde(default)]
+    pub hf_context_length: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     pub backends: Vec<BackendOption>,
     #[serde(default)]
@@ -121,6 +123,8 @@ pub struct ModelForm {
     pub cache_type_k: Option<String>,
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    #[serde(default)]
+    pub hf_context_length: Option<u32>,
     pub quants: BTreeMap<String, QuantInfo>,
     #[serde(default)]
     pub modalities: Option<ModelModalities>,

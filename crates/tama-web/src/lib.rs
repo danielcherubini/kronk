@@ -41,7 +41,6 @@ fn log_warn(msg: &str) {
 }
 
 mod components;
-pub mod constants;
 mod pages;
 pub mod utils;
 

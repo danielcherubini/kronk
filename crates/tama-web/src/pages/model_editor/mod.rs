@@ -187,6 +187,7 @@ pub fn ModelEditor() -> impl IntoView {
                     gpu_layers: d.gpu_layers,
                     cache_type_k: d.cache_type_k,
                     cache_type_v: d.cache_type_v,
+                    hf_context_length: d.hf_context_length,
                     quants: d.quants.clone(),
                     modalities,
                 }));
@@ -360,6 +361,7 @@ pub fn ModelEditor() -> impl IntoView {
                 gpu_layers: initial_form.gpu_layers,
                 cache_type_k: initial_form.cache_type_k,
                 cache_type_v: initial_form.cache_type_v,
+                hf_context_length: initial_form.hf_context_length,
                 quants: initial_form.quants.clone(),
                 modalities: initial_form.modalities.clone(),
             };

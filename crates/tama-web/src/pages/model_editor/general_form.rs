@@ -235,6 +235,7 @@ pub fn ModelEditorGeneralForm(
                     });
                 })
                 reset_key=Signal::derive(move || form.get().map(|f| f.id.clone()).unwrap_or_default())
+                max_context=Signal::derive(move || form.get().and_then(|f| f.hf_context_length))
             />
 
             <label class="form-label" for="field-kv-quant-k">

@@ -1,7 +1,15 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::constants::CONTEXT_VALUES;
+/// Generate context length options in 16K increments from 16K up to `max`.
+fn generate_context_options(max: u32) -> Vec<u32> {
+    const MIN_CONTEXT: u32 = 16384; // 16K minimum
+    const STEP: u32 = 16384;        // 16K step
+    if max < MIN_CONTEXT {
+        return vec![MIN_CONTEXT];
+    }
+    (MIN_CONTEXT..=max).step_by(STEP as usize).collect()
+}
 
 #[component]
 pub fn ContextLengthSelector(
@@ -15,15 +23,28 @@ pub fn ContextLengthSelector(
     /// Optional CSS classes for layout.
     #[prop(into, optional)]
     class: Option<String>,
+    /// Maximum context length for the model. Options are generated as 16K steps up to this value.
+    #[prop(into, optional)]
+    max_context: Signal<Option<u32>>,
 ) -> impl IntoView {
     let is_custom = RwSignal::new(false);
 
+    // Generate options based on max_context — recreated whenever max_context changes.
+    let options = StoredValue::new(generate_context_options(262144)); // default 256K
+
+    Effect::new(move |_| {
+        let max = max_context.get();
+        let max_val = max.unwrap_or(262144);
+        options.set_value(generate_context_options(max_val));
+    });
+
     // Sync internal state with external value:
-    // If the value changes to something that is a known preset, reset is_custom to false.
-    // If the value is a custom number, set is_custom to true.
+    // If the value changes to something that is a generated preset, reset is_custom to false.
+    // If the value is not in the generated list, set is_custom to true.
     Effect::new(move |_| {
         let val = value.get();
-        is_custom.set(val.filter(|v| !CONTEXT_VALUES.contains(v)).is_some());
+        let opts = options.get_value();
+        is_custom.set(val.filter(|v| !opts.contains(v)).is_some());
     });
 
     // Reset internal state when the reset_key changes (e.g. switching models)
@@ -76,10 +97,13 @@ pub fn ContextLengthSelector(
                 }
             >
                 <option value="">"Default"</option>
-                {CONTEXT_VALUES.iter().map(|v| {
-                    let val_str = v.to_string();
-                    view! { <option value=val_str.clone()>{val_str.clone()}</option> }
-                }).collect::<Vec<_>>()}
+                {move || {
+                    let opts = options.get_value();
+                    opts.iter().map(|v| {
+                        let val_str = v.to_string();
+                        view! { <option value=val_str.clone()>{val_str.clone()}</option> }
+                    }).collect::<Vec<_>>()
+                }}
                 <option value="custom">"Custom..."</option>
             </select>
 

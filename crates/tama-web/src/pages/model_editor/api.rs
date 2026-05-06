@@ -34,6 +34,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             gpu_layers: None,
             cache_type_k: None,
             cache_type_v: None,
+            hf_context_length: None,
             quants: std::collections::BTreeMap::new(),
             backends: list.backends,
             mmproj: None,

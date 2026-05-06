@@ -170,6 +170,7 @@ fn model_entry_json(
         "gpu_layers": record.gpu_layers,
         "cache_type_k": record.cache_type_k,
         "cache_type_v": record.cache_type_v,
+        "hf_context_length": record.hf_context_length,
         "quants": quants_json,
         "modalities": m.modalities,
     });
