@@ -471,7 +471,7 @@ async fn install_binary(
         .ok_or_else(|| anyhow!("Could not determine binary filename"))?;
     let binary_dest = options.target_dir.join(binary_name);
 
-    // Copy binary
+    // Copy main binary
     std::fs::copy(&binary_src, &binary_dest)?;
 
     // Set executable permissions on Unix
@@ -512,6 +512,66 @@ async fn install_binary(
         }
     }
     copy_shared_libs(build_output, &options.target_dir);
+
+    // Copy all other executables (llama-cli, llama-bench, llama-quantize, etc.)
+    // so that other benchmarks and tools can find them in the same directory.
+    fn copy_executables(src: &std::path::Path, dest: &std::path::Path) {
+        if let Ok(entries) = std::fs::read_dir(src) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                        // Skip shared libraries (already copied above) and the main binary
+                        let is_shared = if cfg!(target_os = "windows") {
+                            name.ends_with(".dll")
+                        } else {
+                            name.contains(".so") || name.ends_with(".dylib")
+                        };
+                        if !is_shared && !name.contains("cmake") && !name.contains(".git") {
+                            // Check if it looks like an executable (no extension, or .exe)
+                            let is_executable = !name.contains('.')
+                                || name.ends_with(".exe")
+                                || name.starts_with("llama-")
+                                || name.starts_with("ggml-");
+                            if is_executable {
+                                let dest_path = dest.join(name);
+                                if !dest_path.exists() {
+                                    if let Err(e) = std::fs::copy(&entry_path, &dest_path) {
+                                        tracing::warn!("Failed to copy executable {}: {}", name, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if entry_path.is_dir() {
+                    copy_executables(&entry_path, dest);
+                }
+            }
+        }
+    }
+    copy_executables(build_output, &options.target_dir);
+
+    // Set executable permissions on all copied executables (Unix only).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(entries) = std::fs::read_dir(&options.target_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_file() {
+                    if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                        let is_shared = name.contains(".so") || name.ends_with(".dylib");
+                        if !is_shared && !name.contains('.') {
+                            if let Ok(mut perms) = std::fs::metadata(&entry_path).map(|m| m.permissions()) {
+                                perms.set_mode(0o755);
+                                let _ = std::fs::set_permissions(&entry_path, perms);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     emit(
         progress,

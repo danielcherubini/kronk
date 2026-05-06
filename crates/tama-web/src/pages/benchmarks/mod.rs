@@ -239,7 +239,7 @@ pub fn Benchmarks() -> impl IntoView {
                         let backend_list: Vec<(String, String)> = backends_arr
                             .iter()
                             .filter_map(|b| {
-                                let name = b.get("name")?.as_str()?.to_string();
+                                let name = b.get("type")?.as_str()?.to_string();
                                 let display = b
                                     .get("display_name")
                                     .and_then(|v| v.as_str())
