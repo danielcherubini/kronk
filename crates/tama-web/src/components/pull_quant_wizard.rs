@@ -477,6 +477,7 @@ fn spawn_sse_streams(
                         };
 
                         // Inner event processing loop
+                        let mut job_done = false;
                         loop {
                             if cancel.get_untracked() {
                                 break;
@@ -516,7 +517,8 @@ fn spawn_sse_streams(
                                             }
                                         });
                                     }
-                                    // Done event received — exit inner loop
+                                    // Done event received — mark job as complete
+                                    job_done = true;
                                     break;
                                 }
                                 _ => {
@@ -524,6 +526,11 @@ fn spawn_sse_streams(
                                     break;
                                 }
                             }
+                        }
+                        // If the job received a "done" event, stop reconnecting.
+                        // Otherwise (stream ended unexpectedly), outer loop reconnects.
+                        if job_done {
+                            break;
                         }
                     }
                     Err(e) => {
