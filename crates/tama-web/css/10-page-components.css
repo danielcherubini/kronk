@@ -124,3 +124,73 @@
 }
 /* Specific styles for progress bar indeterminate animation are defined in section 9 */
 
+/* 17. Activity Panel */
+.activity-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.activity-panel__title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.activity-panel__title {
+  font-weight: 600;
+}
+
+.activity-panel__status {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.activity-panel__close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.activity-panel__close:hover {
+  color: var(--text-primary);
+}
+
+.activity-panel__body {
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  flex: 1;
+}
+
+.activity-panel__error {
+  color: var(--accent-red);
+}
+
+.activity-panel__connecting {
+  color: var(--text-secondary);
+}
+
+.activity-panel__logs {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+

@@ -173,11 +173,11 @@ mod wasm_impl {
                     let all_lines = lines.get();
                     if all_lines.is_empty() {
                         view! {
-                            <div style="color:#94a3b8;">"Connecting..."</div>
+                            <div class="activity-panel__connecting">"Connecting..."</div>
                         }.into_any()
                     } else {
                         view! {
-                            <pre style="margin:0;white-space:pre-wrap;word-break:break-all;">
+                            <pre class="activity-panel__logs">
                                 {all_lines.join("\n")}
                             </pre>
                         }.into_any()

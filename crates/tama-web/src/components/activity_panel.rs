@@ -32,15 +32,11 @@ pub fn ActivityPanel(
     };
 
     view! {
-        <div
-            style="margin-top:1rem;border:1px solid var(--border,#ccc);border-radius:6px;background:#0f172a;color:#e2e8f0;font-family:monospace;font-size:0.75rem;max-height:300px;display:flex;flex-direction:column;"
-        >
-            <div
-                style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.75rem;background:#1e293b;border-bottom:1px solid #334155;"
-            >
-                <div style="display:flex;align-items:center;gap:0.5rem;">
-                    <span style="font-weight:600;">{title}</span>
-                    <span style="font-size:0.75rem;color:#94a3b8;">
+        <div class="activity-panel">
+            <div class="activity-panel__header">
+                <div class="activity-panel__title-group">
+                    <span class="activity-panel__title">{title}</span>
+                    <span class="activity-panel__status">
                         {move || {
                             let s = status.get();
                             match s.as_str() {
@@ -57,7 +53,7 @@ pub fn ActivityPanel(
                         view! {
                             <button
                                 type="button"
-                                style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:1rem;"
+                                class="activity-panel__close"
                                 on:click=on_close_handler
                             >
                                 "×"
@@ -70,10 +66,10 @@ pub fn ActivityPanel(
                 }}
             </div>
 
-            <div style="overflow-y:auto;padding:0.5rem 0.75rem;flex:1;">
+            <div class="activity-panel__body">
                 {move || {
                     connection_error.get().map(|err| {
-                        view! { <div style="color:#ef4444;">{err}</div> }.into_any()
+                        view! { <div class="activity-panel__error">{err}</div> }.into_any()
                     })
                 }}
                 {children()}
