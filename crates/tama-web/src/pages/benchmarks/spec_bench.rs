@@ -210,32 +210,32 @@ pub fn SpecBench() -> impl IntoView {
             {
                 extract_and_store_csrf_token(&resp);
                 if let Ok(root) = resp.json::<serde_json::Value>().await {
-                    if let Some(backends_arr) = root.get("backends").and_then(|v| v.as_array()) {
-                        let backend_list: Vec<(String, String)> = backends_arr
-                            .iter()
-                            .filter_map(|b| {
-                                let name = b.get("name")?.as_str()?.to_string();
-                                let label = b
-                                    .get("label")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&name)
-                                    .to_string();
-                                let variant = b
-                                    .get("variant")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                // Only include backends that have a variant (i.e. installed)
+                    // /v1/backends returns { backends: [BackendCardDto], custom: [BackendCardDto] }
+                    // BackendCardDto has: type, display_name, gpu_variant, installed
+                    let mut backend_list: Vec<(String, String)> = Vec::new();
+                    for arr_key in ["backends", "custom"] {
+                        if let Some(arr) = root.get(arr_key).and_then(|v| v.as_array()) {
+                            for b in arr {
+                                let installed = b.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                if !installed {
+                                    continue;
+                                }
+                                let name = b.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let display = b.get("display_name").and_then(|v| v.as_str()).unwrap_or(&name).to_string();
+                                let variant = b.get("gpu_variant").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 if !variant.is_empty() {
                                     let value = format!("{}:{}", name, variant);
-                                    Some((value, label))
-                                } else {
-                                    None
+                                    let label = if variant == "cpu" {
+                                        display
+                                    } else {
+                                        format!("{} ({})", display, variant)
+                                    };
+                                    backend_list.push((value, label));
                                 }
-                            })
-                            .collect();
-                        available_backends.update(|list| *list = backend_list);
+                            }
+                        }
                     }
+                    available_backends.update(|list| *list = backend_list);
                 }
             }
         });
