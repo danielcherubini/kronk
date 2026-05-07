@@ -493,15 +493,16 @@ impl Config {
         // Check if a specific version is pinned in config
         if let Some(pinned_version) = self.backends.get(name).and_then(|b| b.version.as_deref()) {
             // Try the specified variant first
-            if let Some(record) =
-                crate::db::queries::get_backend_by_version(conn, name, &gpu_variant, pinned_version)?
-            {
+            if let Some(record) = crate::db::queries::get_backend_by_version(
+                conn,
+                name,
+                &gpu_variant,
+                pinned_version,
+            )? {
                 return Ok(std::path::PathBuf::from(record.path));
             }
             // If not found, try all variants of this backend for the pinned version
-            if let Ok(versions) =
-                crate::db::queries::list_backend_versions(conn, name, None)
-            {
+            if let Ok(versions) = crate::db::queries::list_backend_versions(conn, name, None) {
                 for v in &versions {
                     if v.version == pinned_version {
                         return Ok(std::path::PathBuf::from(&v.path));
@@ -510,7 +511,9 @@ impl Config {
             }
             anyhow::bail!(
                 "Backend '{}' version '{}' not found in DB. Run `tama backend install {}` first.",
-                name, pinned_version, name
+                name,
+                pinned_version,
+                name
             );
         }
 
@@ -524,13 +527,8 @@ impl Config {
         // for this backend. This handles the case where the user selects
         // a backend that's installed for a different GPU variant (e.g.,
         // "rocm" instead of "cpu").
-        if let Ok(versions) =
-            crate::db::queries::list_backend_versions(conn, name, None)
-        {
-            let active_versions: Vec<_> = versions
-                .iter()
-                .filter(|v| v.is_active)
-                .collect();
+        if let Ok(versions) = crate::db::queries::list_backend_versions(conn, name, None) {
+            let active_versions: Vec<_> = versions.iter().filter(|v| v.is_active).collect();
             if let Some(record) = active_versions.first() {
                 return Ok(std::path::PathBuf::from(&record.path));
             }

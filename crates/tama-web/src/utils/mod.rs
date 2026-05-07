@@ -1,5 +1,8 @@
 pub mod self_update;
 
+#[cfg(not(feature = "ssr"))]
+pub mod sse_stream;
+
 use gloo_net::http::{Request, RequestBuilder, Response};
 use leptos::prelude::{RwSignal, Signal};
 use wasm_bindgen::JsValue;

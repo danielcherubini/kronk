@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 /// Generate context length options in 16K increments from 16K up to `max`.
 fn generate_context_options(max: u32) -> Vec<u32> {
     const MIN_CONTEXT: u32 = 16384; // 16K minimum
-    const STEP: u32 = 16384;        // 16K step
+    const STEP: u32 = 16384; // 16K step
     if max < MIN_CONTEXT {
         return vec![MIN_CONTEXT];
     }
