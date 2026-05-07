@@ -162,12 +162,22 @@ mod wasm_impl {
             });
         });
 
+        let on_copy_handler = Callback::new(move |_| {
+            let text = lines.get().join("\n");
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(navigator) = web_sys::window().map(|w| w.navigator()) {
+                    let _ = navigator.clipboard().write_text(&text).await;
+                }
+            });
+        });
+
         view! {
             <ActivityPanel
                 title="Build logs".to_string()
                 status=status
                 connection_error=connection_error
                 on_close=on_close
+                on_copy=Some(on_copy_handler)
             >
                 {move || {
                     let all_lines = lines.get();

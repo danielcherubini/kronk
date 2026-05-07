@@ -22,11 +22,19 @@ pub fn ActivityPanel(
     /// Called when user clicks the close button. If `None`, no close button is shown.
     #[prop(default = None)]
     on_close: Option<Callback<()>>,
+    /// Called when user clicks the copy button. If `None`, no copy button is shown.
+    #[prop(default = None)]
+    on_copy: Option<Callback<()>>,
     /// Child content rendered in the scrollable body when no error is present.
     children: Children,
 ) -> impl IntoView {
     let on_close_handler = move |_| {
         if let Some(cb) = &on_close {
+            cb.run(());
+        }
+    };
+    let on_copy_handler = move |_| {
+        if let Some(cb) = &on_copy {
             cb.run(());
         }
     };
@@ -48,22 +56,41 @@ pub fn ActivityPanel(
                         }}
                     </span>
                 </div>
-                {move || {
-                    if on_close.is_some() {
-                        view! {
-                            <button
-                                type="button"
-                                class="activity-panel__close"
-                                on:click=on_close_handler
-                            >
-                                "×"
-                            </button>
+                <div class="activity-panel__title-group">
+                    {move || {
+                        if on_copy.is_some() {
+                            view! {
+                                <button
+                                    type="button"
+                                    class="activity-panel__close"
+                                    title="Copy logs"
+                                    on:click=on_copy_handler
+                                >
+                                    "📋"
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! { <span/> }.into_any()
                         }
-                        .into_any()
-                    } else {
-                        view! { <span/> }.into_any()
-                    }
-                }}
+                    }}
+                    {move || {
+                        if on_close.is_some() {
+                            view! {
+                                <button
+                                    type="button"
+                                    class="activity-panel__close"
+                                    on:click=on_close_handler
+                                >
+                                    "×"
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! { <span/> }.into_any()
+                        }
+                    }}
+                </div>
             </div>
 
             <div class="activity-panel__body">
