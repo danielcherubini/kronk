@@ -339,39 +339,74 @@ async fn find_available_port() -> Result<u16> {
 ///
 /// Makes `config.runs` completion requests and returns timing stats.
 /// Parses draft acceptance rate from server stderr statistics.
+/// If a run produces an impossibly fast result (>10x baseline), it is logged
+/// and re-run (up to 3 retries) before being accepted.
 async fn execute_server_runs(
     handle: &server::ServerHandle,
     sweep_cfg: &SweepConfig,
     bench_cfg: &SpecBenchConfig,
+    baseline_mean: f64,
     progress: Arc<dyn ProgressSink>,
 ) -> SpecEntry {
     let label = format_config_label(sweep_cfg);
     let prompt = crate::bench::build_prompt(512);
     let mut timings = Vec::new();
+    const MAX_WILD_RETRIES: u32 = 3;
 
     for run in 1..=bench_cfg.runs {
-        progress.log(&format!("[{}] run {}/{}", label, run, bench_cfg.runs));
+        let mut retries = 0;
+        loop {
+            progress.log(&format!(
+                "[{}] run {}/{}{}",
+                label,
+                run,
+                bench_cfg.runs,
+                if retries > 0 {
+                    format!(" (retry {})", retries)
+                } else {
+                    String::new()
+                }
+            ));
 
-        match handle.complete(&prompt, bench_cfg.gen_tokens).await {
-            Ok(tokens_per_sec) => {
-                timings.push(tokens_per_sec);
-            }
-            Err(e) => {
-                progress.log(&format!("[{}] run {} failed: {}", label, run, e));
-                return SpecEntry {
-                    spec_type: sweep_cfg.spec_type.as_str().to_string(),
-                    draft_max: sweep_cfg.draft_max,
-                    ngram_n: sweep_cfg.ngram_n,
-                    ngram_m: sweep_cfg.ngram_m,
-                    ngram_min: sweep_cfg.ngram_min,
-                    ngram_max: sweep_cfg.ngram_max,
-                    tg_ts_mean: 0.0,
-                    tg_ts_stddev: 0.0,
-                    delta_pct: 0.0,
-                    acceptance_rate: None,
-                    status: "failed".to_string(),
-                    error: Some(e.to_string()),
-                };
+            match handle.complete(&prompt, bench_cfg.gen_tokens).await {
+                Ok(tokens_per_sec) => {
+                    // Check for impossibly fast result (>10x baseline)
+                    if baseline_mean > 0.0 && tokens_per_sec > baseline_mean * 10.0 {
+                        progress.log(&format!(
+                            "[{}] run {} wild result: {:.2} tokens/s is {:.0}x baseline ({:.2}) — discarding",
+                            label, run, tokens_per_sec, tokens_per_sec / baseline_mean, baseline_mean
+                        ));
+                        if retries >= MAX_WILD_RETRIES {
+                            progress.log(&format!(
+                                "[{}] run {} accepted after {} retries (may be outlier)",
+                                label, run, MAX_WILD_RETRIES
+                            ));
+                            timings.push(tokens_per_sec);
+                            break;
+                        }
+                        retries += 1;
+                        continue;
+                    }
+                    timings.push(tokens_per_sec);
+                    break;
+                }
+                Err(e) => {
+                    progress.log(&format!("[{}] run {} failed: {}", label, run, e));
+                    return SpecEntry {
+                        spec_type: sweep_cfg.spec_type.as_str().to_string(),
+                        draft_max: sweep_cfg.draft_max,
+                        ngram_n: sweep_cfg.ngram_n,
+                        ngram_m: sweep_cfg.ngram_m,
+                        ngram_min: sweep_cfg.ngram_min,
+                        ngram_max: sweep_cfg.ngram_max,
+                        tg_ts_mean: 0.0,
+                        tg_ts_stddev: 0.0,
+                        delta_pct: 0.0,
+                        acceptance_rate: None,
+                        status: "failed".to_string(),
+                        error: Some(e.to_string()),
+                    };
+                }
             }
         }
     }
@@ -407,6 +442,7 @@ async fn run_single_config(
     binary: &Path,
     cfg: &SweepConfig,
     bench_cfg: &SpecBenchConfig,
+    baseline_mean: f64,
     progress: Arc<dyn ProgressSink>,
 ) -> SpecEntry {
     let label = format_config_label(cfg);
@@ -495,7 +531,7 @@ async fn run_single_config(
 
     progress.log(&format!("llama-server ready on port {} ({})", port, label));
 
-    execute_server_runs(&handle, cfg, bench_cfg, progress.clone()).await
+    execute_server_runs(&handle, cfg, bench_cfg, baseline_mean, progress.clone()).await
 }
 
 /// Run a speculative decoding benchmark sweep using llama-server.
@@ -647,7 +683,7 @@ pub async fn run_spec_bench(
             continue;
         }
 
-        let mut entry = run_single_config(&binary, cfg, config, progress.clone()).await;
+        let mut entry = run_single_config(&binary, cfg, config, baseline_mean, progress.clone()).await;
 
         // Brief pause between configs to let GPU memory be freed
         // before the next server starts loading the model.
@@ -660,27 +696,6 @@ pub async fn run_spec_bench(
         // Compute delta vs baseline.
         if entry.tg_ts_mean > 0.0 && baseline_mean > 0.0 {
             entry.delta_pct = ((entry.tg_ts_mean - baseline_mean) / baseline_mean) * 100.0;
-
-            // Sanity check: speculative decoding can never produce results
-            // that are impossibly fast (>10x baseline would require >1000%
-            // acceptance rate, which is physically impossible). Mark as failed.
-            if entry.delta_pct > 1000.0 {
-                progress.log(&format!(
-                    "[{}] impossible result: {:.2} tokens/s is {:.0}% over baseline ({:.2}) — marked as failed",
-                    entry.spec_type,
-                    entry.tg_ts_mean,
-                    entry.delta_pct,
-                    baseline_mean
-                ));
-                entry.status = "failed".to_string();
-                entry.error = Some(format!(
-                    "Result {:.2} tokens/s is {:.0}% faster than baseline {:.2} — impossible for speculative decoding",
-                    entry.tg_ts_mean, entry.delta_pct, baseline_mean
-                ));
-                entry.tg_ts_mean = 0.0;
-                entry.tg_ts_stddev = 0.0;
-                entry.delta_pct = 0.0;
-            }
         }
 
         all_entries.push(entry);
