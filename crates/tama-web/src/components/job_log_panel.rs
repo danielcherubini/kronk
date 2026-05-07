@@ -91,6 +91,7 @@ mod wasm_impl {
                     };
 
                     // Inner event processing loop - same select pattern as current code
+                    let mut done = false;
                     loop {
                         if cancelled.get_untracked() {
                             break;
@@ -127,7 +128,8 @@ mod wasm_impl {
                                                 cb.run(payload.status.clone());
                                             }
                                             if payload.status != "running" {
-                                                break; // terminal status - exit inner loop
+                                                done = true;
+                                                break; // terminal status — exit inner loop
                                             }
                                         }
                                     }
@@ -151,7 +153,11 @@ mod wasm_impl {
                             } // stream ended
                         }
                     }
-                    // Inner loop exited (terminal status or stream end) → outer loop reconnects
+                    // If job reached terminal status, stop reconnecting.
+                    // Otherwise (stream ended unexpectedly), outer loop reconnects.
+                    if done {
+                        break;
+                    }
                 }
             });
         });
