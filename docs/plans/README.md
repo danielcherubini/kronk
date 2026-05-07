@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 89
-- **Completed**: 84 ✅
-- **In Progress**: 4 🚧
-- **Remaining**: 1
+- **Total Plans**: 90
+- **Completed**: 89 ✅
+- **In Progress**: 1 🚧
+- **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -25,18 +25,25 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Completed Plans
 
-### In Progress
+### Recently Completed
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
-| [Startup Detection & Orphan Cleanup](2026-05-03-startup-detection-and-orphan-cleanup.md) | Fix startup detection (2-consecutive health checks) and orphaned child process cleanup on startup failure | 🚧 IN PROGRESS |
-| [Model Card Redesign](2026-05-03-model-card-redesign.md) | Shared ModelCard component with accent strip, badge pills, and icon actions; replaces ModelRow and inline rendering | 🚧 IN PROGRESS |
-| [HF Metadata for Models](2026-05-03-hf-metadata.md) | Add 9 HF metadata columns (format, base_model, pipeline_tag, params, architecture, context, layers, last_modified), populate from HF API + README parsing, display architecture on model cards, sort by display name | 🚧 IN PROGRESS |
-| [Backend GPU Variant Restructure](2026-05-04-backend-gpu-variant-restructure.md) | Restructure backend folders to type/variant/version, add gpu_variant to DB and queries, support multiple GPU variants per backend (e.g. llama_cpp vulkan + rocm simultaneously), legacy migration, WebUI updates | #85 `ce6c812`, `716e1dc`, `c36bcf6`, `7d7f29c`, `2b216e0` ✅ COMPLETED |
+| [Startup Detection & Orphan Cleanup](2026-05-03-startup-detection-and-orphan-cleanup.md) | Fix startup detection (2-consecutive health checks) and orphaned child process cleanup on startup failure | `17baa64` ✅ COMPLETED |
+| [Model Card Redesign](2026-05-03-model-card-redesign.md) | Shared ModelCard component with accent strip, badge pills, and icon actions; replaces ModelRow and inline rendering | `85c75a5` ✅ COMPLETED |
+| [HF Metadata for Models](2026-05-03-hf-metadata.md) | Add 9 HF metadata columns, populate from HF API + README parsing, display architecture on model cards | `925efde` ✅ COMPLETED |
+| [Backend GPU Variant Restructure](2026-05-04-backend-gpu-variant-restructure.md) | Restructure backend folders to type/variant/version, add gpu_variant to DB and queries, support multiple GPU variants per backend | #85 `18c5d18` ✅ COMPLETED |
 | [Split pull.rs Into Submodules](2026-05-06-split-pull-module.md) | Split 1,693-line models/pull.rs into 5 focused modules: api.rs, download.rs, metadata.rs, quant.rs | `bb6c8f5` ✅ COMPLETED |
-| [Split config/resolve/tests.rs](2026-05-06-split-resolve-tests.md) | Split 2,214-line test file into 4 topic-grouped modules: path_resolution, args_building, server_resolution, kv_cache_types | `bb6c8f5` ✅ COMPLETED |
+| [Split config/resolve/tests.rs](2026-05-06-split-resolve-tests.md) | Split 2,214-line test file into 4 topic-grouped modules | `bb6c8f5` ✅ COMPLETED |
+| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards | `4a88d10` ✅ COMPLETED |
+| [Shared Activity Panel + SSE Core](2026-05-06-shared-activity-panel-and-sse-core.md) | Extract duplicated SSE reconnection logic into shared utility, create generic ActivityPanel UI shell | `ca711f2` ✅ COMPLETED |
+| [Metrics Snapshot Stream](2026-05-07-metrics-snapshot-stream.md) | Replace delta SSE with full snapshot delivery every 2s, unify inference stats into same pipeline, eliminate frontend desync | 🚧 IN PROGRESS |
+
+### Draft
+
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
 | [Split Remaining Long Files](2026-05-06-split-remaining-files-spec.md) | Split args_building.rs (1,411), pull/download.rs (1,041), crud/mod.rs (1,007) | 📋 DRAFT |
-| [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards on the dashboard | `4a88d10` ✅ COMPLETED |
 
 ### Completed Plans
 
@@ -52,7 +59,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Rename Kronk to Tama](2026-04-06-rename-kronk-to-tama.md) | Complete rename across README, crates, routes, service names | `6d3a220`, `8281739`, `ab25016`, `bb8b734`, `d731eab` |
 | [Split Large Files (Wave 1 & 2)](2026-03-23-split-large-files.md) | Split CLI and core files into focused modules | #20 `9915565`, `57b1fe2`, `3ee005e` |
 | [Split Large Files (Wave 3)](2026-04-10-split-large-files.md) | Split remaining large files into domain submodules | #48 `b1e2f7d`, `8705ad0`, `7c6d50c` |
-| [Split Large Files (Wave 4)](2026-04-18-file-size-refactor.md) | Split remaining files >400 lines: model.rs, backends.rs, api.rs, gpu.rs, source.rs, backend.rs, model_editor/mod.rs | 🚧 IN PROGRESS |
+| [Split Large Files (Wave 4)](2026-04-18-file-size-refactor.md) | Split remaining files >400 lines: model.rs, backends.rs, api.rs, gpu.rs, source.rs, backend.rs, model_editor/mod.rs | `69b7889` ✅ COMPLETED |
 | [Split Server Handler](2026-03-28-split-server-handler.md) | Split handlers/server.rs and proxy/server.rs into submodules | `a9b3a84`, `92c110f` |
 | [Split Windows Platform](2026-03-28-split-windows-platform.md) | Split platform/windows.rs into install, service, firewall, permissions | `5d20835` |
 
@@ -121,7 +128,6 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [KV Cache Quantization Dropdowns](2026-04-27-kv-cache-quants.md) | Add K and V cache quantization dropdown selectors to model editor form, wired through all layers to llama-server CLI flags | #77 ✅ COMPLETED |
 | [Dashboard: Show All Models + Pull Model + Check All](2026-04-30-dashboard-all-models.md) | Extend dashboard to show inactive models section, add Pull Model and Check all for updates buttons, hide Models from sidebar | #82 `75543f0`, `e273fa2`, `5d1794d`, `fc860f0`, `eec050f`, `bd969b7`, `4500d30` ✅ COMPLETED
 | [Models Page Horizontal Layout](2026-04-30-models-page-horizontal-layout.md) | Replace models page vertical card grid with horizontal row layout matching dashboard | #81 `fe94160` ✅ COMPLETED |
-| [Shared Activity Panel + SSE Core](2026-05-06-shared-activity-panel-and-sse-core.md) | Extract duplicated SSE reconnection logic into shared utility, create generic ActivityPanel UI shell, refactor JobLogPanel + pull_quant_wizard | 🚧 IN PROGRESS |
 | [Benchmarks Page](2026-04-19-benchmarks.md) | Web UI benchmarking page with llama-bench integration, SSE progress streaming, preset configs (Quick/VRAM Sweet Spot/Thread Scaling), and benchmark history | `dd869b8`–`4be90f7` ✅ COMPLETED |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
 | [Tama Web Control Plane](2026-04-03-tama-web-control-plane.md) | Core UI — initial implementation | ✅ PARTIALLY COMPLETED |
