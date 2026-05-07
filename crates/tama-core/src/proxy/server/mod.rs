@@ -143,6 +143,10 @@ impl ProxyServer {
                         vram_used_mib: sample.vram.as_ref().map(|v| v.used_mib as i64),
                         vram_total_mib: sample.vram.as_ref().map(|v| v.total_mib as i64),
                         models_loaded: sample.models_loaded as i64,
+                        tps: None,
+                        prompt_tps: None,
+                        cache_hit_pct: None,
+                        spec_accept_pct: None,
                     };
                     let cutoff_ms = sample.ts_unix_ms - (retention_secs as i128 * 1000) as i64;
                     // Run the blocking SQLite call off the runtime.

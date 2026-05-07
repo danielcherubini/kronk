@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 21;
+pub const LATEST_VERSION: i32 = 22;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -521,6 +521,15 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 ALTER TABLE model_configs ADD COLUMN gpu_variant TEXT;
                 CREATE INDEX IF NOT EXISTS idx_model_configs_backend_variant
                     ON model_configs(backend, gpu_variant);
+            "#,
+        ),
+        (
+            22,
+            r#"
+                ALTER TABLE system_metrics_history ADD COLUMN tps REAL;
+                ALTER TABLE system_metrics_history ADD COLUMN prompt_tps REAL;
+                ALTER TABLE system_metrics_history ADD COLUMN cache_hit_pct REAL;
+                ALTER TABLE system_metrics_history ADD COLUMN spec_accept_pct REAL;
             "#,
         ),
     ];

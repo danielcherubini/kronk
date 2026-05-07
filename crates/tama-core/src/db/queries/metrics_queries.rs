@@ -14,6 +14,10 @@ pub struct SystemMetricsRow {
     pub vram_used_mib: Option<i64>,
     pub vram_total_mib: Option<i64>,
     pub models_loaded: i64,
+    pub tps: Option<f64>,
+    pub prompt_tps: Option<f64>,
+    pub cache_hit_pct: Option<f64>,
+    pub spec_accept_pct: Option<f64>,
 }
 
 /// Insert one sample and prune anything older than `cutoff_ms` in a single
@@ -28,8 +32,9 @@ pub fn insert_system_metric(
     tx.execute(
         "INSERT INTO system_metrics_history
              (ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
-              gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+              gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded,
+              tps, prompt_tps, cache_hit_pct, spec_accept_pct)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         (
             row.ts_unix_ms,
             row.cpu_usage_pct as f64,
@@ -39,6 +44,10 @@ pub fn insert_system_metric(
             row.vram_used_mib,
             row.vram_total_mib,
             row.models_loaded,
+            row.tps,
+            row.prompt_tps,
+            row.cache_hit_pct,
+            row.spec_accept_pct,
         ),
     )?;
     tx.execute(
@@ -53,7 +62,8 @@ pub fn insert_system_metric(
 pub fn get_system_metrics_since(conn: &Connection, since_ms: i64) -> Result<Vec<SystemMetricsRow>> {
     let mut stmt = conn.prepare(
         "SELECT ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
-                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded
+                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded,
+                 tps, prompt_tps, cache_hit_pct, spec_accept_pct
           FROM system_metrics_history
           WHERE ts_unix_ms > ?1
           ORDER BY ts_unix_ms ASC",
@@ -68,6 +78,10 @@ pub fn get_system_metrics_since(conn: &Connection, since_ms: i64) -> Result<Vec<
             vram_used_mib: row.get(5)?,
             vram_total_mib: row.get(6)?,
             models_loaded: row.get(7)?,
+            tps: row.get(8)?,
+            prompt_tps: row.get(9)?,
+            cache_hit_pct: row.get(10)?,
+            spec_accept_pct: row.get(11)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -81,7 +95,8 @@ pub fn get_recent_system_metrics(conn: &Connection, limit: i64) -> Result<Vec<Sy
     }
     let mut stmt = conn.prepare(
         "SELECT ts_unix_ms, cpu_usage_pct, ram_used_mib, ram_total_mib,
-                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded
+                 gpu_utilization_pct, vram_used_mib, vram_total_mib, models_loaded,
+                 tps, prompt_tps, cache_hit_pct, spec_accept_pct
           FROM system_metrics_history
           ORDER BY ts_unix_ms DESC
           LIMIT ?1",
@@ -96,6 +111,10 @@ pub fn get_recent_system_metrics(conn: &Connection, limit: i64) -> Result<Vec<Sy
             vram_used_mib: row.get(5)?,
             vram_total_mib: row.get(6)?,
             models_loaded: row.get(7)?,
+            tps: row.get(8)?,
+            prompt_tps: row.get(9)?,
+            cache_hit_pct: row.get(10)?,
+            spec_accept_pct: row.get(11)?,
         })
     })?;
     let mut rows: Vec<SystemMetricsRow> = rows.collect::<rusqlite::Result<_>>()?;
@@ -119,7 +138,11 @@ mod tests {
                 gpu_utilization_pct INTEGER,
                 vram_used_mib INTEGER,
                 vram_total_mib INTEGER,
-                models_loaded INTEGER NOT NULL
+                models_loaded INTEGER NOT NULL,
+                tps REAL,
+                prompt_tps REAL,
+                cache_hit_pct REAL,
+                spec_accept_pct REAL
             )",
         )
         .unwrap();
@@ -137,6 +160,10 @@ mod tests {
             vram_used_mib: Some(8192),
             vram_total_mib: Some(16384),
             models_loaded: 1,
+            tps: None,
+            prompt_tps: None,
+            cache_hit_pct: None,
+            spec_accept_pct: None,
         }
     }
 
@@ -267,6 +294,10 @@ mod tests {
             vram_used_mib: None,
             vram_total_mib: None,
             models_loaded: 0,
+            tps: None,
+            prompt_tps: None,
+            cache_hit_pct: None,
+            spec_accept_pct: None,
         };
         insert_system_metric(&conn, &row, 0).unwrap();
 
@@ -274,5 +305,53 @@ mod tests {
         assert_eq!(metrics.len(), 1);
         assert!(metrics[0].gpu_utilization_pct.is_none());
         assert!(metrics[0].vram_used_mib.is_none());
+    }
+
+    /// Verify the 4 inference columns (tps, prompt_tps, cache_hit_pct, spec_accept_pct)
+    /// exist in the test schema and round-trip through insert + query.
+    #[test]
+    fn test_inference_columns_exist_and_queryable() {
+        let conn = test_conn();
+
+        // Verify the columns exist in the table schema
+        for col in ["tps", "prompt_tps", "cache_hit_pct", "spec_accept_pct"] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('system_metrics_history') WHERE name=?",
+                    [col],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                count, 1,
+                "column '{}' must exist in system_metrics_history",
+                col
+            );
+        }
+
+        // Insert a row with non-null inference values
+        let row = SystemMetricsRow {
+            ts_unix_ms: 1000,
+            cpu_usage_pct: 50.0,
+            ram_used_mib: 8192,
+            ram_total_mib: 16384,
+            gpu_utilization_pct: Some(75),
+            vram_used_mib: Some(8192),
+            vram_total_mib: Some(16384),
+            models_loaded: 1,
+            tps: Some(25.5),
+            prompt_tps: Some(150.0),
+            cache_hit_pct: Some(92.3),
+            spec_accept_pct: Some(67.8),
+        };
+        insert_system_metric(&conn, &row, 0).unwrap();
+
+        // Query back and verify the values
+        let metrics = get_system_metrics_since(&conn, 0).unwrap();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].tps, Some(25.5));
+        assert_eq!(metrics[0].prompt_tps, Some(150.0));
+        assert_eq!(metrics[0].cache_hit_pct, Some(92.3));
+        assert_eq!(metrics[0].spec_accept_pct, Some(67.8));
     }
 }
