@@ -17,12 +17,17 @@ pub struct MetricSample {
     /// an empty `Vec` rather than failing the whole sample.
     #[serde(default)]
     pub models: Vec<ModelStatus>,
+    #[serde(default)]
     pub tps: Option<f32>,
+    #[serde(default)]
     pub prompt_tps: Option<f32>,
+    #[serde(default)]
     pub cache_hit_pct: Option<f32>,
+    #[serde(default)]
     pub spec_accept_pct: Option<f32>,
     #[serde(default)]
     pub spec_decoding_active: bool,
+    #[serde(default)]
     pub inference_last_updated_ms: Option<i64>,
 }
 
