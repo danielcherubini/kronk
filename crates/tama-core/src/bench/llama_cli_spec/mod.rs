@@ -683,7 +683,8 @@ pub async fn run_spec_bench(
             continue;
         }
 
-        let mut entry = run_single_config(&binary, cfg, config, baseline_mean, progress.clone()).await;
+        let mut entry =
+            run_single_config(&binary, cfg, config, baseline_mean, progress.clone()).await;
 
         // Brief pause between configs to let GPU memory be freed
         // before the next server starts loading the model.

@@ -256,7 +256,8 @@ pub async fn spawn_server(args: &ServerArgs, timeout_secs: u64) -> Result<Server
     let arg_vec = args.to_args();
 
     let mut child = Command::new(&args.binary);
-    child.args(&arg_vec)
+    child
+        .args(&arg_vec)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

@@ -216,13 +216,28 @@ pub fn SpecBench() -> impl IntoView {
                     for arr_key in ["backends", "custom"] {
                         if let Some(arr) = root.get(arr_key).and_then(|v| v.as_array()) {
                             for b in arr {
-                                let installed = b.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let installed = b
+                                    .get("installed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
                                 if !installed {
                                     continue;
                                 }
-                                let name = b.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let display = b.get("display_name").and_then(|v| v.as_str()).unwrap_or(&name).to_string();
-                                let variant = b.get("gpu_variant").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let name = b
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let display = b
+                                    .get("display_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&name)
+                                    .to_string();
+                                let variant = b
+                                    .get("gpu_variant")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 if !variant.is_empty() {
                                     let value = format!("{}:{}", name, variant);
                                     let label = if variant == "cpu" {
