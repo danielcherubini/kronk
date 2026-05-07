@@ -7,7 +7,7 @@ use super::types::{ModelState, ProxyMetrics, ProxyState};
 
 impl ProxyState {
     pub fn new(config: crate::config::Config, db_dir: Option<std::path::PathBuf>) -> Self {
-        let (metrics_tx, _) = tokio::sync::broadcast::channel(64);
+        let (metrics_tx, _) = tokio::sync::broadcast::channel(3);
 
         // Initialize download queue service if db_dir is configured.
         let poll_interval = config.proxy.download_queue_poll_interval_secs;

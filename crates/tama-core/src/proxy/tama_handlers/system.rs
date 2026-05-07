@@ -1,56 +1,18 @@
 use std::sync::Arc;
 
-use async_stream;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{sse::Event, sse::KeepAlive, IntoResponse, Response, Sse},
     Json,
 };
 use futures_util::Stream;
-use serde::{Deserialize, Serialize};
+
+use serde::Serialize;
 
 use super::types::{is_safe_path_component, QuantEntry};
-use crate::db::queries;
 use crate::gpu::VramInfo;
 use crate::proxy::ProxyState;
-
-/// Query parameters for the metrics history endpoint.
-#[derive(Debug, Deserialize)]
-pub struct HistoryQueryParams {
-    #[serde(default = "default_limit")]
-    pub limit: i64,
-}
-
-fn default_limit() -> i64 {
-    100
-}
-
-/// One historical metrics sample returned by the history endpoint.
-#[derive(Debug, Serialize)]
-pub struct MetricsHistoryEntry {
-    pub ts_unix_ms: i64,
-    pub cpu_usage_pct: f32,
-    pub ram_used_mib: i64,
-    pub ram_total_mib: i64,
-    pub gpu_utilization_pct: Option<i64>,
-    pub vram_used_mib: Option<i64>,
-    pub vram_total_mib: Option<i64>,
-}
-
-impl From<queries::SystemMetricsRow> for MetricsHistoryEntry {
-    fn from(row: queries::SystemMetricsRow) -> Self {
-        MetricsHistoryEntry {
-            ts_unix_ms: row.ts_unix_ms,
-            cpu_usage_pct: row.cpu_usage_pct,
-            ram_used_mib: row.ram_used_mib,
-            ram_total_mib: row.ram_total_mib,
-            gpu_utilization_pct: row.gpu_utilization_pct,
-            vram_used_mib: row.vram_used_mib,
-            vram_total_mib: row.vram_total_mib,
-        }
-    }
-}
 
 /// Typed response for the system health endpoint.
 #[derive(Debug, Serialize)]
@@ -146,98 +108,39 @@ pub async fn handle_tama_system_restart(state: State<Arc<ProxyState>>) -> Respon
         .unwrap()
 }
 
-/// Stream live system metrics samples as SSE events.
+/// Stream live system metrics snapshots as SSE events.
 ///
 /// Subscribes to the `metrics_tx` broadcast channel in `ProxyState`. Each
-/// sample emitted by the metrics task (every 2s) is forwarded as an
-/// `event: "sample"` SSE event with a JSON-serialized `MetricSample` body.
-/// On subscriber lag, emits an `event: "lagged"` event with `{"missed": N}`
-/// and continues. On channel close, the stream ends.
+/// tick (every 2s), the metrics task broadcasts an `Arc<[MetricSample]>`
+/// containing the full history buffer. This handler serializes the array
+/// as JSON and emits it as `event: "snapshot"`.
 ///
-/// No historical backfill — the stream begins from the next live sample.
+/// On subscriber lag, the handler silently skips the missed tick — the next
+/// snapshot will contain the full history. On channel close (empty Arc
+/// sentinel), the stream ends.
 ///
 /// Registered as `GET /tama/v1/system/metrics/stream`.
 pub async fn handle_system_metrics_stream(
     State(state): State<Arc<ProxyState>>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let mut rx = state.metrics_tx.subscribe();
-    let mut inference_rx = state.inference_stats.subscribe();
     let stream = async_stream::stream! {
-        let mut inference_active = true;
         loop {
-            tokio::select! {
-                biased;
-                // System metrics samples (broadcast channel) — polled first, gets priority
-                result = rx.recv() => {
-                    match result {
-                        Ok(sample) => {
-                            match serde_json::to_string(&sample) {
-                                Ok(data) => yield Ok(Event::default().event("sample").data(data)),
-                                Err(e) => tracing::warn!("failed to serialize MetricSample: {}", e),
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            let data = format!("{{\"missed\":{}}}", n);
-                            yield Ok(Event::default().event("lagged").data(data));
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            match rx.recv().await {
+                Ok(samples) => {
+                    if samples.is_empty() { break; } // Shutdown sentinel
+                    match serde_json::to_string(samples.as_ref()) {
+                        Ok(data) => yield Ok(Event::default().event("snapshot").data(data)),
+                        Err(e) => tracing::warn!("failed to serialize MetricSample slice: {}", e),
                     }
                 }
-                // Inference stats updates (watch channel)
-                // `if inference_active` guard: once the watch channel closes, stop polling it
-                // but keep the broadcast channel alive for system metrics
-                result = inference_rx.changed(), if inference_active => {
-                    match result {
-                        Ok(()) => {
-                            // changed() resolved — read the latest value
-                            let value = *inference_rx.borrow_and_update();
-                            match value {
-                                Some(stats) => {
-                                    match serde_json::to_string(&stats) {
-                                        Ok(data) => yield Ok(Event::default().event("inference").data(data)),
-                                        Err(e) => tracing::warn!("failed to serialize LatestInferenceStats: {}", e),
-                                    }
-                                }
-                                None => {
-                                    // Stats cleared (e.g. shutdown) — emit empty
-                                    yield Ok(Event::default().event("inference").data("null"));
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            // Watch channel closed — stop emitting inference events
-                            // System metrics continue via the broadcast channel
-                            inference_active = false;
-                        }
-                    }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    // Subscriber lagged — next snapshot will have full history, no action needed
+                    continue;
                 }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-/// Fetch historical system metrics from the database.
-///
-/// Returns up to `limit` most recent samples (oldest-first). If the database
-/// is unavailable or contains no rows, returns an empty array (HTTP 200).
-/// The `limit` parameter defaults to 100 and is clamped to 1–1000.
-pub async fn handle_system_metrics_history(
-    State(state): State<Arc<ProxyState>>,
-    Query(params): Query<HistoryQueryParams>,
-) -> Json<Vec<MetricsHistoryEntry>> {
-    let limit = params.limit.clamp(1, 1000);
-
-    let entries: Vec<MetricsHistoryEntry> = match state.open_db() {
-        Some(conn) => match queries::get_recent_system_metrics(&conn, limit) {
-            Ok(rows) => rows.into_iter().map(MetricsHistoryEntry::from).collect(),
-            Err(e) => {
-                tracing::warn!("failed to query metrics history: {}", e);
-                vec![]
-            }
-        },
-        None => vec![],
-    };
-
-    Json(entries)
 }
