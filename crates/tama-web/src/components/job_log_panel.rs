@@ -47,7 +47,7 @@ mod wasm_impl {
             }
 
             let url = format!("/tama/v1/backends/jobs/{job_id}/events");
-            let mut conn = sse_stream::create(url, cancelled, None);
+            let conn = sse_stream::create(url, cancelled, None);
 
             wasm_bindgen_futures::spawn_local(async move {
                 loop {

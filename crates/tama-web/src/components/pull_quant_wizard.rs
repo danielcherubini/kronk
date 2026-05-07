@@ -442,7 +442,7 @@ fn spawn_sse_streams(
                 ..Default::default()
             };
             let url = format!("/tama/v1/pulls/{}/stream", job_id_str);
-            let mut conn = sse_stream::create(url, cancel, Some(config));
+            let conn = sse_stream::create(url, cancel, Some(config));
 
             loop {
                 if cancel.get_untracked() {
@@ -531,8 +531,10 @@ fn spawn_sse_streams(
                         dj.update(|jobs| {
                             if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
                                 j.status = "failed".to_string();
-                                j.error =
-                                    Some(format!("Failed to connect after max attempts: {e}"));
+                                j.error = Some(format!(
+                                    "SSE stream for job {} failed after max attempts: {e}",
+                                    job_id_str
+                                ));
                             }
                         });
                         advance_if_all_terminal(&dj, &ws);

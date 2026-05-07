@@ -148,7 +148,7 @@ impl SseConnection {
     /// - If `cancelled` is `true`, returns `Err(SseError::Closed)`.
     /// - If `max_attempts` is reached, returns `Err(SseError::ConnectionFailed(...))`.
     /// - On success, resets backoff state and returns `Ok(())`.
-    pub async fn connect_once(&mut self) -> Result<(), SseError> {
+    pub async fn connect_once(&self) -> Result<(), SseError> {
         // Check cancellation before attempting.
         if self.cancelled.get_untracked() {
             return Err(SseError::Closed);
@@ -189,11 +189,6 @@ impl SseConnection {
                         continue;
                     }
                 }
-
-                // Store the registration back for the next wait cycle.
-                let (_new_handle, new_reg) = AbortHandle::new_pair();
-                *self.abort_handle.borrow_mut() = _new_handle;
-                self.abort_registration.set(Some(new_reg));
             }
 
             // Attempt to create the EventSource.
