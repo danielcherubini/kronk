@@ -284,9 +284,9 @@ impl JobManager {
         }
 
         // Broadcast the final status to live SSE subscribers.
-        // The JobLogPanel component waits for this event to transition from "running"
-        // to "succeeded"/"failed" and close the panel. Without this broadcast,
-        // live subscribers never learn the job is done.
+        // Clients subscribing to job SSE events wait for this terminal status event
+        // to transition from "running" to "succeeded"/"failed" and close the panel.
+        // Without this broadcast, live subscribers never learn the job is done.
         // send() errors are expected when all receivers have disconnected — harmless.
         let _ = job.log_tx.send(JobEvent::Status(status));
 
