@@ -546,7 +546,9 @@ async fn install_binary(
                     if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
                         let is_shared = name.contains(".so") || name.ends_with(".dylib");
                         if !is_shared && !name.contains('.') {
-                            if let Ok(mut perms) = std::fs::metadata(&entry_path).map(|m| m.permissions()) {
+                            if let Ok(mut perms) =
+                                std::fs::metadata(&entry_path).map(|m| m.permissions())
+                            {
                                 perms.set_mode(0o755);
                                 let _ = std::fs::set_permissions(&entry_path, perms);
                             }

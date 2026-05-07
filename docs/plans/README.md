@@ -14,9 +14,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 88
+- **Total Plans**: 89
 - **Completed**: 84 ✅
-- **In Progress**: 3 🚧
+- **In Progress**: 4 🚧
 - **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -121,6 +121,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [KV Cache Quantization Dropdowns](2026-04-27-kv-cache-quants.md) | Add K and V cache quantization dropdown selectors to model editor form, wired through all layers to llama-server CLI flags | #77 ✅ COMPLETED |
 | [Dashboard: Show All Models + Pull Model + Check All](2026-04-30-dashboard-all-models.md) | Extend dashboard to show inactive models section, add Pull Model and Check all for updates buttons, hide Models from sidebar | #82 `75543f0`, `e273fa2`, `5d1794d`, `fc860f0`, `eec050f`, `bd969b7`, `4500d30` ✅ COMPLETED
 | [Models Page Horizontal Layout](2026-04-30-models-page-horizontal-layout.md) | Replace models page vertical card grid with horizontal row layout matching dashboard | #81 `fe94160` ✅ COMPLETED |
+| [Shared Activity Panel + SSE Core](2026-05-06-shared-activity-panel-and-sse-core.md) | Extract duplicated SSE reconnection logic into shared utility, create generic ActivityPanel UI shell, refactor JobLogPanel + pull_quant_wizard | 🚧 IN PROGRESS |
 | [Benchmarks Page](2026-04-19-benchmarks.md) | Web UI benchmarking page with llama-bench integration, SSE progress streaming, preset configs (Quick/VRAM Sweet Spot/Thread Scaling), and benchmark history | `dd869b8`–`4be90f7` ✅ COMPLETED |
 | [Config Hot Reload](2026-04-06-config-hot-reload.md) | Config sync from web UI to proxy without restart | `69cbb68`, `54298dc`, `219c749` |
 | [Tama Web Control Plane](2026-04-03-tama-web-control-plane.md) | Core UI — initial implementation | ✅ PARTIALLY COMPLETED |

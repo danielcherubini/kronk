@@ -4,8 +4,12 @@ use std::collections::{HashMap, HashSet};
 use crate::utils::post_request;
 
 use crate::components::pull_wizard::*;
+
+#[cfg(not(feature = "ssr"))]
 use futures_util::StreamExt;
-use gloo_net::eventsource::futures::EventSource;
+
+#[cfg(not(feature = "ssr"))]
+use crate::utils::sse_stream;
 
 // Re-export CompletedQuant for use in pages
 use crate::components::pull_wizard::components::{
@@ -367,184 +371,11 @@ pub fn PullQuantWizard(
                                                 download_jobs.set(jobs);
                                                 wizard_step.set(WizardStep::Downloading);
 
-                                                // Open SSE stream for each job with per-job reconnection.
-                                                for entry in entries {
-                                                    let job_id_str = entry.job_id.clone();
-                                                    let dj = download_jobs;
-                                                    let ws = wizard_step;
-                                                    let cancel = cancelled;
-
-                                                    wasm_bindgen_futures::spawn_local(async move {
-                                                        // Exponential backoff constants for reconnection.
-                                                        const INITIAL_DELAY_MS: u32 = 1_000;
-                                                        const MAX_DELAY_MS: u32 = 30_000;
-
-                                                        let mut delay_ms: u32 = INITIAL_DELAY_MS;
-
-                                                        let mut reconnect_attempts: u32 = 0;
-                                                        const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-
-                                                        loop {
-                                                            if cancel.get_untracked() {
-                                                                break;
-                                                            }
-
-                                                            let url = format!("/tama/v1/pulls/{}/stream", job_id_str);
-                                                            let mut es = match EventSource::new(&url) {
-                                                                Ok(es) => es,
-                                                                Err(e) => {
-                                                                    reconnect_attempts += 1;
-                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
-                                                                        // Exhausted retries — mark as terminal failure
-                                                                        let msg = format!("{e:?}");
-                                                                        dj.update(|jobs| {
-                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                                j.status = "failed".to_string();
-                                                                                j.error = Some(format!("Failed to open SSE stream after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
-                                                                            }
-                                                                        });
-                                                                        advance_if_all_terminal(&dj, &ws);
-                                                                        break;
-                                                                    }
-                                                                    // Transient failure — show reconnecting status, keep retrying
-                                                                    let _msg = format!("{e:?}");
-                                                                    dj.update(|jobs| {
-                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            if j.status != "completed" && j.status != "failed" {
-                                                                                j.status = "reconnecting".to_string();
-                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
-                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-                                                                    continue;
-                                                                }
-                                                            };
-
-                                                            reconnect_attempts = 0;
-                                                            delay_ms = INITIAL_DELAY_MS;
-
-                                                            let mut progress_stream = match es.subscribe("progress") {
-                                                                Ok(s) => s,
-                                                                Err(e) => {
-                                                                    reconnect_attempts += 1;
-                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
-                                                                        let msg = format!("{e:?}");
-                                                                        dj.update(|jobs| {
-                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                                j.status = "failed".to_string();
-                                                                                j.error = Some(format!("Failed to subscribe to progress events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
-                                                                            }
-                                                                        });
-                                                                        es.close();
-                                                                        advance_if_all_terminal(&dj, &ws);
-                                                                        break;
-                                                                    }
-                                                                    let _msg = format!("{e:?}");
-                                                                    dj.update(|jobs| {
-                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            if j.status != "completed" && j.status != "failed" {
-                                                                                j.status = "reconnecting".to_string();
-                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                    es.close();
-                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
-                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-                                                                    continue;
-                                                                }
-                                                            };
-
-                                                            let mut done_stream = match es.subscribe("done") {
-                                                                Ok(s) => s,
-                                                                Err(e) => {
-                                                                    reconnect_attempts += 1;
-                                                                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
-                                                                        let msg = format!("{e:?}");
-                                                                        dj.update(|jobs| {
-                                                                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                                j.status = "failed".to_string();
-                                                                                j.error = Some(format!("Failed to subscribe to done events after {MAX_RECONNECT_ATTEMPTS} attempts: {msg}"));
-                                                                            }
-                                                                        });
-                                                                        es.close();
-                                                                        advance_if_all_terminal(&dj, &ws);
-                                                                        break;
-                                                                    }
-                                                                    let _msg = format!("{e:?}");
-                                                                    dj.update(|jobs| {
-                                                                        if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                                                            if j.status != "completed" && j.status != "failed" {
-                                                                                j.status = "reconnecting".to_string();
-                                                                                j.error = Some(format!("Reconnecting... (attempt {}/{})", reconnect_attempts, MAX_RECONNECT_ATTEMPTS));
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                    es.close();
-                                                                    delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
-                                                                    gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-                                                                    continue;
-                                                                }
-                                                            };
-
-                                                            loop {
-                                                                if cancel.get_untracked() {
-                                                                    es.close();
-                                                                    return;
-                                                                }
-
-                                                                let next_progress = progress_stream.next();
-                                                                let next_done = done_stream.next();
-                                                                futures_util::pin_mut!(next_progress, next_done);
-
-                                                                match futures_util::future::select(next_progress, next_done).await {
-                                                                    futures_util::future::Either::Left((Some(Ok((_, msg))), _)) => {
-                                                                        let data = msg.data().as_string().unwrap_or_default();
-                                                                        if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                                                            dj.update(|jobs| {
-                                                                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
-                                                                                    j.bytes_downloaded = p.bytes_downloaded;
-                                                                                    j.total_bytes = p.total_bytes;
-                                                                                    j.status = p.status.clone();
-                                                                                    j.error = p.error.clone();
-                                                                                }
-                                                                            });
-                                                                        }
-                                                                    }
-                                                                    futures_util::future::Either::Right((Some(Ok((_, msg))), _)) => {
-                                                                        let data = msg.data().as_string().unwrap_or_default();
-                                                                        if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                                                            dj.update(|jobs| {
-                                                                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
-                                                                                    j.bytes_downloaded = p.bytes_downloaded;
-                                                                                    j.total_bytes = p.total_bytes;
-                                                                                    j.status = p.status.clone();
-                                                                                    j.error = p.error.clone();
-                                                                                }
-                                                                            });
-                                                                        }
-                                                                        es.close();
-                                                                        advance_if_all_terminal(&dj, &ws);
-                                                                        break;
-                                                                    }
-                                                                    _ => {
-                                                                        es.close();
-                                                                        advance_if_all_terminal(&dj, &ws);
-                                                                        break;
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            // Stream ended — reconnect with backoff.
-                                                            if !cancel.get_untracked() {
-                                                                gloo_timers::future::TimeoutFuture::new(delay_ms).await;
-                                                                delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
-                                                            }
-                                                        }
-                                                    });
-                                                }
+                                                // Open SSE stream for each job with per-job reconnection via sse_stream.
+                                                #[cfg(not(feature = "ssr"))]
+                                                spawn_sse_streams(entries, download_jobs, wizard_step, cancelled);
+                                                #[cfg(feature = "ssr")]
+                                                let _ = entries;
                                             }
                                             Err(e) => {
                                                 error_msg.set(Some(format!("Failed to parse response: {e}")));
@@ -591,5 +422,133 @@ fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<Wizard
             .all(|j| j.status == "completed" || j.status == "failed")
     {
         ws.set(WizardStep::Done);
+    }
+}
+
+/// Spawn an SSE stream per download job using sse_stream with max 10 reconnect attempts.
+#[cfg(not(feature = "ssr"))]
+fn spawn_sse_streams(
+    entries: Vec<PullJobEntry>,
+    dj: RwSignal<Vec<JobProgress>>,
+    ws: RwSignal<WizardStep>,
+    cancel: RwSignal<bool>,
+) {
+    for entry in entries {
+        let job_id_str = entry.job_id.clone();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let config = sse_stream::SseReconnectConfig {
+                max_attempts: Some(10),
+                ..Default::default()
+            };
+            let url = format!("/tama/v1/pulls/{}/stream", job_id_str);
+            let conn = sse_stream::create(url, cancel, Some(config));
+
+            loop {
+                if cancel.get_untracked() {
+                    break;
+                }
+
+                // Connect (or reconnect) with exponential backoff
+                match conn.connect_once().await {
+                    Ok(()) => {
+                        // Reset error on successful connection
+                        dj.update(|jobs| {
+                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                j.error = None;
+                                if j.status == "reconnecting" {
+                                    j.status = "downloading".to_string();
+                                }
+                            }
+                        });
+
+                        // Subscribe to channels
+                        let mut progress_stream = match conn.subscribe("progress") {
+                            Ok(s) => s,
+                            Err(_) => {
+                                continue; // connection dropped, loop back
+                            }
+                        };
+                        let mut done_stream = match conn.subscribe("done") {
+                            Ok(s) => s,
+                            Err(_) => {
+                                continue; // connection dropped, loop back
+                            }
+                        };
+
+                        // Inner event processing loop
+                        let mut job_done = false;
+                        loop {
+                            if cancel.get_untracked() {
+                                break;
+                            }
+
+                            let next_progress = progress_stream.next();
+                            let next_done = done_stream.next();
+                            futures_util::pin_mut!(next_progress, next_done);
+
+                            match futures_util::future::select(next_progress, next_done).await {
+                                futures_util::future::Either::Left((Some(Ok(event)), _)) => {
+                                    let data = event.data.clone();
+                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                        dj.update(|jobs| {
+                                            if let Some(j) =
+                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
+                                            {
+                                                j.bytes_downloaded = p.bytes_downloaded;
+                                                j.total_bytes = p.total_bytes;
+                                                j.status = p.status.clone();
+                                                j.error = p.error.clone();
+                                            }
+                                        });
+                                    }
+                                }
+                                futures_util::future::Either::Right((Some(Ok(event)), _)) => {
+                                    let data = event.data.clone();
+                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
+                                        dj.update(|jobs| {
+                                            if let Some(j) =
+                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
+                                            {
+                                                j.bytes_downloaded = p.bytes_downloaded;
+                                                j.total_bytes = p.total_bytes;
+                                                j.status = p.status.clone();
+                                                j.error = p.error.clone();
+                                            }
+                                        });
+                                    }
+                                    // Done event received — mark job as complete
+                                    job_done = true;
+                                    break;
+                                }
+                                _ => {
+                                    // Stream ended — loop back for reconnect
+                                    break;
+                                }
+                            }
+                        }
+                        // If the job received a "done" event, stop reconnecting.
+                        // Otherwise (stream ended unexpectedly), outer loop reconnects.
+                        if job_done {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Max attempts exhausted — mark as terminal failure
+                        dj.update(|jobs| {
+                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
+                                j.status = "failed".to_string();
+                                j.error = Some(format!(
+                                    "SSE stream for job {} failed after max attempts: {e}",
+                                    job_id_str
+                                ));
+                            }
+                        });
+                        advance_if_all_terminal(&dj, &ws);
+                        break;
+                    }
+                }
+            }
+        });
     }
 }
