@@ -1,14 +1,11 @@
-use js_sys::{Date, Function, Reflect};
 use leptos::prelude::*;
-use leptos::task::spawn_local;
-use log::info;
 use wasm_bindgen::prelude::*;
 
 use crate::components::modal::Modal;
 use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
 use crate::components::sparkline::SparklineChart;
-use crate::utils::{extract_and_store_csrf_token, post_request, rw_signal_to_signal};
+use crate::utils::{post_request, rw_signal_to_signal};
 
 mod metrics;
 pub use metrics::*;
@@ -16,48 +13,12 @@ pub use metrics::*;
 #[cfg(test)]
 mod tests;
 
-/// Maximum number of inference stats entries to keep in the history buffer.
-const INFERENCE_MAX_LEN: usize = 450;
-
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let history = RwSignal::new(Vec::<MetricSample>::new());
     let fetch_failed = RwSignal::new(false);
     // Incrementing this signal re-runs the Effect that opens the EventSource.
     let connect_trigger = RwSignal::new(0u32);
-    // Tracks the last backfill timestamp to enforce a cooldown (prevents redundant fetches
-    // when SSE lagged, visibilitychange, and reconnect fire together).
-    let last_backfill = RwSignal::new(0u64);
-    // Set to true when the SSE connection errors, cleared on the next sample event.
-    // Used to detect reconnection after a disconnect and trigger backfill.
-    let reconnect_pending = RwSignal::new(false);
-    let inference_history = RwSignal::new(Vec::<InferenceStats>::new());
-
-    // Fetch historical metrics on mount, before connecting to SSE.
-    // This populates the chart with up to 450 recent data points (15 minutes at 2s intervals).
-    {
-        let history_signal = history;
-        let last_backfill_signal = last_backfill;
-        spawn_local(async move {
-            if let Ok(resp) =
-                gloo_net::http::Request::get("/tama/v1/system/metrics/history?limit=450")
-                    .send()
-                    .await
-            {
-                extract_and_store_csrf_token(&resp);
-                if let Ok(entries) = resp.json::<Vec<MetricsHistoryEntry>>().await {
-                    let samples: Vec<MetricSample> = entries.into_iter().map(Into::into).collect();
-                    if !samples.is_empty() {
-                        history_signal.update(|buf| {
-                            *buf = samples;
-                        });
-                        // Prevent immediate redundant backfill on the first SSE lagged/visibility event
-                        last_backfill_signal.set(Date::now() as u64);
-                    }
-                }
-            }
-        });
-    }
 
     // Open (or re-open) an EventSource each time connect_trigger changes.
     Effect::new(move |_| {
@@ -71,72 +32,23 @@ pub fn Dashboard() -> impl IntoView {
             }
         };
 
-        // Handler for "sample" events.
-        let on_sample =
+        // Handler for "snapshot" events — replaces the entire history buffer.
+        let on_snapshot =
             Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
                 if let Some(data_str) = evt.data().as_string() {
-                    if let Ok(sample) = serde_json::from_str::<MetricSample>(&data_str) {
+                    if let Ok(samples) = serde_json::from_str::<Vec<MetricSample>>(&data_str) {
                         fetch_failed.set(false);
-                        history.update(|buf| {
-                            buf.push(sample);
-                            if buf.len() > 450 {
-                                buf.drain(..buf.len() - 450);
-                            }
-                        });
-                        // If the SSE connection was lost and reconnected, backfill the gap
-                        if reconnect_pending.get() {
-                            reconnect_pending.set(false);
-                            info!("SSE reconnected, backfilling metrics");
-                            let history_copy = history;
-                            let last_backfill_copy = last_backfill;
-                            spawn_local(backfill_metrics(history_copy, last_backfill_copy));
-                        }
-                    }
-                }
-            });
-        let _ = es.add_event_listener_with_callback("sample", on_sample.as_ref().unchecked_ref());
-        on_sample.forget();
-
-        // Handler for "lagged" events — the broadcast channel dropped messages.
-        // Fetch recent history to fill the gap.
-        let on_lagged =
-            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if let Some(data_str) = evt.data().as_string() {
-                    info!("SSE lagged event received: {}", data_str);
-                    let history_copy = history;
-                    let last_backfill_copy = last_backfill;
-                    spawn_local(backfill_metrics(history_copy, last_backfill_copy));
-                }
-            });
-        let _ = es.add_event_listener_with_callback("lagged", on_lagged.as_ref().unchecked_ref());
-        on_lagged.forget();
-
-        // Handler for "inference" events — inference statistics from the backend.
-        let on_inference =
-            Closure::<dyn Fn(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
-                if let Some(data_str) = evt.data().as_string() {
-                    if data_str == "null" {
-                        inference_history.set(Vec::new());
-                        return;
-                    }
-                    if let Ok(stats) = serde_json::from_str::<InferenceStats>(&data_str) {
-                        inference_history.update(|buf| {
-                            buf.push(stats);
-                            if buf.len() > INFERENCE_MAX_LEN {
-                                buf.drain(..buf.len() - INFERENCE_MAX_LEN);
-                            }
-                        });
+                        history.set(samples);
                     }
                 }
             });
         let _ =
-            es.add_event_listener_with_callback("inference", on_inference.as_ref().unchecked_ref());
-        on_inference.forget();
+            es.add_event_listener_with_callback("snapshot", on_snapshot.as_ref().unchecked_ref());
+        on_snapshot.forget();
 
-        // Error handler — flag for the empty-history retry UI and track disconnect for backfill.
+        // Error handler — flag for the empty-history retry UI.
         let on_error = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
             fetch_failed.set(true);
-            reconnect_pending.set(true);
         });
         es.set_onerror(Some(on_error.as_ref().unchecked_ref()));
         on_error.forget();
@@ -147,42 +59,9 @@ pub fn Dashboard() -> impl IntoView {
         });
     });
 
-    // When the browser tab becomes visible again, backfill metrics that were missed
-    // while the SSE connection was throttled or disconnected by the browser.
-    Effect::new(move |_| {
-        let history_sig = history;
-        let last_backfill_sig = last_backfill;
-        let on_visibility = Closure::<dyn Fn(web_sys::Event)>::new(move |_: web_sys::Event| {
-            // Use Reflect to check document.hidden (avoids extra web-sys feature flags).
-            // When hidden is false (or missing), the tab is visible.
-            let is_hidden = web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|doc| Reflect::get(&doc, &"hidden".into()).ok())
-                .and_then(|v| v.as_bool());
-            if is_hidden == Some(false) {
-                spawn_local(backfill_metrics(history_sig, last_backfill_sig));
-            }
-        });
-        // Clone the JS function reference (cheap, not the Closure itself) for both add and remove.
-        // Closure does not implement Clone, so we extract the underlying Function.
-        let js_fn: Function = on_visibility.as_ref().unchecked_ref::<Function>().clone();
-        let doc = web_sys::window()
-            .expect("window")
-            .document()
-            .expect("document");
-        let _ = doc.add_event_listener_with_callback("visibilitychange", &js_fn);
-
-        // on_cleanup owns on_visibility — it stays alive until cleanup runs,
-        // then the Closure is dropped and WASM memory is freed.
-        on_cleanup(move || {
-            let _ = doc.remove_event_listener_with_callback("visibilitychange", &js_fn);
-        });
-    });
-
     // Manual retry: close and re-open the EventSource.
     let manual_refresh = move |_| {
         fetch_failed.set(false);
-        reconnect_pending.set(false);
         connect_trigger.update(|n| *n += 1);
     };
 
@@ -388,31 +267,61 @@ pub fn Dashboard() -> impl IntoView {
 
                 // Inference stats cards — always visible, show "—" until data arrives
                 {move || {
-                    let buf = inference_history.get();
-                    let has_data = !buf.is_empty();
-                    let latest = buf.last().cloned().unwrap_or_default();
-                    let stale = has_data && is_stale(latest.last_updated_ms);
-                    let timestamps: Vec<i64> = buf.iter().map(|s| s.last_updated_ms).collect();
+                    let buf = history.get();
+                    let latest = buf.last();
+                    let has_inference = latest.map(|s| s.inference_last_updated_ms.is_some()).unwrap_or(false);
+                    let stale = if let Some(sample) = latest {
+                        match sample.inference_last_updated_ms {
+                            Some(ts) => (js_sys::Date::now() as i64 - ts) > 30_000,
+                            None => true,
+                        }
+                    } else {
+                        true
+                    };
 
-                    // Extract sparkline data (use 0 for None values in the chart, but show "—" in the label)
-                    let tps_data: Vec<f32> = buf.iter().map(|s| s.tps.unwrap_or(0.0)).collect();
-                    let prompt_tps_data: Vec<f32> = buf.iter().map(|s| s.prompt_tps.unwrap_or(0.0)).collect();
-                    let cache_data: Vec<f32> = buf.iter().map(|s| s.cache_hit_pct.unwrap_or(0.0)).collect();
-                    let spec_data: Vec<f32> = buf.iter().map(|s| s.spec_accept_pct.unwrap_or(0.0)).collect();
+                    // Extract sparkline data from samples with inference timestamps
+                    let inference_samples: Vec<&MetricSample> = buf.iter()
+                        .filter(|s| s.inference_last_updated_ms.is_some())
+                        .collect();
+                    let timestamps: Vec<i64> = inference_samples.iter()
+                        .map(|s| s.inference_last_updated_ms.unwrap_or(s.ts_unix_ms))
+                        .collect();
+                    let tps_data: Vec<f32> = inference_samples.iter()
+                        .map(|s| s.tps.unwrap_or(0.0)).collect();
+                    let prompt_tps_data: Vec<f32> = inference_samples.iter()
+                        .map(|s| s.prompt_tps.unwrap_or(0.0)).collect();
+                    let cache_data: Vec<f32> = inference_samples.iter()
+                        .map(|s| s.cache_hit_pct.unwrap_or(0.0)).collect();
+                    let spec_data: Vec<f32> = inference_samples.iter()
+                        .map(|s| s.spec_accept_pct.unwrap_or(0.0)).collect();
 
                     // Determine max values for sparkline scaling
                     let tps_max = tps_data.iter().cloned().fold(1.0f32, f32::max);
                     let prompt_tps_max = prompt_tps_data.iter().cloned().fold(1.0f32, f32::max);
 
+                    let stale_label = if has_inference && stale {
+                        let ts = latest.unwrap().inference_last_updated_ms.unwrap_or(0);
+                        let diff_secs = ((js_sys::Date::now() as i64 - ts) / 1_000).max(0);
+                        if diff_secs < 60 {
+                            format!("{}s ago", diff_secs)
+                        } else {
+                            format!("{}m ago", diff_secs / 60)
+                        }
+                    } else if !has_inference {
+                        "No data".to_string()
+                    } else {
+                        String::new()
+                    };
+
                     view! {
                         <div class="grid-stats grid-stats--inference">
                             // Processing Speed card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
                                 <div class="card-header">"Processing Speed"</div>
-                                {match latest.prompt_tps {
+                                {match latest.and_then(|s| s.prompt_tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                        <div class="card-secondary">{stale_label.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -432,12 +341,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Gen Speed card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
                                 <div class="card-header">"Gen Speed"</div>
-                                {match latest.tps {
+                                {match latest.and_then(|s| s.tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                        <div class="card-secondary">{stale_label.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -457,12 +366,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Cache Hits card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
                                 <div class="card-header">"Cache Hits"</div>
-                                {match latest.cache_hit_pct {
+                                {match latest.and_then(|s| s.cache_hit_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                        <div class="card-secondary">{stale_label.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -482,12 +391,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Spec Accept card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_data>
+                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
                                 <div class="card-header">"Spec Accept"</div>
-                                {match latest.spec_accept_pct {
+                                {match latest.and_then(|s| s.spec_accept_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">{format_stale_time(latest.last_updated_ms)}</div>
+                                        <div class="card-secondary">{stale_label.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
