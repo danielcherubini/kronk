@@ -432,7 +432,10 @@ async fn run_single_config(
         }
     };
 
-    let draft_min = (cfg.draft_max / 2).max(1);
+    // draft_min/draft_max are not used for ngram-mod (draft length controlled by n-min/n-max)
+    let use_draft_bounds = !matches!(cfg.spec_type, SpecType::NgramMod);
+    let draft_max_val = use_draft_bounds.then_some(cfg.draft_max);
+    let draft_min_val = use_draft_bounds.then_some((cfg.draft_max / 2).max(1));
 
     let server_args = server::ServerArgs {
         binary: binary.to_path_buf(),
@@ -446,8 +449,8 @@ async fn run_single_config(
         spec_ngram_min_hits: (bench_cfg.ngram_min_hits > 1).then_some(bench_cfg.ngram_min_hits),
         spec_ngram_min: cfg.ngram_min,
         spec_ngram_max: cfg.ngram_max,
-        draft_max: Some(cfg.draft_max),
-        draft_min: Some(draft_min),
+        draft_max: draft_max_val,
+        draft_min: draft_min_val,
     };
 
     let arg_vec = server_args.to_args();
