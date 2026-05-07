@@ -450,9 +450,15 @@ async fn run_single_config(
         draft_min: Some(draft_min),
     };
 
+    let arg_vec = server_args.to_args();
     progress.log(&format!(
         "Starting llama-server on port {} ({})",
         port, label
+    ));
+    progress.log(&format!(
+        "llama-server {} {}",
+        binary.display(),
+        arg_vec.join(" ")
     ));
 
     let timeout_secs = std::env::var("LLAMA_SERVER_TIMEOUT_SECS")
@@ -551,6 +557,11 @@ pub async fn run_spec_bench(
         draft_max: None,
         draft_min: None,
     };
+    progress.log(&format!(
+        "llama-server {} {}",
+        binary.display(),
+        baseline_args.to_args().join(" ")
+    ));
 
     let timeout_secs = std::env::var("LLAMA_SERVER_TIMEOUT_SECS")
         .ok()
