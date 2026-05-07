@@ -218,18 +218,18 @@ pub fn SpecBench() -> impl IntoView {
                         let backend_list: Vec<(String, String, String)> = backends_arr
                             .iter()
                             .filter_map(|b| {
-                                let name = b.get("type")?.as_str()?.to_string();
+                                let name = b.get("name")?.as_str()?.to_string();
                                 let display = b
-                                    .get("display_name")
+                                    .get("label")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(&name)
                                     .to_string();
                                 let gpu_variant = b
-                                    .get("gpu_variant")
+                                    .get("variant")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                // Only include backends that have a gpu_variant (i.e. installed)
+                                // Only include backends that have a variant (i.e. installed)
                                 if !gpu_variant.is_empty() {
                                     Some((name, display, gpu_variant))
                                 } else {
