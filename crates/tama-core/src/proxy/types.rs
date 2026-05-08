@@ -228,7 +228,7 @@ pub struct ProxyState {
     /// concurrent downloads writing to the same temp files, which would silently
     /// corrupt the assembled output.
     pub in_flight_downloads: Arc<tokio::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>>,
-    pub metrics_tx: tokio::sync::broadcast::Sender<crate::gpu::MetricSample>,
+    pub metrics_tx: tokio::sync::broadcast::Sender<std::sync::Arc<[crate::gpu::MetricSample]>>,
     pub download_queue: Option<Arc<DownloadQueueService>>,
     /// Semaphore controlling concurrent post-pull config writes.
     /// Replaces the old global CONFIG_WRITE_LOCK to allow controlled
@@ -259,16 +259,9 @@ impl ProxyState {
     /// - Clears in-flight downloads
     pub async fn shutdown(&self) {
         // Close the metrics broadcast channel to stop the metrics stream
-        let _ = self.metrics_tx.send(crate::gpu::MetricSample {
-            ts_unix_ms: 0,
-            cpu_usage_pct: 0.0,
-            ram_used_mib: 0,
-            ram_total_mib: 0,
-            gpu_utilization_pct: None,
-            vram: None,
-            models_loaded: 0,
-            models: vec![],
-        });
+        let _ = self
+            .metrics_tx
+            .send(Arc::<[crate::gpu::MetricSample]>::from(Vec::new()));
 
         // Clear all loaded models
         let mut models = self.models.write().await;
@@ -319,7 +312,7 @@ mod tests {
         // Original is still usable after copy
         assert_eq!(stats.tps, Some(50.0));
         // Test Clone
-        let stats3 = stats.clone();
+        let stats3 = stats;
         assert_eq!(stats3.prompt_tps, Some(200.0));
     }
 

@@ -1,9 +1,4 @@
-use js_sys::Date;
-use leptos::prelude::{Get, RwSignal, Set, Update};
-use log::warn;
 use serde::{Deserialize, Serialize};
-
-use crate::utils::extract_and_store_csrf_token;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricSample {
@@ -22,47 +17,24 @@ pub struct MetricSample {
     /// an empty `Vec` rather than failing the whole sample.
     #[serde(default)]
     pub models: Vec<ModelStatus>,
+    #[serde(default)]
+    pub tps: Option<f32>,
+    #[serde(default)]
+    pub prompt_tps: Option<f32>,
+    #[serde(default)]
+    pub cache_hit_pct: Option<f32>,
+    #[serde(default)]
+    pub spec_accept_pct: Option<f32>,
+    #[serde(default)]
+    pub spec_decoding_active: bool,
+    #[serde(default)]
+    pub inference_last_updated_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VramInfo {
     pub used_mib: u64,
     pub total_mib: u64,
-}
-
-/// Frontend mirror of the backend `MetricsHistoryEntry` response type.
-///
-/// Uses `i64` for memory and GPU fields to match the JSON wire format
-/// (SQLite stores integers as i64). Converted to `MetricSample` on ingestion.
-#[derive(Debug, Clone, Deserialize)]
-pub struct MetricsHistoryEntry {
-    pub ts_unix_ms: i64,
-    pub cpu_usage_pct: f32,
-    pub ram_used_mib: i64,
-    pub ram_total_mib: i64,
-    pub gpu_utilization_pct: Option<i64>,
-    pub vram_used_mib: Option<i64>,
-    pub vram_total_mib: Option<i64>,
-}
-
-impl From<MetricsHistoryEntry> for MetricSample {
-    fn from(entry: MetricsHistoryEntry) -> Self {
-        MetricSample {
-            ts_unix_ms: entry.ts_unix_ms,
-            cpu_usage_pct: entry.cpu_usage_pct,
-            ram_used_mib: entry.ram_used_mib as u64,
-            ram_total_mib: entry.ram_total_mib as u64,
-            gpu_utilization_pct: entry.gpu_utilization_pct.map(|v| v as u8),
-            vram: entry.vram_used_mib.and_then(|used| {
-                entry.vram_total_mib.map(|total| VramInfo {
-                    used_mib: used as u64,
-                    total_mib: total as u64,
-                })
-            }),
-            models_loaded: 0,
-            models: vec![],
-        }
-    }
 }
 
 /// Frontend mirror of `tama_core::gpu::ModelStatus`.
@@ -95,44 +67,6 @@ pub struct ModelStatus {
     pub hf_architecture_type: Option<String>,
     #[serde(default)]
     pub hf_base_model: Option<String>,
-}
-
-/// Frontend data structure for inference statistics emitted via SSE.
-///
-/// Stored in a separate history buffer (not mixed into `MetricSample`) so
-/// sparklines plot actual observation points, not repeated poll-driven values.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct InferenceStats {
-    #[serde(default)]
-    pub tps: Option<f32>,
-    #[serde(default)]
-    pub prompt_tps: Option<f32>,
-    #[serde(default)]
-    pub cache_hit_pct: Option<f32>,
-    #[serde(default)]
-    pub spec_accept_pct: Option<f32>,
-    #[serde(default)]
-    pub spec_decoding_active: bool,
-    #[serde(default)]
-    pub last_updated_ms: i64,
-}
-
-/// Returns true if the stats are considered stale (>30s old)
-pub fn is_stale(last_updated_ms: i64) -> bool {
-    let now = Date::now() as i64;
-    (now - last_updated_ms) > 30_000
-}
-
-/// Format staleness as "Xs ago" / "Xm ago"
-pub fn format_stale_time(last_updated_ms: i64) -> String {
-    let now = Date::now() as i64;
-    let diff_secs = ((now - last_updated_ms) / 1_000).max(0); // clamp to 0
-    if diff_secs < 60 {
-        format!("{}s ago", diff_secs)
-    } else {
-        format!("{}m ago", diff_secs / 60)
-    }
 }
 
 /// Format a number with comma separators (e.g. `8460` → `"8,460"`).
@@ -192,53 +126,4 @@ pub fn model_sort_key(m: &ModelStatus) -> (String, String) {
         .unwrap_or_else(|| model_display_name(m));
     let secondary = model_display_name(m);
     (primary, secondary)
-}
-
-/// Merge new metric samples into the buffer.
-/// Combines, sorts by timestamp, deduplicates (keeping the FIRST entry for each timestamp),
-/// and trims to the last `max_len` samples.
-///
-/// Keeping the first entry is intentional: SSE entries (which include `models` data)
-/// are already in the buffer, and backfill entries (which have `models: vec![]`)
-/// are extended after. Keeping the first preserves the richer SSE entry.
-pub fn merge_samples(buf: &mut Vec<MetricSample>, new: Vec<MetricSample>, max_len: usize) {
-    buf.extend(new);
-    buf.sort_by_key(|s| s.ts_unix_ms);
-    buf.dedup_by(|a, b| a.ts_unix_ms == b.ts_unix_ms); // keeps a (first), removes b (subsequent)
-    if buf.len() > max_len {
-        buf.drain(..buf.len() - max_len);
-    }
-}
-
-/// Fetch metric history from the backend and merge into the history signal.
-///
-/// Applies a 5-second cooldown (tracked by `last_backfill`) to avoid
-/// redundant requests. Used by both the SSE `lagged` handler and the
-/// `visibilitychange` handler so both paths behave identically.
-pub async fn backfill_metrics(history: RwSignal<Vec<MetricSample>>, last_backfill: RwSignal<u64>) {
-    // Cooldown: skip if backfilled in the last 5 seconds
-    let now = Date::now() as u64;
-    if (now - last_backfill.get()) < 5000 {
-        return;
-    }
-    last_backfill.set(now);
-
-    let url = "/tama/v1/system/metrics/history?limit=450";
-    match gloo_net::http::Request::get(url).send().await {
-        Ok(resp) => {
-            extract_and_store_csrf_token(&resp);
-            match resp.json::<Vec<MetricsHistoryEntry>>().await {
-                Ok(entries) => {
-                    let new: Vec<MetricSample> = entries.into_iter().map(Into::into).collect();
-                    if !new.is_empty() {
-                        history.update(|buf| {
-                            merge_samples(buf, new, 450);
-                        });
-                    }
-                }
-                Err(e) => warn!("backfill: failed to parse history JSON: {}", e),
-            }
-        }
-        Err(e) => warn!("backfill: failed to fetch /metrics/history: {}", e),
-    }
 }

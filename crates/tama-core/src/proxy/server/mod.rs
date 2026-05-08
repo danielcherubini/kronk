@@ -2,6 +2,7 @@ pub mod listener;
 pub mod router;
 
 use crate::proxy::ProxyState;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// The proxy server, owning shared state and background tasks.
@@ -84,15 +85,25 @@ impl ProxyServer {
         Self::cleanup_stale_processes(&state).await;
         let idle_timeout_handle = Self::start_idle_timeout_checker(state.clone());
 
+        // Seed in-memory history buffer from SQLite.
+        let mut history_buf: VecDeque<crate::gpu::MetricSample> = VecDeque::with_capacity(450);
+        if let Some(seed_conn) = state.open_db() {
+            if let Ok(rows) = crate::db::queries::get_recent_system_metrics(&seed_conn, 450) {
+                for row in rows {
+                    history_buf.push_back(Self::row_into_sample(&row));
+                }
+            }
+        }
+
         // Spawn background task to refresh system metrics every 2s.
-        // Each tick: collect metrics, update the cached snapshot, persist to SQLite
-        // (best-effort, with inline pruning), and broadcast to SSE subscribers.
+        // Each tick: collect metrics, build unified sample (system + inference),
+        // persist to SQLite, update in-memory buffer, broadcast full buffer.
         let metrics_state = Arc::clone(&state);
         let metrics_handle = tokio::spawn(async move {
             use std::time::{SystemTime, UNIX_EPOCH};
             let mut sys = sysinfo::System::new();
             loop {
-                // Collect metrics on a blocking thread.
+                // 1. Collect system metrics (spawn_blocking, unchanged pattern)
                 let (snapshot, returned_sys) = tokio::task::spawn_blocking(move || {
                     let snapshot = crate::gpu::collect_system_metrics_with(&mut sys);
                     (snapshot, sys)
@@ -107,16 +118,20 @@ impl ProxyServer {
                 // Update the cached snapshot read by /tama/v1/system/health.
                 *metrics_state.system_metrics.write().await = snapshot.clone();
 
-                // Build a timestamped MetricSample.
-                let ts_unix_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
+                // 2. Read latest inference stats from watch channel
+                let inference = *metrics_state.inference_stats.borrow();
+
+                // 3. Collect model statuses
                 let model_statuses = metrics_state.collect_model_statuses().await;
                 let models_loaded =
                     model_statuses.iter().filter(|m| m.state == "ready").count() as u64;
+
+                // 4. Build unified MetricSample WITH inference fields
                 let sample = crate::gpu::MetricSample {
-                    ts_unix_ms,
+                    ts_unix_ms: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
                     cpu_usage_pct: snapshot.cpu_usage_pct,
                     ram_used_mib: snapshot.ram_used_mib,
                     ram_total_mib: snapshot.ram_total_mib,
@@ -124,41 +139,60 @@ impl ProxyServer {
                     vram: snapshot.vram.clone(),
                     models_loaded,
                     models: model_statuses,
+                    tps: inference.as_ref().and_then(|i| i.tps),
+                    prompt_tps: inference.as_ref().and_then(|i| i.prompt_tps),
+                    cache_hit_pct: inference.as_ref().and_then(|i| i.cache_hit_pct),
+                    spec_accept_pct: inference.as_ref().and_then(|i| i.spec_accept_pct),
+                    spec_decoding_active: inference
+                        .map(|i| i.spec_decoding_active)
+                        .unwrap_or(false),
+                    inference_last_updated_ms: inference.as_ref().map(|i| i.last_updated_ms),
                 };
 
-                // Persist to SQLite (best-effort). Read retention from config.
+                // 5. Persist to SQLite (include inference fields in SystemMetricsRow)
+                let row = crate::db::queries::SystemMetricsRow {
+                    ts_unix_ms: sample.ts_unix_ms,
+                    cpu_usage_pct: sample.cpu_usage_pct,
+                    ram_used_mib: sample.ram_used_mib as i64,
+                    ram_total_mib: sample.ram_total_mib as i64,
+                    gpu_utilization_pct: sample.gpu_utilization_pct.map(|v| v as i64),
+                    vram_used_mib: sample.vram.as_ref().map(|v| v.used_mib as i64),
+                    vram_total_mib: sample.vram.as_ref().map(|v| v.total_mib as i64),
+                    models_loaded: sample.models_loaded as i64,
+                    tps: sample.tps.map(|v| v as f64),
+                    prompt_tps: sample.prompt_tps.map(|v| v as f64),
+                    cache_hit_pct: sample.cache_hit_pct.map(|v| v as f64),
+                    spec_accept_pct: sample.spec_accept_pct.map(|v| v as f64),
+                };
+                // Persist (spawn_blocking, unchanged pattern)
                 let retention_secs = metrics_state
                     .config
                     .read()
                     .await
                     .proxy
                     .metrics_retention_secs;
-                if let Some(conn) = metrics_state.open_db() {
-                    let row = crate::db::queries::SystemMetricsRow {
-                        ts_unix_ms: sample.ts_unix_ms,
-                        cpu_usage_pct: sample.cpu_usage_pct,
-                        ram_used_mib: sample.ram_used_mib as i64,
-                        ram_total_mib: sample.ram_total_mib as i64,
-                        gpu_utilization_pct: sample.gpu_utilization_pct.map(|v| v as i64),
-                        vram_used_mib: sample.vram.as_ref().map(|v| v.used_mib as i64),
-                        vram_total_mib: sample.vram.as_ref().map(|v| v.total_mib as i64),
-                        models_loaded: sample.models_loaded as i64,
-                    };
-                    let cutoff_ms = sample.ts_unix_ms - (retention_secs as i128 * 1000) as i64;
-                    // Run the blocking SQLite call off the runtime.
-                    let _ = tokio::task::spawn_blocking(move || {
+                let cutoff_ms = sample.ts_unix_ms - (retention_secs as i128 * 1000) as i64;
+                let db_state = Arc::clone(&metrics_state);
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Some(conn) = db_state.open_db() {
                         if let Err(e) =
                             crate::db::queries::insert_system_metric(&conn, &row, cutoff_ms)
                         {
                             tracing::warn!("failed to persist system metric: {}", e);
                         }
-                    })
-                    .await;
+                    }
+                })
+                .await;
+
+                // 6. Update in-memory buffer
+                history_buf.push_back(sample);
+                while history_buf.len() > 450 {
+                    history_buf.pop_front();
                 }
 
-                // Broadcast to any live SSE subscribers. SendError just means there are
-                // no subscribers; that is the normal idle case.
-                let _ = metrics_state.metrics_tx.send(sample);
+                // 7. Broadcast as Arc slice (no deep clone)
+                let arc: Arc<[crate::gpu::MetricSample]> = history_buf.make_contiguous().into();
+                let _ = metrics_state.metrics_tx.send(arc);
 
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
@@ -270,6 +304,38 @@ impl ProxyServer {
                 let _ = state.check_idle_timeouts().await;
             }
         })
+    }
+
+    /// Convert a `SystemMetricsRow` from SQLite into a `MetricSample`.
+    /// Used to seed the in-memory history buffer on startup.
+    fn row_into_sample(row: &crate::db::queries::SystemMetricsRow) -> crate::gpu::MetricSample {
+        crate::gpu::MetricSample {
+            ts_unix_ms: row.ts_unix_ms,
+            cpu_usage_pct: row.cpu_usage_pct,
+            ram_used_mib: row.ram_used_mib.max(0) as u64,
+            ram_total_mib: row.ram_total_mib.max(0) as u64,
+            gpu_utilization_pct: row.gpu_utilization_pct.and_then(|v| {
+                if (0..=100).contains(&v) {
+                    Some(v as u8)
+                } else {
+                    None
+                }
+            }),
+            vram: row.vram_used_mib.and_then(|used| {
+                row.vram_total_mib.map(|total| crate::gpu::VramInfo {
+                    used_mib: used.max(0) as u64,
+                    total_mib: total.max(0) as u64,
+                })
+            }),
+            models_loaded: row.models_loaded.max(0) as u64,
+            models: vec![], // Not stored in DB — seeded samples have no model status
+            tps: row.tps.map(|v| v as f32),
+            prompt_tps: row.prompt_tps.map(|v| v as f32),
+            cache_hit_pct: row.cache_hit_pct.map(|v| v as f32),
+            spec_accept_pct: row.spec_accept_pct.map(|v| v as f32),
+            spec_decoding_active: false,     // Transient — not in DB
+            inference_last_updated_ms: None, // Transient — not in DB
+        }
     }
 
     /// Consume the server and return a configured axum Router.
@@ -392,9 +458,14 @@ mod tests {
         let result = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv()).await;
         assert!(
             result.is_ok(),
-            "Expected to receive a MetricSample within 4s, but timeout occurred"
+            "Expected to receive a MetricSample slice within 4s, but timeout occurred"
         );
-        let sample = result.unwrap().unwrap();
+        let arc = result.unwrap().unwrap();
+        assert!(
+            !arc.is_empty(),
+            "Expected at least one sample in the broadcast"
+        );
+        let sample = &arc[0];
         assert!(sample.ts_unix_ms > 0, "ts_unix_ms should be positive");
         assert!(
             sample.cpu_usage_pct >= 0.0,
@@ -457,14 +528,19 @@ mod tests {
 
         let _server = ProxyServer::new(state.clone()).await;
 
-        let sample = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv())
+        let arc = tokio::time::timeout(std::time::Duration::from_secs(4), rx.recv())
             .await
-            .expect("Expected to receive a MetricSample within 4s, but timeout occurred")
+            .expect("Expected to receive a MetricSample slice within 4s, but timeout occurred")
             .expect("metrics_tx channel closed before any sample was broadcast");
 
         // The metrics loop must populate `MetricSample.models` from
         // `ProxyState::collect_model_statuses`, which reflects the current
         // configuration.
+        assert!(
+            !arc.is_empty(),
+            "Expected at least one sample in the broadcast"
+        );
+        let sample = &arc[0];
         assert_eq!(
             sample.models.len(),
             1,
@@ -527,7 +603,7 @@ mod tests {
         assert!(content_type.contains("text/event-stream"));
 
         let mut stream = response.bytes_stream();
-        let mut found_sample = false;
+        let mut found_snapshot = false;
         while let Some(chunk) =
             tokio::time::timeout(std::time::Duration::from_secs(4), stream.next())
                 .await
@@ -535,27 +611,28 @@ mod tests {
         {
             let chunk: Bytes = chunk.unwrap();
             let data = String::from_utf8_lossy(&chunk);
-            if data.contains("event: sample") {
+            if data.contains("event: snapshot") {
                 // Parse the data: line to extract data: line
                 for line in data.lines() {
                     if let Some(data_line) = line.strip_prefix("data: ") {
-                        let sample: crate::gpu::MetricSample =
+                        let samples: Vec<crate::gpu::MetricSample> =
                             serde_json::from_str(data_line).unwrap();
-                        assert!(sample.ts_unix_ms > 0);
-                        assert!(sample.ram_total_mib > 0);
-                        found_sample = true;
+                        assert!(!samples.is_empty());
+                        assert!(samples[0].ts_unix_ms > 0);
+                        assert!(samples[0].ram_total_mib > 0);
+                        found_snapshot = true;
                         break;
                     }
                 }
-                if found_sample {
+                if found_snapshot {
                     break;
                 }
             }
         }
 
         assert!(
-            found_sample,
-            "Expected to receive a sample event within 4s, but none was found"
+            found_snapshot,
+            "Expected to receive a snapshot event within 4s, but none was found"
         );
     }
 
@@ -678,15 +755,19 @@ mod tests {
                     }
                 }
 
-                if event_name == Some("sample") {
-                    let data_line = data_line
-                        .expect("sample event must include a data: line carrying the JSON payload");
+                if event_name == Some("snapshot") {
+                    let data_line = data_line.expect(
+                        "snapshot event must include a data: line carrying the JSON payload",
+                    );
                     // The critical assertion: the JSON produced by the
-                    // server must deserialize cleanly into MetricSample,
-                    // including the new `models` field.
-                    let sample: crate::gpu::MetricSample = serde_json::from_str(data_line)
-                        .expect("MetricSample JSON from SSE stream must deserialize without error");
-                    parsed_sample = Some(sample);
+                    // server must deserialize cleanly into Vec<MetricSample>,
+                    // including the `models` field.
+                    let samples: Vec<crate::gpu::MetricSample> = serde_json::from_str(data_line)
+                        .expect(
+                        "MetricSample array JSON from SSE stream must deserialize without error",
+                    );
+                    assert!(!samples.is_empty());
+                    parsed_sample = Some(samples[0].clone());
                     break;
                 }
             }
@@ -697,7 +778,7 @@ mod tests {
         }
 
         let sample = parsed_sample
-            .expect("Expected to receive a sample event within 4s, but none was found");
+            .expect("Expected to receive a snapshot event within 4s, but none was found");
 
         // Statically prove `sample.models` is a `Vec<crate::gpu::ModelStatus>`.
         // If the field's type ever changes, this binding will fail to

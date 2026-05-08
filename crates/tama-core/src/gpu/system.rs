@@ -32,6 +32,24 @@ pub struct MetricSample {
     /// Per-model loaded/idle status, embedded in `MetricSample.models`.
     #[serde(default)]
     pub models: Vec<ModelStatus>,
+    /// Token generation speed (tokens per second), None if not yet observed.
+    #[serde(default)]
+    pub tps: Option<f32>,
+    /// Prompt processing speed in tokens per second, None if not yet observed.
+    #[serde(default)]
+    pub prompt_tps: Option<f32>,
+    /// KV-cache hit rate percentage, None if not yet observed.
+    #[serde(default)]
+    pub cache_hit_pct: Option<f32>,
+    /// Speculative decoding acceptance rate, None if not yet observed.
+    #[serde(default)]
+    pub spec_accept_pct: Option<f32>,
+    /// True if speculative decoding has been active (draft tokens accepted).
+    #[serde(default)]
+    pub spec_decoding_active: bool,
+    /// Unix ms timestamp of the last inference update — transient, not persisted.
+    #[serde(default)]
+    pub inference_last_updated_ms: Option<i64>,
 }
 
 /// Per-model loaded/idle status, embedded in `MetricSample.models`.

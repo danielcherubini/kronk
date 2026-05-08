@@ -17,8 +17,8 @@ pub use pull::{
     start_download_from_queue,
 };
 pub use system::{
-    handle_hf_list_quants, handle_system_metrics_history, handle_system_metrics_stream,
-    handle_tama_system_health, handle_tama_system_restart,
+    handle_hf_list_quants, handle_system_metrics_stream, handle_tama_system_health,
+    handle_tama_system_restart,
 };
 pub use types::{
     max_concurrent_pulls, ModelResponse, PullRequest, PullResponse, QuantDownloadSpec, QuantEntry,
