@@ -50,6 +50,13 @@ jobs:
       - name: Format check
         run: cargo fmt --all --check
 
+      - name: Check for Windows cfg code
+        run: |
+          if grep -rP 'cfg\s*\(.*windows' crates/ --include='*.rs' | grep -v '//.*[Ww]indows' | grep -v '#\[cfg(not(target_os = "linux"))\]'; then
+            echo "ERROR: Found cfg(windows) code. Windows support has been removed."
+            exit 1
+          fi
+
       - name: Build Leptos WASM frontend
         working-directory: crates/tama-web
         run: trunk build
@@ -59,48 +66,6 @@ jobs:
 
       - name: Clippy (tama-web SSR)
         run: cargo clippy --package tama-web --features ssr --all-targets -- -D warnings
-
-      - name: Run tests (workspace)
-        run: cargo test --workspace -- --nocapture
-
-  test-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/release
-          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys:
-            ${{ runner.os }}-cargo-deps-
-
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install trunk
-        uses: jetli/trunk-action@v0.5.0
-        with:
-          version: latest
-
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Build Leptos WASM frontend
-        working-directory: crates/tama-web
-        run: trunk build
-
-      - name: Clippy (workspace)
-        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests (workspace)
         run: cargo test --workspace -- --nocapture
