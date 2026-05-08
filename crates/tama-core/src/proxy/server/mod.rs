@@ -115,6 +115,9 @@ impl ProxyServer {
                 });
                 sys = returned_sys;
 
+                // Update the cached snapshot read by /tama/v1/system/health.
+                *metrics_state.system_metrics.write().await = snapshot.clone();
+
                 // 2. Read latest inference stats from watch channel
                 let inference = *metrics_state.inference_stats.borrow();
 

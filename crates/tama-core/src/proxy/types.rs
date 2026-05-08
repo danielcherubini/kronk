@@ -312,7 +312,7 @@ mod tests {
         // Original is still usable after copy
         assert_eq!(stats.tps, Some(50.0));
         // Test Clone
-        let stats3 = stats.clone();
+        let stats3 = stats;
         assert_eq!(stats3.prompt_tps, Some(200.0));
     }
 
