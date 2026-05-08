@@ -25,7 +25,7 @@ Tama is a local AI server written in Rust that provides an OpenAI-compatible API
 - **Automatic backend management** — Starts, routes, and unloads llama.cpp/ik_llama backends on demand
 - **Web-based control plane** — Browser UI for managing models, TTS backends, viewing logs, benchmarks, downloads, and editing configuration
 - **GPU acceleration** — Supports CUDA, Vulkan, Metal, and ROCm
-- **Cross-platform** — Windows, Linux, and macOS support with native service integration
+- **Linux support with native systemd integration**
 - **Model optimization** — Automatically detects VRAM and suggests optimal quantizations and context sizes
 - **Benchmarks** — Run llama-bench and speculative decoding benchmarks from the CLI or web UI
 - **Downloads Center** — Persistent download queue with real-time progress tracking
@@ -39,12 +39,6 @@ Tama is a local AI server written in Rust that provides an OpenAI-compatible API
 ## Quick Start
 
 ### Installation
-
-**Windows:** Download the installer from [Releases](https://github.com/danielcherubini/tama/releases), or:
-
-```bash
-cargo install --git https://github.com/danielcherubini/tama tama
-```
 
 **Linux (Debian/Ubuntu):**
 
@@ -66,7 +60,7 @@ tama service start
 ```
 
 > [!TIP]
-> On Windows, Tama registers as a native Windows Service with firewall configuration. On Linux, it creates a systemd user unit.
+> On Linux, Tama creates a systemd user unit.
 
 ---
 
@@ -229,8 +223,7 @@ tama self-update                   # Update Tama to the latest version
 
 Tama auto-generates a config on first run:
 
-- **Windows:** `%APPDATA%\tama\config.toml`
-- **Linux/macOS:** `~/.config/tama/config.toml`
+- **Linux:** `~/.config/tama/config.toml`
 
 ```toml
 [backends.llama_cpp]
@@ -295,7 +288,6 @@ tama/
 │   └── tama-web/        # Leptos web control plane (WASM + SSR)
 ├── config/              # Configuration templates
 ├── docs/                # Documentation
-├── installer/           # Windows Inno Setup script
 └── modelcards/         # Community model cards
 ```
 
@@ -336,7 +328,7 @@ cd tama
 cargo build --release
 ```
 
-The binary is at `target/release/tama.exe` (Windows) or `target/release/tama` (Linux).
+The binary is at `target/release/tama`.
 
 For development with the web UI:
 

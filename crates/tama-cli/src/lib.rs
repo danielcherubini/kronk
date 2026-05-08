@@ -12,8 +12,6 @@ pub mod cli;
 pub mod commands;
 pub mod flags;
 pub mod handlers;
-pub mod service;
-
 // Re-exports for integration tests
 pub use flags::extract_tama_flags;
 pub use handlers::server::{cmd_server_add, cmd_server_edit};
@@ -24,23 +22,10 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Args, Commands};
 use handlers::{config, profile, run, serve, server, service_cmd, status};
-#[cfg(target_os = "windows")]
-use service::service_dispatch;
 use tama_core::config::Config;
 
 /// Main entry point for the CLI
 pub async fn main() -> Result<()> {
-    // Check if we're being launched by the Windows Service Control Manager.
-    // SCM passes "service-run" as the first real argument.
-    // Skip logging::init() for service mode — the service sets up file-based logging.
-    #[cfg(target_os = "windows")]
-    {
-        let raw_args: Vec<String> = std::env::args().collect();
-        if raw_args.len() > 1 && raw_args[1] == "service-run" {
-            return service_dispatch();
-        }
-    }
-
     let args = Args::parse();
     let mut config = Config::load()?;
 

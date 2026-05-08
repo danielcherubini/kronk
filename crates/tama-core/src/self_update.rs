@@ -4,9 +4,10 @@
 //! updates, and restart the process. Uses the `self_update` crate's lower-level API
 //! for fine-grained progress reporting.
 
+use std::io::Write;
+
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 
 /// GitHub repository owner for Tama releases.
 pub const REPO_OWNER: &str = "danielcherubini";
@@ -224,11 +225,7 @@ fn perform_update_sync(
     on_progress("Extracting binary...".to_string());
 
     // 5. Extract the binary from the archive
-    let bin_name = if cfg!(target_os = "windows") {
-        "tama.exe"
-    } else {
-        "tama"
-    };
+    let bin_name = "tama";
 
     let archive_kind = crate::self_update::detect_archive_kind(&asset.name);
     tracing::info!(
@@ -316,29 +313,8 @@ fn list_archive_contents(
     archive_kind: self_update::ArchiveKind,
 ) -> String {
     match archive_kind {
-        self_update::ArchiveKind::Zip => list_zip_contents(archive_path),
         self_update::ArchiveKind::Tar(_) => list_tar_gz_contents(archive_path),
         self_update::ArchiveKind::Plain(_) => "(plain binary, no archive entries)".to_string(),
-    }
-}
-
-/// List entry names inside a zip archive.
-fn list_zip_contents(archive_path: &std::path::Path) -> String {
-    let file = match std::fs::File::open(archive_path) {
-        Ok(f) => f,
-        Err(e) => return format!("<failed to open archive: {e}>"),
-    };
-    let archive = match zip::ZipArchive::new(file) {
-        Ok(a) => a,
-        Err(e) => return format!("<failed to read zip: {e}>"),
-    };
-    let names: Vec<&str> = (0..archive.len())
-        .filter_map(|i| archive.name_for_index(i))
-        .collect();
-    if names.is_empty() {
-        "<empty archive>".to_string()
-    } else {
-        names.join(", ")
     }
 }
 
@@ -369,8 +345,6 @@ fn list_tar_gz_contents(archive_path: &std::path::Path) -> String {
 pub fn detect_archive_kind(filename: &str) -> self_update::ArchiveKind {
     if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
         self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
-    } else if filename.ends_with(".zip") {
-        self_update::ArchiveKind::Zip
     } else {
         self_update::ArchiveKind::Plain(None)
     }
@@ -392,39 +366,27 @@ pub fn is_newer_version(latest: &str, current: &str) -> Option<bool> {
 
 /// Determine the binary name for the current platform.
 pub fn target_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "tama.exe"
-    } else {
-        "tama"
-    }
+    "tama"
 }
 
-/// Detect whether the current process is running as a system service.
+/// Detect whether the current process is running as a systemd service.
 pub fn is_running_as_service() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        // systemd sets INVOCATION_ID for both system and user services
-        if std::env::var("INVOCATION_ID").is_ok() {
-            return true;
-        }
-        // Fallback: JOURNAL_STREAM is also set by systemd
-        if std::env::var("JOURNAL_STREAM").is_ok() {
-            return true;
-        }
-        false
+    // systemd sets INVOCATION_ID for both system and user services
+    if std::env::var("INVOCATION_ID").is_ok() {
+        return true;
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows, detect if launched via the `service-run` command
-        std::env::args().any(|arg| arg == "service-run")
+    // Fallback: JOURNAL_STREAM is also set by systemd
+    if std::env::var("JOURNAL_STREAM").is_ok() {
+        return true;
     }
+    false
 }
 
 /// Restart the Tama process after an update.
 ///
-/// If running as a systemd/Windows service, uses the platform's service restart
-/// mechanism. Otherwise, re-execs the current binary with the same arguments.
+/// If running as a system service (e.g., systemd), uses the platform's service restart
+/// mechanism via [`is_running_as_service`] and [`restart_as_service`].
+/// Otherwise, re-execs the current binary with the same arguments.
 pub fn restart_process() -> Result<()> {
     if is_running_as_service() {
         restart_as_service()?;
@@ -437,34 +399,11 @@ pub fn restart_process() -> Result<()> {
 }
 
 /// Restart via the platform service manager.
-#[allow(unreachable_code)]
 fn restart_as_service() -> Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        // When running as a systemd service, we simply exit.
-        // Our unit file is configured with `Restart=always`, so systemd
-        // will automatically restart the process using the new binary.
-        std::process::exit(0);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        match crate::platform::windows::restart_service("tama") {
-            Ok(()) => std::process::exit(0),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to restart via Windows SCM: {e:#}. Falling back to CLI re-exec."
-                );
-                restart_as_cli()?;
-            }
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    anyhow::bail!("service restart is not supported on this platform");
-
-    Ok(())
+    // When running as a systemd service, we simply exit.
+    // Our unit file is configured with `Restart=always`, so systemd
+    // will automatically restart the process using the new binary.
+    std::process::exit(0);
 }
 
 /// Restart by re-execing the current binary with the same arguments.
@@ -502,12 +441,6 @@ mod tests {
             kind,
             self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
         ));
-    }
-
-    #[test]
-    fn test_detect_archive_kind_zip() {
-        let kind = detect_archive_kind("tama-x86_64-pc-windows-msvc.zip");
-        assert!(matches!(kind, self_update::ArchiveKind::Zip));
     }
 
     #[test]
@@ -584,18 +517,9 @@ mod tests {
 
     // ── target_binary_name tests ──────────────────────────────────────────
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn test_target_binary_name_linux_macos() {
-        // On non-Windows platforms, the binary name is "tama"
+    fn test_target_binary_name() {
         assert_eq!(target_binary_name(), "tama");
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn test_target_binary_name_windows() {
-        // On Windows, the binary name is "tama.exe"
-        assert_eq!(target_binary_name(), "tama.exe");
     }
 
     // ── UpdateInfo serialization tests ────────────────────────────────────

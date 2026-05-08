@@ -66,8 +66,6 @@ pub fn get_backend_install_path(
 /// This function canonicalizes both the target path and the backends directory, then verifies
 /// the target is within the managed directory before deletion. This prevents directory traversal
 /// attacks and accidental deletion of files outside the backends directory.
-///
-/// On Windows, if removal fails with PermissionDenied, it retries once after a short delay.
 pub fn safe_remove_installation(info: &BackendInfo) -> Result<()> {
     // Determine what to remove:
     // - If path is a directory (TTS backends), remove the path itself
@@ -96,46 +94,11 @@ pub fn safe_remove_installation(info: &BackendInfo) -> Result<()> {
         return Err(anyhow!("path is outside the managed backends directory"));
     }
 
-    // On Windows, remove_dir_all fails if a process is using the directory
-    #[cfg(windows)]
+    // remove_dir_all will fail if directory is in use
     {
-        use std::io::ErrorKind;
-        match std::fs::remove_dir_all(&target) {
-            Ok(_) => {
-                tracing::info!("Files removed.");
-            }
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                tracing::warn!("Skipping file removal: backend may still be running. Retrying...");
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                match std::fs::remove_dir_all(&target) {
-                    Ok(_) => {
-                        tracing::info!("Files removed.");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Skipping file removal: {}", e);
-                        return Err(anyhow!("Failed to remove backend directory: {}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Skipping file removal: {}", e);
-                return Err(anyhow!("Failed to remove backend directory: {}", e));
-            }
-        }
-    }
-
-    // On Unix, remove_dir_all will fail if directory is in use
-    #[cfg(not(windows))]
-    {
-        match std::fs::remove_dir_all(&target) {
-            Ok(_) => {
-                tracing::info!("Files removed.");
-            }
-            Err(e) => {
-                tracing::warn!("Skipping file removal: {}", e);
-                return Err(anyhow!("Failed to remove backend directory: {}", e));
-            }
-        }
+        std::fs::remove_dir_all(&target)
+            .with_context(|| format!("Failed to remove backend directory: {}", target.display()))?;
+        tracing::info!("Files removed.");
     }
 
     Ok(())

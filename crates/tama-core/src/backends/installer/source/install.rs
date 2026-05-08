@@ -1,19 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(target_os = "windows")]
-use anyhow::Context;
-
 use anyhow::{anyhow, Result};
 
 use super::build::build_cmake_args;
 use super::build::emit;
-#[cfg(not(target_os = "windows"))]
 use super::detect::detect_hip_env;
-#[cfg(target_os = "windows")]
-use super::detect::find_llvm_bin;
-#[cfg(target_os = "windows")]
-use super::detect::find_vcvarsall;
 use crate::backends::installer::extract::find_backend_binary;
 use crate::backends::installer::prebuilt::prepare_target_dir;
 use crate::backends::registry::BackendType;
@@ -55,8 +47,7 @@ pub async fn install_from_source(
     if !caps.compiler_available {
         return Err(anyhow!(
             "C++ compiler is required to build from source.\n\
-             Linux: sudo apt install build-essential\n\
-             Windows: Install Visual Studio Build Tools or MinGW (g++)"
+             Linux: sudo apt install build-essential"
         ));
     }
 
@@ -269,114 +260,26 @@ async fn configure_cmake(
     };
     let cmake_args = build_cmake_args(options, source_dir, build_output, &amdgpu_targets);
 
-    #[cfg(target_os = "windows")]
-    {
-        return configure_cmake_windows(&cmake_args, build_output, progress).await;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let mut cmd = tokio::process::Command::new("cmake");
-        cmd.args(&cmake_args);
-        if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
-            if let Some((hipcxx, hip_path)) = detect_hip_env() {
-                tracing::info!("Using HIPCXX={}, HIP_PATH={}", hipcxx, hip_path);
-                cmd.env("HIPCXX", hipcxx);
-                cmd.env("HIP_PATH", hip_path);
-            } else {
-                tracing::warn!(
-                    "hipconfig not found or returned empty output. \
-                     Falling back to PATH-based HIP discovery. \
-                     Ensure /opt/rocm/bin is on PATH if the build fails."
-                );
-            }
-        }
-        let status = cmd.status().await?;
-
-        if !status.success() {
-            return Err(anyhow!(
-                "CMake configuration failed. Check that all build dependencies are installed."
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-/// On Windows, run cmake inside a vcvars-activated environment so that
-/// nvcc can locate the MSVC host compiler headers and libs.
-///
-/// We write a temporary .bat file containing the vcvarsall + cmake calls,
-/// then execute it with `cmd /c <bat_path>`. This avoids all cmd.exe inline
-/// quoting complexity (the "network path not found" class of errors that
-/// occur when trying to inline a quoted UNC-like path after `cmd /c`).
-#[cfg(target_os = "windows")]
-async fn configure_cmake_windows(
-    cmake_args: &[String],
-    build_output: &Path,
-    #[allow(unused_variables)] progress: Option<&Arc<dyn ProgressSink>>,
-) -> Result<()> {
-    // Build the cmake invocation line for inside the .bat file.
-    // Each arg containing spaces gets double-quoted (safe in .bat context).
-    let cmake_invocation = std::iter::once("cmake".to_string())
-        .chain(cmake_args.iter().cloned())
-        .map(|a| {
-            if a.contains(' ') {
-                format!("\"{}\"", a)
-            } else {
-                a
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // Prepend LLVM bin dir to PATH if found, so clang-cl is discoverable by cmake.
-    let llvm_path_line = match find_llvm_bin() {
-        Some(llvm_bin) => {
-            tracing::info!("Found LLVM bin: {:?}", llvm_bin);
-            format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy())
-        }
-        None => {
+    let mut cmd = tokio::process::Command::new("cmake");
+    cmd.args(&cmake_args);
+    if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
+        if let Some((hipcxx, hip_path)) = detect_hip_env() {
+            tracing::info!("Using HIPCXX={}, HIP_PATH={}", hipcxx, hip_path);
+            cmd.env("HIPCXX", hipcxx);
+            cmd.env("HIP_PATH", hip_path);
+        } else {
             tracing::warn!(
-                "LLVM bin dir not found; clang-cl may not be on PATH. \
-                 Install LLVM from https://releases.llvm.org/"
+                "hipconfig not found or returned empty output. \
+                 Falling back to PATH-based HIP discovery. \
+                 Ensure /opt/rocm/bin is on PATH if the build fails."
             );
-            String::new()
         }
-    };
-
-    let bat_contents = match find_vcvarsall() {
-        Some(vcvarsall) => {
-            tracing::info!("Using vcvarsall: {:?}", vcvarsall);
-            format!(
-                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
-                llvm_path = llvm_path_line,
-                vcvarsall = vcvarsall.to_string_lossy(),
-                cmake = cmake_invocation,
-            )
-        }
-        None => {
-            tracing::warn!(
-                "vcvarsall.bat not found; running cmake without MSVC environment. \
-                 CUDA builds may fail if MSVC headers are not already on PATH."
-            );
-            format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_invocation)
-        }
-    };
-
-    let bat_path = build_output.join("tama_cmake_configure.bat");
-    std::fs::write(&bat_path, &bat_contents)
-        .with_context(|| format!("Failed to write cmake bat file: {:?}", bat_path))?;
-
-    let status = tokio::process::Command::new("cmd")
-        .args(["/c", &bat_path.to_string_lossy()])
-        .status()
-        .await?;
+    }
+    let status = cmd.status().await?;
 
     if !status.success() {
         return Err(anyhow!(
-            "CMake configuration failed. Check that all build dependencies are installed \
-             (clang-cl, ninja, CUDA toolkit, Visual Studio Build Tools)."
+            "CMake configuration failed. Check that all build dependencies are installed."
         ));
     }
 
@@ -397,63 +300,23 @@ async fn build_cmake(build_output: &Path, progress: Option<&Arc<dyn ProgressSink
         ),
     );
 
-    // On Windows, nvcc requires cl.exe to be on PATH (it's the CUDA host
-    // compiler). vcvarsall.bat was sourced during configure, but each
-    // Command::new() spawns a fresh process that doesn't inherit that
-    // environment. Wrap the build step in the same .bat-file approach.
-    #[cfg(target_os = "windows")]
-    {
-        let cmake_build_cmd = format!(
-            "cmake --build \"{}\" --config Release -j {}",
-            build_output.to_string_lossy(),
-            num_jobs
-        );
-        let llvm_path_line = match find_llvm_bin() {
-            Some(llvm_bin) => format!("set PATH={};%PATH%\r\n", llvm_bin.to_string_lossy()),
-            None => String::new(),
-        };
-        let bat_contents = match find_vcvarsall() {
-            Some(vcvarsall) => format!(
-                "@echo off\r\n{llvm_path}call \"{vcvarsall}\" x64\r\nif errorlevel 1 exit /b 1\r\n{cmake}\r\n",
-                llvm_path = llvm_path_line,
-                vcvarsall = vcvarsall.to_string_lossy(),
-                cmake = cmake_build_cmd,
-            ),
-            None => format!("@echo off\r\n{}{}\r\n", llvm_path_line, cmake_build_cmd),
-        };
-        let bat_path = build_output.join("tama_cmake_build.bat");
-        std::fs::write(&bat_path, &bat_contents)
-            .with_context(|| format!("Failed to write build bat file: {:?}", bat_path))?;
-        let status = tokio::process::Command::new("cmd")
-            .args(["/c", &bat_path.to_string_lossy()])
-            .status()
-            .await?;
-        if !status.success() {
-            return Err(anyhow!("Build failed. Check the output above for errors."));
-        }
-        Ok(())
+    let status = tokio::process::Command::new("cmake")
+        .args([
+            "--build",
+            &build_output.to_string_lossy(),
+            "--config",
+            "Release",
+            "-j",
+            &num_jobs.to_string(),
+        ])
+        .status()
+        .await?;
+
+    if !status.success() {
+        return Err(anyhow!("Build failed. Check the output above for errors."));
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let status = tokio::process::Command::new("cmake")
-            .args([
-                "--build",
-                &build_output.to_string_lossy(),
-                "--config",
-                "Release",
-                "-j",
-                &num_jobs.to_string(),
-            ])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(anyhow!("Build failed. Check the output above for errors."));
-        }
-
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Copy the built binary (and shared libs) to the target directory.

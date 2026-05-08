@@ -265,14 +265,8 @@ impl ProxyServer {
                     pid
                 );
                 // Use tokio::process::Command to avoid blocking the async context.
-                #[cfg(unix)]
                 let _ = tokio::process::Command::new("kill")
                     .arg(pid.to_string())
-                    .status()
-                    .await;
-                #[cfg(windows)]
-                let _ = tokio::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/F"])
                     .status()
                     .await;
                 let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);

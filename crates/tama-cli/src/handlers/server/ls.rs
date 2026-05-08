@@ -35,21 +35,8 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
 
         let service_name = Config::service_name(name);
         let service_status = {
-            #[cfg(target_os = "windows")]
-            {
-                tama_core::platform::windows::query_service(&service_name)
-                    .unwrap_or_else(|_| "UNKNOWN".to_string())
-            }
-            #[cfg(target_os = "linux")]
-            {
-                tama_core::platform::linux::auto_query_service(&service_name)
-                    .unwrap_or_else(|_| "UNKNOWN".to_string())
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            {
-                let _ = &service_name;
-                "N/A".to_string()
-            }
+            tama_core::platform::linux::auto_query_service(&service_name)
+                .unwrap_or_else(|_| "UNKNOWN".to_string())
         };
 
         // Use server's resolved health check config
