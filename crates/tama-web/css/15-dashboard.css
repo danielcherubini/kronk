@@ -1,8 +1,3 @@
-/* Stale inference stat cards — dimmed appearance */
-.stat-card--stale {
-  opacity: 0.5;
-}
-
 /* Inference stats grid — vertical gap above to separate from system metrics */
 .grid-stats--inference {
   margin-top: 1rem;

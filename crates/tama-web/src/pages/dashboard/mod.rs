@@ -269,59 +269,32 @@ pub fn Dashboard() -> impl IntoView {
                 {move || {
                     let buf = history.get();
                     let latest = buf.last();
-                    let has_inference = latest.map(|s| s.inference_last_updated_ms.is_some()).unwrap_or(false);
-                    let stale = if let Some(sample) = latest {
-                        match sample.inference_last_updated_ms {
-                            Some(ts) => (js_sys::Date::now() as i64 - ts) > 30_000,
-                            None => true,
-                        }
-                    } else {
-                        true
-                    };
 
-                    // Extract sparkline data from samples with inference timestamps
-                    let inference_samples: Vec<&MetricSample> = buf.iter()
-                        .filter(|s| s.inference_last_updated_ms.is_some())
-                        .collect();
-                    let timestamps: Vec<i64> = inference_samples.iter()
-                        .map(|s| s.inference_last_updated_ms.unwrap_or(s.ts_unix_ms))
-                        .collect();
-                    let tps_data: Vec<f32> = inference_samples.iter()
+                    // Extract sparkline data from ALL samples (full 15-min window),
+                    // filling in 0.0 for samples where inference hasn't been observed yet.
+                    let timestamps: Vec<i64> = buf.iter().map(|s| s.ts_unix_ms).collect();
+                    let tps_data: Vec<f32> = buf.iter()
                         .map(|s| s.tps.unwrap_or(0.0)).collect();
-                    let prompt_tps_data: Vec<f32> = inference_samples.iter()
+                    let prompt_tps_data: Vec<f32> = buf.iter()
                         .map(|s| s.prompt_tps.unwrap_or(0.0)).collect();
-                    let cache_data: Vec<f32> = inference_samples.iter()
+                    let cache_data: Vec<f32> = buf.iter()
                         .map(|s| s.cache_hit_pct.unwrap_or(0.0)).collect();
-                    let spec_data: Vec<f32> = inference_samples.iter()
+                    let spec_data: Vec<f32> = buf.iter()
                         .map(|s| s.spec_accept_pct.unwrap_or(0.0)).collect();
 
                     // Determine max values for sparkline scaling
                     let tps_max = tps_data.iter().cloned().fold(1.0f32, f32::max);
                     let prompt_tps_max = prompt_tps_data.iter().cloned().fold(1.0f32, f32::max);
 
-                    let stale_label = if has_inference && stale {
-                        let ts = latest.unwrap().inference_last_updated_ms.unwrap_or(0);
-                        let diff_secs = ((js_sys::Date::now() as i64 - ts) / 1_000).max(0);
-                        if diff_secs < 60 {
-                            format!("{}s ago", diff_secs)
-                        } else {
-                            format!("{}m ago", diff_secs / 60)
-                        }
-                    } else if !has_inference {
-                        "No data".to_string()
-                    } else {
-                        String::new()
-                    };
-
                     view! {
                         <div class="grid-stats grid-stats--inference">
                             // Processing Speed card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
+                            <div class="stat-card">
                                 <div class="card-header">"Processing Speed"</div>
                                 {match latest.and_then(|s| s.prompt_tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">{stale_label.clone()}</div>
+                                        <div class="card-secondary">String::new()</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -341,12 +314,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Gen Speed card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
+                            <div class="stat-card">
                                 <div class="card-header">"Gen Speed"</div>
                                 {match latest.and_then(|s| s.tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">{stale_label.clone()}</div>
+                                        <div class="card-secondary">String::new()</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -366,12 +339,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Cache Hits card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
+                            <div class="stat-card">
                                 <div class="card-header">"Cache Hits"</div>
                                 {match latest.and_then(|s| s.cache_hit_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">{stale_label.clone()}</div>
+                                        <div class="card-secondary">String::new()</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -391,12 +364,12 @@ pub fn Dashboard() -> impl IntoView {
                             </div>
 
                             // Spec Accept card
-                            <div class="stat-card" class:stat-card--stale=stale || !has_inference>
+                            <div class="stat-card">
                                 <div class="card-header">"Spec Accept"</div>
                                 {match latest.and_then(|s| s.spec_accept_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">{stale_label.clone()}</div>
+                                        <div class="card-secondary">String::new()</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
