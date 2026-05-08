@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 90
+- **Total Plans**: 91
 - **Completed**: 90 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 0
+- **In Progress**: 1 🚧
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -38,6 +38,12 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Inference Stats Dashboard Cards](2026-05-06-inference-stats-dashboard.md) | Surface llama_cpp timings (Processing Speed, Gen Speed, Cache Hits, Spec Accept) as 4 sparkline stat cards | `4a88d10` ✅ COMPLETED |
 | [Shared Activity Panel + SSE Core](2026-05-06-shared-activity-panel-and-sse-core.md) | Extract duplicated SSE reconnection logic into shared utility, create generic ActivityPanel UI shell | `ca711f2` ✅ COMPLETED |
 | [Metrics Snapshot Stream](2026-05-07-metrics-snapshot-stream.md) | Replace delta SSE with full snapshot delivery every 2s, unify inference stats into same pipeline, eliminate frontend desync | #86 `309c895`, `5d920b7`, `aff3c15`, `b024266` ✅ COMPLETED |
+
+### In Progress
+
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
+| [Remove Windows Support](todo/2026-05-08-remove-windows-support.md) | Remove all Windows-specific code, CI, build targets, dependencies, and documentation | 🚧 IN PROGRESS |
 
 ### Draft
 
