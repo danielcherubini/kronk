@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-// Use std::process::kill for Unix, taskkill for Windows
+// Kill child processes by PID
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -207,15 +207,13 @@ impl JobManager {
 
     /// Kill all child processes for a job.
     ///
-    /// Unix: sends SIGTERM to each PID, then SIGKILL after 2 seconds if still alive.
-    /// Windows: uses `taskkill /F /PID` to forcefully terminate each process.
+    /// Sends SIGTERM to each PID, then SIGKILL after 2 seconds if still alive.
     pub async fn kill_children(&self, job: &Job) {
         let pids = job.child_pids.read().await;
         if pids.is_empty() {
             return;
         }
 
-        #[cfg(unix)]
         {
             let mut sigterm_futures = Vec::new();
             for &pid in pids.iter() {
@@ -247,21 +245,6 @@ impl JobManager {
                 })
                 .await;
             }
-        }
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let mut futures = Vec::new();
-            for &pid in pids.iter() {
-                futures.push(tokio::task::spawn_blocking(move || {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/PID", &pid.to_string()])
-                        .creation_flags(0x00000008) // CREATE_NO_WINDOW
-                        .status();
-                }));
-            }
-            let _ = futures_util::future::join_all(futures).await;
         }
 
         tracing::info!("Killed {} child process(es) for job {}", pids.len(), job.id);
