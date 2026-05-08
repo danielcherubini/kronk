@@ -66,8 +66,6 @@ pub fn get_backend_install_path(
 /// This function canonicalizes both the target path and the backends directory, then verifies
 /// the target is within the managed directory before deletion. This prevents directory traversal
 /// attacks and accidental deletion of files outside the backends directory.
-///
-/// On Windows, if removal fails with PermissionDenied, it retries once after a short delay.
 pub fn safe_remove_installation(info: &BackendInfo) -> Result<()> {
     // Determine what to remove:
     // - If path is a directory (TTS backends), remove the path itself

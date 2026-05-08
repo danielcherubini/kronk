@@ -66,7 +66,6 @@ pub fn get_prebuilt_url(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu::GpuType;
 
     #[test]
     fn test_llama_cpp_download_url_linux_cpu() {

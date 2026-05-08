@@ -47,8 +47,7 @@ pub async fn install_from_source(
     if !caps.compiler_available {
         return Err(anyhow!(
             "C++ compiler is required to build from source.\n\
-             Linux: sudo apt install build-essential\n\
-             Windows: Install Visual Studio Build Tools or MinGW (g++)"
+             Linux: sudo apt install build-essential"
         ));
     }
 

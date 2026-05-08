@@ -288,7 +288,6 @@ tama/
 │   └── tama-web/        # Leptos web control plane (WASM + SSR)
 ├── config/              # Configuration templates
 ├── docs/                # Documentation
-├── installer/           # Windows Inno Setup script
 └── modelcards/         # Community model cards
 ```
 
