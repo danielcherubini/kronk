@@ -23,7 +23,6 @@ fn normalize_grouped_args(config: &mut Config) -> bool {
 
 impl Config {
     /// Base directory for all tama data.
-    /// Windows: `%APPDATA%\tama`
     /// Linux: `~/.config/tama`
     ///
     /// On first run after the rename from `kronk` to `tama`, this function
@@ -33,15 +32,7 @@ impl Config {
     pub fn base_dir() -> Result<PathBuf> {
         let proj = directories::ProjectDirs::from("", "", "tama")
             .context("Failed to determine config directory")?;
-        // config_dir() on Windows = %APPDATA%\tama\config, we want the parent
-        // On Linux config_dir() = ~/.config/tama which is already the base
-        #[cfg(target_os = "windows")]
-        let base = proj
-            .config_dir()
-            .parent()
-            .unwrap_or(proj.config_dir())
-            .to_path_buf();
-        #[cfg(not(target_os = "windows"))]
+        // config_dir() on Linux = ~/.config/tama which is already the base
         let base = proj.config_dir().to_path_buf();
 
         // One-time auto-migration from the legacy kronk directory. This is
@@ -68,8 +59,7 @@ impl Config {
     }
 
     /// Load config from an explicit directory path.
-    /// Used by the Windows service which runs as SYSTEM and needs
-    /// the installing user's config directory.
+    /// Used by tests which need to load from a non-standard location.
     pub fn load_from(config_dir: &std::path::Path) -> Result<Self> {
         fs::create_dir_all(config_dir).context("Failed to create config directory")?;
 
@@ -132,7 +122,7 @@ impl Config {
     }
 
     /// Save config to a specific directory path.
-    /// Used by tests and Windows service which need to save to non-standard locations.
+    /// Used by tests which need to save to non-standard locations.
     pub fn save_to(&self, config_dir: &std::path::Path) -> Result<()> {
         let config_path = config_dir.join("config.toml");
         fs::create_dir_all(config_dir).context("Failed to create config directory")?;
@@ -143,7 +133,7 @@ impl Config {
 
     /// Resolve the logs directory path.
     /// Uses `general.logs_dir` if set, otherwise defaults to `<base_dir>/logs/`.
-    /// On Windows this is `%APPDATA%\tama\logs\`, on Linux `~/.config/tama/logs/`.
+    /// On Linux this is `~/.config/tama/logs/`.
     pub fn logs_dir(&self) -> Result<PathBuf> {
         if let Some(ref dir) = self.general.logs_dir {
             Ok(PathBuf::from(dir))

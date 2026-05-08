@@ -72,39 +72,6 @@ pub(crate) fn build_cmake_args(
         super::super::super::registry::BackendType::IkLlama
     ) {
         cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
-
-        // On Windows, use the Ninja + clang-cl approach recommended by the
-        // ik_llama.cpp official build docs. This sidesteps all MSVC AVX2
-        // detection issues: clang-cl accepts -march=native directly (via
-        // /clang:-march=native), which reliably defines __AVX2__ and activates
-        // the IQK optimized CPU kernels required by hybrid Mamba/attention
-        // models like Qwen3.5. Without these kernels, SSM layers produce
-        // inf/NaN logits and crash on the first token.
-        if cfg!(target_os = "windows") {
-            // Use Ninja generator so clang-cl works correctly (it doesn't
-            // integrate well with the Visual Studio MSBuild generator).
-            cmake_args.push("-GNinja".to_string());
-            // clang-cl: LLVM's CL-compatible driver. Supports /arch:AVX2
-            // reliably, unlike plain MSVC cl.exe where AVX2 detection is broken.
-            cmake_args.push("-DCMAKE_C_COMPILER=clang-cl".to_string());
-            cmake_args.push("-DCMAKE_CXX_COMPILER=clang-cl".to_string());
-            // clang-cl identifies itself as MSVC to CMake, so ggml's CMakeLists
-            // takes the MSVC branch for ARCH_FLAGS. In that branch:
-            //   - GGML_NATIVE=ON  → runs FindSIMD.cmake which leaves ARCH_FLAGS
-            //     empty for clang-cl (it only sets flags for true cl.exe)
-            //   - GGML_AVX2=OFF   → skips /arch:AVX2 (default is OFF when NATIVE=ON)
-            // Fix: disable NATIVE and explicitly enable AVX2/FMA/AVX so the MSVC
-            // branch adds /arch:AVX2 to ARCH_FLAGS, which defines __AVX2__ and
-            // activates the IQK optimized CPU kernels required by Qwen3.5/Mamba.
-            cmake_args.push("-DGGML_NATIVE=OFF".to_string());
-            cmake_args.push("-DGGML_AVX2=ON".to_string());
-            cmake_args.push("-DGGML_AVX=ON".to_string());
-            cmake_args.push("-DGGML_FMA=ON".to_string());
-            // CUDA arch: "native" lets nvcc detect the installed GPU at compile
-            // time. Required because without it CUDA 13.x would use the fallback
-            // list which includes compute_50 (dropped in CUDA 13.x).
-            cmake_args.push("-DCMAKE_CUDA_ARCHITECTURES=native".to_string());
-        }
     }
 
     cmake_args
@@ -113,7 +80,6 @@ pub(crate) fn build_cmake_args(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(target_os = "windows"))]
     use crate::backends::installer::source::detect;
     use crate::backends::registry::{BackendSource, BackendType};
     use std::path::PathBuf;
@@ -315,46 +281,6 @@ mod tests {
         assert!(args.contains(&"-DGGML_BACKEND_DL=ON".to_string()));
     }
 
-    /// On Windows, ik_llama builds must use the Ninja + clang-cl approach so
-    /// that -march=native is reliably passed via /clang:-march=native. This
-    /// defines __AVX2__ and activates the IQK optimized CPU kernels required by
-    /// hybrid Mamba/attention models (e.g. Qwen3.5). Without these kernels, SSM
-    /// layers produce inf/NaN logits and crash on the first token.
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_ik_llama_windows_uses_ninja_clang_cl_avx2() {
-        let opts = make_options(BackendType::IkLlama, None);
-        let args = build_cmake_args(&opts, Path::new("/src"), Path::new("/build"), &[]);
-        assert!(
-            args.contains(&"-GNinja".to_string()),
-            "Windows ik_llama build must use -GNinja, got: {:?}",
-            args
-        );
-        assert!(
-            args.contains(&"-DCMAKE_C_COMPILER=clang-cl".to_string()),
-            "Windows ik_llama build must set CMAKE_C_COMPILER=clang-cl, got: {:?}",
-            args
-        );
-        // clang-cl acts as MSVC to CMake, so we must explicitly set AVX2/FMA/AVX
-        // and disable NATIVE so ggml's MSVC branch adds /arch:AVX2 to ARCH_FLAGS.
-        assert!(
-            args.contains(&"-DGGML_NATIVE=OFF".to_string()),
-            "Windows ik_llama build must set GGML_NATIVE=OFF, got: {:?}",
-            args
-        );
-        assert!(
-            args.contains(&"-DGGML_AVX2=ON".to_string()),
-            "Windows ik_llama build must set GGML_AVX2=ON, got: {:?}",
-            args
-        );
-        assert!(
-            args.contains(&"-DGGML_FMA=ON".to_string()),
-            "Windows ik_llama build must set GGML_FMA=ON, got: {:?}",
-            args
-        );
-    }
-
-    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_happy_path() {
         let result = detect::hip_env_from_hipconfig_output("/opt/rocm/llvm/bin\n", "/opt/rocm\n");
@@ -367,7 +293,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_empty_stdout_returns_none() {
         assert_eq!(detect::hip_env_from_hipconfig_output("", "/opt/rocm"), None);
@@ -377,7 +302,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_hip_env_from_hipconfig_output_trims_whitespace() {
         let result =

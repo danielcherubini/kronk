@@ -18,186 +18,91 @@ pub fn override_arg(args: &mut Vec<String>, flag: &str, value: &str) {
 }
 
 /// Check if a process is still alive by PID.
-/// Uses `kill(pid, 0)` on Unix (POSIX-portable across Linux/macOS/BSD)
-/// and `tasklist` with exact PID column matching on Windows.
+/// Uses `kill(pid, 0)` — POSIX-portable across Linux/macOS/BSD.
 pub fn is_process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // POSIX-portable: kill(pid, 0) checks process existence without
-        // sending a signal. Returns 0 if alive, -1 with ESRCH if not.
-        // EPERM means the process exists but we lack permission to signal it.
-        let ret = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        if ret == 0 {
-            return true;
-        }
-        // Check errno: ESRCH = no such process, EPERM = exists but no permission
-        let err = std::io::Error::last_os_error();
-        err.raw_os_error() == Some(libc::EPERM)
+    // POSIX-portable: kill(pid, 0) checks process existence without
+    // sending a signal. Returns 0 if alive, -1 with ESRCH if not.
+    // EPERM means the process exists but we lack permission to signal it.
+    let ret = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if ret == 0 {
+        return true;
     }
-    #[cfg(windows)]
-    {
-        // On Windows, use tasklist to check if PID is running.
-        // Parse line-by-line and match the PID column exactly to avoid
-        // substring false positives (e.g. PID 12 matching PID 123).
-        let pid_str = pid.to_string();
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
-            .output()
-            .map(|o| {
-                let output = String::from_utf8_lossy(&o.stdout);
-                output.lines().any(|line| {
-                    // CSV format: "name","pid","session","session#","mem"
-                    line.split(',')
-                        .nth(1)
-                        .map(|col| col.trim_matches('"').trim() == pid_str)
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    }
+    // Check errno: ESRCH = no such process, EPERM = exists but no permission
+    let err = std::io::Error::last_os_error();
+    err.raw_os_error() == Some(libc::EPERM)
 }
 
-/// Kill a process by PID (cross-platform).
-/// On Unix, sends SIGTERM for graceful shutdown.
-/// On Windows, uses `taskkill /T` without `/F` for graceful termination.
+/// Kill a process by PID. Sends SIGTERM for graceful shutdown.
 pub async fn kill_process(pid: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let mut child: tokio::process::Child = TokioCommand::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .spawn()
-            .with_context(|| format!("Failed to execute kill command for PID {}", pid))?;
-        let status: std::process::ExitStatus = child.wait().await?;
-        if !status.success() {
-            return Err(anyhow::anyhow!("Failed to send SIGTERM to PID {}", pid));
-        }
-    }
-    #[cfg(windows)]
-    {
-        let mut child: tokio::process::Child = TokioCommand::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .spawn()
-            .with_context(|| format!("Failed to execute taskkill command for PID {}", pid))?;
-        let status: std::process::ExitStatus = child.wait().await?;
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to terminate process with PID {}",
-                pid
-            ));
-        }
+    let mut child: tokio::process::Child = TokioCommand::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .spawn()
+        .with_context(|| format!("Failed to execute kill command for PID {}", pid))?;
+    let status: std::process::ExitStatus = child.wait().await?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to send SIGTERM to PID {}", pid));
     }
     Ok(())
 }
 
-/// Forcefully kill a process by PID (SIGKILL on Unix, taskkill /F on Windows).
+/// Forcefully kill a process by PID (sends SIGKILL).
 pub async fn force_kill_process(pid: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let mut child: tokio::process::Child = TokioCommand::new("kill")
-            .arg("-KILL")
-            .arg(pid.to_string())
-            .spawn()
-            .with_context(|| format!("Failed to execute kill -KILL for PID {}", pid))?;
-        let status: std::process::ExitStatus = child.wait().await?;
-        if !status.success() {
-            return Err(anyhow::anyhow!("Failed to send SIGKILL to PID {}", pid));
-        }
-    }
-    #[cfg(windows)]
-    {
-        let mut child: tokio::process::Child = TokioCommand::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .arg("/F")
-            .spawn()
-            .with_context(|| format!("Failed to execute taskkill /F for PID {}", pid))?;
-        let status: std::process::ExitStatus = child.wait().await?;
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to forcefully terminate process with PID {}",
-                pid
-            ));
-        }
+    let mut child: tokio::process::Child = TokioCommand::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .spawn()
+        .with_context(|| format!("Failed to execute kill -KILL for PID {}", pid))?;
+    let status: std::process::ExitStatus = child.wait().await?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to send SIGKILL to PID {}", pid));
     }
     Ok(())
 }
 
 /// Configure a child process to be spawned in its own process group.
-/// On Unix, uses process_group(0) to create a new session.
-/// On Windows, uses CREATE_NEW_PROCESS_GROUP flag.
+/// Uses process_group(0) to create a new session.
 /// Call this before spawning any backend process.
 pub fn configure_process_group(cmd: &mut tokio::process::Command) {
-    #[cfg(unix)]
-    {
-        #[allow(unused_imports)]
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        // CREATE_NEW_PROCESS_GROUP = 0x00000200
-        cmd.creation_flags(0x00000200);
-    }
+    cmd.process_group(0);
 }
 
-/// Send SIGTERM to an entire process group (Unix) or kill the process tree (Windows).
-/// On Unix, negative PID in kill() targets the process group.
-/// On Windows, delegates to kill_process() which uses taskkill /T (tree kill).
+/// Send SIGTERM to an entire process group.
+/// Negative PID in kill() targets the process group.
 pub async fn kill_process_group(pid: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        // SAFETY: libc::kill with a negative PID targets the entire process group.
-        // The PID was obtained from a successfully spawned child process and is guaranteed > 0.
-        // SIGTERM is a standard POSIX signal. The call cannot access invalid memory.
-        let ret = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
-        if ret != 0 {
-            let err = std::io::Error::last_os_error();
-            // ESRCH = no such process group, which is fine (already dead)
-            if err.raw_os_error() != Some(libc::ESRCH) {
-                return Err(anyhow::anyhow!(
-                    "Failed to send SIGTERM to process group {}: {}",
-                    pid,
-                    err
-                ));
-            }
+    // SAFETY: libc::kill with a negative PID targets the entire process group.
+    // The PID was obtained from a successfully spawned child process and is guaranteed > 0.
+    // SIGTERM is a standard POSIX signal. The call cannot access invalid memory.
+    let ret = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        // ESRCH = no such process group, which is fine (already dead)
+        if err.raw_os_error() != Some(libc::ESRCH) {
+            return Err(anyhow::anyhow!(
+                "Failed to send SIGTERM to process group {}: {}",
+                pid,
+                err
+            ));
         }
-    }
-    #[cfg(windows)]
-    {
-        kill_process(pid).await?;
     }
     Ok(())
 }
 
-/// Send SIGKILL to an entire process group (Unix) or force-kill the process tree (Windows).
-/// On Windows, delegates to force_kill_process() which uses taskkill /T /F (forceful tree kill).
+/// Send SIGKILL to an entire process group.
 pub async fn force_kill_process_group(pid: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        // SAFETY: libc::kill with a negative PID targets the entire process group.
-        // The PID was obtained from a successfully spawned child process and is guaranteed > 0.
-        // SIGKILL is a standard POSIX signal. The call cannot access invalid memory.
-        let ret = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
-        if ret != 0 {
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() != Some(libc::ESRCH) {
-                return Err(anyhow::anyhow!(
-                    "Failed to send SIGKILL to process group {}: {}",
-                    pid,
-                    err
-                ));
-            }
+    // SAFETY: libc::kill with a negative PID targets the entire process group.
+    // The PID was obtained from a successfully spawned child process and is guaranteed > 0.
+    // SIGKILL is a standard POSIX signal. The call cannot access invalid memory.
+    let ret = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::ESRCH) {
+            return Err(anyhow::anyhow!(
+                "Failed to send SIGKILL to process group {}: {}",
+                pid,
+                err
+            ));
         }
-    }
-    #[cfg(windows)]
-    {
-        force_kill_process(pid).await?;
     }
     Ok(())
 }
@@ -225,7 +130,6 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn test_kill_process_group_nonexistent_pid_returns_ok() {
         // Use a PID that definitely doesn't exist.
@@ -238,7 +142,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn test_force_kill_process_group_nonexistent_pid_returns_ok() {
         // Same for SIGKILL variant.
@@ -250,7 +153,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[allow(unused_imports)]
     #[tokio::test]
     async fn test_process_group_kills_children() {

@@ -96,36 +96,7 @@ pub fn safe_remove_installation(info: &BackendInfo) -> Result<()> {
         return Err(anyhow!("path is outside the managed backends directory"));
     }
 
-    // On Windows, remove_dir_all fails if a process is using the directory
-    #[cfg(windows)]
-    {
-        use std::io::ErrorKind;
-        match std::fs::remove_dir_all(&target) {
-            Ok(_) => {
-                tracing::info!("Files removed.");
-            }
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-                tracing::warn!("Skipping file removal: backend may still be running. Retrying...");
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                match std::fs::remove_dir_all(&target) {
-                    Ok(_) => {
-                        tracing::info!("Files removed.");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Skipping file removal: {}", e);
-                        return Err(anyhow!("Failed to remove backend directory: {}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Skipping file removal: {}", e);
-                return Err(anyhow!("Failed to remove backend directory: {}", e));
-            }
-        }
-    }
-
-    // On Unix, remove_dir_all will fail if directory is in use
-    #[cfg(not(windows))]
+    // remove_dir_all will fail if directory is in use
     {
         match std::fs::remove_dir_all(&target) {
             Ok(_) => {

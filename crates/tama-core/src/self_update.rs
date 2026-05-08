@@ -224,11 +224,7 @@ fn perform_update_sync(
     on_progress("Extracting binary...".to_string());
 
     // 5. Extract the binary from the archive
-    let bin_name = if cfg!(target_os = "windows") {
-        "tama.exe"
-    } else {
-        "tama"
-    };
+    let bin_name = "tama";
 
     let archive_kind = crate::self_update::detect_archive_kind(&asset.name);
     tracing::info!(
@@ -392,33 +388,20 @@ pub fn is_newer_version(latest: &str, current: &str) -> Option<bool> {
 
 /// Determine the binary name for the current platform.
 pub fn target_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "tama.exe"
-    } else {
-        "tama"
-    }
+    "tama"
 }
 
-/// Detect whether the current process is running as a system service.
+/// Detect whether the current process is running as a systemd service.
 pub fn is_running_as_service() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        // systemd sets INVOCATION_ID for both system and user services
-        if std::env::var("INVOCATION_ID").is_ok() {
-            return true;
-        }
-        // Fallback: JOURNAL_STREAM is also set by systemd
-        if std::env::var("JOURNAL_STREAM").is_ok() {
-            return true;
-        }
-        false
+    // systemd sets INVOCATION_ID for both system and user services
+    if std::env::var("INVOCATION_ID").is_ok() {
+        return true;
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows, detect if launched via the `service-run` command
-        std::env::args().any(|arg| arg == "service-run")
+    // Fallback: JOURNAL_STREAM is also set by systemd
+    if std::env::var("JOURNAL_STREAM").is_ok() {
+        return true;
     }
+    false
 }
 
 /// Restart the Tama process after an update.
@@ -437,34 +420,11 @@ pub fn restart_process() -> Result<()> {
 }
 
 /// Restart via the platform service manager.
-#[allow(unreachable_code)]
 fn restart_as_service() -> Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        // When running as a systemd service, we simply exit.
-        // Our unit file is configured with `Restart=always`, so systemd
-        // will automatically restart the process using the new binary.
-        std::process::exit(0);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        match crate::platform::windows::restart_service("tama") {
-            Ok(()) => std::process::exit(0),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to restart via Windows SCM: {e:#}. Falling back to CLI re-exec."
-                );
-                restart_as_cli()?;
-            }
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    anyhow::bail!("service restart is not supported on this platform");
-
-    Ok(())
+    // When running as a systemd service, we simply exit.
+    // Our unit file is configured with `Restart=always`, so systemd
+    // will automatically restart the process using the new binary.
+    std::process::exit(0);
 }
 
 /// Restart by re-execing the current binary with the same arguments.
@@ -506,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_detect_archive_kind_zip() {
-        let kind = detect_archive_kind("tama-x86_64-pc-windows-msvc.zip");
+        let kind = detect_archive_kind("tama-x86_64-unknown-linux-gnu.zip");
         assert!(matches!(kind, self_update::ArchiveKind::Zip));
     }
 
@@ -584,18 +544,9 @@ mod tests {
 
     // ── target_binary_name tests ──────────────────────────────────────────
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn test_target_binary_name_linux_macos() {
-        // On non-Windows platforms, the binary name is "tama"
+    fn test_target_binary_name() {
         assert_eq!(target_binary_name(), "tama");
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn test_target_binary_name_windows() {
-        // On Windows, the binary name is "tama.exe"
-        assert_eq!(target_binary_name(), "tama.exe");
     }
 
     // ── UpdateInfo serialization tests ────────────────────────────────────

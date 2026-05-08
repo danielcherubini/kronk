@@ -2,10 +2,9 @@
 //! `tama` data directory.
 //!
 //! When the project was renamed from `kronk` to `tama`, existing users had
-//! data under `~/.config/kronk` (Linux) or `%APPDATA%\kronk` (Windows). On
-//! first run of the new binary we rename that directory to the `tama`
-//! location and rename the SQLite database file inside it from `kronk.db` to
-//! `tama.db`.
+//! data under `~/.config/kronk`. On first run of the new binary we rename that
+//! directory to the `tama` location and rename the SQLite database file inside
+//! it from `kronk.db` to `tama.db`.
 //!
 //! This module intentionally contains the legacy name `kronk` as string
 //! literals — it is the only place in the codebase where those literals
@@ -27,19 +26,7 @@ pub struct Migration {
 /// (e.g. in restricted test environments).
 fn legacy_base_dir() -> Option<PathBuf> {
     let proj = directories::ProjectDirs::from("", "", "kronk")?;
-    #[cfg(target_os = "windows")]
-    {
-        Some(
-            proj.config_dir()
-                .parent()
-                .unwrap_or_else(|| proj.config_dir())
-                .to_path_buf(),
-        )
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Some(proj.config_dir().to_path_buf())
-    }
+    Some(proj.config_dir().to_path_buf())
 }
 
 /// Migrate a legacy kronk data directory to the new tama location if needed.

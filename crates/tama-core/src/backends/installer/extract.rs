@@ -101,9 +101,6 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<PathBuf> {
 
 /// Recursively search for the llama-server binary in the extracted directory.
 pub fn find_backend_binary(dir: &Path) -> Result<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let binary_name = "llama-server.exe";
-    #[cfg(not(target_os = "windows"))]
     let binary_name = "llama-server";
 
     // Walk the directory tree to find the binary

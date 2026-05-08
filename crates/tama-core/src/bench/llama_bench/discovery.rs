@@ -21,11 +21,7 @@ pub fn find_llama_bench(backend_path: &std::path::Path) -> Result<PathBuf> {
         }
     }
 
-    let bench_name = if cfg!(target_os = "windows") {
-        "llama-bench.exe"
-    } else {
-        "llama-bench"
-    };
+    let bench_name = "llama-bench";
 
     if let Some(parent_dir) = backend_path.parent() {
         let direct_path = parent_dir.join(bench_name);

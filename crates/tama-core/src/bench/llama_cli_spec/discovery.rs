@@ -29,11 +29,7 @@ pub fn find_llama_server(backend_path: &std::path::Path) -> Result<PathBuf> {
         }
     }
 
-    let server_name = if cfg!(target_os = "windows") {
-        "llama-server.exe"
-    } else {
-        "llama-server"
-    };
+    let server_name = "llama-server";
 
     // 2. <backend_path>/llama-server (our primary layout)
     let root_path = backend_path.join(server_name);
@@ -87,11 +83,7 @@ mod tests {
     static ENV_VAR_MUTEX: Mutex<()> = Mutex::new(());
 
     fn server_name() -> &'static str {
-        if cfg!(target_os = "windows") {
-            "llama-server.exe"
-        } else {
-            "llama-server"
-        }
+        "llama-server"
     }
 
     #[test]
