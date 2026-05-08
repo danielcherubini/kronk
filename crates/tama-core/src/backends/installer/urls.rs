@@ -84,5 +84,4 @@ mod tests {
         let result = get_prebuilt_url(&BackendType::IkLlama, "main", "linux", "x86_64", None);
         assert!(result.is_err());
     }
-
 }

@@ -18,23 +18,9 @@ pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
     // Check if a service is installed for this server
     let service_name = Config::service_name(name);
     let service_installed = {
-        #[cfg(target_os = "windows")]
-        {
-            tama_core::platform::windows::query_service(&service_name)
-                .map(|s| s != "NOT_INSTALLED")
-                .unwrap_or(true)
-        }
-        #[cfg(target_os = "linux")]
-        {
-            tama_core::platform::linux::auto_query_service(&service_name)
-                .map(|s| s != "NOT_INSTALLED")
-                .unwrap_or(true)
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        {
-            let _ = &service_name;
-            false
-        }
+        tama_core::platform::linux::auto_query_service(&service_name)
+            .map(|s| s != "NOT_INSTALLED")
+            .unwrap_or(true)
     };
 
     if service_installed {
