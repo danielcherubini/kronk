@@ -47,6 +47,7 @@ pub(crate) fn build_cmake_args(
                 cmake_args.push("-DGGML_HIP=ON".to_string());
                 cmake_args.push("-DGGML_HIP_ROCWMMA_FATTN=ON".to_string());
                 cmake_args.push("-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string());
+                cmake_args.push("-DGGML_BACKEND_DL=ON".to_string());
                 // Note: `-DLLAMA_CURL=ON` was deprecated upstream and is now
                 // silently ignored (emits a cmake warning). curl support is
                 // handled implicitly by current llama.cpp builds, so we do
@@ -203,6 +204,11 @@ mod tests {
             args
         );
         assert!(
+            args.contains(&"-DGGML_BACKEND_DL=ON".to_string()),
+            "ROCm build must include -DGGML_BACKEND_DL=ON, got: {:?}",
+            args
+        );
+        assert!(
             !args.iter().any(|a| a.starts_with("-DLLAMA_CURL=")),
             "ROCm build must NOT include -DLLAMA_CURL= (deprecated upstream), got: {:?}",
             args
@@ -255,6 +261,7 @@ mod tests {
         assert!(args.contains(&"-DGGML_HIP=ON".to_string()));
         assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
         assert!(args.contains(&"-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string()));
+        assert!(args.contains(&"-DGGML_BACKEND_DL=ON".to_string()));
         assert!(
             !args.iter().any(|a| a.starts_with("-DLLAMA_CURL=")),
             "ROCm build must NOT include -DLLAMA_CURL= (deprecated upstream), got: {:?}",
@@ -305,6 +312,7 @@ mod tests {
         );
         assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
         assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
+        assert!(args.contains(&"-DGGML_BACKEND_DL=ON".to_string()));
     }
 
     /// On Windows, ik_llama builds must use the Ninja + clang-cl approach so
