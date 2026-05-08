@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
 use std::time::Duration;
-use tokio::process::Command as TokioCommand;
+
+use anyhow::{anyhow, Context, Result};
 
 /// Override a CLI flag's value in an argument list (e.g. --host, --port).
 /// If the flag exists, replaces its value. If not, appends the flag and value.
@@ -34,28 +34,20 @@ pub fn is_process_alive(pid: u32) -> bool {
 
 /// Kill a process by PID. Sends SIGTERM for graceful shutdown.
 pub async fn kill_process(pid: u32) -> Result<()> {
-    let mut child: tokio::process::Child = TokioCommand::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
-        .spawn()
-        .with_context(|| format!("Failed to execute kill command for PID {}", pid))?;
-    let status: std::process::ExitStatus = child.wait().await?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to send SIGTERM to PID {}", pid));
+    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(anyhow!("Failed to send SIGTERM to PID {}: {}", pid, err));
     }
     Ok(())
 }
 
 /// Forcefully kill a process by PID (sends SIGKILL).
 pub async fn force_kill_process(pid: u32) -> Result<()> {
-    let mut child: tokio::process::Child = TokioCommand::new("kill")
-        .arg("-KILL")
-        .arg(pid.to_string())
-        .spawn()
-        .with_context(|| format!("Failed to execute kill -KILL for PID {}", pid))?;
-    let status: std::process::ExitStatus = child.wait().await?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to send SIGKILL to PID {}", pid));
+    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(anyhow!("Failed to send SIGKILL to PID {}: {}", pid, err));
     }
     Ok(())
 }
@@ -129,6 +121,7 @@ pub async fn check_health(url: &str, timeout: Option<u64>) -> Result<reqwest::Re
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+    use tokio::process::Command as TokioCommand;
 
     #[tokio::test]
     async fn test_kill_process_group_nonexistent_pid_returns_ok() {

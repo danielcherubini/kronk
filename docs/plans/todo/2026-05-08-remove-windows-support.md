@@ -8,7 +8,7 @@
 
 ---
 
-### Task 1: Delete Windows files and update platform module
+## Task 1: Delete Windows files and update platform module
 
 **Context:**
 Remove the Windows platform directory, job object module, and installer directory. Update `platform/mod.rs` to only export Linux, with a `compile_error!` for non-Linux builds (updated wording for future BSD support).
@@ -48,7 +48,7 @@ compile_error!("Tama currently only supports Linux. BSD support is planned.");
 
 ---
 
-### Task 2: Strip Windows code from tama-core
+## Task 2: Strip Windows code from tama-core
 
 **Context:**
 Remove all `#[cfg(windows)]` and `#[cfg(target_os = "windows")]` branches from tama-core. For each file, make the Linux/unix branch unconditional. Also strip Windows runtime `cfg!()` checks, Windows match arms in URL construction, and Windows-specific tests.
@@ -120,7 +120,7 @@ For each file, remove Windows branches and make the Linux/unix path unconditiona
 
 ---
 
-### Task 3: Strip Windows code from tama-cli
+## Task 3: Strip Windows code from tama-cli
 
 **Context:**
 Remove all Windows service dispatch, service management, and handler code from tama-cli. The `service.rs` file becomes entirely dead code after stripping Windows — delete it. Update `lib.rs` to remove the Windows service dispatch check.
@@ -166,7 +166,7 @@ Remove all Windows service dispatch, service management, and handler code from t
 
 ---
 
-### Task 4: Strip Windows code from tama-web
+## Task 4: Strip Windows code from tama-web
 
 **Context:**
 Remove the Windows branch from tama-web's jobs.rs kill_children function.
@@ -197,7 +197,7 @@ In `jobs.rs`:
 
 ---
 
-### Task 5: Remove Windows dependencies from Cargo.toml files
+## Task 5: Remove Windows dependencies from Cargo.toml files
 
 **Context:**
 Remove the `[target.'cfg(windows)'.dependencies]` sections from both tama-core and tama-cli. Remove zip-related features from self_update in tama-core (they're only used for Windows archive extraction).
@@ -227,7 +227,7 @@ Remove the `[target.'cfg(windows)'.dependencies]` sections from both tama-core a
 
 ---
 
-### Task 6: Remove Windows CI/release jobs and add grep guard
+## Task 6: Remove Windows CI/release jobs and add grep guard
 
 **Context:**
 Remove Windows CI and release jobs from GitHub Actions. Add a grep step to CI that prevents `cfg(windows)` code from being re-introduced.
@@ -263,7 +263,7 @@ Remove Windows CI and release jobs from GitHub Actions. Add a grep step to CI th
 
 ---
 
-### Task 7: Update Makefile and README.md
+## Task 7: Update Makefile and README.md
 
 **Context:**
 Remove Windows-specific Makefile targets and update README to reflect Linux-only support.
@@ -290,7 +290,7 @@ Remove Windows-specific Makefile targets and update README to reflect Linux-only
 
 ---
 
-### Task 8: Final verification
+## Task 8: Final verification
 
 **Context:**
 Run the full verification suite to ensure everything builds, lints, and tests correctly.

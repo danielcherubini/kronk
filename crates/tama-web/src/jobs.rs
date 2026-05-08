@@ -207,7 +207,8 @@ impl JobManager {
 
     /// Kill all child processes for a job.
     ///
-    /// Sends SIGTERM to each PID, then SIGKILL after 2 seconds if still alive.
+    /// Sends SIGTERM to each PID, waits 2 seconds, then unconditionally sends
+    /// SIGKILL to all registered PIDs (SIGKILL on an already-dead PID is harmless).
     pub async fn kill_children(&self, job: &Job) {
         let pids = job.child_pids.read().await;
         if pids.is_empty() {

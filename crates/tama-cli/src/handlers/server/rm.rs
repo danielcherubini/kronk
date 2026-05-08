@@ -17,11 +17,9 @@ pub fn cmd_server_rm(config: &Config, name: &str, force: bool) -> Result<()> {
 
     // Check if a service is installed for this server
     let service_name = Config::service_name(name);
-    let service_installed = {
-        tama_core::platform::linux::auto_query_service(&service_name)
-            .map(|s| s != "NOT_INSTALLED")
-            .unwrap_or(true)
-    };
+    let service_installed = tama_core::platform::linux::auto_query_service(&service_name)
+        .map(|s| s != "NOT_INSTALLED")
+        .context("failed querying service status")?;
 
     if service_installed {
         anyhow::bail!(

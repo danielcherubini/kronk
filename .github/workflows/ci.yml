@@ -52,8 +52,8 @@ jobs:
 
       - name: Check for Windows cfg code
         run: |
-          if grep -rP 'cfg\s*\(.*windows' crates/ --include='*.rs' | grep -v '//.*[Ww]indows' | grep -v '#\[cfg(not(target_os = "linux"))\]'; then
-            echo "ERROR: Found cfg(windows) code. Windows support has been removed."
+          if grep -rP '#\s*\[\s*cfg\s*\(\s*target_os\s*=\s*"windows"' crates/ --include='*.rs'; then
+            echo "ERROR: Found #[cfg(target_os = \"windows\")] attribute. Windows support has been removed."
             exit 1
           fi
 

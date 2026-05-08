@@ -4,9 +4,10 @@
 //! updates, and restart the process. Uses the `self_update` crate's lower-level API
 //! for fine-grained progress reporting.
 
+use std::io::Write;
+
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 
 /// GitHub repository owner for Tama releases.
 pub const REPO_OWNER: &str = "danielcherubini";
@@ -383,8 +384,9 @@ pub fn is_running_as_service() -> bool {
 
 /// Restart the Tama process after an update.
 ///
-/// If running as a systemd/Windows service, uses the platform's service restart
-/// mechanism. Otherwise, re-execs the current binary with the same arguments.
+/// If running as a system service (e.g., systemd), uses the platform's service restart
+/// mechanism via [`is_running_as_service`] and [`restart_as_service`].
+/// Otherwise, re-execs the current binary with the same arguments.
 pub fn restart_process() -> Result<()> {
     if is_running_as_service() {
         restart_as_service()?;

@@ -96,15 +96,9 @@ pub fn safe_remove_installation(info: &BackendInfo) -> Result<()> {
 
     // remove_dir_all will fail if directory is in use
     {
-        match std::fs::remove_dir_all(&target) {
-            Ok(_) => {
-                tracing::info!("Files removed.");
-            }
-            Err(e) => {
-                tracing::warn!("Skipping file removal: {}", e);
-                return Err(anyhow!("Failed to remove backend directory: {}", e));
-            }
-        }
+        std::fs::remove_dir_all(&target)
+            .with_context(|| format!("Failed to remove backend directory: {}", target.display()))?;
+        tracing::info!("Files removed.");
     }
 
     Ok(())
