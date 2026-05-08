@@ -38,8 +38,6 @@ chrono = "0.4.44"
 [dev-dependencies]
 tempfile = "3"
 
-[target.'cfg(windows)'.dependencies]
-windows-service = "0.7"
 
 [package.metadata.deb]
 maintainer = "Daniel Cherubini <daniel@cherubini.casa>"

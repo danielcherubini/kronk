@@ -33,7 +33,7 @@ async-stream = "0.3"
 libc = "0.2.183"
 rusqlite.workspace = true
 uuid = { version = "1", features = ["v4"] }
-self_update = { version = "0.44", default-features = false, features = ["archive-tar", "compression-flate2", "archive-zip", "compression-zip-deflate", "rustls", "ureq"] }
+self_update = { version = "0.44", default-features = false, features = ["archive-tar", "compression-flate2", "rustls", "ureq"] }
 http = "1"
 semver = "1"
 sha2 = "0.10"
@@ -44,9 +44,6 @@ base64 = "0.22"
 futures = "0.3"
 regex.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows-service = "0.7"
-windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_System_Threading", "Win32_Foundation"] }
 
 [dev-dependencies]
 serde_json = "1.0.149"

@@ -312,29 +312,8 @@ fn list_archive_contents(
     archive_kind: self_update::ArchiveKind,
 ) -> String {
     match archive_kind {
-        self_update::ArchiveKind::Zip => list_zip_contents(archive_path),
         self_update::ArchiveKind::Tar(_) => list_tar_gz_contents(archive_path),
         self_update::ArchiveKind::Plain(_) => "(plain binary, no archive entries)".to_string(),
-    }
-}
-
-/// List entry names inside a zip archive.
-fn list_zip_contents(archive_path: &std::path::Path) -> String {
-    let file = match std::fs::File::open(archive_path) {
-        Ok(f) => f,
-        Err(e) => return format!("<failed to open archive: {e}>"),
-    };
-    let archive = match zip::ZipArchive::new(file) {
-        Ok(a) => a,
-        Err(e) => return format!("<failed to read zip: {e}>"),
-    };
-    let names: Vec<&str> = (0..archive.len())
-        .filter_map(|i| archive.name_for_index(i))
-        .collect();
-    if names.is_empty() {
-        "<empty archive>".to_string()
-    } else {
-        names.join(", ")
     }
 }
 
@@ -365,8 +344,6 @@ fn list_tar_gz_contents(archive_path: &std::path::Path) -> String {
 pub fn detect_archive_kind(filename: &str) -> self_update::ArchiveKind {
     if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
         self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
-    } else if filename.ends_with(".zip") {
-        self_update::ArchiveKind::Zip
     } else {
         self_update::ArchiveKind::Plain(None)
     }
@@ -462,12 +439,6 @@ mod tests {
             kind,
             self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz))
         ));
-    }
-
-    #[test]
-    fn test_detect_archive_kind_zip() {
-        let kind = detect_archive_kind("tama-x86_64-unknown-linux-gnu.zip");
-        assert!(matches!(kind, self_update::ArchiveKind::Zip));
     }
 
     #[test]
