@@ -1,4 +1,4 @@
-.PHONY: build install install-global update test check fmt clippy clean build-web build-web-dev wasm-target build-windows coverage dev run
+.PHONY: build install update test check fmt clippy clean build-web build-web-dev wasm-target coverage dev run
 
 # Build and run tama (frontend + backend)
 run: build
@@ -35,16 +35,12 @@ update: build-frontend
 	cargo install --path crates/tama-cli --force
 	tama service start
 
-# Windows: copy release binary to Program Files (requires admin)
-install-global: build
-	copy target\release\tama.exe "C:\Program Files\Tama\tama.exe"
-
 # Run all tests including the tama-web SSR integration tests
 test: build-frontend-dev
 	cargo test --workspace
 	cargo test --package tama-web --features ssr
 
-check: fmt-check clippy test build-windows
+check: fmt-check clippy test
 
 fmt:
 	cargo fmt --all
@@ -66,10 +62,6 @@ build-web: build
 
 build-web-dev: build-frontend-dev
 	cargo build --workspace
-
-# Cross-compile to Windows from Linux (requires mingw64-gcc-c++)
-build-windows:
-	cargo build --target x86_64-pc-windows-gnu --release
 
 # Run code coverage analysis with cargo-tarpaulin (HTML report in target/coverage/)
 coverage:
