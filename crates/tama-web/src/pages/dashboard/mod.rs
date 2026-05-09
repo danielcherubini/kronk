@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::*;
 use crate::components::modal::Modal;
 use crate::components::model_card::ModelCard;
 use crate::components::pull_quant_wizard::{CompletedQuant, PullQuantWizard};
-use crate::components::sparkline::SparklineChart;
+use crate::components::sparkline::{format_relative_time, SparklineChart};
 use crate::utils::{post_request, rw_signal_to_signal};
 
 mod metrics;
@@ -270,6 +270,12 @@ pub fn Dashboard() -> impl IntoView {
                     let buf = history.get();
                     let latest = buf.last();
 
+                    // Compute "time since" string for inference stats cards
+                    let inference_time_ago = latest
+                        .and_then(|s| s.inference_last_updated_ms)
+                        .map(format_relative_time)
+                        .unwrap_or_default();
+
                     // Extract sparkline data from ALL samples (full 15-min window),
                     // filling in 0.0 for samples where inference hasn't been observed yet.
                     let timestamps: Vec<i64> = buf.iter().map(|s| s.ts_unix_ms).collect();
@@ -294,7 +300,7 @@ pub fn Dashboard() -> impl IntoView {
                                 {match latest.and_then(|s| s.prompt_tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">String::new()</div>
+                                        <div class="card-secondary">{inference_time_ago.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -319,7 +325,7 @@ pub fn Dashboard() -> impl IntoView {
                                 {match latest.and_then(|s| s.tps) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1} tok/s", v)}</div>
-                                        <div class="card-secondary">String::new()</div>
+                                        <div class="card-secondary">{inference_time_ago.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -344,7 +350,7 @@ pub fn Dashboard() -> impl IntoView {
                                 {match latest.and_then(|s| s.cache_hit_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">String::new()</div>
+                                        <div class="card-secondary">{inference_time_ago.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>
@@ -369,7 +375,7 @@ pub fn Dashboard() -> impl IntoView {
                                 {match latest.and_then(|s| s.spec_accept_pct) {
                                     Some(v) => view! {
                                         <div class="card-value">{format!("{:.1}%", v)}</div>
-                                        <div class="card-secondary">String::new()</div>
+                                        <div class="card-secondary">{inference_time_ago.clone()}</div>
                                     }.into_any(),
                                     None => view! {
                                         <div class="card-value-empty">"—"</div>

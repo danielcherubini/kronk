@@ -22,7 +22,7 @@ struct HoverPoint {
 /// Returns a human-readable string like "2m 15s ago" or "45s ago"
 /// based on the difference between `ts_unix_ms` and the current
 /// browser time. Returns an empty string if the timestamp is 0.
-fn format_relative_time(ts_unix_ms: i64) -> String {
+pub fn format_relative_time(ts_unix_ms: i64) -> String {
     if ts_unix_ms == 0 {
         return String::new();
     }
