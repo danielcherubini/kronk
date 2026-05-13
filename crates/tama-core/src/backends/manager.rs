@@ -1,5 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
+
+use crate::backends::types::{BackendInfo, BackendSource, BackendType};
 
 /// A single backend option for UI dropdowns (e.g. model editor backend selector).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -96,6 +98,194 @@ impl BackendManager {
             }
         }
         Ok(options)
+    }
+
+    // ── Installation (backend_installations table) ─────────────
+
+    /// Add a new backend installation, marking it as the active version.
+    /// Delegates to `insert_backend_installation` which handles INSERT OR REPLACE
+    /// and deactivates other versions of the same (name, gpu_variant).
+    pub fn add_installation(&self, info: &BackendInfo) -> Result<()> {
+        let record = Self::info_to_record(info)?;
+        crate::db::queries::insert_backend_installation(&self.conn, &record)
+            .with_context(|| format!("Failed to insert backend '{}'", info.name))
+    }
+
+    /// Get the active installation for a name + variant.
+    pub fn get_active(&self, name: &str, gpu_variant: &str) -> Result<Option<BackendInfo>> {
+        let record = crate::db::queries::get_active_backend(&self.conn, name, gpu_variant)?;
+        match record {
+            Some(r) => Ok(Some(Self::record_to_info(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// List all active backend installations (one per name+variant).
+    pub fn list_active(&self) -> Result<Vec<BackendInfo>> {
+        let records = crate::db::queries::list_active_backends(&self.conn)?;
+        records.into_iter().map(Self::record_to_info).collect()
+    }
+
+    /// List all versions of a backend.
+    /// If `gpu_variant` is Some, filters to that variant. If None, returns all variants.
+    /// Returns None if no versions exist for this name.
+    pub fn list_versions(
+        &self,
+        name: &str,
+        gpu_variant: Option<&str>,
+    ) -> Result<Option<Vec<BackendInfo>>> {
+        let records = crate::db::queries::list_backend_versions(&self.conn, name, gpu_variant)?;
+        if records.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(
+                records
+                    .into_iter()
+                    .map(Self::record_to_info)
+                    .collect::<Result<Vec<_>>>()?,
+            ))
+        }
+    }
+
+    /// Get a specific installation by (name, gpu_variant, version).
+    pub fn get_by_version(
+        &self,
+        name: &str,
+        gpu_variant: &str,
+        version: &str,
+    ) -> Result<Option<BackendInfo>> {
+        let record =
+            crate::db::queries::get_backend_by_version(&self.conn, name, gpu_variant, version)?;
+        match record {
+            Some(r) => Ok(Some(Self::record_to_info(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Activate a specific version for a name + variant.
+    /// Deactivates all other versions of the same (name, gpu_variant).
+    /// Returns true if the version was found and activated.
+    pub fn activate(&self, name: &str, gpu_variant: &str, version: &str) -> Result<bool> {
+        crate::db::queries::activate_backend_version(&self.conn, name, gpu_variant, version)
+    }
+
+    /// Update an existing backend to a new version (convenience).
+    /// Reads the current active installation, builds a new BackendInfo with
+    /// updated version/path/source, and calls add_installation.
+    pub fn update_version(
+        &self,
+        name: &str,
+        gpu_variant: &str,
+        new_version: String,
+        new_path: std::path::PathBuf,
+        new_source: Option<BackendSource>,
+    ) -> Result<()> {
+        let existing = self
+            .get_active(name, gpu_variant)?
+            .ok_or_else(|| anyhow!("Backend '{}' variant '{}' not found", name, gpu_variant))?;
+        let updated = BackendInfo {
+            name: existing.name,
+            backend_type: existing.backend_type,
+            version: new_version,
+            path: new_path,
+            installed_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64),
+            gpu_type: existing.gpu_type,
+            gpu_variant: existing.gpu_variant,
+            source: new_source,
+        };
+        self.add_installation(&updated)
+    }
+
+    /// Delete a specific (name, gpu_variant, version) installation row.
+    /// If the deleted version was active, re-activates the newest remaining version.
+    pub fn remove_version(&self, name: &str, gpu_variant: &str, version: &str) -> Result<()> {
+        // Check if the target version exists before deleting
+        let existing =
+            crate::db::queries::get_backend_by_version(&self.conn, name, gpu_variant, version)?;
+        let was_active = existing.as_ref().map(|r| r.is_active).unwrap_or(false);
+
+        crate::db::queries::delete_backend_installation(&self.conn, name, gpu_variant, version)?;
+
+        // If we deleted the active version, activate the newest remaining one
+        if was_active {
+            let remaining =
+                crate::db::queries::list_backend_versions(&self.conn, name, Some(gpu_variant))?;
+            if let Some(newest) = remaining.first() {
+                crate::db::queries::activate_backend_version(
+                    &self.conn,
+                    name,
+                    gpu_variant,
+                    &newest.version,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Delete all versions of a backend.
+    /// If `gpu_variant` is Some, only deletes that variant.
+    /// If None, deletes all variants.
+    pub fn delete_all_versions(&self, name: &str, gpu_variant: Option<&str>) -> Result<()> {
+        crate::db::queries::delete_all_backend_versions(&self.conn, name, gpu_variant)
+    }
+
+    // ── Private helpers ──────────────────────────────────────
+
+    fn info_to_record(info: &BackendInfo) -> Result<crate::db::queries::BackendInstallationRecord> {
+        let gpu_type_json = info
+            .gpu_type
+            .as_ref()
+            .map(|g| serde_json::to_string(g))
+            .transpose()
+            .context("Failed to serialize gpu_type")?;
+        let source_json = info
+            .source
+            .as_ref()
+            .map(|s| serde_json::to_string(s))
+            .transpose()
+            .context("Failed to serialize source")?;
+        Ok(crate::db::queries::BackendInstallationRecord {
+            id: 0,
+            name: info.name.clone(),
+            backend_type: info.backend_type.to_string(),
+            version: info.version.clone(),
+            path: info.path.to_string_lossy().to_string(),
+            installed_at: info.installed_at,
+            gpu_type: gpu_type_json,
+            gpu_variant: info.gpu_variant.clone(),
+            source: source_json,
+            is_active: true,
+        })
+    }
+
+    fn record_to_info(
+        record: crate::db::queries::BackendInstallationRecord,
+    ) -> Result<BackendInfo> {
+        let gpu_type = record
+            .gpu_type
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .context("Failed to deserialize gpu_type")?;
+        let source = record
+            .source
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .context("Failed to deserialize source")?;
+        Ok(BackendInfo {
+            name: record.name,
+            backend_type: record.backend_type.parse().unwrap_or(BackendType::LlamaCpp),
+            version: record.version,
+            path: std::path::PathBuf::from(record.path),
+            installed_at: record.installed_at,
+            gpu_type,
+            gpu_variant: record.gpu_variant,
+            source,
+        })
     }
 }
 
@@ -279,5 +469,288 @@ mod tests {
             .find(|o| o.variant == Some("cuda".to_string()))
             .unwrap();
         assert_eq!(cuda_opt.name, "llama_cpp");
+    }
+
+    // ── Installation tests ───────────────────────────────────────────
+
+    fn make_backend_info(name: &str, version: &str) -> BackendInfo {
+        BackendInfo {
+            name: name.to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: version.to_string(),
+            path: std::path::PathBuf::from(format!("/path/to/{}", name)),
+            installed_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            gpu_type: None,
+            gpu_variant: "cpu".to_string(),
+            source: None,
+        }
+    }
+
+    #[test]
+    fn test_add_and_get_installation() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info).unwrap();
+
+        let result = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(result.name, "llama_cpp");
+        assert_eq!(result.version, "b8407");
+        assert_eq!(result.backend_type, BackendType::LlamaCpp);
+    }
+
+    #[test]
+    fn test_add_installation_replaces_old() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info1 = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info1).unwrap();
+
+        // Add a new version — should deactivate old one
+        let info2 = BackendInfo {
+            version: "b9000".to_string(),
+            installed_at: info1.installed_at + 100,
+            ..info1.clone()
+        };
+        manager.add_installation(&info2).unwrap();
+
+        // Active should be the new version
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+
+        // Old version should still exist but not be active
+        let old = manager
+            .get_by_version("llama_cpp", "cpu", "b8407")
+            .unwrap()
+            .unwrap();
+        assert_eq!(old.version, "b8407");
+    }
+
+    #[test]
+    fn test_list_active_returns_all() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        manager
+            .add_installation(&make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+        let ik_info = BackendInfo {
+            name: "ik_llama".to_string(),
+            backend_type: BackendType::IkLlama,
+            gpu_variant: "cuda".to_string(),
+            ..make_backend_info("ik_llama", "main")
+        };
+        manager.add_installation(&ik_info).unwrap();
+
+        let active = manager.list_active().unwrap();
+        assert_eq!(active.len(), 2);
+
+        let llama = active.iter().find(|b| b.name == "llama_cpp").unwrap();
+        assert_eq!(llama.version, "b8407");
+
+        let ik = active.iter().find(|b| b.name == "ik_llama").unwrap();
+        assert_eq!(ik.version, "main");
+    }
+
+    #[test]
+    fn test_list_versions_by_variant() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info1 = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info1).unwrap();
+
+        let info2 = BackendInfo {
+            version: "b9000".to_string(),
+            installed_at: info1.installed_at + 100,
+            ..info1.clone()
+        };
+        manager.add_installation(&info2).unwrap();
+
+        let info_cuda = BackendInfo {
+            name: "llama_cpp".to_string(),
+            backend_type: BackendType::LlamaCpp,
+            version: "b8407".to_string(),
+            path: std::path::PathBuf::from("/path/to/llama_cpp"),
+            installed_at: info1.installed_at,
+            gpu_type: None,
+            gpu_variant: "cuda".to_string(),
+            source: None,
+        };
+        manager.add_installation(&info_cuda).unwrap();
+
+        // Filter by cpu variant
+        let versions = manager
+            .list_versions("llama_cpp", Some("cpu"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 2);
+
+        // Filter by cuda variant
+        let versions = manager
+            .list_versions("llama_cpp", Some("cuda"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].gpu_variant, "cuda");
+
+        // No variant filter — should return all
+        let all_versions = manager.list_versions("llama_cpp", None).unwrap().unwrap();
+        assert_eq!(all_versions.len(), 3);
+
+        // Unknown backend returns None
+        assert!(manager
+            .list_versions("nonexistent", None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_activate_switches_active() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info1 = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info1).unwrap();
+
+        let info2 = BackendInfo {
+            version: "b9000".to_string(),
+            installed_at: info1.installed_at + 100,
+            ..info1.clone()
+        };
+        manager.add_installation(&info2).unwrap();
+
+        // b9000 should be active (added last)
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+
+        // Activate b8407
+        let result = manager.activate("llama_cpp", "cpu", "b8407").unwrap();
+        assert!(result);
+
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b8407");
+
+        // Activate nonexistent version returns false
+        let result = manager.activate("llama_cpp", "cpu", "nonexistent").unwrap();
+        assert!(!result);
+
+        // Active should still be b8407
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b8407");
+    }
+
+    #[test]
+    fn test_remove_version_deletes_row() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info1 = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info1).unwrap();
+
+        let info2 = BackendInfo {
+            version: "b9000".to_string(),
+            installed_at: info1.installed_at + 100,
+            ..info1.clone()
+        };
+        manager.add_installation(&info2).unwrap();
+
+        // Two versions exist
+        let all = manager.list_versions("llama_cpp", None).unwrap().unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Remove b8407
+        manager.remove_version("llama_cpp", "cpu", "b8407").unwrap();
+
+        // Only b9000 remains
+        let all = manager.list_versions("llama_cpp", None).unwrap().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].version, "b9000");
+
+        // b9000 should be active
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+    }
+
+    #[test]
+    fn test_delete_all_versions_with_variant() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        manager
+            .add_installation(&make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+
+        let info_cuda = BackendInfo {
+            gpu_variant: "cuda".to_string(),
+            ..make_backend_info("llama_cpp", "b8407")
+        };
+        manager.add_installation(&info_cuda).unwrap();
+
+        // Delete only cpu variant
+        manager
+            .delete_all_versions("llama_cpp", Some("cpu"))
+            .unwrap();
+
+        // CPU variant should be gone
+        assert!(manager
+            .list_versions("llama_cpp", Some("cpu"))
+            .unwrap()
+            .is_none());
+
+        // CUDA variant should still exist
+        let versions = manager
+            .list_versions("llama_cpp", Some("cuda"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+    }
+
+    #[test]
+    fn test_delete_all_versions_without_variant_deletes_all() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        manager
+            .add_installation(&make_backend_info("llama_cpp", "b8407"))
+            .unwrap();
+
+        let info_cuda = BackendInfo {
+            gpu_variant: "cuda".to_string(),
+            ..make_backend_info("llama_cpp", "b8407")
+        };
+        manager.add_installation(&info_cuda).unwrap();
+
+        // Delete all variants
+        manager.delete_all_versions("llama_cpp", None).unwrap();
+
+        // All versions should be gone
+        assert!(manager.list_versions("llama_cpp", None).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_update_version_convenience() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let info = make_backend_info("llama_cpp", "b8407");
+        manager.add_installation(&info).unwrap();
+
+        // Update to new version
+        manager
+            .update_version(
+                "llama_cpp",
+                "cpu",
+                "b9000".to_string(),
+                std::path::PathBuf::from("/path/to/llama_cpp_v2"),
+                Some(BackendSource::Prebuilt {
+                    version: "b9000".to_string(),
+                }),
+            )
+            .unwrap();
+
+        let active = manager.get_active("llama_cpp", "cpu").unwrap().unwrap();
+        assert_eq!(active.version, "b9000");
+        assert_eq!(
+            active.path,
+            std::path::PathBuf::from("/path/to/llama_cpp_v2")
+        );
+        assert!(active.source.is_some());
     }
 }
