@@ -4,7 +4,10 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::config::ModelConfig;
-use crate::db::queries::{DownloadLogEntry, ModelConfigRecord, ModelFileRecord, ModelPullRecord};
+use crate::db::queries::{
+    ActiveModelRecord, DownloadLogEntry, DownloadQueueItem, ModelConfigRecord, ModelFileRecord,
+    ModelPullRecord, UpdateCheckParams, UpdateCheckRecord,
+};
 
 /// Centralized model data access. Each caller opens its own instance.
 /// `Connection` is `Send` but not `Sync` — do not share across threads.
@@ -191,6 +194,135 @@ impl ModelManager {
     /// Log a download event (append-only).
     pub fn log_download(&self, entry: &DownloadLogEntry) -> Result<()> {
         crate::db::queries::log_download(&self.conn, entry)
+    }
+
+    // ── Active models ──────────────────────────────────────────
+
+    /// Insert or replace an active model entry when a backend is loaded.
+    pub fn insert_active(
+        &self,
+        server_name: &str,
+        model_name: &str,
+        backend: &str,
+        pid: i64,
+        port: i64,
+        backend_url: &str,
+    ) -> Result<()> {
+        crate::db::queries::insert_active_model(
+            &self.conn,
+            server_name,
+            model_name,
+            backend,
+            pid,
+            port,
+            backend_url,
+        )
+    }
+
+    /// Remove an active model entry when a backend is unloaded.
+    pub fn remove_active(&self, server_name: &str) -> Result<()> {
+        crate::db::queries::remove_active_model(&self.conn, server_name)
+    }
+
+    /// Get all active model entries (for status / cleanup).
+    pub fn get_active(&self) -> Result<Vec<ActiveModelRecord>> {
+        crate::db::queries::get_active_models(&self.conn)
+    }
+
+    /// Rename an active model by updating its primary key (server_name).
+    pub fn rename_active(&self, old_name: &str, new_name: &str) -> Result<()> {
+        crate::db::queries::rename_active_model(&self.conn, old_name, new_name)
+    }
+
+    // ── Download queue ─────────────────────────────────────────
+
+    /// Insert a new item into the download queue. Returns the new row id.
+    #[allow(clippy::too_many_arguments)]
+    pub fn queue_insert(
+        &self,
+        job_id: &str,
+        repo_id: &str,
+        filename: &str,
+        display_name: Option<&str>,
+        kind: &str,
+        quant: Option<&str>,
+        context_length: Option<u32>,
+    ) -> Result<i64> {
+        crate::db::queries::insert_queue_item(
+            &self.conn,
+            job_id,
+            repo_id,
+            filename,
+            display_name,
+            kind,
+            quant,
+            context_length,
+        )
+    }
+
+    /// Retrieve the oldest queued item (FIFO).
+    pub fn queue_get_queued(&self) -> Result<Option<DownloadQueueItem>> {
+        crate::db::queries::get_queued_item(&self.conn)
+    }
+
+    /// Get all active items (queued, running, verifying), ordered by status priority then queued_at.
+    pub fn queue_get_active(&self) -> Result<Vec<DownloadQueueItem>> {
+        crate::db::queries::get_active_items(&self.conn)
+    }
+
+    /// Get history items (completed, failed, cancelled), sorted newest first.
+    pub fn queue_get_history(&self, limit: i64, offset: i64) -> Result<Vec<DownloadQueueItem>> {
+        crate::db::queries::get_history_items(&self.conn, limit, offset)
+    }
+
+    /// Update a queue item's status and related fields.
+    pub fn queue_update_status(
+        &self,
+        job_id: &str,
+        new_status: &str,
+        bytes_downloaded: i64,
+        total_bytes: Option<i64>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        crate::db::queries::update_queue_status(
+            &self.conn,
+            job_id,
+            new_status,
+            bytes_downloaded,
+            total_bytes,
+            error_message,
+        )
+    }
+
+    /// Cancel a queue item if it hasn't reached a terminal state.
+    pub fn queue_cancel(&self, job_id: &str) -> Result<()> {
+        crate::db::queries::cancel_queue_item(&self.conn, job_id)
+    }
+
+    /// Retrieve a queue item by its job_id.
+    pub fn queue_get_by_job_id(&self, job_id: &str) -> Result<Option<DownloadQueueItem>> {
+        crate::db::queries::get_item_by_job_id(&self.conn, job_id)
+    }
+
+    // ── Update checks ──────────────────────────────────────────
+
+    /// Get a stored update check record.
+    pub fn get_update_check(
+        &self,
+        item_type: &str,
+        item_id: &str,
+    ) -> Result<Option<UpdateCheckRecord>> {
+        crate::db::queries::get_update_check(&self.conn, item_type, item_id)
+    }
+
+    /// Insert or update an update check record.
+    pub fn upsert_update_check(&self, params: UpdateCheckParams) -> Result<()> {
+        crate::db::queries::upsert_update_check(&self.conn, params)
+    }
+
+    /// Delete a stored update check record.
+    pub fn delete_update_check(&self, item_type: &str, item_id: &str) -> Result<()> {
+        crate::db::queries::delete_update_check(&self.conn, item_type, item_id)
     }
 }
 
@@ -409,6 +541,167 @@ mod tests {
         };
 
         manager.log_download(&entry).unwrap();
+    }
+
+    #[test]
+    fn test_active_model_operations() {
+        let manager = ModelManager::open_in_memory().unwrap();
+
+        // Initially empty
+        let active = manager.get_active().unwrap();
+        assert!(active.is_empty());
+
+        // Insert an active record
+        manager
+            .insert_active(
+                "server1",
+                "model.gguf",
+                "llama.cpp",
+                1234,
+                8080,
+                "http://127.0.0.1:8080",
+            )
+            .unwrap();
+
+        // Verify it appears
+        let active = manager.get_active().unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].server_name, "server1");
+        assert_eq!(active[0].model_name, "model.gguf");
+        assert_eq!(active[0].backend, "llama.cpp");
+        assert_eq!(active[0].pid, 1234);
+        assert_eq!(active[0].port, 8080);
+
+        // Rename the active record
+        manager.rename_active("server1", "server1-renamed").unwrap();
+        let active = manager.get_active().unwrap();
+        assert_eq!(active[0].server_name, "server1-renamed");
+
+        // Remove the active record
+        manager.remove_active("server1-renamed").unwrap();
+        let active = manager.get_active().unwrap();
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn test_download_queue_operations() {
+        let manager = ModelManager::open_in_memory().unwrap();
+
+        // Insert a queue item
+        let id = manager
+            .queue_insert(
+                "pull-abc123",
+                "owner/test-model",
+                "test-model.Q4_K_M.gguf",
+                Some("Test Model Q4"),
+                "model",
+                Some("Q4_K_M"),
+                Some(4096),
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        // Get queued item
+        let item = manager.queue_get_queued().unwrap().unwrap();
+        assert_eq!(item.job_id, "pull-abc123");
+        assert_eq!(item.status, "queued");
+        assert_eq!(item.kind, "model");
+        assert_eq!(item.quant, Some("Q4_K_M".to_string()));
+        assert_eq!(item.context_length, Some(4096));
+
+        // Update status to running
+        manager
+            .queue_update_status("pull-abc123", "running", 500, Some(1000), None)
+            .unwrap();
+
+        // Get by job_id
+        let item = manager.queue_get_by_job_id("pull-abc123").unwrap().unwrap();
+        assert_eq!(item.status, "running");
+        assert_eq!(item.bytes_downloaded, 500);
+
+        // Get active items
+        let active = manager.queue_get_active().unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].job_id, "pull-abc123");
+
+        // Complete the item
+        manager
+            .queue_update_status("pull-abc123", "completed", 1000, Some(1000), None)
+            .unwrap();
+
+        // Should appear in history now
+        let history = manager.queue_get_history(10, 0).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, "completed");
+
+        // Should no longer be in active
+        let active = manager.queue_get_active().unwrap();
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn test_queue_cancel() {
+        let manager = ModelManager::open_in_memory().unwrap();
+
+        manager
+            .queue_insert(
+                "pull-cancel1",
+                "owner/test",
+                "test.gguf",
+                None,
+                "model",
+                None,
+                None,
+            )
+            .unwrap();
+
+        manager.queue_cancel("pull-cancel1").unwrap();
+
+        let item = manager
+            .queue_get_by_job_id("pull-cancel1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.status, "cancelled");
+        assert!(item.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_update_check_operations() {
+        let manager = ModelManager::open_in_memory().unwrap();
+
+        // Initially no update check
+        let check = manager.get_update_check("backend", "llama.cpp").unwrap();
+        assert!(check.is_none());
+
+        // Upsert an update check
+        let params = UpdateCheckParams {
+            item_type: "backend",
+            item_id: "llama.cpp",
+            current_version: Some("0.1"),
+            latest_version: Some("0.2"),
+            update_available: true,
+            status: "update_available",
+            error_message: None,
+            details_json: None,
+            checked_at: 1700000000,
+        };
+        manager.upsert_update_check(params).unwrap();
+
+        // Retrieve it
+        let check = manager
+            .get_update_check("backend", "llama.cpp")
+            .unwrap()
+            .unwrap();
+        assert_eq!(check.item_type, "backend");
+        assert_eq!(check.item_id, "llama.cpp");
+        assert_eq!(check.current_version, Some("0.1".to_string()));
+        assert_eq!(check.latest_version, Some("0.2".to_string()));
+        assert!(check.update_available);
+
+        // Delete it
+        manager.delete_update_check("backend", "llama.cpp").unwrap();
+        let check = manager.get_update_check("backend", "llama.cpp").unwrap();
+        assert!(check.is_none());
     }
 
     #[test]
