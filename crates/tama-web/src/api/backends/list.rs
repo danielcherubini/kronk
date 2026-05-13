@@ -66,8 +66,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
     let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
         tama_core::backends::BackendManager::open(&config_dir)
             .ok()
-            .map(|mgr| mgr.list_configs().ok())
-            .flatten()
+            .and_then(|mgr| mgr.list_configs().ok())
             .map(|configs| {
                 configs
                     .into_iter()
@@ -349,8 +348,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
     let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
         tama_core::backends::BackendManager::open(&config_dir)
             .ok()
-            .map(|mgr| mgr.list_configs().ok())
-            .flatten()
+            .and_then(|mgr| mgr.list_configs().ok())
             .map(|configs| {
                 configs
                     .into_iter()

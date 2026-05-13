@@ -258,13 +258,13 @@ impl BackendManager {
         let gpu_type_json = info
             .gpu_type
             .as_ref()
-            .map(|g| serde_json::to_string(g))
+            .map(serde_json::to_string)
             .transpose()
             .context("Failed to serialize gpu_type")?;
         let source_json = info
             .source
             .as_ref()
-            .map(|s| serde_json::to_string(s))
+            .map(serde_json::to_string)
             .transpose()
             .context("Failed to serialize source")?;
         Ok(crate::db::queries::BackendInstallationRecord {
