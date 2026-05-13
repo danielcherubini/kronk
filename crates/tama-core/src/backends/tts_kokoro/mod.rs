@@ -2,14 +2,13 @@ pub mod download;
 pub mod paths;
 
 use super::{
-    get_backend_install_path, BackendInfo, BackendRegistry, BackendSource, BackendType,
-    ProgressSink,
+    get_backend_install_path, BackendInfo, BackendManager, BackendSource, BackendType, ProgressSink,
 };
 use anyhow::Context;
 
 /// Install the Kokoro TTS backend: clone repo, create venv, install deps, download model.
 pub async fn install_tts_kokoro(
-    registry: &mut BackendRegistry,
+    manager: BackendManager,
     progress: Box<dyn ProgressSink>,
 ) -> anyhow::Result<()> {
     let p = std::sync::Arc::from(progress);
@@ -43,8 +42,8 @@ pub async fn install_tts_kokoro(
         }),
     };
 
-    registry
-        .add(info)
+    manager
+        .add_installation(&info)
         .with_context(|| "Failed to register Kokoro backend")?;
 
     Ok(())

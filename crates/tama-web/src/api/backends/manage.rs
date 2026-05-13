@@ -66,32 +66,30 @@ pub async fn update_backend(
         }
     };
 
-    // Open registry and get backend
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
-        tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
-        .and_then(|r| r);
+    // Open manager and get backend
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
+        tokio::task::spawn_blocking(move || tama_core::backends::BackendManager::open(&config_dir))
+            .await
+            .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+            .and_then(|r| r);
 
-    let mut registry = match registry_result {
+    let mgr = match mgr_result {
         Ok(r) => r,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to open registry: {}", e)})),
+                Json(serde_json::json!({"error": format!("Failed to open manager: {}", e)})),
             )
                 .into_response();
         }
     };
 
-    // Determine gpu_variant: use explicit value or auto-infer from registry
+    // Determine gpu_variant: use explicit value or auto-infer from manager
     let lookup_variant = match query.gpu_variant {
         Some(v) => v,
         None => {
             // Auto-infer: find unique variant for this backend
-            let versions = match registry.list_all_versions(&name, None) {
+            let versions = match mgr.list_versions(&name, None) {
                 Ok(Some(v)) => v,
                 Ok(None) => {
                     return (
@@ -133,7 +131,7 @@ pub async fn update_backend(
         }
     };
 
-    let backend_info = match registry.get(&name, &lookup_variant) {
+    let backend_info = match mgr.get_active(&name, &lookup_variant) {
         Ok(Some(info)) => info,
         Ok(None) => {
             return (
@@ -253,8 +251,16 @@ pub async fn update_backend(
             job: job_clone.clone(),
         });
 
+        let client = reqwest::Client::builder()
+            .user_agent("tama-backend-manager")
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client");
+
         let result = match tama_core::backends::update_backend_with_progress(
-            &mut registry,
+            mgr,
+            &client,
             &name_clone,
             &gpu_variant_clone,
             options,
@@ -422,22 +428,22 @@ pub async fn remove_backend_version(
         }
     };
 
-    // Open registry and get the specific version
+    // Open manager and get the specific version
     let config_dir_clone = config_dir.clone();
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
         tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir_clone)
+            tama_core::backends::BackendManager::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    let mut registry = match registry_result {
+    let mgr = match mgr_result {
         Ok(r) => r,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to open registry: {}", e)})),
+                Json(serde_json::json!({"error": format!("Failed to open manager: {}", e)})),
             )
                 .into_response();
         }
@@ -447,7 +453,7 @@ pub async fn remove_backend_version(
     let gpu_variant_filter = query.gpu_variant.clone();
 
     // Get the specific version record before deleting
-    let versions = match registry.list_all_versions(&name, gpu_variant_filter.as_deref()) {
+    let versions = match mgr.list_versions(&name, gpu_variant_filter.as_deref()) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return (
@@ -549,11 +555,11 @@ pub async fn remove_backend_version(
         }
     }
 
-    // Remove from registry (DB only — activates another version if this was active)
-    if let Err(e) = registry.remove_version(&name, &info.gpu_variant, &version) {
+    // Remove from DB (activates another version if this was active)
+    if let Err(e) = mgr.remove_version(&name, &info.gpu_variant, &version) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to remove version from registry: {}", e)})),
+            Json(serde_json::json!({"error": format!("Failed to remove version: {}", e)})),
         )
             .into_response();
     }
@@ -612,7 +618,7 @@ pub async fn activate_backend_version(
         }
     };
 
-    // Determine gpu_variant: use explicit value or auto-infer from registry
+    // Determine gpu_variant: use explicit value or auto-infer from manager
     let gpu_variant = match query.gpu_variant {
         Some(v) => v,
         None => {
@@ -621,8 +627,8 @@ pub async fn activate_backend_version(
             let version_clone = req.version.clone();
             let infer_result: Result<Option<Vec<tama_core::backends::BackendInfo>>, anyhow::Error> =
                 tokio::task::spawn_blocking(move || {
-                    let reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
-                    reg.list_all_versions(&name_clone, None)
+                    let mgr = tama_core::backends::BackendManager::open(&config_dir_clone)?;
+                    mgr.list_versions(&name_clone, None)
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
@@ -711,17 +717,17 @@ pub async fn activate_backend_version(
     let name_clone = name.clone();
     let version_for_error = version_clone.clone();
     let gpu_variant_clone = gpu_variant.to_string();
-    let registry_result: Result<(tama_core::backends::BackendRegistry, bool), _> =
+    let mgr_result: Result<(tama_core::backends::BackendManager, bool), _> =
         tokio::task::spawn_blocking(move || {
-            let mut reg = tama_core::backends::BackendRegistry::open(&config_dir_clone)?;
-            let activated = reg.activate(&name_clone, &gpu_variant_clone, &version_clone)?;
-            Ok((reg, activated))
+            let mgr = tama_core::backends::BackendManager::open(&config_dir_clone)?;
+            let activated = mgr.activate(&name_clone, &gpu_variant_clone, &version_clone)?;
+            Ok((mgr, activated))
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    match registry_result {
+    match mgr_result {
         Ok((_, activated)) => {
             if !activated {
                 return (

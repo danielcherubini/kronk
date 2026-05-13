@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 use tama_core::backends::{
-    check_latest_version, get_backend_install_path, BackendRegistry, BackendSource, BackendType,
+    check_latest_version, get_backend_install_path, BackendManager, BackendSource, BackendType,
     InstallOptions,
 };
 
@@ -454,15 +454,15 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let registry_res = BackendRegistry::open(&config_dir);
-        let mut registry = match registry_res {
+        let mgr_res = BackendManager::open(&config_dir);
+        let mgr = match mgr_res {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("Failed to open backend registry: {}", e);
+                tracing::error!("Failed to open backend manager: {}", e);
                 return;
             }
         };
-        let all_versions = match registry.list_all_versions(&name_clone, None) {
+        let all_versions = match mgr.list_versions(&name_clone, None) {
             Ok(Some(versions)) => versions,
             Ok(None) => {
                 tracing::error!("Backend '{}' not found during update", name_clone);
@@ -513,8 +513,16 @@ pub async fn apply_backend_update(
             allow_overwrite: true,
         };
 
+        let client = reqwest::Client::builder()
+            .user_agent("tama-backend-manager")
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client");
+
         match tama_core::backends::update_backend_with_progress(
-            &mut registry,
+            mgr,
+            &client,
             &name_clone,
             &backend_info.gpu_variant,
             options,

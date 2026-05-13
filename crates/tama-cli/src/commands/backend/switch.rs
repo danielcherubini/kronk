@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use tama_core::backends::{BackendInfo, BackendRegistry};
+use tama_core::backends::{BackendInfo, BackendManager};
 
 use super::parse::registry_config_dir;
 
@@ -9,10 +9,10 @@ pub async fn cmd_switch(
     version: &str,
     gpu_variant: Option<&str>,
 ) -> Result<()> {
-    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
 
     // Get all versions for this backend
-    let all_versions = registry.list_all_versions(name, None)?.ok_or_else(|| {
+    let all_versions = mgr.list_versions(name, None)?.ok_or_else(|| {
         anyhow!(
             "Backend '{}' not found. Run `tama backend list` to see installed backends.",
             name
@@ -81,7 +81,7 @@ pub async fn cmd_switch(
     }
 
     // Activate the version
-    let activated = registry.activate(name, &gpu_variant, version)?;
+    let activated = mgr.activate(name, &gpu_variant, version)?;
     if !activated {
         anyhow::bail!("Failed to activate version '{}' [{}]", version, gpu_variant);
     }

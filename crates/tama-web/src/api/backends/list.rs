@@ -54,9 +54,9 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     // Open registry (blocking call wrapped in spawn_blocking)
     let config_dir_clone = config_dir.clone();
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
         tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir_clone)
+            tama_core::backends::BackendManager::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
@@ -97,11 +97,11 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
     let mut custom: Vec<BackendCardDto> = Vec::new();
     let mut available: Vec<String> = Vec::new();
 
-    match registry_result {
-        Ok(registry) => {
+    match mgr_result {
+        Ok(mgr) => {
             // Emit one card per (backend_type, gpu_variant) pair — only if installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
+                let versions_opt = mgr.list_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
                     // Group versions by gpu_variant
@@ -121,7 +121,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                             .cloned()
                             .unwrap_or_default();
 
-                        let active_version = registry.get(type_, &variant).ok().flatten();
+                        let active_version = mgr.get_active(type_, &variant).ok().flatten();
 
                         // Sort versions by installed_at DESC
                         let mut sorted_versions = variant_versions;
@@ -183,7 +183,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             // Custom backends — one card per (name, variant) pair
             // Collect unique custom backend names to avoid duplicate cards
             // when multiple variants are active for the same backend
-            let active_backends = registry.list().unwrap_or_default();
+            let active_backends = mgr.list_active().unwrap_or_default();
             let mut custom_names: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             for active in &active_backends {
@@ -194,7 +194,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             }
 
             for name in &custom_names {
-                let versions_opt = registry.list_all_versions(name, None).unwrap_or(None);
+                let versions_opt = mgr.list_versions(name, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
                     let bt = versions
@@ -213,7 +213,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
                     }
 
                     for (variant, variant_versions) in variant_groups {
-                        let active_version = registry.get(name, &variant).ok().flatten();
+                        let active_version = mgr.get_active(name, &variant).ok().flatten();
                         let default_args = backend_configs_map
                             .get(&(bt.clone(), variant.clone()))
                             .cloned()
@@ -273,7 +273,7 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to open backend registry: {}", e);
+            tracing::warn!("Failed to open backend manager: {}", e);
         }
     }
 
@@ -337,9 +337,9 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
     // Open registry
     let config_dir_clone = config_dir.clone();
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
         tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir_clone)
+            tama_core::backends::BackendManager::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
@@ -362,11 +362,11 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
     let mut backends: Vec<BackendCardDto> = Vec::new();
     let mut custom: Vec<BackendCardDto> = Vec::new();
 
-    match registry_result {
-        Ok(registry) => {
+    match mgr_result {
+        Ok(mgr) => {
             // Emit one card per (backend_type, gpu_variant) pair
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
+                let versions_opt = mgr.list_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
                     // Group versions by gpu_variant
@@ -386,7 +386,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                             .cloned()
                             .unwrap_or_default();
 
-                        let active_version = registry.get(type_, &variant).ok().flatten();
+                        let active_version = mgr.get_active(type_, &variant).ok().flatten();
 
                         // Check for updates against the active version
                         let update_check = match active_version.as_ref() {
@@ -457,7 +457,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
             // Custom backends — one card per (name, variant) pair
             // Collect unique custom backend names to avoid duplicate cards
-            let active_backends = registry.list().unwrap_or_default();
+            let active_backends = mgr.list_active().unwrap_or_default();
             let mut custom_names: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             for active in &active_backends {
@@ -468,7 +468,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             }
 
             for name in &custom_names {
-                let versions_opt = registry.list_all_versions(name, None).unwrap_or(None);
+                let versions_opt = mgr.list_versions(name, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
                     let bt = versions
@@ -487,7 +487,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                     }
 
                     for (variant, variant_versions) in variant_groups {
-                        let active_version = registry.get(name, &variant).ok().flatten();
+                        let active_version = mgr.get_active(name, &variant).ok().flatten();
                         let default_args = backend_configs_map
                             .get(&(bt.clone(), variant.clone()))
                             .cloned()
@@ -532,7 +532,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to open backend registry: {}", e);
+            tracing::warn!("Failed to open backend manager: {}", e);
             // On error, still return known backends as not installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
                 backends.push(BackendCardDto::default_uninstalled(
@@ -590,17 +590,17 @@ pub async fn list_backend_versions(
     };
 
     let config_dir_clone = config_dir.clone();
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
         tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir_clone)
+            tama_core::backends::BackendManager::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    match registry_result {
-        Ok(registry) => {
-            let versions_opt = match registry.list_all_versions(&name, None) {
+    match mgr_result {
+        Ok(mgr) => {
+            let versions_opt = match mgr.list_versions(&name, None) {
                 Ok(v) => v,
                 Err(e) => {
                     return (
@@ -623,8 +623,8 @@ pub async fn list_backend_versions(
             };
 
             // Get the active version for this backend, keyed by (name, gpu_variant)
-            let active_backends: Vec<_> = registry
-                .list()
+            let active_backends: Vec<_> = mgr
+                .list_active()
                 .ok()
                 .map(|backends| {
                     backends
@@ -664,7 +664,7 @@ pub async fn list_backend_versions(
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to open registry: {}", e)})),
+            Json(json!({"error": format!("Failed to open manager: {}", e)})),
         )
             .into_response(),
     }

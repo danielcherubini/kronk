@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use tama_core::backends::{safe_remove_installation, BackendInfo, BackendRegistry};
+use tama_core::backends::{safe_remove_installation, BackendInfo, BackendManager};
 
 use super::parse::registry_config_dir;
 
@@ -8,17 +8,15 @@ pub async fn cmd_remove(
     name: &str,
     gpu_variant: Option<&str>,
 ) -> Result<()> {
-    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
 
     // Get all versions to determine what we're removing
-    let all_versions = registry
-        .list_all_versions(name, gpu_variant)?
-        .ok_or_else(|| {
-            anyhow!(
-                "Backend '{}' not found. Run `tama backend list` to see installed backends.",
-                name
-            )
-        })?;
+    let all_versions = mgr.list_versions(name, gpu_variant)?.ok_or_else(|| {
+        anyhow!(
+            "Backend '{}' not found. Run `tama backend list` to see installed backends.",
+            name
+        )
+    })?;
 
     if all_versions.is_empty() {
         anyhow::bail!("No versions found for backend '{}'", name);
@@ -82,7 +80,7 @@ pub async fn cmd_remove(
     }
 
     // Remove from registry only after all file deletions succeeded
-    registry.remove(name, gpu_variant)?;
+    mgr.delete_all_versions(name, gpu_variant)?;
 
     println!("Backend '{}' removed.", name);
     Ok(())
@@ -94,10 +92,10 @@ pub async fn cmd_remove_version(
     version: &str,
     gpu_variant: Option<&str>,
 ) -> Result<()> {
-    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
 
     // Get all versions for this backend
-    let all_versions = registry.list_all_versions(name, None)?.ok_or_else(|| {
+    let all_versions = mgr.list_versions(name, None)?.ok_or_else(|| {
         anyhow!(
             "Backend '{}' not found. Run `tama backend list` to see installed backends.",
             name
@@ -176,7 +174,7 @@ pub async fn cmd_remove_version(
     }
 
     // STEP 2: Remove from registry (activates another version if this was active)
-    registry.remove_version(name, &gpu_variant, version)?;
+    mgr.remove_version(name, &gpu_variant, version)?;
 
     println!("Version '{}' [{}] removed.", version, gpu_variant);
 

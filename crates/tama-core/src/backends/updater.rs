@@ -4,7 +4,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::installer::{install_backend_with_progress, InstallOptions};
-use super::registry::{BackendInfo, BackendRegistry, BackendType};
+use super::manager::BackendManager;
+use super::types::{BackendInfo, BackendType};
 use super::ProgressSink;
 
 /// Check for GitHub token for authenticated API requests (5000 req/hour vs 60 unauth)
@@ -121,7 +122,8 @@ pub async fn check_updates(backend_info: &BackendInfo) -> Result<UpdateCheck> {
 
 /// Update a backend with progress tracking.
 pub async fn update_backend_with_progress(
-    registry: &mut BackendRegistry,
+    manager: BackendManager,
+    client: &reqwest::Client,
     backend_name: &str,
     gpu_variant: &str,
     options: InstallOptions,
@@ -129,8 +131,8 @@ pub async fn update_backend_with_progress(
     progress: Option<Arc<dyn ProgressSink>>,
 ) -> Result<()> {
     // Validate backend exists before installing to prevent orphaned files
-    registry
-        .get(backend_name, gpu_variant)?
+    manager
+        .get_active(backend_name, gpu_variant)?
         .ok_or_else(|| anyhow!("Backend '{}' not found", backend_name))?;
 
     // Clone source before install_backend moves options
@@ -138,9 +140,8 @@ pub async fn update_backend_with_progress(
     // Clone backend_type before install_backend moves options
     let backend_type = options.backend_type.clone();
 
-    // Install the new version with progress, using the registry's shared client
-    let new_binary_path =
-        install_backend_with_progress(options, progress, Some(&registry.client)).await?;
+    // Install the new version with progress
+    let new_binary_path = install_backend_with_progress(options, progress, Some(client)).await?;
 
     // Resolve "latest" to actual tag before storing in registry
     let resolved_version = if latest_version.to_lowercase() == "latest" {
@@ -152,7 +153,7 @@ pub async fn update_backend_with_progress(
         latest_version
     };
 
-    registry.update_version(
+    manager.update_version(
         backend_name,
         gpu_variant,
         resolved_version,
@@ -169,14 +170,16 @@ pub async fn update_backend_with_progress(
 /// This is a thin wrapper around `update_backend_with_progress` that passes `None`
 /// for the progress sink, preserving the original CLI behavior.
 pub async fn update_backend(
-    registry: &mut BackendRegistry,
+    manager: BackendManager,
+    client: &reqwest::Client,
     backend_name: &str,
     gpu_variant: &str,
     options: InstallOptions,
     latest_version: String,
 ) -> Result<()> {
     update_backend_with_progress(
-        registry,
+        manager,
+        client,
         backend_name,
         gpu_variant,
         options,

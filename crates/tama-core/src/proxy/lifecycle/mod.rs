@@ -10,7 +10,7 @@ use super::process::{
     is_process_group_alive, kill_process, kill_process_group, override_arg,
 };
 use super::types::{ModelState, ProxyState};
-use crate::backends::BackendRegistry;
+use crate::backends::BackendManager;
 use crate::logging;
 
 impl ProxyState {
@@ -850,15 +850,15 @@ impl ProxyState {
     pub async fn load_tts_backend(&self, backend_name: &str) -> Result<String> {
         debug!("Loading TTS backend: {}", backend_name);
 
-        // Open registry and look up backend by name
+        // Open manager and look up backend by name
         let base_dir =
             crate::config::Config::base_dir().with_context(|| "Failed to get config directory")?;
-        let registry =
-            BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
+        let mgr =
+            BackendManager::open(&base_dir).with_context(|| "Failed to open backend manager")?;
 
         // Discover variant dynamically - TTS backends typically only have one variant
-        let variants = registry
-            .list_all_versions(backend_name, None)
+        let variants = mgr
+            .list_versions(backend_name, None)
             .with_context(|| format!("Failed to list versions for '{}'", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 
@@ -867,9 +867,9 @@ impl ProxyState {
             .map(|v| v.gpu_variant.clone())
             .unwrap_or_else(|| "cpu".to_string());
 
-        let info = registry
-            .get(backend_name, &variant)
-            .with_context(|| format!("Backend '{}' not found in registry", backend_name))?
+        let info = mgr
+            .get_active(backend_name, &variant)
+            .with_context(|| format!("Backend '{}' not found in manager", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 
         // Derive paths from BackendInfo.path (base_dir = backends/tts_kokoro/).

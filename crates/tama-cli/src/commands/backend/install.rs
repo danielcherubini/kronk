@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tama_core::backends::{
     backends_dir, check_latest_version, get_backend_install_path, install_backend,
-    install_tts_kokoro, BackendInfo, BackendRegistry, BackendSource, BackendType, InstallOptions,
+    install_tts_kokoro, BackendInfo, BackendManager, BackendSource, BackendType, InstallOptions,
     NullSink,
 };
 use tama_core::gpu;
@@ -174,9 +174,9 @@ pub async fn cmd_install(
 
     // Handle TTS backends with dedicated installers (no GPU selection needed)
     if matches!(backend_type, BackendType::TtsKokoro) {
-        let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
+        let mgr = BackendManager::open(&registry_config_dir()?)?;
 
-        install_tts_kokoro(&mut registry, Box::new(NullSink)).await?;
+        install_tts_kokoro(mgr, Box::new(NullSink)).await?;
 
         println!("\nKokoro TTS backend installed successfully!");
         println!("  Name:    {}", backend_name);
@@ -219,8 +219,8 @@ pub async fn cmd_install(
     let binary_path = install_backend(options).await?;
 
     // Register
-    let mut registry = BackendRegistry::open(&registry_config_dir()?)?;
-    registry.add(BackendInfo {
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
+    mgr.add_installation(&BackendInfo {
         name: backend_name.clone(),
         backend_type,
         version: version.clone(),
