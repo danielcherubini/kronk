@@ -346,8 +346,6 @@ mod tests {
             "vllm".to_string(),
             BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },
@@ -356,8 +354,6 @@ mod tests {
             "llama_cpp".to_string(),
             BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },

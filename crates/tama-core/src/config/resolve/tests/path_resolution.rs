@@ -102,8 +102,6 @@ fn test_resolve_backend_path_version_pin() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: None,
-            default_args: vec![],
-            health_check_url: None,
             version: Some("v1.0.0".to_string()),
             gpu_variant: None,
         },
@@ -126,8 +124,6 @@ fn test_resolve_backend_path_version_pin_not_found() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: None,
-            default_args: vec![],
-            health_check_url: None,
             version: Some("nonexistent".to_string()),
             gpu_variant: None,
         },

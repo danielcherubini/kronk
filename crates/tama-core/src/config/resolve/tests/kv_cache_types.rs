@@ -31,8 +31,6 @@ fn test_kv_cache_type_args_injected_when_set() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -109,8 +107,6 @@ fn test_kv_cache_type_args_not_injected_when_none() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -186,8 +182,6 @@ fn test_kv_cache_type_args_not_injected_for_non_llama_backend() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -263,8 +257,6 @@ fn test_kv_cache_type_args_no_duplicate_when_in_user_args() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -343,8 +335,6 @@ fn test_kv_cache_type_args_not_injected_for_empty_string() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };

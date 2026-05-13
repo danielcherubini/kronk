@@ -158,10 +158,6 @@ pub struct General {
 pub struct BackendConfig {
     #[serde(default)]
     pub path: Option<String>,
-    #[serde(default)]
-    pub default_args: Vec<String>,
-    #[serde(default)]
-    pub health_check_url: Option<String>,
     /// Optional version pin. When set, resolve_backend_path looks up this
     /// specific version in the DB instead of the currently-active version.
     #[serde(default)]

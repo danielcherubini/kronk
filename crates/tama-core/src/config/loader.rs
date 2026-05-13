@@ -6,21 +6,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// Normalize all `default_args` and `args` lists in the config from
-/// legacy flat form to grouped form. Returns `true` if anything changed.
-fn normalize_grouped_args(config: &mut Config) -> bool {
-    use crate::config::group_legacy_flat_args;
-    let mut changed = false;
-    for backend in config.backends.values_mut() {
-        let (migrated, did) = group_legacy_flat_args(&backend.default_args);
-        if did {
-            backend.default_args = migrated;
-            changed = true;
-        }
-    }
-    changed
-}
-
 impl Config {
     /// Base directory for all tama data.
     /// Linux: `~/.config/tama`
@@ -82,30 +67,7 @@ impl Config {
             default
         };
 
-        // Migrate legacy flat args to grouped form. If anything changed,
-        // persist the migrated config back to disk so the next load is a
-        // no-op and `tama status` shows the new format.
-        let args_migrated = normalize_grouped_args(&mut config);
-        if args_migrated {
-            tracing::info!(
-                "Migrated legacy flat args to grouped form in {}",
-                config_path.display()
-            );
-        }
-
         config.loaded_from = Some(config_dir.to_path_buf());
-
-        if args_migrated {
-            // Best-effort save; if it fails (e.g. read-only filesystem),
-            // log a warning but do not fail the load.
-            if let Err(e) = config.save_to(config_dir) {
-                tracing::warn!(
-                    "Failed to persist migrated args to {}: {}",
-                    config_path.display(),
-                    e
-                );
-            }
-        }
 
         Ok(config)
     }
@@ -163,8 +125,6 @@ impl Default for Config {
             "llama_cpp".to_string(),
             BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: Some("http://localhost:8080/health".to_string()),
                 version: None,
                 gpu_variant: None,
             },
@@ -173,8 +133,6 @@ impl Default for Config {
             "ik_llama".to_string(),
             BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: Some("http://localhost:8080/health".to_string()),
                 version: None,
                 gpu_variant: None,
             },
@@ -238,151 +196,4 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalize_migrates_flat_backend_default_args() {
-        let mut config = Config::default();
-        config.backends.insert(
-            "flat_backend".to_string(),
-            BackendConfig {
-                path: None,
-                default_args: vec![
-                    "-fa".to_string(),
-                    "1".to_string(),
-                    "-b".to_string(),
-                    "2048".to_string(),
-                    "--mlock".to_string(),
-                ],
-                health_check_url: None,
-                version: None,
-                gpu_variant: None,
-            },
-        );
-
-        let changed = normalize_grouped_args(&mut config);
-        assert!(changed);
-
-        let migrated = &config.backends["flat_backend"].default_args;
-        assert_eq!(
-            migrated,
-            &vec![
-                "-fa 1".to_string(),
-                "-b 2048".to_string(),
-                "--mlock".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn normalize_default_config_is_noop() {
-        // Config::default() must already be in grouped form, so calling
-        // normalize_grouped_args on it should not change anything. We
-        // compare only the args/default_args fields rather than whole
-        // structs because BackendConfig/ModelConfig/QuantEntry don't
-        // currently derive PartialEq, and adding those derives is
-        // out-of-scope for this PR.
-        let mut config = Config::default();
-
-        // Snapshot the args fields before normalization. Use BTreeMap to
-        // get deterministic ordering for the comparison.
-        let before_backend_args: std::collections::BTreeMap<String, Vec<String>> = config
-            .backends
-            .iter()
-            .map(|(k, b)| (k.clone(), b.default_args.clone()))
-            .collect();
-
-        let changed = normalize_grouped_args(&mut config);
-        assert!(
-            !changed,
-            "Config::default() must already be in grouped form"
-        );
-
-        let after_backend_args: std::collections::BTreeMap<String, Vec<String>> = config
-            .backends
-            .iter()
-            .map(|(k, b)| (k.clone(), b.default_args.clone()))
-            .collect();
-
-        assert_eq!(
-            before_backend_args, after_backend_args,
-            "default backend default_args drifted"
-        );
-    }
-
-    #[test]
-    fn normalize_already_grouped_is_noop() {
-        let mut config = Config::default();
-        config.backends.insert(
-            "grouped".to_string(),
-            BackendConfig {
-                path: None,
-                default_args: vec!["-fa 1".to_string(), "-b 2048".to_string()],
-                health_check_url: None,
-                version: None,
-                gpu_variant: None,
-            },
-        );
-
-        let changed = normalize_grouped_args(&mut config);
-        assert!(!changed);
-    }
-
-    #[test]
-    fn load_from_persists_migration_to_disk() {
-        let temp_dir = tempfile::tempdir().expect("tempdir");
-        let config_path = temp_dir.path().join("config.toml");
-        let legacy_toml = r#"
-[general]
-log_level = "info"
-
-[backends.llama_cpp]
-default_args = ["-fa", "1", "-b", "2048"]
-"#;
-        std::fs::write(&config_path, legacy_toml).expect("write");
-
-        let _config = Config::load_from(temp_dir.path()).expect("load");
-
-        let after = std::fs::read_to_string(&config_path).expect("read after");
-        // After load, the file on disk must contain grouped form.
-        assert!(
-            after.contains("\"-fa 1\""),
-            "expected grouped -fa 1 in {}",
-            after
-        );
-        assert!(
-            after.contains("\"-b 2048\""),
-            "expected grouped -b 2048 in {}",
-            after
-        );
-        // The flat tokens must NOT remain.
-        assert!(!after.contains("\"-fa\","), "flat -fa, leaked: {}", after);
-    }
-
-    #[test]
-    fn load_from_already_grouped_does_not_rewrite() {
-        // Pin the "don't churn already-grouped configs" invariant: if the
-        // file on disk is already in grouped form, Config::load_from must
-        // NOT rewrite it. We verify by snapshotting the byte content
-        // before and after.
-        let temp_dir = tempfile::tempdir().expect("tempdir");
-        let config_path = temp_dir.path().join("config.toml");
-        let grouped_toml = r#"
-[general]
-log_level = "info"
-
-[backends.llama_cpp]
-default_args = ["-fa 1", "-b 2048"]
-"#;
-        std::fs::write(&config_path, grouped_toml).expect("write");
-        let before = std::fs::read_to_string(&config_path).expect("read before");
-
-        let _config = Config::load_from(temp_dir.path()).expect("load");
-
-        let after = std::fs::read_to_string(&config_path).expect("read after");
-        assert_eq!(
-            before, after,
-            "already-grouped config was rewritten unnecessarily.\nBefore:\n{}\nAfter:\n{}",
-            before, after
-        );
-    }
 }

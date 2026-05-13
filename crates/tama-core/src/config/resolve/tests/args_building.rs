@@ -62,8 +62,6 @@ fn test_build_full_args_unified() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -147,8 +145,6 @@ fn test_build_full_args_ctx_override() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -215,8 +211,6 @@ fn test_build_full_args_no_sampling() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -267,8 +261,6 @@ fn test_build_full_args_no_quants() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -280,69 +272,6 @@ fn test_build_full_args_no_quants() {
     // Should not emit -m arg when quant lookup fails
     let args = args.expect("build_full_args failed");
     assert!(!args.iter().any(|a| a == "-m"));
-}
-
-/// Tests that backend flags are deduplicated when both backend and model args contain them
-#[test]
-fn test_build_args_dedupes_backend_vs_model_flags() {
-    let mut config = Config::default();
-    config.backends.insert(
-        "test_backend".to_string(),
-        BackendConfig {
-            path: None,
-            default_args: vec![
-                "-b 2048".to_string(),
-                "-ub 512".to_string(),
-                "-t 14".to_string(),
-            ],
-            health_check_url: None,
-            version: None,
-            gpu_variant: None,
-        },
-    );
-
-    let server = ModelConfig {
-        backend: "test_backend".to_string(),
-        args: vec!["-b 4096".to_string(), "-ub 4096".to_string()],
-        sampling: None,
-        model: None,
-        quant: None,
-        mmproj: None,
-        port: None,
-        health_check: None,
-        enabled: true,
-        context_length: None,
-        num_parallel: Some(1),
-        kv_unified: false,
-        profile: None,
-        api_name: None,
-        gpu_layers: None,
-        cache_type_k: None,
-        cache_type_v: None,
-        quants: std::collections::BTreeMap::new(),
-        modalities: None,
-        display_name: None,
-        db_id: None,
-        ..Default::default()
-    };
-
-    let backend = config.backends.get("test_backend").unwrap().clone();
-    let flat = config.build_args(&server, &backend, None);
-
-    // -t 14 from base must survive (flattened to separate tokens)
-    assert!(flat.iter().any(|t| *t == "-t"));
-    assert!(flat.iter().any(|t| *t == "14"));
-    // -b appears exactly once with value 4096
-    let b_count = flat.iter().filter(|t| *t == "-b").count();
-    assert_eq!(b_count, 1, "expected exactly one -b flag, got {:?}", flat);
-    assert!(flat.iter().any(|t| *t == "-b"));
-    // -ub appears exactly once with value 4096
-    let ub_count = flat.iter().filter(|t| *t == "-ub").count();
-    assert_eq!(ub_count, 1, "expected exactly one -ub flag, got {:?}", flat);
-    assert!(flat.iter().any(|t| *t == "-ub"));
-    // 2048 and 512 must NOT appear
-    assert!(!flat.iter().any(|t| t.contains("2048")));
-    assert!(!flat.iter().any(|t| t.contains("512")));
 }
 
 /// Tests that inline temperature in args is overridden by sampling params
@@ -357,8 +286,6 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
         "test_backend".to_string(),
         BackendConfig {
             path: None,
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },
@@ -406,95 +333,6 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
     assert!(flat.iter().any(|t| *t == "--temp"));
     assert!(flat.iter().any(|t| *t == "0.50"));
     assert!(!flat.iter().any(|t| t.contains("0.10")));
-}
-
-/// Tests that backend flags are deduplicated in full args when both backend and model args contain them
-#[test]
-fn test_build_full_args_dedupes_backend_vs_model_flags() {
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let models_dir = temp_dir.path().join("models");
-    let org_dir = models_dir.join("org").join("repo");
-    let quant_file = org_dir.join("model-Q4_K_M.gguf");
-    std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
-    std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
-
-    let mut quants = std::collections::BTreeMap::new();
-    quants.insert(
-        "Q4_K_M".to_string(),
-        crate::config::types::QuantEntry {
-            file: "model-Q4_K_M.gguf".to_string(),
-            kind: Default::default(),
-            size_bytes: None,
-            context_length: None,
-        },
-    );
-
-    let mut config = Config::default();
-    config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
-    config.loaded_from = Some(temp_dir.path().to_path_buf());
-
-    let server = ModelConfig {
-        backend: "llama_cpp".to_string(),
-        args: vec!["-b 4096".to_string(), "-ub 4096".to_string()],
-        sampling: None,
-        model: Some("org/repo".to_string()),
-        quant: Some("Q4_K_M".to_string()),
-        mmproj: None,
-        port: None,
-        health_check: None,
-        enabled: true,
-        context_length: Some(4096),
-        num_parallel: Some(1),
-        kv_unified: false,
-        profile: None,
-        api_name: None,
-        gpu_layers: Some(99),
-        cache_type_k: None,
-        cache_type_v: None,
-        quants,
-        modalities: None,
-        display_name: None,
-        db_id: None,
-        ..Default::default()
-    };
-
-    let backend = BackendConfig {
-        path: None,
-        default_args: vec![
-            "-b 2048".to_string(),
-            "-ub 512".to_string(),
-            "-t 14".to_string(),
-        ],
-        health_check_url: None,
-        version: None,
-        gpu_variant: None,
-    };
-
-    let args = config
-        .build_full_args(&server, &backend, None, None)
-        .expect("build_full_args failed");
-
-    // -t 14 must survive from backend defaults
-    assert!(
-        args.windows(2).any(|w| w == ["-t", "14"]),
-        "expected -t 14 in args, got {:?}",
-        args
-    );
-    // -b appears exactly once with value 4096
-    let b_count = args.iter().filter(|t| *t == "-b").count();
-    assert_eq!(b_count, 1, "expected exactly one -b token, got {:?}", args);
-    assert!(args.windows(2).any(|w| w == ["-b", "4096"]));
-    // -ub appears exactly once with value 4096
-    let ub_count = args.iter().filter(|t| *t == "-ub").count();
-    assert_eq!(
-        ub_count, 1,
-        "expected exactly one -ub token, got {:?}",
-        args
-    );
-    assert!(args.windows(2).any(|w| w == ["-ub", "4096"]));
-    // No 2048 or 512 anywhere
-    assert!(!args.iter().any(|t| t == "2048"));
-    assert!(!args.iter().any(|t| t == "512"));
 }
 
 /// Tests that flat tokens are preserved with quoted paths in full args
@@ -550,8 +388,6 @@ fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -626,8 +462,6 @@ fn test_build_full_args_context_multiplied_by_num_parallel() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -707,8 +541,6 @@ fn test_build_full_args_context_saturating_overflow() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -781,8 +613,6 @@ fn test_build_full_args_context_no_num_parallel_defaults_to_one() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -850,8 +680,6 @@ fn test_build_full_args_injects_np_flag() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -934,8 +762,6 @@ fn test_build_full_args_no_np_when_default() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -948,87 +774,6 @@ fn test_build_full_args_no_np_when_default() {
     assert!(
         !args.contains(&"-np".to_string()),
         "Expected no -np flag when num_parallel=1, got: {:?}",
-        args
-    );
-}
-
-/// Tests that -np is NOT injected when already present in backend/server args.
-#[test]
-fn test_build_full_args_skips_np_when_already_present() {
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let models_dir = temp_dir.path().join("models");
-    let org_dir = models_dir.join("org").join("repo");
-    let quant_file = org_dir.join("model-Q4_K_M.gguf");
-
-    std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
-    std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
-
-    let mut quants = std::collections::BTreeMap::new();
-    quants.insert(
-        "Q4_K_M".to_string(),
-        crate::config::types::QuantEntry {
-            file: "model-Q4_K_M.gguf".to_string(),
-            kind: Default::default(),
-            size_bytes: None,
-            context_length: Some(8192),
-        },
-    );
-
-    let mut config = Config::default();
-    config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
-    config.loaded_from = Some(temp_dir.path().to_path_buf());
-
-    // Backend already has -np 4, server has num_parallel=2 → should not inject another -np
-    let server = ModelConfig {
-        backend: "llama_cpp".to_string(),
-        args: vec![],
-        sampling: None,
-        model: Some("org/repo".to_string()),
-        quant: Some("Q4_K_M".to_string()),
-        mmproj: None,
-        port: None,
-        health_check: None,
-        enabled: true,
-        context_length: Some(8192),
-        num_parallel: Some(2),
-        kv_unified: false,
-        profile: None,
-        api_name: None,
-        gpu_layers: None,
-        cache_type_k: None,
-        cache_type_v: None,
-        quants,
-        modalities: None,
-        display_name: None,
-        db_id: None,
-        ..Default::default()
-    };
-
-    let backend = BackendConfig {
-        path: None,
-        default_args: vec!["-np 4".to_string()],
-        health_check_url: None,
-        version: None,
-        gpu_variant: None,
-    };
-
-    let args = config
-        .build_full_args(&server, &backend, None, None)
-        .expect("build_full_args failed");
-
-    // Should have exactly one -np (from backend), not two
-    let np_count = args.iter().filter(|a| *a == "-np").count();
-    assert_eq!(
-        np_count, 1,
-        "Expected exactly one -np flag, got {} in: {:?}",
-        np_count, args
-    );
-    // The value should be 4 (from backend), not 2
-    let np_idx = args.iter().position(|a| *a == "-np").unwrap();
-    assert_eq!(
-        args[np_idx + 1],
-        "4",
-        "Expected -np value to be 4 (from backend), got {:?}",
         args
     );
 }
@@ -1087,8 +832,6 @@ fn test_build_full_args_unified_n_slots() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -1166,8 +909,6 @@ fn test_build_full_args_non_unified_n_slots() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -1230,8 +971,6 @@ fn test_build_full_args_unified_default() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -1309,8 +1048,6 @@ fn test_build_full_args_ctx_override_unified() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };
@@ -1391,8 +1128,6 @@ fn test_build_full_args_kv_unified_not_duplicated_when_in_user_args() {
 
     let backend = BackendConfig {
         path: None,
-        default_args: vec![],
-        health_check_url: None,
         version: None,
         gpu_variant: None,
     };

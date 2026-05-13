@@ -104,10 +104,6 @@ fn default_update_check_interval() -> u32 {
 pub struct BackendConfig {
     #[serde(default)]
     pub path: Option<String>,
-    #[serde(default)]
-    pub default_args: Vec<String>,
-    #[serde(default)]
-    pub health_check_url: Option<String>,
     /// Optional version pin.
     #[serde(default)]
     pub version: Option<String>,
@@ -476,8 +472,6 @@ impl From<CoreBackendConfig> for BackendConfig {
     fn from(b: CoreBackendConfig) -> Self {
         Self {
             path: b.path,
-            default_args: b.default_args,
-            health_check_url: b.health_check_url,
             version: b.version,
             gpu_variant: b.gpu_variant,
         }
@@ -489,8 +483,6 @@ impl From<BackendConfig> for CoreBackendConfig {
     fn from(b: BackendConfig) -> Self {
         Self {
             path: b.path,
-            default_args: b.default_args,
-            health_check_url: b.health_check_url,
             version: b.version,
             gpu_variant: b.gpu_variant,
         }

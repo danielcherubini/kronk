@@ -288,8 +288,6 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
         "test".to_string(),
         tama_core::config::BackendConfig {
             path: Some("llama-server".to_string()),
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },

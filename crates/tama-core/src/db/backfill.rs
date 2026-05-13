@@ -213,14 +213,7 @@ pub fn migrate_backend_config_from_toml(
             .clone()
             .unwrap_or_else(|| "cpu".to_string());
 
-        upsert_backend_config(
-            conn,
-            name,
-            &gpu_variant,
-            &backend_config.default_args,
-            backend_config.health_check_url.as_deref(),
-        )
-        .with_context(|| {
+        upsert_backend_config(conn, name, &gpu_variant, &[], None).with_context(|| {
             format!(
                 "Failed to insert backend config '{}' during migration",
                 name
@@ -929,18 +922,18 @@ installed_at = 1700000000
         let config_path = tmp.path().join("config.toml");
 
         // Write a config.toml with [backends] section
+        // Note: default_args and health_check_url are no longer in TOML BackendConfig;
+        // they are stored in the DB instead. Old TOML files with these fields will
+        // deserialize fine (unknown fields are ignored), but the migration will not
+        // copy them since they are no longer on the struct.
         let toml_content = r#"
 [general]
 log_level = "info"
 
 [backends.llama_cpp]
-default_args = ["-fa 1", "-b 2048"]
-health_check_url = "http://localhost:8080/health"
 gpu_variant = "cpu"
 
 [backends.ik_llama]
-default_args = []
-health_check_url = "http://localhost:9090/health"
 "#;
         std::fs::write(&config_path, toml_content).unwrap();
 
@@ -956,11 +949,9 @@ health_check_url = "http://localhost:9090/health"
             .expect("llama_cpp should exist in DB after migration");
         assert_eq!(llama.name, "llama_cpp");
         assert_eq!(llama.gpu_variant, "cpu");
-        assert_eq!(llama.default_args, vec!["-fa 1", "-b 2048"]);
-        assert_eq!(
-            llama.health_check_url,
-            Some("http://localhost:8080/health".to_string())
-        );
+        // default_args and health_check_url are no longer copied from TOML
+        assert!(llama.default_args.is_empty());
+        assert!(llama.health_check_url.is_none());
 
         // Verify ik_llama config (no gpu_variant specified, defaults to cpu)
         let ik = crate::db::queries::get_backend_config(&conn, "ik_llama", "cpu")
@@ -969,10 +960,7 @@ health_check_url = "http://localhost:9090/health"
         assert_eq!(ik.name, "ik_llama");
         assert_eq!(ik.gpu_variant, "cpu");
         assert!(ik.default_args.is_empty());
-        assert_eq!(
-            ik.health_check_url,
-            Some("http://localhost:9090/health".to_string())
-        );
+        assert!(ik.health_check_url.is_none());
 
         // Verify [backends] section was cleared from config.toml
         let after = std::fs::read_to_string(&config_path).unwrap();

@@ -67,8 +67,13 @@ impl ProxyState {
             .with_context(|| format!("Server '{}' not found", server_name))?
             .0;
 
+        // Open DB connection for health_check_url lookup
+        let db_conn = self
+            .db_dir
+            .as_ref()
+            .and_then(|dir| crate::db::open(dir).ok().map(|r| r.conn));
         let backend_url = config
-            .resolve_backend_url(server)
+            .resolve_backend_url(server, db_conn.as_ref())
             .with_context(|| format!("No backend URL resolved for server '{}'", server_name))?;
 
         Ok(backend_url)

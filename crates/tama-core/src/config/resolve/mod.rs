@@ -89,11 +89,15 @@ impl Config {
     }
 
     /// Resolve the health check URL for a server, taking into account:
-    /// 1. Backend's health_check_url if set
+    /// 1. Backend's health_check_url from DB if available
     /// 2. Server's custom port if set
     /// 3. Fallback to http://localhost:{port}/health
-    pub fn resolve_health_url(&self, server: &ModelConfig) -> Option<String> {
-        let backend = match self.backends.get(&server.backend) {
+    pub fn resolve_health_url(
+        &self,
+        server: &ModelConfig,
+        db_conn: Option<&rusqlite::Connection>,
+    ) -> Option<String> {
+        let _backend = match self.backends.get(&server.backend) {
             Some(b) => b,
             None => {
                 tracing::warn!(
@@ -104,8 +108,20 @@ impl Config {
             }
         };
 
-        // If backend has health_check_url, use it (and replace port if server.port is set)
-        if let Some(ref backend_url) = backend.health_check_url {
+        // Look up health_check_url from DB
+        let db_health_url = db_conn.and_then(|conn| {
+            crate::db::queries::get_backend_config(
+                conn,
+                &server.backend,
+                server.gpu_variant.as_deref().unwrap_or("cpu"),
+            )
+            .ok()
+            .flatten()
+            .and_then(|c| c.health_check_url)
+        });
+
+        // If DB has health_check_url, use it (and replace port if server.port is set)
+        if let Some(ref backend_url) = db_health_url {
             if let Some(port) = server.port {
                 let mut url = url::Url::parse(backend_url).ok()?;
                 url.set_port(Some(port)).ok()?;
@@ -114,18 +130,22 @@ impl Config {
             return Some(backend_url.clone());
         }
 
-        // backend.health_check_url is None, try server.port fallback
+        // DB health_check_url is None, try server.port fallback
         if let Some(port) = server.port {
             return Some(format!("http://localhost:{}/health", port));
         }
 
-        // Neither backend.health_check_url nor server.port present
+        // Neither DB health_check_url nor server.port present
         None
     }
 
     /// Resolve the backend URL (without /health) for a server.
-    pub fn resolve_backend_url(&self, server: &ModelConfig) -> Option<String> {
-        let backend = match self.backends.get(&server.backend) {
+    pub fn resolve_backend_url(
+        &self,
+        server: &ModelConfig,
+        db_conn: Option<&rusqlite::Connection>,
+    ) -> Option<String> {
+        let _backend = match self.backends.get(&server.backend) {
             Some(b) => b,
             None => {
                 tracing::warn!(
@@ -136,8 +156,20 @@ impl Config {
             }
         };
 
-        // If backend has health_check_url, derive the base URL from it
-        if let Some(ref health_url) = backend.health_check_url {
+        // Look up health_check_url from DB to derive the base URL
+        let db_health_url = db_conn.and_then(|conn| {
+            crate::db::queries::get_backend_config(
+                conn,
+                &server.backend,
+                server.gpu_variant.as_deref().unwrap_or("cpu"),
+            )
+            .ok()
+            .flatten()
+            .and_then(|c| c.health_check_url)
+        });
+
+        // If DB has health_check_url, derive the base URL from it
+        if let Some(ref health_url) = db_health_url {
             let mut url = url::Url::parse(health_url).ok()?;
 
             // Override port if the server specifies one
@@ -153,24 +185,28 @@ impl Config {
             return Some(base);
         }
 
-        // backend.health_check_url is None, try server.port fallback
+        // DB health_check_url is None, try server.port fallback
         if let Some(port) = server.port {
             return Some(format!("http://localhost:{}", port));
         }
 
-        // Neither backend.health_check_url nor server.port present
+        // Neither DB health_check_url nor server.port present
         None
     }
 
     /// Resolve the effective health check config for a server.
-    /// Merges: server.health_check -> backend.health_check_url -> supervisor defaults.
-    pub fn resolve_health_check(&self, server: &ModelConfig) -> HealthCheck {
+    /// Merges: server.health_check -> DB health_check_url -> supervisor defaults.
+    pub fn resolve_health_check(
+        &self,
+        server: &ModelConfig,
+        db_conn: Option<&rusqlite::Connection>,
+    ) -> HealthCheck {
         let server_hc = server.health_check.as_ref();
 
         HealthCheck {
             url: server_hc
                 .and_then(|h| h.url.clone())
-                .or_else(|| self.resolve_health_url(server)),
+                .or_else(|| self.resolve_health_url(server, db_conn)),
             interval_ms: Some(
                 server_hc
                     .and_then(|h| h.interval_ms)
@@ -183,13 +219,13 @@ impl Config {
     /// Build the merged arg list for a server, returning **flat tokens**
     /// suitable for `Command::args`.
     ///
-    /// Merging order: `backend.default_args` → `server.args` →
+    /// Merging order: DB backend default_args → `server.args` →
     /// `server.sampling.to_args()`. Each later layer's flags fully replace
     /// the same flag in the earlier layers via `merge_args`.
     pub fn build_args(
         &self,
         server: &ModelConfig,
-        backend: &BackendConfig,
+        _backend: &BackendConfig,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Vec<String> {
         let db_args = db_conn
@@ -203,7 +239,7 @@ impl Config {
                 .flatten()
                 .map(|c| c.default_args)
             })
-            .unwrap_or_else(|| backend.default_args.clone());
+            .unwrap_or_default();
         let mut grouped = crate::config::merge_args(&db_args, &server.args);
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
@@ -218,7 +254,7 @@ impl Config {
     /// `Command::args`.
     ///
     /// Merging order:
-    /// 1. `backend.default_args`
+    /// 1. DB backend default_args
     /// 2. `server.args`     (replaces same-flag entries from #1)
     /// 3. Injected `-m`/`-c`/`-ngl` (only if not already present after #1+#2)
     /// 4. `server.sampling.to_args()` (replaces same-flag entries from #1+#2+#3)
@@ -231,7 +267,7 @@ impl Config {
     pub fn build_full_args(
         &self,
         server: &ModelConfig,
-        backend: &BackendConfig,
+        _backend: &BackendConfig,
         ctx_override: Option<u32>,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Result<Vec<String>> {
@@ -246,7 +282,7 @@ impl Config {
                 .flatten()
                 .map(|c| c.default_args)
             })
-            .unwrap_or_else(|| backend.default_args.clone());
+            .unwrap_or_default();
         let mut grouped = crate::config::merge_args(&db_args, &server.args);
 
         // Inject -m from model card, only if not already present.
