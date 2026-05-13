@@ -75,6 +75,26 @@ impl BackendManager {
         crate::db::queries::list_backend_configs(&self.conn)
     }
 
+    // ── Resolution ───────────────────────────────────────────────
+
+    /// Get default_args for a backend + variant from backend_configs.
+    /// Returns empty vec if no config exists.
+    pub fn get_default_args(&self, name: &str, gpu_variant: &str) -> Vec<String> {
+        crate::db::queries::get_backend_config(&self.conn, name, gpu_variant)
+            .ok()
+            .flatten()
+            .map(|c| c.default_args)
+            .unwrap_or_default()
+    }
+
+    /// Get health_check_url from backend_configs.
+    pub fn get_health_check_url(&self, name: &str, gpu_variant: &str) -> Option<String> {
+        crate::db::queries::get_backend_config(&self.conn, name, gpu_variant)
+            .ok()
+            .flatten()
+            .and_then(|c| c.health_check_url)
+    }
+
     // ── Discovery ───────────────────────────────────────────────
 
     /// Return backend options for UI dropdowns (name, variant, label).
@@ -723,6 +743,54 @@ mod tests {
 
         // All versions should be gone
         assert!(manager.list_versions("llama_cpp", None).unwrap().is_none());
+    }
+
+    // ── Resolution tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_get_default_args_returns_args() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let args = vec!["-fa 1".to_string(), "-b 2048".to_string()];
+        manager
+            .save_config("llama_cpp", "cpu", &args, None)
+            .unwrap();
+
+        let result = manager.get_default_args("llama_cpp", "cpu");
+        assert_eq!(result, args);
+    }
+
+    #[test]
+    fn test_get_default_args_returns_empty_for_missing() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let result = manager.get_default_args("nonexistent", "cpu");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_health_check_url_returns_url() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        manager
+            .save_config(
+                "llama_cpp",
+                "cpu",
+                &[],
+                Some("http://localhost:8080/health"),
+            )
+            .unwrap();
+
+        let result = manager.get_health_check_url("llama_cpp", "cpu");
+        assert_eq!(result, Some("http://localhost:8080/health".to_string()));
+    }
+
+    #[test]
+    fn test_get_health_check_url_returns_none_for_missing() {
+        let manager = BackendManager::open_in_memory().unwrap();
+
+        let result = manager.get_health_check_url("nonexistent", "cpu");
+        assert!(result.is_none());
     }
 
     #[test]
