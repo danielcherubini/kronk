@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 22;
+pub const LATEST_VERSION: i32 = 23;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -532,6 +532,20 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                 ALTER TABLE system_metrics_history ADD COLUMN spec_accept_pct REAL;
             "#,
         ),
+        (
+            23,
+            r#"
+                CREATE TABLE backend_configs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    gpu_variant TEXT NOT NULL DEFAULT 'cpu',
+                    default_args TEXT,
+                    health_check_url TEXT,
+                    UNIQUE(name, gpu_variant)
+                );
+                CREATE INDEX idx_backend_configs_name_variant ON backend_configs(name, gpu_variant);
+            "#,
+        ),
     ];
 
     let current_version: i32 =
@@ -1023,6 +1037,87 @@ mod tests {
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM backend_installations WHERE name='llama_cpp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    /// Regression test: migration v23 must create the backend_configs table
+    /// with the correct schema and index.
+    #[test]
+    fn test_migration_v23_creates_backend_configs() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        // Table must exist
+        let table_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backend_configs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_exists, 1);
+
+        // Index must exist
+        let idx_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_backend_configs_name_variant'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_exists, 1);
+
+        // Columns must exist
+        let columns = [
+            "id",
+            "name",
+            "gpu_variant",
+            "default_args",
+            "health_check_url",
+        ];
+        for col in &columns {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('backend_configs') WHERE name=?",
+                    [col],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "column '{}' must exist", col);
+        }
+
+        // Test UNIQUE(name, gpu_variant) constraint
+        conn.execute(
+            "INSERT INTO backend_configs (name, gpu_variant, default_args, health_check_url)
+             VALUES ('llama_cpp', 'cpu', '[\"-fa 1\"]', 'http://localhost:8080/health')",
+            [],
+        )
+        .unwrap();
+
+        // Duplicate (name, gpu_variant) must fail
+        let err = conn.execute(
+            "INSERT INTO backend_configs (name, gpu_variant, default_args)
+             VALUES ('llama_cpp', 'cpu', '[]')",
+            [],
+        );
+        assert!(err.is_err(), "duplicate (name, gpu_variant) must fail");
+
+        // Same name, different variant must succeed
+        conn.execute(
+            "INSERT INTO backend_configs (name, gpu_variant, default_args)
+             VALUES ('llama_cpp', 'vulkan', '[]')",
+            [],
+        )
+        .unwrap();
+
+        // Verify both rows exist
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backend_configs WHERE name='llama_cpp'",
                 [],
                 |row| row.get(0),
             )

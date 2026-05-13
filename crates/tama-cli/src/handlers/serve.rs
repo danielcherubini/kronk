@@ -94,6 +94,13 @@ async fn start_proxy_server(
                 {
                     tracing::error!("Backend registry TOML migration failed: {}", e);
                 }
+
+                // Always run the backend config TOML migration (runs once, then clears [backends])
+                if let Err(e) =
+                    tama_core::db::backfill::migrate_backend_config_from_toml(&db_result.conn, dir)
+                {
+                    tracing::error!("Backend config TOML migration failed: {}", e);
+                }
             }
             Err(e) => tracing::error!("Failed to open DB for backfill check: {}", e),
         }
