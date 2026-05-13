@@ -15,7 +15,7 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
 
     let (server, backend) = config.resolve_server(&model_configs, server_name)?;
 
-    let args = config.build_full_args(server, backend, ctx_override)?;
+    let args = config.build_full_args(server, backend, ctx_override, Some(&conn))?;
 
     // Resolve backend binary path from DB (priority) or config.path (fallback)
     let backend_path = {

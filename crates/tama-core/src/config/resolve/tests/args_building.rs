@@ -69,7 +69,7 @@ fn test_build_full_args_unified() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Verify model path arg
@@ -155,7 +155,7 @@ fn test_build_full_args_ctx_override() {
 
     // ctx_override should take priority over server.context_length
     let args = config
-        .build_full_args(&server, &backend, Some(2048))
+        .build_full_args(&server, &backend, Some(2048), None)
         .expect("build_full_args failed");
 
     assert!(args.contains(&"-c".to_string()));
@@ -222,7 +222,7 @@ fn test_build_full_args_no_sampling() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Verify no sampling args
@@ -274,7 +274,7 @@ fn test_build_full_args_no_quants() {
     };
 
     // Should not crash when quants is empty
-    let args = config.build_full_args(&server, &backend, None);
+    let args = config.build_full_args(&server, &backend, None, None);
     assert!(args.is_ok());
 
     // Should not emit -m arg when quant lookup fails
@@ -327,7 +327,7 @@ fn test_build_args_dedupes_backend_vs_model_flags() {
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
-    let flat = config.build_args(&server, &backend);
+    let flat = config.build_args(&server, &backend, None);
 
     // -t 14 from base must survive (flattened to separate tokens)
     assert!(flat.iter().any(|t| *t == "-t"));
@@ -394,7 +394,7 @@ fn test_build_args_sampling_overrides_inline_temp_in_args() {
     };
 
     let backend = config.backends.get("test_backend").unwrap().clone();
-    let flat = config.build_args(&server, &backend);
+    let flat = config.build_args(&server, &backend, None);
 
     // --temp appears exactly once with value 0.50 (flattened)
     let temp_count = flat.iter().filter(|t| *t == "--temp").count();
@@ -471,7 +471,7 @@ fn test_build_full_args_dedupes_backend_vs_model_flags() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // -t 14 must survive from backend defaults
@@ -557,7 +557,7 @@ fn test_build_full_args_returns_flat_tokens_with_quoted_path() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // -m and the path must appear as adjacent flat tokens, with the
@@ -633,7 +633,7 @@ fn test_build_full_args_context_multiplied_by_num_parallel() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Context should be 4096 * 2 = 8192
@@ -715,7 +715,7 @@ fn test_build_full_args_context_saturating_overflow() {
 
     // Should not panic — saturating_mul clamps to u32::MAX
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args should not panic with large values");
 
     assert!(args.contains(&"-c".to_string()));
@@ -788,7 +788,7 @@ fn test_build_full_args_context_no_num_parallel_defaults_to_one() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Context should be 8192 * 1 = 8192 (unchanged)
@@ -857,7 +857,7 @@ fn test_build_full_args_injects_np_flag() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // -np flag should be present with value 2
@@ -941,7 +941,7 @@ fn test_build_full_args_no_np_when_default() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // -np should NOT be present when num_parallel is 1
@@ -1013,7 +1013,7 @@ fn test_build_full_args_skips_np_when_already_present() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Should have exactly one -np (from backend), not two
@@ -1094,7 +1094,7 @@ fn test_build_full_args_unified_n_slots() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // With kv_unified=true, -c should be per-slot context (8192), not multiplied
@@ -1173,7 +1173,7 @@ fn test_build_full_args_non_unified_n_slots() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // With kv_unified=false, -c should be 8192 * 4 = 32768
@@ -1237,7 +1237,7 @@ fn test_build_full_args_unified_default() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     // Default (false) should use non-unified formula: 8192 * 2 = 16384
@@ -1317,7 +1317,7 @@ fn test_build_full_args_ctx_override_unified() {
 
     // ctx_override=4096, kv_unified=true → -c 4096 (not 12288)
     let args = config
-        .build_full_args(&server, &backend, Some(4096))
+        .build_full_args(&server, &backend, Some(4096), None)
         .expect("build_full_args failed");
 
     // With kv_unified=true and ctx_override=4096, -c should be 4096 (per-slot)
@@ -1398,7 +1398,7 @@ fn test_build_full_args_kv_unified_not_duplicated_when_in_user_args() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None)
+        .build_full_args(&server, &backend, None, None)
         .expect("build_full_args failed");
 
     let kv_count = args.iter().filter(|a| *a == "--kv-unified").count();

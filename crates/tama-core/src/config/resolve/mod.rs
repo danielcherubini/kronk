@@ -186,8 +186,25 @@ impl Config {
     /// Merging order: `backend.default_args` → `server.args` →
     /// `server.sampling.to_args()`. Each later layer's flags fully replace
     /// the same flag in the earlier layers via `merge_args`.
-    pub fn build_args(&self, server: &ModelConfig, backend: &BackendConfig) -> Vec<String> {
-        let mut grouped = crate::config::merge_args(&backend.default_args, &server.args);
+    pub fn build_args(
+        &self,
+        server: &ModelConfig,
+        backend: &BackendConfig,
+        db_conn: Option<&rusqlite::Connection>,
+    ) -> Vec<String> {
+        let db_args = db_conn
+            .and_then(|conn| {
+                crate::db::queries::get_backend_config(
+                    conn,
+                    &server.backend,
+                    server.gpu_variant.as_deref().unwrap_or("cpu"),
+                )
+                .ok()
+                .flatten()
+                .map(|c| c.default_args)
+            })
+            .unwrap_or_else(|| backend.default_args.clone());
+        let mut grouped = crate::config::merge_args(&db_args, &server.args);
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
                 grouped = crate::config::merge_args(&grouped, &sampling.to_args());
@@ -216,8 +233,21 @@ impl Config {
         server: &ModelConfig,
         backend: &BackendConfig,
         ctx_override: Option<u32>,
+        db_conn: Option<&rusqlite::Connection>,
     ) -> Result<Vec<String>> {
-        let mut grouped = crate::config::merge_args(&backend.default_args, &server.args);
+        let db_args = db_conn
+            .and_then(|conn| {
+                crate::db::queries::get_backend_config(
+                    conn,
+                    &server.backend,
+                    server.gpu_variant.as_deref().unwrap_or("cpu"),
+                )
+                .ok()
+                .flatten()
+                .map(|c| c.default_args)
+            })
+            .unwrap_or_else(|| backend.default_args.clone());
+        let mut grouped = crate::config::merge_args(&db_args, &server.args);
 
         // Inject -m from model card, only if not already present.
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {

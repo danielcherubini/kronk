@@ -107,7 +107,8 @@ async fn _start_backend(
     drop(listener);
 
     // Build full args, then overwrite host/port removing any duplicates
-    let mut args = config.build_full_args(server_config, backend_config, ctx_override)?;
+    let mut args =
+        config.build_full_args(server_config, backend_config, ctx_override, Some(&conn))?;
     _override_arg(&mut args, "--host", "127.0.0.1");
     _override_arg(&mut args, "--port", &port.to_string());
 
