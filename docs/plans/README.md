@@ -14,9 +14,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 91
+- **Total Plans**: 92
 - **Completed**: 91 ✅
-- **In Progress**: 0
+- **In Progress**: 1 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -42,7 +42,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ### In Progress
 
-*(none)*
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
+| [Per-Variant Default Args](2026-05-13-per-variant-default-args.md) | Support independent default_args per GPU variant (vulkan/rocm/cpu) instead of sharing across all variants | 🚧 IN PROGRESS
 
 ### Draft
 
@@ -246,4 +248,4 @@ When implementing a new feature:
 
 ---
 
-**Last Updated**: 2026-04-30
+**Last Updated**: 2026-05-13
