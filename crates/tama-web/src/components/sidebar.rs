@@ -92,7 +92,7 @@ pub fn Sidebar() -> impl IntoView {
             </button>
 
             <A href="/" attr:class="sidebar-header" on:click=move |_| mobile_open.set(false)>
-                <span class="sidebar-header__logo">"⚡"</span>
+                <span class="sidebar-header__logo">"🦙"</span>
                 <span class="sidebar-header__text">"Tama"</span>
             </A>
 
