@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
-use tama_core::models::ModelRegistry;
+use tama_core::models::{ModelManager, ModelRegistry};
 
 pub(super) fn cmd_ls(
     config: &Config,
@@ -11,8 +10,8 @@ pub(super) fn cmd_ls(
 ) -> Result<()> {
     let models_dir = config.models_dir()?;
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
-    let model_configs = tama_core::db::load_model_configs(&conn)?;
+    let mgr = ModelManager::open(&db_dir)?;
+    let model_configs = tama_core::db::load_model_configs(mgr.conn())?;
 
     match model_id_arg {
         None => {
@@ -103,8 +102,8 @@ pub(super) fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
 
     // Check for referencing model configurations in DB
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
-    let model_configs = tama_core::db::load_model_configs(&conn)?;
+    let mgr = ModelManager::open(&db_dir)?;
+    let model_configs = tama_core::db::load_model_configs(mgr.conn())?;
     let linked_configs: Vec<&str> = model_configs
         .iter()
         .filter(|(_, p)| p.model.as_deref() == Some(model_id))
@@ -155,8 +154,8 @@ pub(super) fn cmd_rm(config: &Config, model_id: &str) -> Result<()> {
         &model.card.model.source
     };
     // Look up model_id for DB deletion
-    if let Some(record) = tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_key)? {
-        let _ = tama_core::db::queries::delete_model_records(&conn, record.id);
+    if let Some(record) = mgr.get_config_by_repo_id(repo_key)? {
+        let _ = mgr.delete_config(record.id);
     }
 
     println!("Removed model '{}'.", model_id);

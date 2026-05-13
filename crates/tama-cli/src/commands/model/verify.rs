@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use tama_core::config::Config;
-use tama_core::db::{Connection, OpenResult};
-use tama_core::models::ModelRegistry;
+use tama_core::db::Connection;
+use tama_core::models::{ModelManager, ModelRegistry};
 
 /// Result of verifying a single model's files.
 #[derive(Debug)]
@@ -66,10 +66,7 @@ pub(super) async fn cmd_verify(config: &Config, model_filter: Option<String>) ->
     use tama_core::models::verify;
 
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult {
-        conn,
-        needs_backfill: _,
-    } = tama_core::db::open(&db_dir)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
@@ -115,13 +112,14 @@ pub(super) async fn cmd_verify(config: &Config, model_filter: Option<String>) ->
         let model_dir = &model.dir;
         println!("{}", repo_id);
 
-        let model_id = tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)
+        let model_id = mgr
+            .get_config_by_repo_id(repo_id)
             .ok()
             .flatten()
             .map(|r| r.id);
 
         let results = match model_id {
-            Some(id) => match verify::verify_model(&conn, id, repo_id, model_dir) {
+            Some(id) => match verify::verify_model(mgr.conn(), id, repo_id, model_dir) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("  verify error: {}", e);
@@ -202,15 +200,12 @@ pub(super) async fn cmd_verify_existing(
     use tama_core::models::verify;
 
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult {
-        conn,
-        needs_backfill: _,
-    } = tama_core::db::open(&db_dir)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
     let models_dir = config.models_dir()?;
 
     // Load model configs from DB
-    let model_configs = tama_core::db::load_model_configs(&conn)?;
+    let model_configs = tama_core::db::load_model_configs(mgr.conn())?;
 
     // Collect unique HF repo IDs from DB.
     // Entries without a `model` field (raw-args entries) are skipped.
@@ -272,7 +267,7 @@ pub(super) async fn cmd_verify_existing(
         println!("Model: {}", repo_id);
 
         // Look up model_id
-        let model_id = match tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)? {
+        let model_id = match mgr.get_config_by_repo_id(repo_id)? {
             Some(r) => r.id,
             None => {
                 println!("  (no DB entry)");
@@ -281,7 +276,7 @@ pub(super) async fn cmd_verify_existing(
         };
 
         // Check if any files need hash backfilling
-        let records = match tama_core::db::queries::get_model_files(&conn, model_id) {
+        let records = match mgr.get_files(model_id) {
             Ok(r) => r,
             Err(e) => {
                 println!("  Error reading database: {}", e);
@@ -314,19 +309,20 @@ pub(super) async fn cmd_verify_existing(
             }
 
             // Always refresh metadata when needed, regardless of verbose flag
-            match tama_core::models::update::refresh_metadata(&conn, &models_dir, repo_id).await {
+            match tama_core::models::update::refresh_metadata(mgr.conn(), &models_dir, repo_id)
+                .await
+            {
                 Ok(_) => {
                     // Re-fetch records to see how many were successfully backfilled
-                    let updated_records =
-                        match tama_core::db::queries::get_model_files(&conn, model_id) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                println!("  Error reading database: {}", e);
-                                any_failed = true;
-                                hard_errors.push(format!("{}: {}", repo_id, e));
-                                continue;
-                            }
-                        };
+                    let updated_records = match mgr.get_files(model_id) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            println!("  Error reading database: {}", e);
+                            any_failed = true;
+                            hard_errors.push(format!("{}: {}", repo_id, e));
+                            continue;
+                        }
+                    };
                     // Count how many still need backfilling after the refresh
                     let still_needing_backfill = updated_records
                         .iter()
@@ -351,13 +347,14 @@ pub(super) async fn cmd_verify_existing(
             }
         }
 
-        let model_id = tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)
+        let model_id = mgr
+            .get_config_by_repo_id(repo_id)
             .ok()
             .flatten()
             .map(|r| r.id);
 
         let results = match model_id {
-            Some(id) => match verify::verify_model(&conn, id, repo_id, &model_dir) {
+            Some(id) => match verify::verify_model(mgr.conn(), id, repo_id, &model_dir) {
                 Ok(r) => r,
                 Err(e) => {
                     println!("  verify error: {}", e);
@@ -463,6 +460,7 @@ pub(super) async fn cmd_verify_existing(
 mod tests {
     use super::*;
     use std::io::Write;
+    use tama_core::db::OpenResult;
 
     /// Test that verify_files returns correct counts for a model with mixed results.
     #[test]

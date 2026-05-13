@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
 use tama_core::models::search::{self, SortBy};
-use tama_core::models::ModelRegistry;
+use tama_core::models::{ModelManager, ModelRegistry};
 
 pub(super) async fn cmd_update(
     config: &Config,
@@ -15,10 +14,7 @@ pub(super) async fn cmd_update(
     use tama_core::models::update;
 
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult {
-        conn,
-        needs_backfill: _,
-    } = tama_core::db::open(&db_dir)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
     let models_dir = config.models_dir()?;
     let configs_dir = config.configs_dir()?;
@@ -44,7 +40,7 @@ pub(super) async fn cmd_update(
         for model in &models {
             let repo_id = &model.card.model.source;
             print!("  Refreshing metadata for {}...", repo_id);
-            update::refresh_metadata(&conn, &models_dir, repo_id).await?;
+            update::refresh_metadata(mgr.conn(), &models_dir, repo_id).await?;
             println!(" done.");
         }
         println!();
@@ -59,7 +55,7 @@ pub(super) async fn cmd_update(
     let mut check_results: Vec<update::UpdateCheckResult> = Vec::new();
     for model in &models {
         let repo_id = &model.card.model.source;
-        let result = update::check_for_updates(&conn, repo_id).await?;
+        let result = update::check_for_updates(mgr.conn(), repo_id).await?;
         check_results.push(result);
     }
 
@@ -200,16 +196,14 @@ pub(super) async fn cmd_update(
                 .and_then(|b| b.lfs_sha256.as_deref());
 
             // Look up model_id for DB writes
-            let model_id =
-                match tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)? {
-                    Some(r) => r.id,
-                    None => {
-                        tracing::warn!("Model {} not in DB, skipping", repo_id);
-                        continue;
-                    }
-                };
-            let _ = tama_core::db::queries::upsert_model_file(
-                &conn,
+            let model_id = match mgr.get_config_by_repo_id(repo_id)? {
+                Some(r) => r.id,
+                None => {
+                    tracing::warn!("Model {} not in DB, skipping", repo_id);
+                    continue;
+                }
+            };
+            let _ = mgr.upsert_file(
                 model_id,
                 repo_id,
                 &file_info.filename,
@@ -220,19 +214,16 @@ pub(super) async fn cmd_update(
 
             let now = super::utils::manual_timestamp();
 
-            let _ = tama_core::db::queries::log_download(
-                &conn,
-                &tama_core::db::queries::DownloadLogEntry {
-                    repo_id: repo_id.to_string(),
-                    filename: file_info.filename.clone(),
-                    started_at: now.clone(),
-                    completed_at: Some(now),
-                    size_bytes: Some(dl.size_bytes as i64),
-                    duration_ms: None,
-                    success: true,
-                    error_message: None,
-                },
-            );
+            let _ = mgr.log_download(&tama_core::db::queries::DownloadLogEntry {
+                repo_id: repo_id.to_string(),
+                filename: file_info.filename.clone(),
+                started_at: now.clone(),
+                completed_at: Some(now),
+                size_bytes: Some(dl.size_bytes as i64),
+                duration_ms: None,
+                success: true,
+                error_message: None,
+            });
 
             // Accumulate size_bytes updates into the shared card clone
             for quant_info in card.quants.values_mut() {
@@ -248,11 +239,9 @@ pub(super) async fn cmd_update(
         card.save(&model.card_path)?;
 
         // Update DB pull record with new commit SHA
-        let model_id =
-            tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)?.map(|r| r.id);
+        let model_id = mgr.get_config_by_repo_id(repo_id)?.map(|r| r.id);
         if let Some(id) = model_id {
-            let _ =
-                tama_core::db::queries::upsert_model_pull(&conn, id, repo_id, &listing.commit_sha);
+            let _ = mgr.upsert_pull(id, repo_id, &listing.commit_sha);
         }
     }
 

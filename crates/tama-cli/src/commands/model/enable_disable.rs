@@ -1,33 +1,35 @@
 use anyhow::{Context, Result};
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
+use tama_core::models::ModelManager;
 
 pub(super) fn cmd_enable(_config: &Config, name: &str) -> Result<()> {
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
-    let mut model_configs = tama_core::db::load_model_configs(&conn)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
-    let srv = model_configs
-        .get_mut(name)
+    // Verify the config exists before enabling
+    let repo_id = tama_core::db::config_key_to_repo_id(name);
+    mgr.get_config_by_repo_id(&repo_id)
+        .with_context(|| format!("Failed to lookup model '{}' in database", name))?
         .with_context(|| format!("Model '{}' not found", name))?;
-    srv.enabled = true;
 
-    tama_core::db::save_model_config(&conn, name, srv)?;
+    mgr.enable_model(name)
+        .with_context(|| format!("Failed to enable model '{}'", name))?;
     println!("Enabled model: {}", name);
     Ok(())
 }
 
 pub(super) fn cmd_disable(_config: &Config, name: &str) -> Result<()> {
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
-    let mut model_configs = tama_core::db::load_model_configs(&conn)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
-    let srv = model_configs
-        .get_mut(name)
+    // Verify the config exists before disabling
+    let repo_id = tama_core::db::config_key_to_repo_id(name);
+    mgr.get_config_by_repo_id(&repo_id)
+        .with_context(|| format!("Failed to lookup model '{}' in database", name))?
         .with_context(|| format!("Model '{}' not found", name))?;
-    srv.enabled = false;
 
-    tama_core::db::save_model_config(&conn, name, srv)?;
+    mgr.disable_model(name)
+        .with_context(|| format!("Failed to disable model '{}'", name))?;
     println!("Disabled model: {}", name);
     Ok(())
 }
