@@ -7,6 +7,9 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
     let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
     let model_configs = tama_core::db::load_model_configs(&conn)?;
 
+    // Open BackendManager for health check resolution
+    let manager = tama_core::backends::BackendManager::open(&db_dir)?;
+
     if model_configs.is_empty() {
         println!("No models configured.");
         println!();
@@ -40,7 +43,9 @@ pub async fn cmd_server_ls(config: &Config) -> Result<()> {
         };
 
         // Use server's resolved health check config
-        let health_check = config.resolve_health_check(srv, Some(&conn));
+        let gpu_variant = srv.gpu_variant.as_deref().unwrap_or("cpu");
+        let health_url = manager.get_health_check_url(&srv.backend, gpu_variant);
+        let health_check = config.resolve_health_check(srv, health_url.as_deref());
         let health = if let Some(url) = health_check.url {
             match http_client.get(url).send().await {
                 Ok(resp) if resp.status().is_success() => "HEALTHY",

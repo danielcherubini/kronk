@@ -99,13 +99,13 @@ impl Config {
     }
 
     /// Resolve the health check URL for a server, taking into account:
-    /// 1. Backend's health_check_url from DB if available
+    /// 1. Pre-resolved health_check_url if available
     /// 2. Server's custom port if set
     /// 3. Fallback to http://localhost:{port}/health
     pub fn resolve_health_url(
         &self,
         server: &ModelConfig,
-        db_conn: Option<&rusqlite::Connection>,
+        health_check_url: Option<&str>,
     ) -> Option<String> {
         // Guard: ensure backend exists in TOML config. All current callers go
         // through resolve_server first (which requires a TOML entry), but this
@@ -122,34 +122,22 @@ impl Config {
             }
         };
 
-        // Look up health_check_url from DB
-        let db_health_url = db_conn.and_then(|conn| {
-            crate::db::queries::get_backend_config(
-                conn,
-                &server.backend,
-                server.gpu_variant.as_deref().unwrap_or("cpu"),
-            )
-            .ok()
-            .flatten()
-            .and_then(|c| c.health_check_url)
-        });
-
-        // If DB has health_check_url, use it (and replace port if server.port is set)
-        if let Some(ref backend_url) = db_health_url {
+        // If pre-resolved health_check_url is provided, use it (and replace port if server.port is set)
+        if let Some(backend_url) = health_check_url {
             if let Some(port) = server.port {
                 let mut url = url::Url::parse(backend_url).ok()?;
                 url.set_port(Some(port)).ok()?;
                 return Some(url.to_string());
             }
-            return Some(backend_url.clone());
+            return Some(backend_url.to_string());
         }
 
-        // DB health_check_url is None, try server.port fallback
+        // health_check_url is None, try server.port fallback
         if let Some(port) = server.port {
             return Some(format!("http://localhost:{}/health", port));
         }
 
-        // Neither DB health_check_url nor server.port present
+        // Neither health_check_url nor server.port present
         None
     }
 
@@ -157,7 +145,7 @@ impl Config {
     pub fn resolve_backend_url(
         &self,
         server: &ModelConfig,
-        db_conn: Option<&rusqlite::Connection>,
+        health_check_url: Option<&str>,
     ) -> Option<String> {
         // Guard: ensure backend exists in TOML config. All current callers go
         // through resolve_server first (which requires a TOML entry), but this
@@ -174,20 +162,8 @@ impl Config {
             }
         };
 
-        // Look up health_check_url from DB to derive the base URL
-        let db_health_url = db_conn.and_then(|conn| {
-            crate::db::queries::get_backend_config(
-                conn,
-                &server.backend,
-                server.gpu_variant.as_deref().unwrap_or("cpu"),
-            )
-            .ok()
-            .flatten()
-            .and_then(|c| c.health_check_url)
-        });
-
-        // If DB has health_check_url, derive the base URL from it
-        if let Some(ref health_url) = db_health_url {
+        // If pre-resolved health_check_url is provided, derive the base URL from it
+        if let Some(health_url) = health_check_url {
             let mut url = url::Url::parse(health_url).ok()?;
 
             // Override port if the server specifies one
@@ -203,28 +179,28 @@ impl Config {
             return Some(base);
         }
 
-        // DB health_check_url is None, try server.port fallback
+        // health_check_url is None, try server.port fallback
         if let Some(port) = server.port {
             return Some(format!("http://localhost:{}", port));
         }
 
-        // Neither DB health_check_url nor server.port present
+        // Neither health_check_url nor server.port present
         None
     }
 
     /// Resolve the effective health check config for a server.
-    /// Merges: server.health_check -> DB health_check_url -> supervisor defaults.
+    /// Merges: server.health_check -> pre-resolved health_check_url -> supervisor defaults.
     pub fn resolve_health_check(
         &self,
         server: &ModelConfig,
-        db_conn: Option<&rusqlite::Connection>,
+        health_check_url: Option<&str>,
     ) -> HealthCheck {
         let server_hc = server.health_check.as_ref();
 
         HealthCheck {
             url: server_hc
                 .and_then(|h| h.url.clone())
-                .or_else(|| self.resolve_health_url(server, db_conn)),
+                .or_else(|| self.resolve_health_url(server, health_check_url)),
             interval_ms: Some(
                 server_hc
                     .and_then(|h| h.interval_ms)
@@ -237,29 +213,17 @@ impl Config {
     /// Build the merged arg list for a server, returning **flat tokens**
     /// suitable for `Command::args`.
     ///
-    /// Merging order: DB backend default_args → `server.args` →
+    /// Merging order: pre-resolved `default_args` → `server.args` →
     /// `server.sampling.to_args()`. Each later layer's flags fully replace
     /// the same flag in the earlier layers via `merge_args`.
     pub fn build_args(
         &self,
         server: &ModelConfig,
-        // Kept for API stability; default_args now resolved from DB via db_conn.
+        // Kept for API stability; default_args now resolved externally.
         #[allow(dead_code)] _backend: &BackendConfig,
-        db_conn: Option<&rusqlite::Connection>,
+        default_args: &[String],
     ) -> Vec<String> {
-        let db_args = db_conn
-            .and_then(|conn| {
-                crate::db::queries::get_backend_config(
-                    conn,
-                    &server.backend,
-                    server.gpu_variant.as_deref().unwrap_or("cpu"),
-                )
-                .ok()
-                .flatten()
-                .map(|c| c.default_args)
-            })
-            .unwrap_or_default();
-        let mut grouped = crate::config::merge_args(&db_args, &server.args);
+        let mut grouped = crate::config::merge_args(default_args, &server.args);
         if let Some(sampling) = &server.sampling {
             if !sampling.is_empty() {
                 grouped = crate::config::merge_args(&grouped, &sampling.to_args());
@@ -273,7 +237,7 @@ impl Config {
     /// `Command::args`.
     ///
     /// Merging order:
-    /// 1. DB backend default_args
+    /// 1. Pre-resolved `default_args`
     /// 2. `server.args`     (replaces same-flag entries from #1)
     /// 3. Injected `-m`/`-c`/`-ngl` (only if not already present after #1+#2)
     /// 4. `server.sampling.to_args()` (replaces same-flag entries from #1+#2+#3)
@@ -286,24 +250,12 @@ impl Config {
     pub fn build_full_args(
         &self,
         server: &ModelConfig,
-        // Kept for API stability; default_args now resolved from DB via db_conn.
+        // Kept for API stability; default_args now resolved externally.
         #[allow(dead_code)] _backend: &BackendConfig,
         ctx_override: Option<u32>,
-        db_conn: Option<&rusqlite::Connection>,
+        default_args: &[String],
     ) -> Result<Vec<String>> {
-        let db_args = db_conn
-            .and_then(|conn| {
-                crate::db::queries::get_backend_config(
-                    conn,
-                    &server.backend,
-                    server.gpu_variant.as_deref().unwrap_or("cpu"),
-                )
-                .ok()
-                .flatten()
-                .map(|c| c.default_args)
-            })
-            .unwrap_or_default();
-        let mut grouped = crate::config::merge_args(&db_args, &server.args);
+        let mut grouped = crate::config::merge_args(default_args, &server.args);
 
         // Inject -m from model card, only if not already present.
         if let (Some(ref model_id), Some(ref quant_name)) = (&server.model, &server.quant) {
@@ -551,21 +503,21 @@ impl Config {
     /// Priority:
     /// 1. Model-level `gpu_variant` (passed as `model_variant`) — most specific
     /// 2. Global config `[backends.<name>].gpu_variant`
-    /// 3. Discover from DB (first active installation, or first variant found)
+    /// 3. Discover from BackendManager (first active installation, or first variant found)
     /// 4. Default "cpu"
     ///
     /// Then:
     /// 1. If `config.backends[name].version` is pinned, look up that exact version
-    ///    in the DB for the resolved variant.
+    ///    in the BackendManager for the resolved variant.
     /// 2. Otherwise, use the active (latest) installation for that variant.
     /// 3. Fallback to `path` field in `config.toml` [backends] section.
     pub fn resolve_backend_path(
         &self,
         name: &str,
         model_variant: Option<&str>,
-        conn: &rusqlite::Connection,
+        manager: &crate::backends::BackendManager,
     ) -> Result<std::path::PathBuf> {
-        // Determine the gpu_variant to use (model > config > db > "cpu")
+        // Determine the gpu_variant to use (model > config > "cpu")
         let gpu_variant: String = model_variant
             .map(String::from)
             .or_else(|| {
@@ -579,19 +531,14 @@ impl Config {
         // Check if a specific version is pinned in config
         if let Some(pinned_version) = self.backends.get(name).and_then(|b| b.version.as_deref()) {
             // Try the specified variant first
-            if let Some(record) = crate::db::queries::get_backend_by_version(
-                conn,
-                name,
-                &gpu_variant,
-                pinned_version,
-            )? {
-                return Ok(std::path::PathBuf::from(record.path));
+            if let Some(info) = manager.get_by_version(name, &gpu_variant, pinned_version)? {
+                return Ok(info.path);
             }
             // If not found, try all variants of this backend for the pinned version
-            if let Ok(versions) = crate::db::queries::list_backend_versions(conn, name, None) {
+            if let Some(versions) = manager.list_versions(name, None)? {
                 for v in &versions {
                     if v.version == pinned_version {
-                        return Ok(std::path::PathBuf::from(&v.path));
+                        return Ok(v.path.clone());
                     }
                 }
             }
@@ -605,18 +552,27 @@ impl Config {
 
         // No version pin — try to find the active installation.
         // First, try the specific variant (model > config > "cpu").
-        if let Some(record) = crate::db::queries::get_active_backend(conn, name, &gpu_variant)? {
-            return Ok(std::path::PathBuf::from(record.path));
+        if let Some(info) = manager.get_active(name, &gpu_variant)? {
+            return Ok(info.path);
         }
 
         // If not found for the specific variant, try all active variants
         // for this backend. This handles the case where the user selects
         // a backend that's installed for a different GPU variant (e.g.,
         // "rocm" instead of "cpu").
-        if let Ok(versions) = crate::db::queries::list_backend_versions(conn, name, None) {
-            let active_versions: Vec<_> = versions.iter().filter(|v| v.is_active).collect();
-            if let Some(record) = active_versions.first() {
-                return Ok(std::path::PathBuf::from(&record.path));
+        if let Some(versions) = manager.list_versions(name, None)? {
+            let active_versions: Vec<_> = versions
+                .iter()
+                .filter(|v| {
+                    manager
+                        .get_active(name, &v.gpu_variant)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                })
+                .collect();
+            if let Some(info) = active_versions.first() {
+                return Ok(info.path.clone());
             }
         }
 

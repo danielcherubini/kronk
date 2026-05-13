@@ -61,7 +61,7 @@ fn test_kv_cache_type_args_injected_when_set() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None, None)
+        .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
     // -ctk q4_0 should be present
@@ -137,7 +137,7 @@ fn test_kv_cache_type_args_not_injected_when_none() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None, None)
+        .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
     // -ctk and -ctv should NOT be present
@@ -212,7 +212,7 @@ fn test_kv_cache_type_args_not_injected_for_non_llama_backend() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None, None)
+        .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
     // -ctk and -ctv should NOT be present for non-llama.cpp backends
@@ -287,7 +287,7 @@ fn test_kv_cache_type_args_no_duplicate_when_in_user_args() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None, None)
+        .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
     // -ctk should appear exactly once (from args, not injected)
@@ -365,7 +365,7 @@ fn test_kv_cache_type_args_not_injected_for_empty_string() {
     };
 
     let args = config
-        .build_full_args(&server, &backend, None, None)
+        .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
     assert!(

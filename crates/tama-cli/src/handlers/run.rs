@@ -15,13 +15,15 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
 
     let (server, backend) = config.resolve_server(&model_configs, server_name)?;
 
-    let args = config.build_full_args(server, backend, ctx_override, Some(&conn))?;
+    // Open BackendManager for resolution
+    let manager = tama_core::backends::BackendManager::open(&db_dir)?;
+    let gpu_variant = server.gpu_variant.as_deref().unwrap_or("cpu");
+    let default_args = manager.get_default_args(&server.backend, gpu_variant);
+    let args = config.build_full_args(server, backend, ctx_override, &default_args)?;
 
     // Resolve backend binary path from DB (priority) or config.path (fallback)
-    let backend_path = {
-        let conn = Config::open_db();
-        config.resolve_backend_path(&server.backend, server.gpu_variant.as_deref(), &conn)?
-    };
+    let backend_path =
+        config.resolve_backend_path(&server.backend, server.gpu_variant.as_deref(), &manager)?;
     let backend_path_str = backend_path.to_string_lossy().to_string();
 
     println!("Starting server...");
@@ -31,7 +33,8 @@ pub async fn cmd_run(config: &Config, server_name: &str, ctx_override: Option<u3
     if let Some(ctx) = ctx_override {
         println!("  Context:  {}", ctx);
     }
-    let health_check = config.resolve_health_check(server, Some(&conn));
+    let health_url = manager.get_health_check_url(&server.backend, gpu_variant);
+    let health_check = config.resolve_health_check(server, health_url.as_deref());
     if let Some(ref url) = health_check.url {
         println!("  Health:   {}", url);
     }

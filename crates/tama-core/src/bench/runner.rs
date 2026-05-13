@@ -101,6 +101,11 @@ async fn _start_backend(
 
     let spawn_start = Instant::now();
 
+    // Open BackendManager for resolution
+    let manager = crate::backends::BackendManager::open(&db_dir)?;
+    let gpu_variant = server_config.gpu_variant.as_deref().unwrap_or("cpu");
+    let default_args = manager.get_default_args(&server_config.backend, gpu_variant);
+
     // Allocate a free port
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -108,19 +113,16 @@ async fn _start_backend(
 
     // Build full args, then overwrite host/port removing any duplicates
     let mut args =
-        config.build_full_args(server_config, backend_config, ctx_override, Some(&conn))?;
+        config.build_full_args(server_config, backend_config, ctx_override, &default_args)?;
     _override_arg(&mut args, "--host", "127.0.0.1");
     _override_arg(&mut args, "--port", &port.to_string());
 
     // Resolve the backend binary path: DB takes priority, config.path is fallback.
-    let backend_path = {
-        let conn = Config::open_db();
-        config.resolve_backend_path(
-            &server_config.backend,
-            server_config.gpu_variant.as_deref(),
-            &conn,
-        )?
-    };
+    let backend_path = config.resolve_backend_path(
+        &server_config.backend,
+        server_config.gpu_variant.as_deref(),
+        &manager,
+    )?;
 
     let health_url = format!("http://127.0.0.1:{}/health", port);
 

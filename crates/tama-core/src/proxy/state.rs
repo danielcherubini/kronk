@@ -67,13 +67,19 @@ impl ProxyState {
             .with_context(|| format!("Server '{}' not found", server_name))?
             .0;
 
-        // Open DB connection for health_check_url lookup
-        let db_conn = self
+        // Open BackendManager for health_check_url lookup
+        let manager = self
             .db_dir
             .as_ref()
-            .and_then(|dir| crate::db::open(dir).ok().map(|r| r.conn));
+            .and_then(|dir| crate::backends::BackendManager::open(dir).ok())
+            .unwrap_or_else(|| {
+                crate::backends::BackendManager::open_in_memory()
+                    .expect("in-memory BackendManager must always open")
+            });
+        let gpu_variant = server.gpu_variant.as_deref().unwrap_or("cpu");
+        let health_url = manager.get_health_check_url(&server.backend, gpu_variant);
         let backend_url = config
-            .resolve_backend_url(server, db_conn.as_ref())
+            .resolve_backend_url(server, health_url.as_deref())
             .with_context(|| format!("No backend URL resolved for server '{}'", server_name))?;
 
         Ok(backend_url)
