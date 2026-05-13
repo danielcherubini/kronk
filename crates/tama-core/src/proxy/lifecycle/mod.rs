@@ -308,9 +308,8 @@ impl ProxyState {
         }
 
         // Write to DB after model is ready (best-effort)
-        if let Some(conn) = self.open_db() {
-            let _ = crate::db::queries::insert_active_model(
-                &conn,
+        if let Some(mgr) = self.model_mgr() {
+            let _ = mgr.insert_active(
                 &server_name,
                 model_name,
                 &server_config.backend,
@@ -489,8 +488,8 @@ impl ProxyState {
         models.remove(server_name);
 
         // Write to DB after model is unloaded (best-effort)
-        if let Some(conn) = self.open_db() {
-            let _ = crate::db::queries::remove_active_model(&conn, server_name);
+        if let Some(mgr) = self.model_mgr() {
+            let _ = mgr.remove_active(server_name);
         }
 
         info!("Server '{}' unloaded", server_name);
@@ -770,9 +769,9 @@ impl ProxyState {
             }
             // Clean DB — remove ALL dead entries so cleanup_stale_processes()
             // doesn't rediscover them, regardless of whether they'll be restarted
-            if let Some(conn) = self.open_db() {
+            if let Some(mgr) = self.model_mgr() {
                 for server_name in &removed_servers {
-                    let _ = crate::db::queries::remove_active_model(&conn, server_name);
+                    let _ = mgr.remove_active(server_name);
                 }
             }
 

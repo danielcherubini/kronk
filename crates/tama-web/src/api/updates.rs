@@ -656,8 +656,8 @@ pub async fn apply_model_update(
 
     // Phase 1: Preflight — check all items for duplicates before creating any jobs.
     // This is read-only and returns early on the first conflict or error.
-    let conn = match svc.open_conn() {
-        Ok(c) => c,
+    let mgr = match tama_core::models::ModelManager::open(&config_dir) {
+        Ok(m) => m,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -666,9 +666,10 @@ pub async fn apply_model_update(
                 .into_response();
         }
     };
+    let conn = mgr.conn();
 
     for (quant_key, filename) in &unique_files {
-        match tama_core::db::queries::get_active_item_by_repo_filename(&conn, &repo_id, filename) {
+        match tama_core::db::queries::get_active_item_by_repo_filename(conn, &repo_id, filename) {
             Ok(Some(existing)) => {
                 return (
                     StatusCode::CONFLICT,

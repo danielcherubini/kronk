@@ -206,11 +206,11 @@ impl ProxyServer {
     }
 
     async fn cleanup_stale_processes(state: &ProxyState) {
-        let conn = match state.open_db() {
-            Some(c) => c,
+        let mgr = match state.model_mgr() {
+            Some(m) => m,
             None => return,
         };
-        let active = match crate::db::queries::get_active_models(&conn) {
+        let active = match mgr.get_active() {
             Ok(a) => a,
             Err(_) => return,
         };
@@ -223,7 +223,7 @@ impl ProxyServer {
                     entry.server_name,
                     pid
                 );
-                let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
+                let _ = mgr.remove_active(&entry.server_name);
                 continue;
             }
 
@@ -269,7 +269,7 @@ impl ProxyServer {
                     .arg(pid.to_string())
                     .status()
                     .await;
-                let _ = crate::db::queries::remove_active_model(&conn, &entry.server_name);
+                let _ = mgr.remove_active(&entry.server_name);
             }
         }
     }
