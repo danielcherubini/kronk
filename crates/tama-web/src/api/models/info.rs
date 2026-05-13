@@ -19,51 +19,37 @@ struct BackendOption {
 
 /// Build the list of available backend options by querying installed variants from the DB.
 fn build_backend_options(
-    cfg: &tama_core::config::Config,
+    _cfg: &tama_core::config::Config,
     config_dir: &std::path::Path,
 ) -> Vec<BackendOption> {
     let mut options = Vec::new();
 
     let db_open = match tama_core::db::open(config_dir) {
         Ok(o) => o,
-        Err(_) => {
-            for name in cfg.backends.keys() {
-                options.push(BackendOption {
-                    name: name.clone(),
-                    variant: None,
-                    label: name.clone(),
-                });
-            }
-            return options;
-        }
+        Err(_) => return options,
     };
     let conn = &db_open.conn;
 
-    for name in cfg.backends.keys() {
-        match tama_core::db::queries::list_backend_versions(conn, name, None) {
-            Ok(versions) if !versions.is_empty() => {
-                let mut seen = std::collections::HashSet::new();
-                for v in &versions {
-                    if seen.insert(v.gpu_variant.clone()) {
-                        options.push(BackendOption {
-                            name: name.clone(),
-                            variant: Some(v.gpu_variant.clone()),
-                            label: if v.gpu_variant == "cpu" {
-                                name.clone()
-                            } else {
-                                format!("{} ({})", name, v.gpu_variant)
-                            },
-                        });
-                    }
-                }
-            }
-            _ => {
-                options.push(BackendOption {
-                    name: name.clone(),
-                    variant: None,
-                    label: name.clone(),
-                });
-            }
+    // Discover backend names from installed backends in the DB, not from
+    // TOML config (which may be empty after migration to backend_configs).
+    let Ok(active) = tama_core::db::queries::list_active_backends(conn) else {
+        return options;
+    };
+
+    // Collect unique (name, gpu_variant) pairs from active installations
+    let mut seen = std::collections::HashSet::new();
+    for record in &active {
+        let key = (record.name.clone(), record.gpu_variant.clone());
+        if seen.insert(key.clone()) {
+            options.push(BackendOption {
+                name: key.0.clone(),
+                variant: Some(key.1.clone()),
+                label: if key.1 == "cpu" {
+                    key.0.clone()
+                } else {
+                    format!("{} ({})", key.0, key.1)
+                },
+            });
         }
     }
 
