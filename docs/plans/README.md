@@ -15,8 +15,8 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 92
-- **Completed**: 91 ✅
-- **In Progress**: 1 🚧
+- **Completed**: 92 ✅
+- **In Progress**: 0 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -29,6 +29,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [Backend Config to Database](2026-05-13-backend-config-to-db.md) | Move backend config (default_args, health_check_url) from config.toml to SQLite backend_configs table, keyed by (name, gpu_variant) with unique DB id | #88 ✅ COMPLETED |
 | [Startup Detection & Orphan Cleanup](2026-05-03-startup-detection-and-orphan-cleanup.md) | Fix startup detection (2-consecutive health checks) and orphaned child process cleanup on startup failure | `17baa64` ✅ COMPLETED |
 | [Model Card Redesign](2026-05-03-model-card-redesign.md) | Shared ModelCard component with accent strip, badge pills, and icon actions; replaces ModelRow and inline rendering | `85c75a5` ✅ COMPLETED |
 | [HF Metadata for Models](2026-05-03-hf-metadata.md) | Add 9 HF metadata columns, populate from HF API + README parsing, display architecture on model cards | `925efde` ✅ COMPLETED |
@@ -39,12 +40,6 @@ This directory contains implementation plans for the Tama project. Each plan doc
 | [Shared Activity Panel + SSE Core](2026-05-06-shared-activity-panel-and-sse-core.md) | Extract duplicated SSE reconnection logic into shared utility, create generic ActivityPanel UI shell | `ca711f2` ✅ COMPLETED |
 | [Metrics Snapshot Stream](2026-05-07-metrics-snapshot-stream.md) | Replace delta SSE with full snapshot delivery every 2s, unify inference stats into same pipeline, eliminate frontend desync | #86 `309c895`, `5d920b7`, `aff3c15`, `b024266` ✅ COMPLETED |
 | [Remove Windows Support](todo/2026-05-08-remove-windows-support.md) | Remove all Windows-specific code, CI, build targets, dependencies, and documentation | #87 `091b11f`, `5f6a1c4`, `91559b3`, `918e2dd`, `9d7dbf4`, `f1af925`, `8f30f52`, `3b8419f` ✅ COMPLETED |
-
-### In Progress
-
-| Plan | Description | PR / Git References |
-|------|-------------|---------------------|
-| [Backend Config to Database](2026-05-13-backend-config-to-db.md) | Move backend config (default_args, health_check_url) from config.toml to SQLite backend_configs table, keyed by (name, gpu_variant) with unique DB id | 🚧 IN PROGRESS
 
 ### Draft
 
