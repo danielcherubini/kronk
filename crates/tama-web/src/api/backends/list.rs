@@ -64,18 +64,15 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     // Load backend configs from DB (keyed by (name, gpu_variant))
     let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
-        tama_core::db::open(&config_dir)
+        tama_core::backends::BackendManager::open(&config_dir)
             .ok()
-            .map(|open| {
-                tama_core::db::queries::list_backend_configs(&open.conn)
-                    .ok()
-                    .map(|configs| {
-                        configs
-                            .into_iter()
-                            .map(|c| ((c.name.clone(), c.gpu_variant.clone()), c.default_args))
-                            .collect()
-                    })
-                    .unwrap_or_default()
+            .map(|mgr| mgr.list_configs().ok())
+            .flatten()
+            .map(|configs| {
+                configs
+                    .into_iter()
+                    .map(|c| ((c.name, c.gpu_variant), c.default_args))
+                    .collect()
             })
             .unwrap_or_default();
 
@@ -350,18 +347,15 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
     // Load backend configs from DB (keyed by (name, gpu_variant))
     let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
-        tama_core::db::open(&config_dir)
+        tama_core::backends::BackendManager::open(&config_dir)
             .ok()
-            .map(|open| {
-                tama_core::db::queries::list_backend_configs(&open.conn)
-                    .ok()
-                    .map(|configs| {
-                        configs
-                            .into_iter()
-                            .map(|c| ((c.name.clone(), c.gpu_variant.clone()), c.default_args))
-                            .collect()
-                    })
-                    .unwrap_or_default()
+            .map(|mgr| mgr.list_configs().ok())
+            .flatten()
+            .map(|configs| {
+                configs
+                    .into_iter()
+                    .map(|c| ((c.name, c.gpu_variant), c.default_args))
+                    .collect()
             })
             .unwrap_or_default();
 

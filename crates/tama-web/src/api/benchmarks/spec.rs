@@ -231,11 +231,8 @@ pub async fn run_spec_benchmark_inner(
         .as_deref()
         .unwrap_or(&server_config.backend);
     let manager = tama_core::backends::BackendManager::open(&db_dir)?;
-    let backend_path = config.resolve_backend_path(
-        target_backend,
-        req.gpu_variant.as_deref(),
-        &manager,
-    )?;
+    let backend_path =
+        config.resolve_backend_path(target_backend, req.gpu_variant.as_deref(), &manager)?;
 
     // Discover llama-server binary
     // The resolved path may be a file (llama-server) rather than the backend directory.

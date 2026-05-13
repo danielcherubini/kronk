@@ -794,14 +794,8 @@ pub async fn update_backend_default_args(
     let default_args = req.default_args.clone();
 
     let result: Result<(), anyhow::Error> = tokio::task::spawn_blocking(move || {
-        let open = tama_core::db::open(&config_dir)?;
-        tama_core::db::queries::upsert_backend_config(
-            &open.conn,
-            &backend_name,
-            &gpu_variant,
-            &default_args,
-            None,
-        )?;
+        let mgr = tama_core::backends::BackendManager::open(&config_dir)?;
+        mgr.save_config(&backend_name, &gpu_variant, &default_args, None)?;
         Ok(())
     })
     .await
