@@ -36,6 +36,7 @@ indicatif = "0.18"
 tempfile = "3"
 url = "2"
 axum = { version = "0.7", features = ["http2", "macros", "multipart"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "catch-panic"] }
 bytes = "1.0"
 http-body-util = "0.1"

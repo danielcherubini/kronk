@@ -407,18 +407,36 @@ pub async fn run_with_opts(
     let jobs_for_shutdown = state.jobs.clone();
     let app = build_router(state);
     tracing::info!("Tama web UI listening on http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(jobs_for_shutdown, shutdown_rx))
-        .await?;
+
+    // Use axum-server for timeout-based graceful shutdown.
+    // SSE streams (metrics, jobs, downloads) can hold connections open
+    // indefinitely — the timeout forces them closed after 5s.
+    use axum_server::Handle;
+    let handle = Handle::new();
+    let shutdown_handle = handle.clone();
+
+    tokio::spawn(async move {
+        shutdown_signal_inner(jobs_for_shutdown, shutdown_rx).await;
+        tracing::info!("Web UI initiating graceful shutdown (timeout: 5s)...");
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(5)));
+    });
+
+    // axum_server::from_tcp takes a std::net::TcpListener
+    let std_listener = std::net::TcpListener::bind(addr)?;
+    std_listener.set_nonblocking(true)?;
+
+    let result = axum_server::from_tcp(std_listener)
+        .handle(handle)
+        .serve(app.into_make_service())
+        .await;
+
+    result?;
     Ok(())
 }
 
-/// Graceful shutdown handler.
-/// If `shutdown_rx` is provided, listens on the shared shutdown channel
-/// (signaled by the proxy server). Otherwise, registers its own SIGINT/SIGTERM
-/// handlers for standalone operation (e.g. `tama web`).
-async fn shutdown_signal(
+/// Wait for the shutdown trigger (shared channel or own signal handlers).
+/// Does NOT do cleanup here — cleanup is done by the caller after this returns.
+async fn shutdown_signal_inner(
     jobs: Option<Arc<JobManager>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<()>>,
 ) {

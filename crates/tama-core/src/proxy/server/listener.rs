@@ -1,6 +1,13 @@
 use axum::Router;
-use std::net::SocketAddr;
+use axum_server::Handle;
+use std::net::{SocketAddr, TcpListener as StdTcpListener};
+use std::time::Duration;
 use tracing::info;
+
+/// Timeout for forcing connections closed during graceful shutdown.
+/// SSE streams (metrics, jobs, downloads) can hold connections open
+/// indefinitely. This timeout ensures shutdown completes promptly.
+const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 /// Start the proxy server on the given address.
 ///
@@ -17,11 +24,16 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     info!("Starting proxy server on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // axum_server::from_tcp takes a std::net::TcpListener
+    let std_listener = StdTcpListener::bind(addr)?;
+    std_listener.set_nonblocking(true)?;
 
-    // Create a future that completes when we receive SIGTERM or SIGINT.
-    // Broadcasts the shutdown signal to any subscribed servers.
-    let shutdown_signal = async move {
+    let handle = Handle::new();
+
+    // Spawn a task that listens for shutdown signals and triggers cleanup
+    // + graceful shutdown with timeout.
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
@@ -54,23 +66,28 @@ pub async fn run(
         if let Some(tx) = shutdown_tx {
             let _ = tx.send(());
         }
-    };
 
-    // Run the server with graceful shutdown and optional cleanup
-    let app = if let Some(cleanup) = on_shutdown {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                shutdown_signal.await;
-                cleanup.await;
-            })
-            .await
-    } else {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal)
-            .await
-    };
+        // Run optional cleanup (e.g. unload TTS backends)
+        if let Some(cleanup) = on_shutdown {
+            cleanup.await;
+        }
 
-    app?;
+        // Initiate graceful shutdown with timeout.
+        // axum-server will close all connections after SHUTDOWN_TIMEOUT_SECS.
+        info!(
+            "Initiating graceful shutdown (timeout: {}s)...",
+            SHUTDOWN_TIMEOUT_SECS
+        );
+        shutdown_handle.graceful_shutdown(Some(Duration::from_secs(SHUTDOWN_TIMEOUT_SECS)));
+    });
+
+    // Run the server using axum-server (supports timeout-based graceful shutdown)
+    let result = axum_server::from_tcp(std_listener)
+        .handle(handle)
+        .serve(app.into_make_service())
+        .await;
+
+    result?;
     info!("Server shutdown complete");
     Ok(())
 }

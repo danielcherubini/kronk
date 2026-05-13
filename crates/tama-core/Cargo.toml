@@ -25,6 +25,7 @@ flate2 = "1.0"
 tar = "0.4"
 tempfile.workspace = true
 axum.workspace = true
+axum-server.workspace = true
 tower-http.workspace = true
 bytes.workspace = true
 serde_json.workspace = true
