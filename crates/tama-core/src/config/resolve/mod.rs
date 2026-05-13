@@ -97,6 +97,10 @@ impl Config {
         server: &ModelConfig,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Option<String> {
+        // Guard: ensure backend exists in TOML config. All current callers go
+        // through resolve_server first (which requires a TOML entry), but this
+        // catches any future callers that might bypass it. If the backend is
+        // missing, we can't resolve the health URL even if the DB has it.
         let _backend = match self.backends.get(&server.backend) {
             Some(b) => b,
             None => {
@@ -145,6 +149,10 @@ impl Config {
         server: &ModelConfig,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Option<String> {
+        // Guard: ensure backend exists in TOML config. All current callers go
+        // through resolve_server first (which requires a TOML entry), but this
+        // catches any future callers that might bypass it. If the backend is
+        // missing, we can't resolve the backend URL even if the DB has it.
         let _backend = match self.backends.get(&server.backend) {
             Some(b) => b,
             None => {
@@ -225,7 +233,8 @@ impl Config {
     pub fn build_args(
         &self,
         server: &ModelConfig,
-        _backend: &BackendConfig,
+        // Kept for API stability; default_args now resolved from DB via db_conn.
+        #[allow(dead_code)] _backend: &BackendConfig,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Vec<String> {
         let db_args = db_conn
@@ -267,7 +276,8 @@ impl Config {
     pub fn build_full_args(
         &self,
         server: &ModelConfig,
-        _backend: &BackendConfig,
+        // Kept for API stability; default_args now resolved from DB via db_conn.
+        #[allow(dead_code)] _backend: &BackendConfig,
         ctx_override: Option<u32>,
         db_conn: Option<&rusqlite::Connection>,
     ) -> Result<Vec<String>> {
