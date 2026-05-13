@@ -134,12 +134,12 @@ pub fn BackendCard(
     /// Called when default_args input changes with (backend_type, new_value)
     #[prop(optional)]
     on_default_args_change: Option<Callback<(String, String)>>,
-    /// Called with (backend_type, version) when a version is activated via dropdown.
+    /// Called with (backend_type, version, gpu_variant) when a version is activated via dropdown.
     #[prop(optional)]
-    on_activate: Option<Callback<(String, String)>>,
-    /// Called with (backend_type, version) when "Remove Version" is clicked from dropdown.
+    on_activate: Option<Callback<(String, String, String)>>,
+    /// Called with (backend_type, version, gpu_variant) when "Remove Version" is clicked from dropdown.
     #[prop(optional)]
-    on_remove_version: Option<Callback<(String, String)>>,
+    on_remove_version: Option<Callback<(String, String, String)>>,
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
@@ -256,11 +256,13 @@ pub fn BackendCard(
                             let idx = selected_version_idx.get();
                             if idx < version_count && !versions[idx].is_active {
                                 let ver = versions[idx].version.clone();
+                                let gv = versions[idx].gpu_variant.clone();
                                 let bt = vts.clone();
                                 view! {
                                     <div style="display:flex;gap:0.375rem;margin-left:auto;">
                                         {if let Some(cb) = activate_cb {
                                             let ver_act = ver.clone();
+                                            let gv_act = gv.clone();
                                             let bt_act = bt.clone();
                                             view! {
                                                 <button
@@ -268,7 +270,7 @@ pub fn BackendCard(
                                                     class="btn btn-sm"
                                                     style="background:#22c55e;color:white;font-size:0.75rem;padding:0.25rem 0.625rem;"
                                                     on:click=move |_| {
-                                                        cb.run((bt_act.clone(), ver_act.clone()));
+                                                        cb.run((bt_act.clone(), ver_act.clone(), gv_act.clone()));
                                                     }
                                                 >
                                                     "Activate"
@@ -277,6 +279,7 @@ pub fn BackendCard(
                                         } else { view! { <span/> }.into_any() }}
                                         {if let Some(cb) = remove_cb {
                                             let ver_rem = ver.clone();
+                                            let gv_rem = gv.clone();
                                             let bt_rem = bt.clone();
                                             view! {
                                                 <button
@@ -284,7 +287,7 @@ pub fn BackendCard(
                                                     class="btn btn-sm"
                                                     style="color:#dc2626;font-size:0.75rem;padding:0.25rem 0.625rem;"
                                                     on:click=move |_| {
-                                                        cb.run((bt_rem.clone(), ver_rem.clone()));
+                                                        cb.run((bt_rem.clone(), ver_rem.clone(), gv_rem.clone()));
                                                     }
                                                 >
                                                     "Remove Version"

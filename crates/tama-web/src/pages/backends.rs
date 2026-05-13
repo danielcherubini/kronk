@@ -202,12 +202,16 @@ pub fn Backends() -> impl IntoView {
             save_status.set(None); // Clear status when user makes new edits
         });
 
-    let on_activate_click = Callback::new(move |(backend_type, version): (String, String)| {
-        action_error.set(None);
-        wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("/tama/v1/backends/{}/activate", backend_type);
-            let body = serde_json::json!({ "version": version });
-            match post_request(&url).json(&body).unwrap().send().await {
+    let on_activate_click =
+        Callback::new(move |(backend_type, version, gpu_variant): (String, String, String)| {
+            action_error.set(None);
+            wasm_bindgen_futures::spawn_local(async move {
+                let url = format!(
+                    "/tama/v1/backends/{}/activate?gpu_variant={}",
+                    backend_type, gpu_variant
+                );
+                let body = serde_json::json!({ "version": version });
+                match post_request(&url).json(&body).unwrap().send().await {
                 Ok(resp) if resp.ok() => {
                     refresh_tick.update(|n| *n += 1);
                 }
@@ -221,10 +225,13 @@ pub fn Backends() -> impl IntoView {
     });
 
     let on_remove_version_click =
-        Callback::new(move |(backend_type, version): (String, String)| {
+        Callback::new(move |(backend_type, version, gpu_variant): (String, String, String)| {
             action_error.set(None);
             wasm_bindgen_futures::spawn_local(async move {
-                let url = format!("/tama/v1/backends/{}/versions/{}", backend_type, version);
+                let url = format!(
+                    "/tama/v1/backends/{}/versions/{}?gpu_variant={}",
+                    backend_type, version, gpu_variant
+                );
                 match gloo_net::http::Request::delete(&url).send().await {
                     Ok(resp) if resp.ok() => {
                         refresh_tick.update(|n| *n += 1);
