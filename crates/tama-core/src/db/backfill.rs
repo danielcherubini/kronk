@@ -200,8 +200,9 @@ pub fn migrate_backend_config_from_toml(
     let config: crate::config::Config = toml::from_str(&content)
         .with_context(|| format!("Failed to parse {}", config_path.display()))?;
 
-    // Nothing to migrate if backends section is empty
-    if config.backends.is_empty() {
+    // Nothing to migrate if backends section is empty or already migrated
+    let marker_path = config_dir.join("backend_config_migrated");
+    if config.backends.is_empty() || marker_path.exists() {
         return Ok(0);
     }
 
@@ -235,6 +236,15 @@ pub fn migrate_backend_config_from_toml(
         "Migrated {} backend config(s) from config.toml [backends] section",
         count
     );
+
+    // Create a marker file so we know migration already ran.
+    // This prevents re-migrating if config.toml is restored from backup.
+    let marker_path = config_dir.join("backend_config_migrated");
+    if !marker_path.exists() {
+        std::fs::write(&marker_path, "migrated\n").with_context(|| {
+            format!("Failed to write migration marker {}", marker_path.display())
+        })?;
+    }
 
     Ok(count)
 }
