@@ -1,6 +1,6 @@
 //! Backend installation database query functions.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// A stored installation record for a backend binary.
@@ -232,4 +232,257 @@ pub fn delete_all_backend_versions(
         conn.execute("DELETE FROM backend_installations WHERE name = ?1", [name])?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Backend config queries
+// ---------------------------------------------------------------------------
+
+/// A stored config record for a backend.
+#[derive(Debug, Clone)]
+pub struct BackendConfigRecord {
+    pub id: i64,
+    pub name: String,
+    pub gpu_variant: String,
+    /// Parsed from JSON array stored in `default_args` column.
+    pub default_args: Vec<String>,
+    pub health_check_url: Option<String>,
+}
+
+/// Raw row struct for backend_configs before JSON parsing.
+#[derive(Debug)]
+struct RawBackendConfigRow {
+    id: i64,
+    name: String,
+    gpu_variant: String,
+    default_args_raw: Option<String>,
+    health_check_url: Option<String>,
+}
+
+fn map_raw_backend_config(row: &rusqlite::Row) -> rusqlite::Result<RawBackendConfigRow> {
+    Ok(RawBackendConfigRow {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        gpu_variant: row.get(2)?,
+        default_args_raw: row.get(3)?,
+        health_check_url: row.get(4)?,
+    })
+}
+
+fn raw_to_record(raw: RawBackendConfigRow) -> Result<BackendConfigRecord> {
+    let default_args: Vec<String> = match raw.default_args_raw {
+        Some(ref s) if !s.is_empty() => {
+            serde_json::from_str(s).context("Failed to parse default_args JSON")?
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(BackendConfigRecord {
+        id: raw.id,
+        name: raw.name,
+        gpu_variant: raw.gpu_variant,
+        default_args,
+        health_check_url: raw.health_check_url,
+    })
+}
+
+/// Get the backend config for a given name and gpu_variant.
+pub fn get_backend_config(
+    conn: &Connection,
+    name: &str,
+    gpu_variant: &str,
+) -> Result<Option<BackendConfigRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, gpu_variant, default_args, health_check_url
+         FROM backend_configs
+         WHERE name = ?1 AND gpu_variant = ?2",
+    )?;
+    let mut rows = stmt.query_map((name, gpu_variant), map_raw_backend_config)?;
+    match rows.next() {
+        Some(row) => {
+            let raw = row?;
+            Ok(Some(raw_to_record(raw)?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Insert or replace a backend config record. Returns the row's id.
+pub fn upsert_backend_config(
+    conn: &Connection,
+    name: &str,
+    gpu_variant: &str,
+    default_args: &[String],
+    health_check_url: Option<&str>,
+) -> Result<i64> {
+    let default_args_json = if default_args.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(default_args)
+                .context("Failed to serialize default_args to JSON")?,
+        )
+    };
+
+    conn.execute(
+        "INSERT INTO backend_configs (name, gpu_variant, default_args, health_check_url)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(name, gpu_variant) DO UPDATE SET
+             default_args = excluded.default_args,
+             health_check_url = excluded.health_check_url",
+        (
+            name,
+            gpu_variant,
+            default_args_json.as_deref(),
+            health_check_url,
+        ),
+    )?;
+
+    // Fetch the id of the (possibly updated) row
+    let id: i64 = conn.query_row(
+        "SELECT id FROM backend_configs WHERE name = ?1 AND gpu_variant = ?2",
+        (name, gpu_variant),
+        |row| row.get(0),
+    )?;
+
+    Ok(id)
+}
+
+/// Return all backend config records.
+pub fn list_backend_configs(conn: &Connection) -> Result<Vec<BackendConfigRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, gpu_variant, default_args, health_check_url
+         FROM backend_configs",
+    )?;
+    let raw_rows = stmt.query_map([], map_raw_backend_config)?;
+    let records: Vec<BackendConfigRecord> = raw_rows
+        .map(|row| raw_to_record(row?))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{open_in_memory, OpenResult};
+
+    #[test]
+    fn test_upsert_backend_config_insert() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let args = vec!["-fa 1".to_string(), "-b 2048".to_string()];
+        let id = upsert_backend_config(
+            &conn,
+            "llama_cpp",
+            "cpu",
+            &args,
+            Some("http://localhost:8080/health"),
+        )
+        .unwrap();
+        assert_eq!(id, 1);
+
+        let record = get_backend_config(&conn, "llama_cpp", "cpu")
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.id, 1);
+        assert_eq!(record.name, "llama_cpp");
+        assert_eq!(record.gpu_variant, "cpu");
+        assert_eq!(record.default_args, args);
+        assert_eq!(
+            record.health_check_url,
+            Some("http://localhost:8080/health".to_string())
+        );
+    }
+
+    #[test]
+    fn test_upsert_backend_config_update() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // Insert initial row
+        let id1 = upsert_backend_config(
+            &conn,
+            "llama_cpp",
+            "cpu",
+            &["-fa 1".to_string()],
+            Some("http://localhost:8080/health"),
+        )
+        .unwrap();
+
+        // Upsert with different values
+        let id2 = upsert_backend_config(
+            &conn,
+            "llama_cpp",
+            "cpu",
+            &["-fa 1".to_string(), "-b 2048".to_string()],
+            Some("http://localhost:9090/health"),
+        )
+        .unwrap();
+
+        // ID should be the same (updated, not re-inserted)
+        assert_eq!(id1, id2);
+
+        let record = get_backend_config(&conn, "llama_cpp", "cpu")
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.default_args, vec!["-fa 1", "-b 2048"]);
+        assert_eq!(
+            record.health_check_url,
+            Some("http://localhost:9090/health".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_backend_config_not_found() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let result = get_backend_config(&conn, "nonexistent", "cpu").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_list_backend_configs() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        upsert_backend_config(
+            &conn,
+            "llama_cpp",
+            "cpu",
+            &["-fa 1".to_string()],
+            Some("http://localhost:8080/health"),
+        )
+        .unwrap();
+        upsert_backend_config(&conn, "llama_cpp", "vulkan", &[], None).unwrap();
+        upsert_backend_config(&conn, "ik_llama", "cpu", &[], None).unwrap();
+
+        let configs = list_backend_configs(&conn).unwrap();
+        assert_eq!(configs.len(), 3);
+
+        // Verify each config
+        let cpu = configs
+            .iter()
+            .find(|c| c.name == "llama_cpp" && c.gpu_variant == "cpu")
+            .unwrap();
+        assert_eq!(cpu.default_args, vec!["-fa 1"]);
+
+        let vulkan = configs
+            .iter()
+            .find(|c| c.name == "llama_cpp" && c.gpu_variant == "vulkan")
+            .unwrap();
+        assert!(vulkan.default_args.is_empty());
+        assert!(vulkan.health_check_url.is_none());
+    }
+
+    #[test]
+    fn test_upsert_backend_config_empty_args() {
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let id = upsert_backend_config(&conn, "empty_backend", "cpu", &[], None).unwrap();
+        assert_eq!(id, 1);
+
+        let record = get_backend_config(&conn, "empty_backend", "cpu")
+            .unwrap()
+            .unwrap();
+        assert!(record.default_args.is_empty());
+        assert!(record.health_check_url.is_none());
+    }
 }

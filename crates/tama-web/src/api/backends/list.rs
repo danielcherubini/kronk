@@ -62,17 +62,22 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    // Load config to get default_args
-    let config_result = tama_core::config::Config::load_from(&config_dir.clone());
-    let default_args_map: std::collections::HashMap<String, Vec<String>> = config_result
-        .ok()
-        .map(|cfg| {
-            cfg.backends
-                .iter()
-                .map(|(k, v)| (k.clone(), v.default_args.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Load backend configs from DB (keyed by (name, gpu_variant))
+    let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
+        tama_core::db::open(&config_dir)
+            .ok()
+            .map(|open| {
+                tama_core::db::queries::list_backend_configs(&open.conn)
+                    .ok()
+                    .map(|configs| {
+                        configs
+                            .into_iter()
+                            .map(|c| ((c.name.clone(), c.gpu_variant.clone()), c.default_args))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
 
     // Load cached update checks from DB (keyed by "name:variant")
     let update_checks: std::collections::HashMap<
@@ -99,12 +104,6 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
         Ok(registry) => {
             // Emit one card per (backend_type, gpu_variant) pair — only if installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                #[allow(clippy::unnecessary_to_owned)]
-                let default_args = default_args_map
-                    .get(&type_.to_string())
-                    .cloned()
-                    .unwrap_or_default();
-
                 let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
@@ -120,6 +119,11 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
                     // Create one card per variant
                     for (variant, variant_versions) in variant_groups {
+                        let default_args = backend_configs_map
+                            .get(&(type_.to_string(), variant.clone()))
+                            .cloned()
+                            .unwrap_or_default();
+
                         let active_version = registry.get(type_, &variant).ok().flatten();
 
                         // Sort versions by installed_at DESC
@@ -213,7 +217,10 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
                     for (variant, variant_versions) in variant_groups {
                         let active_version = registry.get(name, &variant).ok().flatten();
-                        let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+                        let default_args = backend_configs_map
+                            .get(&(bt.clone(), variant.clone()))
+                            .cloned()
+                            .unwrap_or_default();
 
                         let mut sorted_versions = variant_versions;
                         sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
@@ -341,17 +348,22 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    // Load config to get default_args
-    let config_result = tama_core::config::Config::load_from(&config_dir);
-    let default_args_map: std::collections::HashMap<String, Vec<String>> = config_result
-        .ok()
-        .map(|cfg| {
-            cfg.backends
-                .iter()
-                .map(|(k, v)| (k.clone(), v.default_args.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Load backend configs from DB (keyed by (name, gpu_variant))
+    let backend_configs_map: std::collections::HashMap<(String, String), Vec<String>> =
+        tama_core::db::open(&config_dir)
+            .ok()
+            .map(|open| {
+                tama_core::db::queries::list_backend_configs(&open.conn)
+                    .ok()
+                    .map(|configs| {
+                        configs
+                            .into_iter()
+                            .map(|c| ((c.name.clone(), c.gpu_variant.clone()), c.default_args))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
 
     let mut backends: Vec<BackendCardDto> = Vec::new();
     let mut custom: Vec<BackendCardDto> = Vec::new();
@@ -360,12 +372,6 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         Ok(registry) => {
             // Emit one card per (backend_type, gpu_variant) pair
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                #[allow(clippy::unnecessary_to_owned)]
-                let default_args = default_args_map
-                    .get(&type_.to_string())
-                    .cloned()
-                    .unwrap_or_default();
-
                 let versions_opt = registry.list_all_versions(type_, None).unwrap_or(None);
 
                 if let Some(versions) = versions_opt {
@@ -381,6 +387,11 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
                     // Create one card per variant
                     for (variant, variant_versions) in variant_groups {
+                        let default_args = backend_configs_map
+                            .get(&(type_.to_string(), variant.clone()))
+                            .cloned()
+                            .unwrap_or_default();
+
                         let active_version = registry.get(type_, &variant).ok().flatten();
 
                         // Check for updates against the active version
@@ -445,7 +456,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
                         type_,
                         display_name,
                         *release_notes_url,
-                        default_args,
+                        Vec::new(),
                     ));
                 }
             }
@@ -483,7 +494,10 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
                     for (variant, variant_versions) in variant_groups {
                         let active_version = registry.get(name, &variant).ok().flatten();
-                        let default_args = default_args_map.get(&bt).cloned().unwrap_or_default();
+                        let default_args = backend_configs_map
+                            .get(&(bt.clone(), variant.clone()))
+                            .cloned()
+                            .unwrap_or_default();
 
                         let mut sorted_versions = variant_versions;
                         sorted_versions.sort_by_key(|b| std::cmp::Reverse(b.installed_at));
@@ -527,16 +541,11 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
             tracing::warn!("Failed to open backend registry: {}", e);
             // On error, still return known backends as not installed
             for (type_, display_name, release_notes_url) in KNOWN_BACKENDS {
-                #[allow(clippy::unnecessary_to_owned)]
-                let default_args = default_args_map
-                    .get(&type_.to_string())
-                    .cloned()
-                    .unwrap_or_default();
                 backends.push(BackendCardDto::default_uninstalled(
                     type_,
                     display_name,
                     *release_notes_url,
-                    default_args,
+                    Vec::new(),
                 ));
             }
         }

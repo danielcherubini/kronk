@@ -7,8 +7,6 @@ fn test_resolve_by_api_name() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: Some("/usr/local/bin/llama-server".to_string()),
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },
@@ -67,8 +65,6 @@ fn test_api_name_takes_priority() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: Some("/usr/local/bin/llama-server".to_string()),
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },
@@ -127,8 +123,6 @@ fn test_backward_compat_no_api_name() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: Some("/usr/local/bin/llama-server".to_string()),
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },
@@ -190,8 +184,6 @@ fn test_resolve_server_by_api_name() {
         "llama_cpp".to_string(),
         BackendConfig {
             path: Some("/usr/local/bin/llama-server".to_string()),
-            default_args: vec![],
-            health_check_url: None,
             version: None,
             gpu_variant: None,
         },

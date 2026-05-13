@@ -216,8 +216,6 @@ mod tests {
             "new_backend".to_string(),
             crate::config::BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: Some("http://test/health".to_string()),
                 version: None,
                 gpu_variant: None,
             },
@@ -247,8 +245,6 @@ mod tests {
             "existing".to_string(),
             crate::config::BackendConfig {
                 path: Some("/local/path".to_string()),
-                default_args: vec!["--local".to_string()],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },
@@ -259,8 +255,6 @@ mod tests {
             "existing".to_string(),
             crate::config::BackendConfig {
                 path: Some("/backup/path".to_string()),
-                default_args: vec!["--backup".to_string()],
-                health_check_url: Some("http://backup/health".to_string()),
                 version: None,
                 gpu_variant: None,
             },
@@ -298,8 +292,6 @@ mod tests {
             "new".to_string(),
             crate::config::BackendConfig {
                 path: None,
-                default_args: vec![],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },
@@ -323,8 +315,6 @@ mod tests {
                 format!("backend{}", i),
                 crate::config::BackendConfig {
                     path: None,
-                    default_args: vec![],
-                    health_check_url: None,
                     version: None,
                     gpu_variant: None,
                 },
@@ -349,8 +339,6 @@ mod tests {
                 format!("local{}", i),
                 crate::config::BackendConfig {
                     path: None,
-                    default_args: vec![],
-                    health_check_url: None,
                     version: None,
                     gpu_variant: None,
                 },
@@ -362,8 +350,6 @@ mod tests {
                 format!("backend{}", i),
                 crate::config::BackendConfig {
                     path: None,
-                    default_args: vec![],
-                    health_check_url: None,
                     version: None,
                     gpu_variant: None,
                 },
@@ -374,8 +360,6 @@ mod tests {
             "local1".to_string(),
             crate::config::BackendConfig {
                 path: Some("/backup/path".to_string()),
-                default_args: vec![],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },
@@ -384,8 +368,6 @@ mod tests {
             "local2".to_string(),
             crate::config::BackendConfig {
                 path: Some("/backup/path".to_string()),
-                default_args: vec![],
-                health_check_url: None,
                 version: None,
                 gpu_variant: None,
             },

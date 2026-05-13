@@ -19,7 +19,7 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                 let (srv, backend) = config.resolve_server(&model_configs, &server_name)?;
                 let service_name = Config::service_name(&server_name);
 
-                let args = config.build_full_args(srv, backend, None)?;
+                let args = config.build_full_args(srv, backend, None, Some(&conn))?;
                 let port = srv.port.unwrap_or(8080);
                 // Resolve backend binary path from DB (priority) or config.path (fallback)
                 let backend_path = {

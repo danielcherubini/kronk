@@ -252,10 +252,12 @@ pub fn Backends() -> impl IntoView {
             for key in edit_keys {
                 let args_str = args_edits.get(&key).cloned().unwrap_or_default();
                 let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
-                // Extract backend_type from key "type:variant"
-                let bt = key.split(':').next().unwrap_or(&key);
+                // Parse "backend_type:gpu_variant" from key
+                let parts_key: Vec<&str> = key.splitn(2, ':').collect();
+                let bt = parts_key[0];
+                let gv = parts_key.get(1).copied().unwrap_or("cpu");
                 let body = serde_json::json!({ "default_args": parts });
-                let url = format!("/tama/v1/backends/{}/default-args", bt);
+                let url = format!("/tama/v1/backends/{}/default-args?gpu_variant={}", bt, gv);
                 let res = post_request(&url).json(&body).unwrap().send().await;
                 match res {
                     Ok(response) if response.ok() => {}
