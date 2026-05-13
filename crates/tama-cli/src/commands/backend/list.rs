@@ -1,12 +1,12 @@
 use anyhow::Result;
-use tama_core::backends::{check_updates, BackendInfo, BackendRegistry};
+use tama_core::backends::{check_updates, BackendInfo, BackendManager};
 use tama_core::gpu;
 
 use super::parse::registry_config_dir;
 
 pub async fn cmd_list(_config: &tama_core::config::Config) -> Result<()> {
-    let registry = BackendRegistry::open(&registry_config_dir()?)?;
-    let active_backends = registry.list()?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
+    let active_backends = mgr.list_active()?;
 
     if active_backends.is_empty() {
         println!("No backends installed.");
@@ -27,9 +27,7 @@ pub async fn cmd_list(_config: &tama_core::config::Config) -> Result<()> {
         }
 
         // Get all versions for this backend
-        let all_versions = registry
-            .list_all_versions(&backend.name, None)
-            .unwrap_or(None);
+        let all_versions = mgr.list_versions(&backend.name, None).unwrap_or(None);
 
         if let Some(versions) = all_versions {
             // Group versions by gpu_variant
@@ -86,8 +84,8 @@ pub async fn cmd_list(_config: &tama_core::config::Config) -> Result<()> {
 }
 
 pub async fn cmd_check_updates(_config: &tama_core::config::Config) -> Result<()> {
-    let registry = BackendRegistry::open(&registry_config_dir()?)?;
-    let backends = registry.list()?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
+    let backends = mgr.list_active()?;
 
     if backends.is_empty() {
         println!("No backends installed.");
@@ -129,8 +127,8 @@ pub async fn cmd_all_versions(
     _config: &tama_core::config::Config,
     name: Option<&str>,
 ) -> Result<()> {
-    let registry = BackendRegistry::open(&registry_config_dir()?)?;
-    let active_backends = registry.list()?;
+    let mgr = BackendManager::open(&registry_config_dir()?)?;
+    let active_backends = mgr.list_active()?;
 
     if active_backends.is_empty() {
         println!("No backends installed.");
@@ -141,7 +139,7 @@ pub async fn cmd_all_versions(
 
     if let Some(target_name) = name {
         // Show all versions for a specific backend
-        match registry.list_all_versions(target_name, None)? {
+        match mgr.list_versions(target_name, None)? {
             Some(versions) => {
                 // Get all active versions for comparison (across all variants)
                 let active_versions: Vec<(String, String)> = active_backends
@@ -181,7 +179,7 @@ pub async fn cmd_all_versions(
             let name = active.name.clone();
 
             // Get all versions for this backend
-            let all_versions = match registry.list_all_versions(&name, None)? {
+            let all_versions = match mgr.list_versions(&name, None)? {
                 Some(v) => v,
                 None => vec![active.clone()],
             };

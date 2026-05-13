@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::server::AppState;
 use tama_core::backends::{
-    check_latest_version, get_backend_install_path, BackendRegistry, BackendSource, BackendType,
+    check_latest_version, get_backend_install_path, BackendManager, BackendSource, BackendType,
     InstallOptions,
 };
 
@@ -233,26 +233,28 @@ pub async fn check_single(
             let requested_variant = query.gpu_variant.clone();
             let bt_result = tokio::task::spawn_blocking(
                 move || -> anyhow::Result<Option<(BackendType, String)>> {
-                    let open = tama_core::db::open(&config_dir_clone)?;
-                    let versions = tama_core::db::queries::list_backend_versions(
-                        &open.conn,
-                        &item_id_clone,
-                        None,
-                    )?;
+                    let mgr = tama_core::backends::BackendManager::open(&config_dir_clone)?;
+                    let versions = mgr.list_versions(&item_id_clone, None)?;
 
                     // If a specific variant is requested, find that variant
                     // Otherwise, fall back to the active variant (legacy behavior)
+                    let versions = match versions {
+                        Some(v) => v,
+                        None => return Ok(None),
+                    };
+
                     let record = if let Some(ref variant) = requested_variant {
                         versions.iter().find(|v| v.gpu_variant == *variant)
                     } else {
-                        versions.iter().find(|v| v.is_active).or(versions.first())
+                        // No is_active field on BackendInfo; use first as fallback
+                        versions.first()
                     };
 
                     Ok(record.map(|r| {
                         (
-                            match r.backend_type.as_str() {
-                                "llama_cpp" => BackendType::LlamaCpp,
-                                "ik_llama" => BackendType::IkLlama,
+                            match r.backend_type {
+                                BackendType::LlamaCpp => BackendType::LlamaCpp,
+                                BackendType::IkLlama => BackendType::IkLlama,
                                 _ => BackendType::Custom,
                             },
                             r.gpu_variant.clone(),
@@ -347,22 +349,28 @@ pub async fn apply_backend_update(
         let name = name.clone();
         let requested_variant = requested_variant.clone();
         move || -> anyhow::Result<(Option<BackendType>, Option<String>)> {
-            let open = tama_core::db::open(&config_dir)?;
-            let versions = tama_core::db::queries::list_backend_versions(&open.conn, &name, None)?;
+            let mgr = tama_core::backends::BackendManager::open(&config_dir)?;
+            let versions = mgr.list_versions(&name, None)?;
 
             // If a specific variant is requested, find that variant
             // Otherwise, fall back to the active variant (legacy behavior)
+            let versions = match versions {
+                Some(v) => v,
+                None => return Ok((None, None)),
+            };
+
             let record = if let Some(ref variant) = requested_variant {
                 versions.iter().find(|v| v.gpu_variant == *variant)
             } else {
-                versions.iter().find(|v| v.is_active).or(versions.first())
+                // No is_active field on BackendInfo; use first as fallback
+                versions.first()
             };
 
             Ok(record
                 .map(|r| {
-                    let bt = match r.backend_type.as_str() {
-                        "llama_cpp" => BackendType::LlamaCpp,
-                        "ik_llama" => BackendType::IkLlama,
+                    let bt = match r.backend_type {
+                        BackendType::LlamaCpp => BackendType::LlamaCpp,
+                        BackendType::IkLlama => BackendType::IkLlama,
                         _ => BackendType::Custom,
                     };
                     (Some(bt), Some(r.gpu_variant.clone()))
@@ -446,15 +454,15 @@ pub async fn apply_backend_update(
                 return;
             }
         };
-        let registry_res = BackendRegistry::open(&config_dir);
-        let mut registry = match registry_res {
+        let mgr_res = BackendManager::open(&config_dir);
+        let mgr = match mgr_res {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("Failed to open backend registry: {}", e);
+                tracing::error!("Failed to open backend manager: {}", e);
                 return;
             }
         };
-        let all_versions = match registry.list_all_versions(&name_clone, None) {
+        let all_versions = match mgr.list_versions(&name_clone, None) {
             Ok(Some(versions)) => versions,
             Ok(None) => {
                 tracing::error!("Backend '{}' not found during update", name_clone);
@@ -505,8 +513,16 @@ pub async fn apply_backend_update(
             allow_overwrite: true,
         };
 
+        let client = reqwest::Client::builder()
+            .user_agent("tama-backend-manager")
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client");
+
         match tama_core::backends::update_backend_with_progress(
-            &mut registry,
+            mgr,
+            &client,
             &name_clone,
             &backend_info.gpu_variant,
             options,

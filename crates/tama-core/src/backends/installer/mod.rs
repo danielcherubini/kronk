@@ -15,7 +15,7 @@ use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::registry::{BackendSource, BackendType};
+use super::types::{BackendSource, BackendType};
 use super::ProgressSink;
 use crate::gpu::GpuType;
 

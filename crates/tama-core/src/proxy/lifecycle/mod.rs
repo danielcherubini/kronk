@@ -10,7 +10,7 @@ use super::process::{
     is_process_group_alive, kill_process, kill_process_group, override_arg,
 };
 use super::types::{ModelState, ProxyState};
-use crate::backends::BackendRegistry;
+use crate::backends::BackendManager;
 use crate::logging;
 
 impl ProxyState {
@@ -65,22 +65,22 @@ impl ProxyState {
             );
         }
 
+        // Open BackendManager for path resolution and default args.
+        let manager = self
+            .db_dir
+            .as_ref()
+            .and_then(|dir| crate::backends::BackendManager::open(dir).ok())
+            .unwrap_or_else(|| {
+                crate::backends::BackendManager::open_in_memory()
+                    .expect("in-memory BackendManager must always open")
+            });
+
         // Resolve the backend binary path: DB takes priority, config.path is fallback.
-        let backend_path = if let Some(db_conn) = self.open_db() {
-            config.resolve_backend_path(
-                &server_config.backend,
-                server_config.gpu_variant.as_deref(),
-                &db_conn,
-            )?
-        } else {
-            let fallback_result =
-                crate::db::open_in_memory().context("Failed to open in-memory DB")?;
-            config.resolve_backend_path(
-                &server_config.backend,
-                server_config.gpu_variant.as_deref(),
-                &fallback_result.conn,
-            )?
-        };
+        let backend_path = config.resolve_backend_path(
+            &server_config.backend,
+            server_config.gpu_variant.as_deref(),
+            &manager,
+        )?;
 
         // Find a free port for this backend.
         // Note: there is a small race window between dropping the listener and the
@@ -91,9 +91,10 @@ impl ProxyState {
         drop(listener); // Free the port for the backend to use
 
         // Build full args (including -m, -c, -ngl from model card) and override host/port
-        let db_conn_opt = self.open_db();
-        let db_conn = db_conn_opt.as_ref();
-        let mut args = config.build_full_args(server_config, backend_config, None, db_conn)?;
+        let gpu_variant = server_config.gpu_variant.as_deref().unwrap_or("cpu");
+        let default_args = manager.get_default_args(&server_config.backend, gpu_variant);
+        let mut args =
+            config.build_full_args(server_config, backend_config, None, &default_args)?;
         override_arg(&mut args, "--host", "127.0.0.1");
         override_arg(&mut args, "--port", &port.to_string());
 
@@ -849,15 +850,15 @@ impl ProxyState {
     pub async fn load_tts_backend(&self, backend_name: &str) -> Result<String> {
         debug!("Loading TTS backend: {}", backend_name);
 
-        // Open registry and look up backend by name
+        // Open manager and look up backend by name
         let base_dir =
             crate::config::Config::base_dir().with_context(|| "Failed to get config directory")?;
-        let registry =
-            BackendRegistry::open(&base_dir).with_context(|| "Failed to open backend registry")?;
+        let mgr =
+            BackendManager::open(&base_dir).with_context(|| "Failed to open backend manager")?;
 
         // Discover variant dynamically - TTS backends typically only have one variant
-        let variants = registry
-            .list_all_versions(backend_name, None)
+        let variants = mgr
+            .list_versions(backend_name, None)
             .with_context(|| format!("Failed to list versions for '{}'", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 
@@ -866,9 +867,9 @@ impl ProxyState {
             .map(|v| v.gpu_variant.clone())
             .unwrap_or_else(|| "cpu".to_string());
 
-        let info = registry
-            .get(backend_name, &variant)
-            .with_context(|| format!("Backend '{}' not found in registry", backend_name))?
+        let info = mgr
+            .get_active(backend_name, &variant)
+            .with_context(|| format!("Backend '{}' not found in manager", backend_name))?
             .ok_or_else(|| anyhow::anyhow!("Backend '{}' not installed", backend_name))?;
 
         // Derive paths from BackendInfo.path (base_dir = backends/tts_kokoro/).

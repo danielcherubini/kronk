@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 
-use super::super::registry::BackendType;
+use crate::backends::types::BackendType;
 use crate::gpu::GpuType;
 
 /// Construct the GitHub release download URL for a pre-built binary.

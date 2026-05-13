@@ -19,13 +19,18 @@ pub fn cmd_service(config: &Config, command: crate::cli::ServiceCommands) -> Res
                 let (srv, backend) = config.resolve_server(&model_configs, &server_name)?;
                 let service_name = Config::service_name(&server_name);
 
-                let args = config.build_full_args(srv, backend, None, Some(&conn))?;
+                // Open BackendManager for resolution
+                let manager = tama_core::backends::BackendManager::open(&db_dir)?;
+                let gpu_variant = srv.gpu_variant.as_deref().unwrap_or("cpu");
+                let default_args = manager.get_default_args(&srv.backend, gpu_variant);
+                let args = config.build_full_args(srv, backend, None, &default_args)?;
                 let port = srv.port.unwrap_or(8080);
                 // Resolve backend binary path from DB (priority) or config.path (fallback)
-                let backend_path = {
-                    let conn = Config::open_db();
-                    config.resolve_backend_path(&srv.backend, srv.gpu_variant.as_deref(), &conn)?
-                };
+                let backend_path = config.resolve_backend_path(
+                    &srv.backend,
+                    srv.gpu_variant.as_deref(),
+                    &manager,
+                )?;
                 let backend_path_str = backend_path.to_string_lossy().to_string();
                 tama_core::platform::linux::install_service(
                     &service_name,

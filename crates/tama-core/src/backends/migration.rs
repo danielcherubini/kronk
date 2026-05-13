@@ -5,7 +5,7 @@ use anyhow::Context;
 use rusqlite::Connection;
 
 use crate::backends::get_backend_install_path;
-use crate::backends::registry::BackendType;
+use crate::backends::types::BackendType;
 use crate::gpu::GpuType;
 
 const MIGRATION_MARKER: &str = ".tama-migration-v2-done";

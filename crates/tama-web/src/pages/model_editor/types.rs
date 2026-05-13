@@ -44,9 +44,14 @@ pub struct ModelModalities {
     pub output: Vec<String>,
 }
 
+#[cfg(feature = "ssr")]
+pub use tama_core::backends::BackendOption;
+
+#[cfg(not(feature = "ssr"))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendOption {
     pub name: String,
+    #[serde(default)]
     pub variant: Option<String>,
     pub label: String,
 }

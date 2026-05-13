@@ -102,10 +102,12 @@ pub async fn run_llama_bench(
         resolve_model_path(config, &db_dir, &conn, &model_configs, resolved_id, quant)?;
 
     let target_backend = backend_name.unwrap_or(&server_config.backend);
-    let backend_path = {
-        let conn = Config::open_db();
-        config.resolve_backend_path(target_backend, server_config.gpu_variant.as_deref(), &conn)?
-    };
+    let manager = crate::backends::BackendManager::open(&db_dir)?;
+    let backend_path = config.resolve_backend_path(
+        target_backend,
+        server_config.gpu_variant.as_deref(),
+        &manager,
+    )?;
 
     let bench_binary = discovery::find_llama_bench(&backend_path).context(format!(
         "llama-bench not found for backend '{}'. Install llama.cpp from source or set LLAMA_BENCH_PATH",

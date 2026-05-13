@@ -160,18 +160,18 @@ pub async fn install_backend(
                 job: job_clone.clone(),
             };
 
-            // Open registry and run TTS installer
+            // Open manager and run TTS installer
             let result = match config_dir {
                 Some(ref config_dir) => {
                     let config_dir_clone = config_dir.clone();
                     let reg_result = tokio::task::spawn_blocking(move || {
-                        tama_core::backends::BackendRegistry::open(&config_dir_clone)
+                        tama_core::backends::BackendManager::open(&config_dir_clone)
                     })
                     .await
                     .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
                     .and_then(|r| r);
 
-                    let mut registry = match reg_result {
+                    let mgr = match reg_result {
                         Ok(r) => r,
                         Err(e) => {
                             // Log the error and finish the job as failed
@@ -182,7 +182,7 @@ pub async fn install_backend(
                                 .finish(
                                     &job_clone,
                                     crate::jobs::JobStatus::Failed,
-                                    Some("Failed to open registry".to_string()),
+                                    Some("Failed to open manager".to_string()),
                                 )
                                 .await;
                             return;
@@ -192,7 +192,7 @@ pub async fn install_backend(
                     let progress = Box::new(adapter);
                     match bt {
                         tama_core::backends::BackendType::TtsKokoro => {
-                            tama_core::backends::install_tts_kokoro(&mut registry, progress).await
+                            tama_core::backends::install_tts_kokoro(mgr, progress).await
                         }
                         _ => unreachable!(),
                     }
@@ -454,8 +454,8 @@ pub async fn install_backend(
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
                     let reg_result = tokio::task::spawn_blocking(move || {
-                        let mut registry = tama_core::backends::BackendRegistry::open(&config_dir)?;
-                        registry.add(tama_core::backends::BackendInfo {
+                        let mgr = tama_core::backends::BackendManager::open(&config_dir)?;
+                        mgr.add_installation(&tama_core::backends::BackendInfo {
                             name: reg_backend_name,
                             backend_type: reg_backend_type,
                             version: reg_version,
@@ -543,7 +543,7 @@ pub async fn remove_backend(
         }
     };
 
-    // Open registry and get backend
+    // Open manager and get backend
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return (
             StatusCode::BAD_REQUEST,
@@ -557,20 +557,20 @@ pub async fn remove_backend(
     let gpu_variant = query.gpu_variant;
 
     let config_dir_clone = config_dir.clone();
-    let registry_result: Result<tama_core::backends::BackendRegistry, _> =
+    let mgr_result: Result<tama_core::backends::BackendManager, _> =
         tokio::task::spawn_blocking(move || {
-            tama_core::backends::BackendRegistry::open(&config_dir_clone)
+            tama_core::backends::BackendManager::open(&config_dir_clone)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
         .and_then(|r| r);
 
-    let mut registry = match registry_result {
+    let mgr = match mgr_result {
         Ok(r) => r,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to open registry: {}", e)})),
+                Json(serde_json::json!({"error": format!("Failed to open manager: {}", e)})),
             )
                 .into_response();
         }
@@ -581,7 +581,7 @@ pub async fn remove_backend(
     let backends_to_remove: Vec<tama_core::backends::BackendInfo> =
         if let Some(variant) = &gpu_variant {
             // Specific variant requested — get ALL versions of that variant
-            match registry.list_all_versions(&name, Some(variant.as_str())) {
+            match mgr.list_versions(&name, Some(variant.as_str())) {
                 Ok(Some(versions)) if !versions.is_empty() => versions,
                 Ok(Some(_)) | Ok(None) => {
                     return (
@@ -600,7 +600,7 @@ pub async fn remove_backend(
             }
         } else {
             // No variant specified — iterate ALL variants
-            match registry.list_all_versions(&name, None) {
+            match mgr.list_versions(&name, None) {
                 Ok(Some(versions)) => versions,
                 Ok(None) => {
                     return (
@@ -658,12 +658,12 @@ pub async fn remove_backend(
         }
     }
 
-    // Remove from registry (Some = remove specific variant, None = remove all variants)
+    // Remove from DB (Some = remove specific variant, None = remove all variants)
     let variant_to_remove = gpu_variant.as_deref();
-    if let Err(e) = registry.remove(&name, variant_to_remove) {
+    if let Err(e) = mgr.delete_all_versions(&name, variant_to_remove) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to remove from registry: {}", e)})),
+            Json(serde_json::json!({"error": format!("Failed to remove: {}", e)})),
         )
             .into_response();
     }

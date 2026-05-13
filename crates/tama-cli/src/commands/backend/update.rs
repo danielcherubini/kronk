@@ -11,10 +11,10 @@ pub async fn cmd_update(
     name: &str,
     force: bool,
 ) -> Result<()> {
-    let mut registry = tama_core::backends::BackendRegistry::open(&registry_config_dir()?)?;
+    let mgr = tama_core::backends::BackendManager::open(&registry_config_dir()?)?;
 
     // Find the active backend by listing all active backends
-    let active_backends = registry.list()?;
+    let active_backends = mgr.list_active()?;
     let matches: Vec<_> = active_backends.iter().filter(|b| b.name == name).collect();
 
     let backend_info = match matches.len() {
@@ -120,8 +120,15 @@ pub async fn cmd_update(
         allow_overwrite: true,
     };
 
+    let client = reqwest::Client::builder()
+        .user_agent("tama-backend-manager")
+        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
     update_backend(
-        &mut registry,
+        mgr,
+        &client,
         name,
         &backend_info.gpu_variant,
         options,

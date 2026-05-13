@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::backends::{check_latest_version, BackendRegistry, BackendType};
+use crate::backends::{check_latest_version, BackendManager, BackendType};
 use crate::config::Config;
 use crate::db;
 use crate::db::queries::{
@@ -122,17 +122,17 @@ impl UpdateChecker {
         let (backends, models) = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             move || -> anyhow::Result<UpdateSyncResults> {
-                let registry = BackendRegistry::open(&config_dir)?;
+                let mgr = BackendManager::open(&config_dir)?;
 
                 // Collect all unique (name, backend_type) pairs from all installed backends
-                let all_backends = registry.list().unwrap_or_default();
+                let all_backends = mgr.list_active().unwrap_or_default();
                 let backend_names: Vec<String> =
                     all_backends.iter().map(|b| b.name.clone()).collect();
 
                 // For each backend name, get ALL versions and group by variant
                 let mut backend_entries: Vec<(String, BackendType, String)> = Vec::new();
                 for name in &backend_names {
-                    if let Ok(Some(versions)) = registry.list_all_versions(name, None) {
+                    if let Ok(Some(versions)) = mgr.list_versions(name, None) {
                         // Collect unique variants for this backend
                         let mut variants: Vec<String> =
                             versions.iter().map(|v| v.gpu_variant.clone()).collect();

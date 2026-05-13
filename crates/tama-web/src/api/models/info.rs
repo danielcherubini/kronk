@@ -8,52 +8,18 @@ use std::sync::Arc;
 
 use crate::api::load_config_from_state;
 use crate::server::AppState;
-
-/// A selectable backend option for the model editor dropdown.
-#[derive(Debug, Clone, serde::Serialize)]
-struct BackendOption {
-    name: String,
-    variant: Option<String>,
-    label: String,
-}
+use tama_core::backends::BackendOption;
 
 /// Build the list of available backend options by querying installed variants from the DB.
 fn build_backend_options(
     _cfg: &tama_core::config::Config,
     config_dir: &std::path::Path,
 ) -> Vec<BackendOption> {
-    let mut options = Vec::new();
-
-    let db_open = match tama_core::db::open(config_dir) {
-        Ok(o) => o,
-        Err(_) => return options,
+    let mgr = match tama_core::backends::BackendManager::open(config_dir) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
     };
-    let conn = &db_open.conn;
-
-    // Discover backend names from installed backends in the DB, not from
-    // TOML config (which may be empty after migration to backend_configs).
-    let Ok(active) = tama_core::db::queries::list_active_backends(conn) else {
-        return options;
-    };
-
-    // Collect unique (name, gpu_variant) pairs from active installations
-    let mut seen = std::collections::HashSet::new();
-    for record in &active {
-        let key = (record.name.clone(), record.gpu_variant.clone());
-        if seen.insert(key.clone()) {
-            options.push(BackendOption {
-                name: key.0.clone(),
-                variant: Some(key.1.clone()),
-                label: if key.1 == "cpu" {
-                    key.0.clone()
-                } else {
-                    format!("{} ({})", key.0, key.1)
-                },
-            });
-        }
-    }
-
-    options
+    mgr.available_backends().unwrap_or_default()
 }
 
 /// Resolve a model identifier string to an integer id.
