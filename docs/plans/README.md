@@ -44,7 +44,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
-| [Per-Variant Default Args](2026-05-13-per-variant-default-args.md) | Support independent default_args per GPU variant (vulkan/rocm/cpu) instead of sharing across all variants | 🚧 IN PROGRESS
+| [Backend Config to Database](2026-05-13-backend-config-to-db.md) | Move backend config (default_args, health_check_url) from config.toml to SQLite backend_configs table, keyed by (name, gpu_variant) with unique DB id | 🚧 IN PROGRESS
 
 ### Draft
 
