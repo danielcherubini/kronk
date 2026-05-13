@@ -51,7 +51,10 @@ impl Config {
                 .with_context(|| format!("Model '{}' not found in config", name))?
         };
 
-        let backend = self.backends.get(&server.backend).unwrap_or(&EMPTY_BACKEND_CONFIG);
+        let backend = self
+            .backends
+            .get(&server.backend)
+            .unwrap_or(&EMPTY_BACKEND_CONFIG);
 
         Ok((server, backend))
     }
@@ -71,7 +74,10 @@ impl Config {
             // After migration to backend_configs table, the [backends] TOML
             // section may be empty — backend data (default_args, health URL)
             // now lives in the DB, not TOML.
-            let backend = self.backends.get(&server.backend).unwrap_or(&EMPTY_BACKEND_CONFIG);
+            let backend = self
+                .backends
+                .get(&server.backend)
+                .unwrap_or(&EMPTY_BACKEND_CONFIG);
 
             // Match on api_name (highest priority), then config key, then model field.
             // Comparisons are case-insensitive for api_name and model (OpenAI API

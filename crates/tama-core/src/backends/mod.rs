@@ -1,11 +1,13 @@
 pub mod installer;
 pub mod log_stream;
+pub mod manager;
 pub mod migration;
 pub mod registry;
 pub mod tts_kokoro;
 pub mod updater;
 
 pub use installer::{install_backend, install_backend_with_progress, InstallOptions};
+pub use manager::{BackendManager, BackendOption};
 pub use registry::{BackendInfo, BackendRegistry, BackendSource, BackendType};
 pub use tts_kokoro::install_tts_kokoro;
 pub use updater::{

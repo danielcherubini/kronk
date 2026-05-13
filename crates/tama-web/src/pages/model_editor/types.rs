@@ -44,12 +44,7 @@ pub struct ModelModalities {
     pub output: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BackendOption {
-    pub name: String,
-    pub variant: Option<String>,
-    pub label: String,
-}
+pub use tama_core::backends::BackendOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDetail {
