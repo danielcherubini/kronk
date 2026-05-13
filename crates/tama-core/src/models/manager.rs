@@ -324,6 +324,32 @@ impl ModelManager {
     pub fn delete_update_check(&self, item_type: &str, item_id: &str) -> Result<()> {
         crate::db::queries::delete_update_check(&self.conn, item_type, item_id)
     }
+
+    // ── Async wrappers ────────────────────────────────────────
+
+    /// Check for HuggingFace updates for a model. Async wrapper around
+    /// `crate::models::update::check_for_updates`.
+    ///
+    /// Note: this method is `!Send` because `Connection: !Send`.
+    /// Callers must use `tokio::task::spawn_blocking` or similar.
+    pub async fn check_for_updates(
+        &self,
+        repo_id: &str,
+    ) -> Result<crate::models::update::UpdateCheckResult> {
+        crate::models::update::check_for_updates(&self.conn, repo_id).await
+    }
+
+    /// Refresh HuggingFace metadata for a model. Async wrapper around
+    /// `crate::models::update::refresh_metadata`.
+    ///
+    /// Note: this method is `!Send` because `Connection: !Send`.
+    pub async fn refresh_metadata(
+        &self,
+        models_dir: &Path,
+        repo_id: &str,
+    ) -> Result<()> {
+        crate::models::update::refresh_metadata(&self.conn, models_dir, repo_id).await
+    }
 }
 
 #[cfg(test)]

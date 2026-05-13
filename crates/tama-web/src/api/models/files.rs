@@ -256,7 +256,7 @@ pub async fn verify_model_files(
     let task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
         let mgr = tama_core::models::ModelManager::open(&config_dir)?;
         let results = tama_core::models::verify::verify_model(
-            mgr.conn(),
+            &mgr,
             model_id,
             &repo_id_clone,
             &model_dir,
