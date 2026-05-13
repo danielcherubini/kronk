@@ -2,6 +2,14 @@ use super::types::{BackendConfig, Config, HealthCheck, ModelConfig};
 use crate::models::repo_path;
 use anyhow::Result;
 
+/// Empty BackendConfig used as fallback when backend is not in TOML config
+/// (e.g. after migration to backend_configs DB table cleared the [backends] section).
+static EMPTY_BACKEND_CONFIG: BackendConfig = BackendConfig {
+    path: None,
+    version: None,
+    gpu_variant: None,
+};
+
 impl Config {
     pub fn resolve_server<'a>(
         &'a self,
@@ -43,12 +51,7 @@ impl Config {
                 .with_context(|| format!("Model '{}' not found in config", name))?
         };
 
-        let backend = self.backends.get(&server.backend).with_context(|| {
-            format!(
-                "Backend '{}' referenced by model not found in config",
-                server.backend
-            )
-        })?;
+        let backend = self.backends.get(&server.backend).unwrap_or(&EMPTY_BACKEND_CONFIG);
 
         Ok((server, backend))
     }
@@ -64,10 +67,11 @@ impl Config {
             if !server.enabled {
                 continue;
             }
-            let backend = match self.backends.get(&server.backend) {
-                Some(b) => b,
-                None => continue,
-            };
+            // Use TOML backend config if present, otherwise empty default.
+            // After migration to backend_configs table, the [backends] TOML
+            // section may be empty — backend data (default_args, health URL)
+            // now lives in the DB, not TOML.
+            let backend = self.backends.get(&server.backend).unwrap_or(&EMPTY_BACKEND_CONFIG);
 
             // Match on api_name (highest priority), then config key, then model field.
             // Comparisons are case-insensitive for api_name and model (OpenAI API
