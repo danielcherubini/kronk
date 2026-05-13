@@ -748,15 +748,23 @@ pub async fn activate_backend_version(
 }
 
 /// POST /tama/v1/backends/:name/default-args
-/// Update default_args for a backend in config.toml
+/// Update default_args for a backend in the backend_configs DB table.
 #[derive(Deserialize)]
 pub struct UpdateDefaultArgsRequest {
     pub default_args: Vec<String>,
 }
 
+/// Query params for POST /tama/v1/backends/:name/default-args
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DefaultArgsQuery {
+    pub gpu_variant: String,
+}
+
 pub async fn update_backend_default_args(
     State(state): State<Arc<AppState>>,
     Path(backend_name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<DefaultArgsQuery>,
     Json(req): Json<UpdateDefaultArgsRequest>,
 ) -> impl IntoResponse {
     let config_path = match &state.config_path {
@@ -781,56 +789,30 @@ pub async fn update_backend_default_args(
         }
     };
 
-    // Load config
-    let mut config = match tama_core::config::Config::load_from(&config_dir) {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to load config: {}", e)})),
-            )
-                .into_response();
-        }
-    };
+    let backend_name = backend_name.clone();
+    let gpu_variant = query.gpu_variant.clone();
+    let default_args = req.default_args.clone();
 
-    // Update default_args for the backend
-    if let Some(backend) = config.backends.get_mut(&backend_name) {
-        backend.default_args = req.default_args;
-    } else {
-        // Backend doesn't exist in config, create it
-        config.backends.insert(
-            backend_name.clone(),
-            tama_core::config::BackendConfig {
-                path: None,
-                default_args: req.default_args,
-                health_check_url: None,
-                version: None,
-                gpu_variant: None,
-            },
-        );
-    }
+    let result: Result<(), anyhow::Error> = tokio::task::spawn_blocking(move || {
+        let open = tama_core::db::open(&config_dir)?;
+        tama_core::db::queries::upsert_backend_config(
+            &open.conn,
+            &backend_name,
+            &gpu_variant,
+            &default_args,
+            None,
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("spawn error: {}", e))
+    .and_then(|r| r);
 
-    // Clone config for proxy sync
-    let config_clone = config.clone();
-
-    // Save config
-    match tokio::task::spawn_blocking(move || config.save_to(&config_dir)).await {
-        Ok(Ok(())) => {
-            // Sync proxy config if available
-            if let Some(ref proxy_config) = state.proxy_config {
-                let mut pc = proxy_config.write().await;
-                *pc = config_clone;
-            }
-            Json(serde_json::json!({"success": true})).into_response()
-        }
-        Ok(Err(e)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to save config: {}", e)})),
-        )
-            .into_response(),
+    match result {
+        Ok(()) => Json(serde_json::json!({"success": true})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Task failed: {}", e)})),
+            Json(serde_json::json!({"error": format!("Failed to update backend config: {}", e)})),
         )
             .into_response(),
     }
