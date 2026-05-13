@@ -117,7 +117,13 @@ async fn start_proxy_server(
         let jobs = std::sync::Arc::new(tama_web::jobs::JobManager::new());
         let capabilities = std::sync::Arc::new(tama_web::api::backends::CapabilitiesCache::new());
         let download_queue = state.download_queue.clone();
-        tokio::spawn(async move {
+
+        // Shared shutdown channel: proxy server signals, web UI listens.
+        // This avoids competing SIGINT/SIGTERM handlers — only the proxy
+        // registers OS signals and broadcasts to the web UI.
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+
+        let web_handle = tokio::spawn(async move {
             if let Err(e) = tama_web::server::run_with_opts(
                 web_addr,
                 proxy_base_url,
@@ -128,17 +134,46 @@ async fn start_proxy_server(
                 Some(capabilities),
                 env!("CARGO_PKG_VERSION").to_string(),
                 download_queue,
+                Some(shutdown_rx),
             )
             .await
             {
                 tracing::error!("Web UI server error: {}", e);
             }
         });
+
+        // Pass the shutdown sender to the proxy server
+        let shutdown_tx_for_proxy = Some(shutdown_tx);
+
+        // Create and run proxy server
+        let server = ProxyServer::new(state.clone()).await;
+        server.run(addr, shutdown_tx_for_proxy).await?;
+
+        // Proxy has shut down (signal received, TTS backends unloaded, etc.).
+        // Now wait for the web UI to finish its own graceful shutdown.
+        // The web UI listens on the shared shutdown channel — it will exit
+        // promptly since the proxy already broadcast the signal.
+        // Use a timeout so systemd stop never hangs (systemd default TimeoutStopSec=90s).
+        match tokio::time::timeout(std::time::Duration::from_secs(10), web_handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!("Web UI task joined with error: {}", e);
+            }
+            Err(_) => {
+                tracing::warn!("Web UI did not shut down within 10s — aborting");
+            }
+        }
+
+        Ok(())
     }
 
-    // Create and run proxy server
-    let server = ProxyServer::new(state.clone()).await;
-    server.run(addr).await?;
+    // Non web-ui path
+    #[cfg(not(feature = "web-ui"))]
+    {
+        // Create and run proxy server
+        let server = ProxyServer::new(state.clone()).await;
+        server.run(addr, None).await?;
 
-    Ok(())
+        Ok(())
+    }
 }

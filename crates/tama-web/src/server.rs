@@ -388,6 +388,7 @@ pub async fn run_with_opts(
     capabilities: Option<Arc<CapabilitiesCache>>,
     binary_version: String,
     download_queue: Option<Arc<DownloadQueueService>>,
+    shutdown_rx: Option<tokio::sync::watch::Receiver<()>>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         proxy_base_url,
@@ -408,57 +409,50 @@ pub async fn run_with_opts(
     tracing::info!("Tama web UI listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(jobs_for_shutdown))
+        .with_graceful_shutdown(shutdown_signal(jobs_for_shutdown, shutdown_rx))
         .await?;
     Ok(())
 }
 
-/// Graceful shutdown signal handler.
-/// Listens for SIGINT/SIGTERM and triggers cleanup:
-/// - Kills all child processes
-/// - Releases job manager active slots (SSE channels close when jobs are dropped)
-async fn shutdown_signal(jobs: Option<Arc<JobManager>>) {
-    // Wait for either SIGINT or SIGTERM
-    #[cfg(unix)]
-    {
-        let sig_int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
-        let sig_term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-
-        match (sig_int, sig_term) {
-            (Ok(mut int_signal), Ok(mut term_signal)) => {
-                // Use select! to wait for either signal
+/// Graceful shutdown handler.
+/// If `shutdown_rx` is provided, listens on the shared shutdown channel
+/// (signaled by the proxy server). Otherwise, registers its own SIGINT/SIGTERM
+/// handlers for standalone operation (e.g. `tama web`).
+async fn shutdown_signal(
+    jobs: Option<Arc<JobManager>>,
+    shutdown_rx: Option<tokio::sync::watch::Receiver<()>>,
+) {
+    if let Some(mut rx) = shutdown_rx {
+        // Wait for the shutdown signal from the proxy server
+        let _ = rx.changed().await;
+        tracing::info!("Shutdown signal received, shutting down web UI...");
+    } else {
+        // Standalone mode — register our own signal handlers
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let (Ok(mut sigint), Ok(mut sigterm)) = (
+                signal(SignalKind::interrupt()),
+                signal(SignalKind::terminate()),
+            ) {
                 tokio::select! {
-                    _ = int_signal.recv() => {
-                        tracing::info!("Received SIGINT, shutting down gracefully...");
+                    _ = sigint.recv() => {
+                        tracing::info!("Received SIGINT, shutting down web UI...");
                     }
-                    _ = term_signal.recv() => {
-                        tracing::info!("Received SIGTERM, shutting down gracefully...");
+                    _ = sigterm.recv() => {
+                        tracing::info!("Received SIGTERM, shutting down web UI...");
                     }
                 }
-            }
-            (Err(_), Ok(mut term_signal)) => {
-                tracing::warn!("Unix signals not available, waiting for SIGTERM");
-                let _ = term_signal.recv().await;
-                tracing::info!("Received SIGTERM, shutting down gracefully...");
-            }
-            (Ok(mut int_signal), Err(_)) => {
-                tracing::warn!("Unix signals not available, waiting for SIGINT");
-                let _ = int_signal.recv().await;
-                tracing::info!("Received SIGINT, shutting down gracefully...");
-            }
-            (Err(_), Err(_)) => {
-                tracing::warn!("Unix signals not available, using ctrl_c fallback");
+            } else {
                 tokio::signal::ctrl_c().await.ok();
-                tracing::info!("Received interrupt, shutting down gracefully...");
+                tracing::info!("Received interrupt, shutting down web UI...");
             }
         }
-    }
-    #[cfg(not(unix))]
-    {
-        // On non-Unix platforms, use ctrl_c for graceful shutdown
-        tracing::info!("Using Ctrl+C for graceful shutdown on this platform");
-        tokio::signal::ctrl_c().await.ok();
-        tracing::info!("Received interrupt, shutting down gracefully...");
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received interrupt, shutting down web UI...");
+        }
     }
 
     // Cleanup: kill all child processes for active jobs
@@ -471,6 +465,7 @@ async fn shutdown_signal(jobs: Option<Arc<JobManager>>) {
 }
 
 /// Convenience wrapper with no logs_dir/config_path.
+/// Runs in standalone mode (registers own signal handlers).
 pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::Result<()> {
     run_with_opts(
         addr,
@@ -481,6 +476,7 @@ pub async fn run(addr: std::net::SocketAddr, proxy_base_url: String) -> anyhow::
         None,
         None,
         env!("CARGO_PKG_VERSION").to_string(),
+        None,
         None,
     )
     .await

@@ -340,7 +340,13 @@ impl ProxyServer {
     /// Start serving on the given address.
     ///
     /// Builds the router and delegates to the listener module.
-    pub async fn run(self, addr: std::net::SocketAddr) -> anyhow::Result<()> {
+    /// If `shutdown_tx` is provided, the shutdown signal is broadcast to
+    /// other servers (e.g. the web UI) so they shut down simultaneously.
+    pub async fn run(
+        self,
+        addr: std::net::SocketAddr,
+        shutdown_tx: Option<tokio::sync::watch::Sender<()>>,
+    ) -> anyhow::Result<()> {
         // Clone state for shutdown cleanup (unloads TTS backends)
         let cleanup_state = Arc::clone(&self.state);
         let app = self.into_router();
@@ -358,7 +364,7 @@ impl ProxyServer {
                 }
             }
         };
-        listener::run(app, addr, Some(on_shutdown)).await
+        listener::run(app, addr, Some(on_shutdown), shutdown_tx).await
     }
 }
 

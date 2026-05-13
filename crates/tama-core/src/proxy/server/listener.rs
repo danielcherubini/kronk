@@ -7,17 +7,21 @@ use tracing::info;
 /// Binds a TCP listener and serves the provided router until shutdown.
 /// Handles SIGTERM/SIGINT for graceful shutdown.
 /// Optionally runs a cleanup future before exiting.
+/// If `shutdown_tx` is provided, the signal is broadcast to other servers
+/// (e.g. the web UI) so they shut down simultaneously.
 pub async fn run(
     app: Router,
     addr: SocketAddr,
     on_shutdown: Option<impl std::future::Future<Output = ()> + Send + 'static>,
+    shutdown_tx: Option<tokio::sync::watch::Sender<()>>,
 ) -> anyhow::Result<()> {
     info!("Starting proxy server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    // Create a future that completes when we receive SIGTERM or SIGINT
-    let shutdown_signal = async {
+    // Create a future that completes when we receive SIGTERM or SIGINT.
+    // Broadcasts the shutdown signal to any subscribed servers.
+    let shutdown_signal = async move {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
@@ -44,6 +48,11 @@ pub async fn run(
         {
             tokio::signal::ctrl_c().await.ok();
             info!("Received Ctrl+C, shutting down...");
+        }
+
+        // Broadcast shutdown to other servers (e.g. web UI)
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(());
         }
     };
 

@@ -20,6 +20,7 @@ pub async fn cmd_web(
         Some(capabilities),
         env!("CARGO_PKG_VERSION").to_string(),
         None,
+        None, // standalone — web UI registers its own signal handlers
     )
     .await
 }
