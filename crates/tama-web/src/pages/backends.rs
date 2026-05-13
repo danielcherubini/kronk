@@ -194,56 +194,27 @@ pub fn Backends() -> impl IntoView {
         refresh_tick.update(|n| *n += 1);
     });
 
+    // Key by "backend_type:gpu_variant" so each variant has its own args.
+    // e.g. "llama_cpp:vulkan" vs "llama_cpp:rocm"
     let on_default_args_change =
-        Callback::new(move |(backend_type, new_value): (String, String)| {
+        Callback::new(move |(backend_key, new_value): (String, String)| {
             default_args_edits.update(|edits| {
-                edits.insert(backend_type, new_value);
+                edits.insert(backend_key, new_value);
             });
             save_status.set(None); // Clear status when user makes new edits
         });
 
-    let on_activate_click = Callback::new(
-        move |(backend_type, version, gpu_variant): (String, String, String)| {
-            action_error.set(None);
-            wasm_bindgen_futures::spawn_local(async move {
-                let url = format!(
-                    "/tama/v1/backends/{}/activate?gpu_variant={}",
-                    backend_type, gpu_variant
-                );
-                let body = serde_json::json!({ "version": version });
-                match post_request(&url).json(&body).unwrap().send().await {
-                    Ok(resp) if resp.ok() => {
-                        refresh_tick.update(|n| *n += 1);
-                    }
-                    Ok(resp) => {
-                        let text = resp.text().await.unwrap_or_default();
-                        action_error.set(Some(format!("Activate failed: {text}")));
-                    }
-                    Err(e) => action_error.set(Some(format!("Activate request failed: {e}"))),
-                }
-            });
-        },
-    );
+    // Track version selection changes: key = "backend_type:gpu_variant", value = (type, version, variant)
+    let version_edits: RwSignal<std::collections::HashMap<String, (String, String, String)>> =
+        RwSignal::new(std::collections::HashMap::new());
 
-    let on_remove_version_click = Callback::new(
+    let on_version_change = Callback::new(
         move |(backend_type, version, gpu_variant): (String, String, String)| {
-            action_error.set(None);
-            wasm_bindgen_futures::spawn_local(async move {
-                let url = format!(
-                    "/tama/v1/backends/{}/versions/{}?gpu_variant={}",
-                    backend_type, version, gpu_variant
-                );
-                match gloo_net::http::Request::delete(&url).send().await {
-                    Ok(resp) if resp.ok() => {
-                        refresh_tick.update(|n| *n += 1);
-                    }
-                    Ok(resp) => {
-                        let text = resp.text().await.unwrap_or_default();
-                        action_error.set(Some(format!("Remove version failed: {text}")));
-                    }
-                    Err(e) => action_error.set(Some(format!("Remove version request failed: {e}"))),
-                }
+            let key = format!("{}:{}", backend_type, gpu_variant);
+            version_edits.update(|edits| {
+                edits.insert(key, (backend_type, version, gpu_variant));
             });
+            save_status.set(None);
         },
     );
 
@@ -251,18 +222,38 @@ pub fn Backends() -> impl IntoView {
         if saving.get() {
             return;
         }
-        let edits = default_args_edits.get();
-        if edits.is_empty() {
+        let args_edits = default_args_edits.get();
+        let ver_edits = version_edits.get();
+        if args_edits.is_empty() && ver_edits.is_empty() {
             return;
         }
         saving.set(true);
         save_status.set(Some("Saving…".to_string()));
         wasm_bindgen_futures::spawn_local(async move {
             let mut errors = Vec::new();
-            let edit_keys: Vec<String> = edits.keys().cloned().collect();
-            for bt in edit_keys {
-                let args_str = edits.get(&bt).cloned().unwrap_or_default();
+
+            // Apply version changes first
+            for (bt, ver, gv) in ver_edits.values() {
+                let url = format!("/tama/v1/backends/{}/activate?gpu_variant={}", bt, gv);
+                let body = serde_json::json!({ "version": ver });
+                match post_request(&url).json(&body).unwrap().send().await {
+                    Ok(resp) if resp.ok() => {}
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let text = resp.text().await.unwrap_or_default();
+                        errors.push(format!("Activate {}: HTTP {} - {}", bt, status, text));
+                    }
+                    Err(e) => errors.push(format!("Activate {}: {}", bt, e)),
+                }
+            }
+
+            // Apply default args changes — key is "backend_type:gpu_variant"
+            let edit_keys: Vec<String> = args_edits.keys().cloned().collect();
+            for key in edit_keys {
+                let args_str = args_edits.get(&key).cloned().unwrap_or_default();
                 let parts: Vec<String> = args_str.split_whitespace().map(String::from).collect();
+                // Extract backend_type from key "type:variant"
+                let bt = key.split(':').next().unwrap_or(&key);
                 let body = serde_json::json!({ "default_args": parts });
                 let url = format!("/tama/v1/backends/{}/default-args", bt);
                 let res = post_request(&url).json(&body).unwrap().send().await;
@@ -271,14 +262,16 @@ pub fn Backends() -> impl IntoView {
                     Ok(response) => {
                         let status = response.status();
                         let text = response.text().await.unwrap_or_default();
-                        errors.push(format!("{}: HTTP {} - {}", bt, status, text));
+                        errors.push(format!("{}: HTTP {} - {}", key, status, text));
                     }
-                    Err(e) => errors.push(format!("{}: {}", bt, e)),
+                    Err(e) => errors.push(format!("{}: {}", key, e)),
                 }
             }
+
             if errors.is_empty() {
                 save_status.set(Some("✅ Saved".to_string()));
                 default_args_edits.set(std::collections::HashMap::new());
+                version_edits.set(std::collections::HashMap::new());
                 refresh_tick.update(|n| *n += 1);
             } else {
                 save_status.set(Some(format!("❌ {}", errors.join(", "))));
@@ -395,8 +388,6 @@ pub fn Backends() -> impl IntoView {
 
                     let mut cards = Vec::new();
                     for backend in combined {
-                        let activate_cb = on_activate_click;
-                        let remove_version_cb = on_remove_version_click;
                         cards.push(view! {
                             <BackendCard
                                 backend=backend
@@ -405,8 +396,7 @@ pub fn Backends() -> impl IntoView {
                                 on_check_updates=on_check_updates_click
                                 on_delete=on_delete_click
                                 on_default_args_change=on_default_args_change
-                                on_activate=activate_cb
-                                on_remove_version=remove_version_cb
+                                on_version_change=on_version_change
                             />
                         }.into_any());
                     }

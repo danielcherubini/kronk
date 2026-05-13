@@ -131,15 +131,12 @@ pub fn BackendCard(
     /// Called with (backend_type, gpu_variant) when "Uninstall" is clicked.
     #[prop(optional)]
     on_delete: Option<Callback<(String, String)>>,
-    /// Called when default_args input changes with (backend_type, new_value)
+    /// Called when default_args input changes with ("backend_type:gpu_variant", new_value)
     #[prop(optional)]
     on_default_args_change: Option<Callback<(String, String)>>,
-    /// Called with (backend_type, version, gpu_variant) when a version is activated via dropdown.
+    /// Called with (backend_type, version, gpu_variant) when version dropdown changes.
     #[prop(optional)]
-    on_activate: Option<Callback<(String, String, String)>>,
-    /// Called with (backend_type, version, gpu_variant) when "Remove Version" is clicked from dropdown.
-    #[prop(optional)]
-    on_remove_version: Option<Callback<(String, String, String)>>,
+    on_version_change: Option<Callback<(String, String, String)>>,
 ) -> impl IntoView {
     let type_install = backend.r#type.clone();
     let type_update = backend.r#type.clone();
@@ -154,7 +151,9 @@ pub fn BackendCard(
     let gpu_variant = backend.gpu_variant.clone();
     let release_notes_url = backend.release_notes_url.clone();
     let backend_type = backend.r#type.clone();
-    let bt_input = backend_type.clone();
+    // Unique key for this backend variant: "llama_cpp:vulkan"
+    let backend_key = format!("{}:{}", backend_type, gpu_variant);
+    let bk_input = backend_key.clone();
 
     let update_available = backend.update.update_available.unwrap_or(false);
     let latest_version = backend.update.latest_version.clone();
@@ -222,8 +221,7 @@ pub fn BackendCard(
 
             {/* Version selector dropdown */}
             {if installed && version_count > 1 {
-                let activate_cb = on_activate;
-                let remove_cb = on_remove_version;
+                let version_cb = on_version_change;
                 let vts = backend.r#type.clone();
                 view! {
                     <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
@@ -236,6 +234,14 @@ pub fn BackendCard(
                                 if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
                                     if let Ok(idx) = input.value().parse::<usize>() {
                                         selected_version_idx.set(idx);
+                                        // Track version change as a pending edit
+                                        if let Some(cb) = &version_cb {
+                                            if idx < version_count {
+                                                let ver = versions[idx].version.clone();
+                                                let gv = versions[idx].gpu_variant.clone();
+                                                cb.run((vts.clone(), ver, gv.clone()));
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -251,55 +257,6 @@ pub fn BackendCard(
                                 }.into_any()
                             }).collect::<Vec<_>>()}
                         </select>
-                        {/* Version actions — only show when not on active version */}
-                        {move || {
-                            let idx = selected_version_idx.get();
-                            if idx < version_count && !versions[idx].is_active {
-                                let ver = versions[idx].version.clone();
-                                let gv = versions[idx].gpu_variant.clone();
-                                let bt = vts.clone();
-                                view! {
-                                    <div style="display:flex;gap:0.375rem;margin-left:auto;">
-                                        {if let Some(cb) = activate_cb {
-                                            let ver_act = ver.clone();
-                                            let gv_act = gv.clone();
-                                            let bt_act = bt.clone();
-                                            view! {
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-sm"
-                                                    style="background:#22c55e;color:white;font-size:0.75rem;padding:0.25rem 0.625rem;"
-                                                    on:click=move |_| {
-                                                        cb.run((bt_act.clone(), ver_act.clone(), gv_act.clone()));
-                                                    }
-                                                >
-                                                    "Activate"
-                                                </button>
-                                            }.into_any()
-                                        } else { view! { <span/> }.into_any() }}
-                                        {if let Some(cb) = remove_cb {
-                                            let ver_rem = ver.clone();
-                                            let gv_rem = gv.clone();
-                                            let bt_rem = bt.clone();
-                                            view! {
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-sm"
-                                                    style="color:#dc2626;font-size:0.75rem;padding:0.25rem 0.625rem;"
-                                                    on:click=move |_| {
-                                                        cb.run((bt_rem.clone(), ver_rem.clone(), gv_rem.clone()));
-                                                    }
-                                                >
-                                                    "Remove Version"
-                                                </button>
-                                            }.into_any()
-                                        } else { view! { <span/> }.into_any() }}
-                                    </div>
-                                }.into_any()
-                            } else {
-                                view! { <span/> }.into_any()
-                            }
-                        }}
                     </div>
                 }.into_any()
             } else {
@@ -341,7 +298,7 @@ pub fn BackendCard(
                              if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
                                  default_args_signal.set(input.value());
                                  if let Some(cb) = &on_default_args_change {
-                                     cb.run((bt_input.clone(), input.value()));
+                                     cb.run((bk_input.clone(), input.value()));
                                  }
                              }
                          }
