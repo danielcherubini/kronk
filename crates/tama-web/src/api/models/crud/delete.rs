@@ -20,7 +20,7 @@ pub async fn delete_quant(
     match tokio::task::spawn_blocking(move || {
         let (cfg, config_dir) = load_config_from_state(&state)?;
 
-        let open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
@@ -28,7 +28,8 @@ pub async fn delete_quant(
         })?;
 
         // Find the model from DB
-        let model_record = tama_core::db::queries::get_model_config(&open.conn, id)
+        let model_record = mgr
+            .get_config(id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -69,12 +70,13 @@ pub async fn delete_quant(
 
         // Save to DB
         let config_key = repo_id.to_lowercase().replace('/', "--");
-        tama_core::db::save_model_config(&open.conn, &config_key, &model_config).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": e.to_string()}),
-            )
-        })?;
+        mgr.save_model_config(&config_key, &model_config)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?;
 
         // Clean up file (best-effort) - only after config is saved
         if !repo_id.is_empty() {
@@ -94,8 +96,7 @@ pub async fn delete_quant(
 
         // Clean up DB record (best-effort) - only after config is saved
         if !repo_id.is_empty() {
-            // We already have 'open' connection
-            let _ = tama_core::db::queries::delete_model_file(&open.conn, id, &filename);
+            let _ = mgr.delete_file(id, &filename);
         }
 
         Ok((
@@ -135,13 +136,13 @@ pub async fn delete_model(
         let (cfg, config_dir) = load_config_from_state(&state)?;
 
         // Capture the removed model for cleanup
-        let mut open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mut mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let model_id = resolve_model_id(&id_str, &open.conn)
+        let model_id = resolve_model_id(&id_str, &mgr)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -154,10 +155,11 @@ pub async fn delete_model(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let model_record = tama_core::db::queries::get_model_config(&open.conn, model_id)
+        let model_record = mgr
+            .get_config(model_id)
             .map_err(|e| {
                 (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::INTERNAL_SERVER_ERROR,
                     serde_json::json!({"error": e.to_string()}),
                 )
             })?
@@ -175,40 +177,26 @@ pub async fn delete_model(
         {
             let repo_id = model_record.repo_id.clone();
 
-            // Start transaction
-            let tx = match open.conn.transaction() {
-                Ok(tx) => tx,
-                Err(e) => {
-                    tracing::error!("Failed to start transaction for model deletion: {e}");
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        serde_json::json!({"error": "Failed to delete model records from database"}),
-                    ));
-                }
-            };
-
-            // Delete the model config record — CASCADE handles model_files and model_pulls.
+            // Run atomic delete operations via ModelManager transaction
             tracing::debug!("Deleting model config for id={}", model_id);
-            if let Err(e) =
-                tama_core::db::queries::delete_model_config(&tx, model_id)
-            {
-                tracing::error!("Failed to delete model config: {e}");
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    serde_json::json!({"error": format!("Failed to delete model records from database: {e}")}),
-                ));
-            }
+            let result = mgr.transaction(|tx| {
+                // Delete the model config record — CASCADE handles model_files and model_pulls.
+                tx.execute(
+                    "DELETE FROM model_configs WHERE id = ?1",
+                    rusqlite::params![model_id],
+                )?;
 
-            // Delete update check record (best-effort, non-fatal)
-            if let Err(e) =
-                tama_core::db::queries::delete_update_check(&tx, "model", &repo_id)
-            {
-                tracing::warn!("Failed to delete update check (non-fatal): {e}");
-            }
+                // Delete update check record (best-effort, non-fatal)
+                let _ = tx.execute(
+                    "DELETE FROM update_checks WHERE item_type = ?1 AND item_id = ?2",
+                    rusqlite::params!["model", &repo_id],
+                );
 
-            // Commit the transaction — after this point, DB is clean.
-            if let Err(e) = tx.commit() {
-                tracing::error!("Failed to commit transaction for model deletion: {e}");
+                Ok(())
+            });
+
+            if let Err(e) = result {
+                tracing::error!("Failed to delete model records from database: {e}");
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     serde_json::json!({"error": "Failed to delete model records from database"}),
