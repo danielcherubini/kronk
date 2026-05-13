@@ -69,7 +69,7 @@ pub(crate) fn build_cmake_args(
     // GGML_CUDA_FA_ALL_QUANTS (CUDA FlashAttention kernels, defaults OFF).
     if matches!(
         options.backend_type,
-        super::super::super::registry::BackendType::IkLlama
+        crate::backends::types::BackendType::IkLlama
     ) {
         cmake_args.push("-DGGML_IQK_FA_ALL_QUANTS=ON".to_string());
     }
@@ -81,7 +81,7 @@ pub(crate) fn build_cmake_args(
 mod tests {
     use super::*;
     use crate::backends::installer::source::detect;
-    use crate::backends::registry::{BackendSource, BackendType};
+    use crate::backends::types::{BackendSource, BackendType};
     use std::path::PathBuf;
 
     fn make_options(backend_type: BackendType, gpu_type: Option<GpuType>) -> InstallOptions {

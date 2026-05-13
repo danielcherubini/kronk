@@ -8,7 +8,7 @@ use super::build::emit;
 use super::detect::detect_hip_env;
 use crate::backends::installer::extract::find_backend_binary;
 use crate::backends::installer::prebuilt::prepare_target_dir;
-use crate::backends::registry::BackendType;
+use crate::backends::types::BackendType;
 use crate::backends::InstallOptions;
 use crate::backends::ProgressSink;
 use crate::gpu::{detect_amdgpu_targets, GpuType};
