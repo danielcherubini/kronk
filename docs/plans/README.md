@@ -14,9 +14,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 93
+- **Total Plans**: 94
 - **Completed**: 93 ✅
-- **In Progress**: 0 🚧
+- **In Progress**: 1 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -24,6 +24,12 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ---
 
 ## Completed Plans
+
+### In Progress
+
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
+| [Model Manager Centralization](2026-05-13-model-manager-centralization.md) | Centralize all model DB access into a single ModelManager struct, replacing 29+ scattered db::open() calls across web, CLI, and proxy | 🚧 IN PROGRESS |
 
 ### Recently Completed
 
