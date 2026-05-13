@@ -494,7 +494,6 @@ mod tests {
 log_level = "info"
 
 [backends.llama_cpp]
-health_check_url = "http://localhost:8080/health"
 
 [models.test]
 backend = "llama_cpp"

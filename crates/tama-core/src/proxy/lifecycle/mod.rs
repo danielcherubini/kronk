@@ -91,7 +91,9 @@ impl ProxyState {
         drop(listener); // Free the port for the backend to use
 
         // Build full args (including -m, -c, -ngl from model card) and override host/port
-        let mut args = config.build_full_args(server_config, backend_config, None)?;
+        let db_conn_opt = self.open_db();
+        let db_conn = db_conn_opt.as_ref();
+        let mut args = config.build_full_args(server_config, backend_config, None, db_conn)?;
         override_arg(&mut args, "--host", "127.0.0.1");
         override_arg(&mut args, "--port", &port.to_string());
 

@@ -175,6 +175,80 @@ pub fn migrate_backend_registry_toml(
     Ok(())
 }
 
+/// Migrate `[backends]` section from `config.toml` into the `backend_configs` SQLite table.
+///
+/// If the `[backends]` section does not exist or is empty, returns `Ok(0)` immediately.
+/// After migrating all entries, the `[backends]` section is removed from `config.toml`
+/// and the file is saved back to disk.
+///
+/// Returns the number of backend configs migrated.
+pub fn migrate_backend_config_from_toml(
+    conn: &Connection,
+    config_dir: &std::path::Path,
+) -> Result<usize> {
+    use crate::db::queries::upsert_backend_config;
+
+    let config_path = config_dir.join("config.toml");
+
+    if !config_path.exists() {
+        return Ok(0);
+    }
+
+    let content = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read {}", config_path.display()))?;
+
+    let config: crate::config::Config = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+
+    // Nothing to migrate if backends section is empty or already migrated
+    let marker_path = config_dir.join("backend_config_migrated");
+    if config.backends.is_empty() || marker_path.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0usize;
+
+    for (name, backend_config) in &config.backends {
+        let gpu_variant = backend_config
+            .gpu_variant
+            .clone()
+            .unwrap_or_else(|| "cpu".to_string());
+
+        upsert_backend_config(conn, name, &gpu_variant, &[], None).with_context(|| {
+            format!(
+                "Failed to insert backend config '{}' during migration",
+                name
+            )
+        })?;
+        count += 1;
+    }
+
+    // Remove the [backends] section from config.toml to prevent re-migration.
+    // We rewrite the config with an empty backends map.
+    let mut updated_config = config;
+    updated_config.backends.clear();
+    let new_content = toml::to_string_pretty(&updated_config)
+        .with_context(|| "Failed to serialize updated config")?;
+    std::fs::write(&config_path, &new_content)
+        .with_context(|| format!("Failed to write {}", config_path.display()))?;
+
+    tracing::info!(
+        "Migrated {} backend config(s) from config.toml [backends] section",
+        count
+    );
+
+    // Create a marker file so we know migration already ran.
+    // This prevents re-migrating if config.toml is restored from backup.
+    let marker_path = config_dir.join("backend_config_migrated");
+    if !marker_path.exists() {
+        std::fs::write(&marker_path, "migrated\n").with_context(|| {
+            format!("Failed to write migration marker {}", marker_path.display())
+        })?;
+    }
+
+    Ok(count)
+}
+
 /// Repopulate `model_files` for any `model_configs` row that has zero
 /// referencing files. Scans `<models_dir>/<repo_id>/` for `.gguf` files and
 /// inserts one `model_files` row per file.
@@ -849,5 +923,97 @@ installed_at = 1700000000
 
         let result = backfill_hf_metadata(&db_dir).await;
         assert!(result.is_ok());
+    }
+
+    /// Test that migrate_backend_config_from_toml correctly migrates [backends] from config.toml.
+    #[test]
+    fn test_migrate_backend_config_from_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        // Write a config.toml with [backends] section
+        // Note: default_args and health_check_url are no longer in TOML BackendConfig;
+        // they are stored in the DB instead. Old TOML files with these fields will
+        // deserialize fine (unknown fields are ignored), but the migration will not
+        // copy them since they are no longer on the struct.
+        let toml_content = r#"
+[general]
+log_level = "info"
+
+[backends.llama_cpp]
+gpu_variant = "cpu"
+
+[backends.ik_llama]
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // Run the migration
+        let count = migrate_backend_config_from_toml(&conn, tmp.path()).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify llama_cpp config
+        let llama = crate::db::queries::get_backend_config(&conn, "llama_cpp", "cpu")
+            .unwrap()
+            .expect("llama_cpp should exist in DB after migration");
+        assert_eq!(llama.name, "llama_cpp");
+        assert_eq!(llama.gpu_variant, "cpu");
+        // default_args and health_check_url are no longer copied from TOML
+        assert!(llama.default_args.is_empty());
+        assert!(llama.health_check_url.is_none());
+
+        // Verify ik_llama config (no gpu_variant specified, defaults to cpu)
+        let ik = crate::db::queries::get_backend_config(&conn, "ik_llama", "cpu")
+            .unwrap()
+            .expect("ik_llama should exist in DB after migration");
+        assert_eq!(ik.name, "ik_llama");
+        assert_eq!(ik.gpu_variant, "cpu");
+        assert!(ik.default_args.is_empty());
+        assert!(ik.health_check_url.is_none());
+
+        // Verify [backends] section was cleared from config.toml
+        let after = std::fs::read_to_string(&config_path).unwrap();
+        let reloaded: crate::config::Config = toml::from_str(&after).unwrap();
+        assert!(
+            reloaded.backends.is_empty(),
+            "backends section should be cleared after migration"
+        );
+    }
+
+    /// Test that migrate_backend_config_from_toml returns Ok(0) when no config file exists.
+    #[test]
+    fn test_migrate_backend_config_from_toml_no_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        let count = migrate_backend_config_from_toml(&conn, tmp.path()).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    /// Test that migrate_backend_config_from_toml is idempotent (no-op on second call).
+    #[test]
+    fn test_migrate_backend_config_from_toml_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        let toml_content = r#"
+[general]
+log_level = "info"
+
+[backends.llama_cpp]
+default_args = ["-fa 1"]
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        let OpenResult { conn, .. } = open_in_memory().unwrap();
+
+        // First call migrates
+        let count1 = migrate_backend_config_from_toml(&conn, tmp.path()).unwrap();
+        assert_eq!(count1, 1);
+
+        // Second call is a no-op (backends cleared)
+        let count2 = migrate_backend_config_from_toml(&conn, tmp.path()).unwrap();
+        assert_eq!(count2, 0);
     }
 }

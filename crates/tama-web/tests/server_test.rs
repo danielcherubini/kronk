@@ -343,4 +343,153 @@ mod tests {
         // Keep temp_dir alive until all assertions are done so the files aren't removed early.
         drop(temp_dir);
     }
+
+    /// End-to-end test: POST default_args with gpu_variant saves to DB,
+    /// GET backends returns per-variant args.
+    #[tokio::test]
+    async fn test_backend_default_args_db_roundtrip() {
+        // Create temp dir for DB
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_dir = temp_dir.path().to_path_buf();
+        let config_path = config_dir.join("config.toml");
+
+        // Write minimal config
+        let initial_config = tama_core::config::Config {
+            loaded_from: Some(config_dir.clone()),
+            ..Default::default()
+        };
+        let toml_str = toml::to_string_pretty(&initial_config).unwrap();
+        std::fs::write(&config_path, &toml_str).unwrap();
+
+        // Initialize DB (runs migrations)
+        {
+            let _open_result = tama_core::db::open(&config_dir).unwrap();
+            // DB is ready
+        }
+
+        // Seed backend_configs with test data for llama_cpp:cpu
+        {
+            let open_result = tama_core::db::open(&config_dir).unwrap();
+            tama_core::db::queries::upsert_backend_config(
+                &open_result.conn,
+                "llama_cpp",
+                "cpu",
+                &["--threads".to_string(), "4".to_string()],
+                None,
+            )
+            .unwrap();
+            tama_core::db::queries::upsert_backend_config(
+                &open_result.conn,
+                "llama_cpp",
+                "vulkan",
+                &["--flash-attn".to_string()],
+                None,
+            )
+            .unwrap();
+        }
+
+        // Start server with config_path
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        {
+            let config_path_server = config_path.clone();
+            tokio::spawn(async move {
+                let state = Arc::new(tama_web::server::AppState {
+                    jobs: None,
+                    capabilities: None,
+                    proxy_base_url: "http://127.0.0.1:11434".to_string(),
+                    client: reqwest::Client::new(),
+                    logs_dir: None,
+                    config_path: Some(config_path_server),
+                    proxy_config: None,
+                    binary_version: "0.0.0-test".to_string(),
+                    update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                    upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
+                        std::collections::HashMap::new(),
+                    )),
+                    update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
+                    download_queue: None,
+                });
+                axum::serve(listener, tama_web::server::build_router(state))
+                    .await
+                    .unwrap();
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let client = reqwest::Client::new();
+        let csrf_token = get_csrf_token(&client, &format!("http://{}/", addr)).await;
+
+        // POST default_args for llama_cpp with gpu_variant=vulkan
+        let resp = client
+            .post(format!(
+                "http://{}/tama/v1/backends/llama_cpp/default-args?gpu_variant=vulkan",
+                addr
+            ))
+            .header("origin", "http://localhost:11435")
+            .header("cookie", format!("tama_csrf_token={csrf_token}"))
+            .header("x-csrf-token", &csrf_token)
+            .json(&serde_json::json!({
+                "default_args": ["--vulkan-devices", "0"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            200,
+            "POST default_args should return 200"
+        );
+
+        // Verify the DB was updated
+        {
+            let open_result = tama_core::db::open(&config_dir).unwrap();
+            let config = tama_core::db::queries::get_backend_config(
+                &open_result.conn,
+                "llama_cpp",
+                "vulkan",
+            )
+            .unwrap()
+            .expect("vulkan config should exist");
+            assert_eq!(
+                config.default_args,
+                vec!["--vulkan-devices".to_string(), "0".to_string()],
+                "vulkan default_args should be updated"
+            );
+
+            // cpu variant should be unchanged
+            let cpu_config =
+                tama_core::db::queries::get_backend_config(&open_result.conn, "llama_cpp", "cpu")
+                    .unwrap()
+                    .expect("cpu config should exist");
+            assert_eq!(
+                cpu_config.default_args,
+                vec!["--threads".to_string(), "4".to_string()],
+                "cpu default_args should be unchanged"
+            );
+        }
+
+        // POST without gpu_variant should fail (400 or 422)
+        let resp = client
+            .post(format!(
+                "http://{}/tama/v1/backends/llama_cpp/default-args",
+                addr
+            ))
+            .header("origin", "http://localhost:11435")
+            .header("cookie", format!("tama_csrf_token={csrf_token}"))
+            .header("x-csrf-token", &csrf_token)
+            .json(&serde_json::json!({
+                "default_args": ["--test"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        // Without gpu_variant, the query param deserialization fails (400 Bad Request)
+        assert!(
+            resp.status().is_client_error(),
+            "POST without gpu_variant should return client error, got {}",
+            resp.status()
+        );
+
+        drop(temp_dir);
+    }
 }
