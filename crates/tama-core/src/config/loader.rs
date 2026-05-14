@@ -1,5 +1,5 @@
 use super::migrate::rename_legacy_directories;
-use super::types::{BackendConfig, Config, General, ProxyConfig, Supervisor};
+use super::types::{Config, General, ProxyConfig, Supervisor};
 use crate::profiles::Profile;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -23,6 +23,8 @@ impl Config {
         // One-time auto-migration from the legacy kronk directory. This is
         // a no-op if the new directory already exists or if no legacy
         // directory is present.
+        // TODO(v1.60): Remove kronk→tama migration. By v1.60 all users will have
+        // migrated or started fresh. Remove this call and the rename_legacy module.
         if let Err(e) = super::rename_legacy::migrate_legacy_data_dir(&base) {
             tracing::warn!("Legacy data directory migration failed: {}", e);
         }
@@ -120,23 +122,7 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut backends = HashMap::new();
-        backends.insert(
-            "llama_cpp".to_string(),
-            BackendConfig {
-                path: None,
-                version: None,
-                gpu_variant: None,
-            },
-        );
-        backends.insert(
-            "ik_llama".to_string(),
-            BackendConfig {
-                path: None,
-                version: None,
-                gpu_variant: None,
-            },
-        );
+        let backends = HashMap::new();
 
         // Built-in sampling templates for all profiles
         let mut sampling_templates = HashMap::new();

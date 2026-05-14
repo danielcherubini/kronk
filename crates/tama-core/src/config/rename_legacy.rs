@@ -1,3 +1,7 @@
+// TODO(v1.60): Remove this entire module. See loader.rs migration call site.
+// Once removed, also remove the `rename_legacy` module declaration from config/mod.rs
+// and the migration call in Config::base_dir().
+
 //! One-time auto-migration from the legacy `kronk` data directory to the new
 //! `tama` data directory.
 //!
