@@ -14,10 +14,10 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 94
+- **Total Plans**: 95
 - **Completed**: 94 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 0
+- **In Progress**: 1 🚧
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -27,7 +27,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ### In Progress
 
-*(none)*
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
+| [Remove llama.cpp Hardcoded Defaults](2025-05-14-remove-llama-defaults.md) | Remove hardcoded llama_cpp and ik_llama backend entries from default config and template, making tama backend-agnostic from first boot | 🚧 IN PROGRESS |
 
 ### Recently Completed
 
