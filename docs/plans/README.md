@@ -15,8 +15,8 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 94
-- **Completed**: 93 ✅
-- **In Progress**: 1 🚧
+- **Completed**: 94 ✅
+- **In Progress**: 0 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -27,14 +27,13 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ### In Progress
 
-| Plan | Description | PR / Git References |
-|------|-------------|---------------------|
-| [Model Manager Centralization](2026-05-13-model-manager-centralization.md) | Centralize all model DB access into a single ModelManager struct, replacing 29+ scattered db::open() calls across web, CLI, and proxy | 🚧 IN PROGRESS |
+*(none)*
 
 ### Recently Completed
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [Model Manager Centralization](2026-05-13-model-manager-centralization.md) | Centralize all model DB access into a single ModelManager struct, replacing 29+ scattered db::open() calls across web, CLI, and proxy | #89 ✅ COMPLETED |
 | [Backend Manager Centralization](2026-05-13-backend-manager-centralization.md) | Centralize all backend data access into a single BackendManager struct, replacing scattered db::queries calls and absorbing BackendRegistry | `e6b163c` ✅ COMPLETED |
 | [Backend Config to Database](2026-05-13-backend-config-to-db.md) | Move backend config (default_args, health_check_url) from config.toml to SQLite backend_configs table, keyed by (name, gpu_variant) with unique DB id | #88 ✅ COMPLETED |
 | [Startup Detection & Orphan Cleanup](2026-05-03-startup-detection-and-orphan-cleanup.md) | Fix startup detection (2-consecutive health checks) and orphaned child process cleanup on startup failure | `17baa64` ✅ COMPLETED |
