@@ -315,19 +315,13 @@ mod tests {
 
         // File with wrong stored hash
         write_tmp(tmp.path(), "bad.gguf", b"hello");
-        mgr.upsert_file(
-            model_id,
-            repo,
-            "bad.gguf",
-            None,
-            Some("deadbeef"),
-            Some(5),
-        )
-        .unwrap();
+        mgr.upsert_file(model_id, repo, "bad.gguf", None, Some("deadbeef"), Some(5))
+            .unwrap();
 
         // File with no upstream hash
         write_tmp(tmp.path(), "unknown.gguf", b"hello");
-        mgr.upsert_file(model_id, repo, "unknown.gguf", None, None, Some(5)).unwrap();
+        mgr.upsert_file(model_id, repo, "unknown.gguf", None, None, Some(5))
+            .unwrap();
 
         let results = verify_model(&mgr, model_id, repo, tmp.path()).unwrap();
         assert_eq!(results.len(), 3);

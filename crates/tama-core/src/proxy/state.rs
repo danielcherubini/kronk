@@ -221,8 +221,11 @@ impl ProxyState {
     /// Open a ModelManager for model-related database operations.
     ///
     /// Returns `None` if `db_dir` is not configured (e.g., in tests).
-    /// Each call opens a fresh connection — `Connection` is `Send` but not `Sync`,
-    /// so we cannot share a single instance across threads.
+    ///
+    /// Each call opens a fresh `ModelManager` (and thus a fresh `rusqlite::Connection`).
+    /// This is deliberate: `Connection` is `Send` but not `Sync`, so we cannot
+    /// share a single instance across threads via `Arc`. For persistent reuse,
+    /// see `DownloadQueueService` which wraps `ModelManager` in `Mutex`.
     pub fn model_mgr(&self) -> Option<crate::models::ModelManager> {
         self.db_dir
             .as_ref()

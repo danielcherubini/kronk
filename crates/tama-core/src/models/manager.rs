@@ -343,11 +343,7 @@ impl ModelManager {
     /// `crate::models::update::refresh_metadata`.
     ///
     /// Note: this method is `!Send` because `Connection: !Send`.
-    pub async fn refresh_metadata(
-        &self,
-        models_dir: &Path,
-        repo_id: &str,
-    ) -> Result<()> {
+    pub async fn refresh_metadata(&self, models_dir: &Path, repo_id: &str) -> Result<()> {
         crate::models::update::refresh_metadata(&self.conn, models_dir, repo_id).await
     }
 }

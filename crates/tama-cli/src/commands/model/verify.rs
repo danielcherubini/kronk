@@ -481,7 +481,7 @@ mod tests {
         let mgr = tama_core::models::ModelManager::open_in_memory().unwrap();
         let mc = tama_core::config::ModelConfig::default();
         let config_key = "empty--repo".to_string();
-        let model_id = mgr.save_model_config( &config_key, &mc).unwrap();
+        let model_id = mgr.save_model_config(&config_key, &mc).unwrap();
 
         let result = verify_files(&mgr, model_id, std::path::Path::new("")).unwrap();
         assert_eq!(result.total_files, 0);
@@ -502,8 +502,8 @@ mod tests {
         // Override: only keep the good file in DB
         {
             use tama_core::db::queries::delete_model_file;
-            mgr.delete_file( model_id, "bad.gguf").ok();
-            mgr.delete_file( model_id, "unknown.gguf").ok();
+            mgr.delete_file(model_id, "bad.gguf").ok();
+            mgr.delete_file(model_id, "unknown.gguf").ok();
         }
 
         let result = verify_files(&mgr, model_id, tmp.path()).unwrap();
@@ -525,7 +525,7 @@ mod tests {
         // Override: remove the good file from DB — leaves bad (fail) + unknown (unverifiable)
         {
             use tama_core::db::queries::delete_model_file;
-            mgr.delete_file( model_id, "good.gguf").ok();
+            mgr.delete_file(model_id, "good.gguf").ok();
         }
 
         let result = verify_files(&mgr, model_id, tmp.path()).unwrap();
@@ -544,11 +544,10 @@ mod tests {
         // Create a model with a file tracked in DB but missing on disk
         let mc = tama_core::config::ModelConfig::default();
         let config_key = "test--missing".to_string();
-        let model_id = mgr.save_model_config( &config_key, &mc).unwrap();
+        let model_id = mgr.save_model_config(&config_key, &mc).unwrap();
 
         let expected_hash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
         mgr.upsert_file(
-            
             model_id,
             "test/missing",
             "missing.gguf",
@@ -619,15 +618,8 @@ mod tests {
             let mut f = std::fs::File::create(&path).unwrap();
             f.write_all(b"hello").unwrap();
             drop(f);
-            mgr.upsert_file(
-                model_id,
-                repo_id,
-                "unknown.gguf",
-                None,
-                None,
-                Some(5),
-            )
-            .unwrap();
+            mgr.upsert_file(model_id, repo_id, "unknown.gguf", None, None, Some(5))
+                .unwrap();
         }
 
         (model_id, repo_id.to_string())
