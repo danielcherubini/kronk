@@ -13,6 +13,9 @@ pub use pull::infer_quant_from_filename;
 pub use registry::{InstalledModel, ModelRegistry};
 pub use search::{search_models, SearchResult, SortBy};
 
+#[cfg(test)]
+mod manager_tests;
+
 /// Append a HuggingFace `repo_id` (e.g. `"org/repo-name"`) to a base path using
 /// the platform-native separator.
 ///
