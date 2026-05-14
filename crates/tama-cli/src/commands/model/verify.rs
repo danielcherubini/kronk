@@ -501,7 +501,6 @@ mod tests {
 
         // Override: only keep the good file in DB
         {
-            use tama_core::db::queries::delete_model_file;
             mgr.delete_file(model_id, "bad.gguf").ok();
             mgr.delete_file(model_id, "unknown.gguf").ok();
         }
@@ -524,7 +523,6 @@ mod tests {
 
         // Override: remove the good file from DB — leaves bad (fail) + unknown (unverifiable)
         {
-            use tama_core::db::queries::delete_model_file;
             mgr.delete_file(model_id, "good.gguf").ok();
         }
 

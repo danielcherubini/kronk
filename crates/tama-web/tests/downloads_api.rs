@@ -283,7 +283,7 @@ async fn test_cancel_download_succeeds_for_queued_item() {
     let state = create_test_state();
     seed_test_data(&state);
 
-    let svc = state.download_queue.as_ref().unwrap();
+    let _svc = state.download_queue.as_ref().unwrap();
 
     let app = build_download_router(state);
 
