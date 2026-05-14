@@ -83,10 +83,10 @@ impl ProxyState {
         let mut models_obj = serde_json::Map::new();
 
         for (model_name, model_config) in model_configs.iter() {
-            let backend_path = match config.backends.get(&model_config.backend) {
-                Some(b) => b.path.clone(),
-                None => continue,
-            };
+            let backend_path = config
+                .backends
+                .get(&model_config.backend)
+                .and_then(|b| b.path.clone());
 
             let model_state = models.get(model_name);
 

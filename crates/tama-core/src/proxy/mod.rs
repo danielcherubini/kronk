@@ -465,6 +465,51 @@ mod tests {
     /// Test that the config_write_semaphore allows controlled concurrency.
     /// With capacity=4, up to 4 concurrent acquisitions should succeed immediately,
     /// while a 5th task must wait or return None with try_acquire.
+    /// When backends are not configured in TOML, models should still appear
+    /// in the status response with `backend_path: null` rather than being
+    /// silently skipped.
+    #[tokio::test]
+    async fn test_build_status_response_backend_path_null() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Explicitly ensure backends are empty
+        {
+            let mut cfg = state.config.write().await;
+            cfg.backends.clear();
+        }
+
+        // Add a model with backend "llama_cpp" (not in config)
+        {
+            let mut model_configs = state.model_configs.write().await;
+            model_configs.insert(
+                "test-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    model: Some("test/model".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let response = state.build_status_response().await;
+
+        // The model should appear in the response even though backend is missing
+        let models = response.get("models").unwrap().as_object().unwrap();
+        assert!(
+            models.contains_key("test-model"),
+            "model should appear in status even when backend is not in TOML"
+        );
+
+        let model = &models["test-model"];
+        // backend_path should be null, not cause the model to be skipped
+        assert!(
+            model.get("backend_path").unwrap().is_null(),
+            "backend_path should be null when backend is not configured"
+        );
+    }
+
     #[tokio::test]
     async fn test_config_write_semaphore_allows_concurrent_acquisitions() {
         use std::time::Duration;
