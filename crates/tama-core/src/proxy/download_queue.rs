@@ -3,22 +3,15 @@
 //! Provides a `DownloadQueueService` that wraps the database query functions
 //! and emits `DownloadEvent`s via a broadcast channel for each state transition.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use tokio::sync::broadcast;
 
-use crate::db::OpenResult;
+use crate::models::ModelManager;
 
-// Re-export query types for use in tests and the service.
-// These are re-exported via `crate::db::queries::*`.
-use crate::db::queries::{
-    cancel_queue_item, count_history_items, get_active_items, get_history_items,
-    get_item_by_job_id, get_queued_item, insert_queue_item, mark_stale_running_as_queued,
-    try_mark_running as db_try_mark_running, update_progress_only, update_queue_status,
-    DownloadQueueItem,
-};
+// Re-export query type for use in tests.
+use crate::db::queries::DownloadQueueItem;
 
 /// Events emitted by the download queue service during lifecycle transitions.
 #[derive(Debug, Clone)]
@@ -62,7 +55,7 @@ pub enum DownloadEvent {
 
 /// Service that manages the download queue lifecycle.
 pub struct DownloadQueueService {
-    db_dir: Option<PathBuf>,
+    model_mgr: std::sync::Mutex<ModelManager>,
     events_tx: broadcast::Sender<DownloadEvent>,
     poll_interval_secs: u64,
 }
@@ -73,23 +66,13 @@ impl DownloadQueueService {
     /// Capacity is set to 256 to accommodate rapid progress updates during
     /// large downloads without dropping events. The SSE endpoint handles
     /// dropped events via the `Lagged` marker event.
-    pub fn new(db_dir: Option<PathBuf>, poll_interval_secs: u64) -> Self {
+    pub fn new(model_mgr: ModelManager, poll_interval_secs: u64) -> Self {
         let events_tx = broadcast::channel(256).0;
         Self {
-            db_dir,
+            model_mgr: std::sync::Mutex::new(model_mgr),
             events_tx,
             poll_interval_secs,
         }
-    }
-
-    /// Open a database connection using the configured db_dir.
-    pub fn open_conn(&self) -> Result<rusqlite::Connection> {
-        let dir = self
-            .db_dir
-            .as_ref()
-            .ok_or_else(|| anyhow!("Database directory not configured"))?;
-        let OpenResult { conn, .. } = crate::db::open(dir)?;
-        Ok(conn)
     }
 
     /// Enqueue a new download item.
@@ -107,9 +90,7 @@ impl DownloadQueueService {
         quant: Option<&str>,
         context_length: Option<u32>,
     ) -> Result<()> {
-        let conn = self.open_conn()?;
-        insert_queue_item(
-            &conn,
+        self.model_mgr.lock().unwrap().queue_insert(
             job_id,
             repo_id,
             filename,
@@ -130,8 +111,7 @@ impl DownloadQueueService {
     ///
     /// Opens a DB connection and returns the next item, or `None` if empty.
     pub fn dequeue(&self) -> Result<Option<DownloadQueueItem>> {
-        let conn = self.open_conn()?;
-        get_queued_item(&conn)
+        self.model_mgr.lock().unwrap().queue_get_queued()
     }
 
     /// Update a queue item's status and emit the corresponding event.
@@ -147,12 +127,14 @@ impl DownloadQueueService {
         error_message: Option<&str>,
         duration_ms: Option<u64>,
     ) -> Result<()> {
-        let conn = self.open_conn()?;
-        let item = get_item_by_job_id(&conn, job_id)?
+        let item = self
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id(job_id)?
             .ok_or_else(|| anyhow!("Job '{}' not found", job_id))?;
 
-        update_queue_status(
-            &conn,
+        self.model_mgr.lock().unwrap().queue_update_status(
             job_id,
             new_status,
             bytes_downloaded,
@@ -206,8 +188,13 @@ impl DownloadQueueService {
         bytes_downloaded: i64,
         total_bytes: Option<i64>,
     ) -> Result<()> {
-        let conn = self.open_conn()?;
-        update_progress_only(&conn, job_id, bytes_downloaded, total_bytes)?;
+        self.model_mgr.lock().unwrap().queue_update_status(
+            job_id,
+            "progress",
+            bytes_downloaded,
+            total_bytes,
+            None,
+        )?;
 
         let _ = self.events_tx.send(DownloadEvent::Progress {
             job_id: job_id.to_string(),
@@ -221,10 +208,12 @@ impl DownloadQueueService {
     ///
     /// Opens a DB connection, cancels the item, and emits `DownloadEvent::Cancelled`.
     pub fn cancel(&self, job_id: &str) -> Result<()> {
-        let conn = self.open_conn()?;
-
         // Check if the item exists and is in a non-terminal state
-        let item = get_item_by_job_id(&conn, job_id)?
+        let item = self
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id(job_id)?
             .ok_or_else(|| anyhow!("Job '{}' not found", job_id))?;
 
         if matches!(item.status.as_str(), "completed" | "failed" | "cancelled") {
@@ -235,7 +224,7 @@ impl DownloadQueueService {
             ));
         }
 
-        cancel_queue_item(&conn, job_id)?;
+        self.model_mgr.lock().unwrap().queue_cancel(job_id)?;
 
         let _ = self.events_tx.send(DownloadEvent::Cancelled {
             job_id: job_id.to_string(),
@@ -246,20 +235,24 @@ impl DownloadQueueService {
 
     /// Get all active items (queued + running + verifying), ordered by status priority.
     pub fn get_active_items(&self) -> Result<Vec<DownloadQueueItem>> {
-        let conn = self.open_conn()?;
-        get_active_items(&conn)
+        self.model_mgr.lock().unwrap().queue_get_active()
     }
 
     /// Get history items (completed, failed, cancelled), sorted newest first.
     pub fn get_history_items(&self, limit: i64, offset: i64) -> Result<Vec<DownloadQueueItem>> {
-        let conn = self.open_conn()?;
-        get_history_items(&conn, limit, offset)
+        self.model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_history(limit, offset)
     }
 
     /// Count total history items (completed, failed, cancelled).
     pub fn count_history_items(&self) -> Result<i64> {
-        let conn = self.open_conn()?;
-        count_history_items(&conn)
+        self.model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_history(i64::MAX, 0)
+            .map(|items| items.len() as i64)
     }
 
     /// Subscribe to download events via a broadcast channel receiver.
@@ -272,8 +265,15 @@ impl DownloadQueueService {
     /// Clears started_at so the download restarts fresh (hf-hub resumes if the
     /// partial file exists on disk, otherwise it downloads from scratch).
     pub fn on_startup_recovery(&self) -> Result<()> {
-        let conn = self.open_conn()?;
-        mark_stale_running_as_queued(&conn)?;
+        // Mark stale running items as queued by updating their status.
+        // ModelManager doesn't have a dedicated method for this, so we use the
+        // raw connection for the SQL update.
+        self.model_mgr.lock().unwrap().conn().execute(
+            "UPDATE download_queue SET status = 'queued', started_at = NULL, completed_at = NULL
+             WHERE status = 'running' AND (started_at IS NULL OR
+               (strftime('%s', 'now') - strftime('%s', started_at)) > 3600)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -282,8 +282,12 @@ impl DownloadQueueService {
     /// Returns `true` if the item was claimed (was queued, now running),
     /// `false` if it was already started by someone else.
     pub fn try_mark_running(&self, job_id: &str) -> Result<bool> {
-        let conn = self.open_conn()?;
-        db_try_mark_running(&conn, job_id)
+        let rows = self.model_mgr.lock().unwrap().conn().execute(
+            "UPDATE download_queue SET status = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE job_id = ?1 AND status = 'queued'",
+            [job_id],
+        )?;
+        Ok(rows > 0)
     }
 }
 
@@ -298,12 +302,7 @@ async fn start_download_from_queue(
     job_id: String,
 ) {
     // Read the queue item from DB to get details
-    let conn = match svc.open_conn() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let item = match get_item_by_job_id(&conn, &job_id) {
+    let item = match svc.model_mgr.lock().unwrap().queue_get_by_job_id(&job_id) {
         Ok(Some(item)) => item,
         _ => return,
     };
@@ -364,14 +363,12 @@ pub(crate) async fn queue_processor_loop(state: Arc<super::ProxyState>) {
             // Check the actual DB status directly — pull_jobs may not have
             // registered yet (race condition after spawn) or may have cleaned up
             // (task finished). The DB is the source of truth.
-            let conn = match svc.open_conn() {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!(error=%e, "Failed to open conn for status check");
-                    continue;
-                }
-            };
-            let current = match get_item_by_job_id(&conn, &item.job_id) {
+            let current = match svc
+                .model_mgr
+                .lock()
+                .unwrap()
+                .queue_get_by_job_id(&item.job_id)
+            {
                 Ok(Some(row)) => row,
                 Ok(None) => {
                     // Item was deleted, nothing to do
@@ -474,12 +471,9 @@ mod tests {
     use std::time::Instant;
 
     fn setup_service() -> DownloadQueueService {
-        // We need a temp directory for the service to work (open_conn uses db_dir)
-        let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
-        // Open and initialize the DB once
-        let _ = svc.open_conn().unwrap();
-        svc
+        // Use in-memory DB for tests
+        let mgr = ModelManager::open_in_memory().unwrap();
+        DownloadQueueService::new(mgr, 2)
     }
 
     #[test]
@@ -584,9 +578,8 @@ mod tests {
     /// with the correct fields including quant and context_length.
     #[test]
     fn test_enqueue_download_creates_queue_row() {
-        let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
-        let _ = svc.open_conn().unwrap();
+        let mgr = ModelManager::open_in_memory().unwrap();
+        let svc = DownloadQueueService::new(mgr, 2);
 
         // Subscribe before enqueue so we can receive the event
         let mut rx = svc.subscribe_events();
@@ -602,9 +595,12 @@ mod tests {
         )
         .unwrap();
 
-        // Verify the row exists in the DB
-        let conn = svc.open_conn().unwrap();
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-001")
+        // Verify the row exists in the DB via model_mgr
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-001")
             .unwrap()
             .expect("row should exist");
 
@@ -632,9 +628,8 @@ mod tests {
     /// Integration test: verify full lifecycle status transitions through the DB.
     #[test]
     fn test_status_transitions_through_lifecycle() {
-        let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
-        let _ = svc.open_conn().unwrap();
+        let mgr = ModelManager::open_in_memory().unwrap();
+        let svc = DownloadQueueService::new(mgr, 2);
 
         // Subscribe before enqueue so we can receive events
         let mut rx = svc.subscribe_events();
@@ -651,8 +646,11 @@ mod tests {
         )
         .unwrap();
 
-        let conn = svc.open_conn().unwrap();
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-002")
             .unwrap()
             .expect("row should exist");
         assert_eq!(item.status, "queued");
@@ -661,7 +659,11 @@ mod tests {
         svc.update_status("pull-test-002", "running", 0, None, None, None)
             .unwrap();
 
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-002")
             .unwrap()
             .expect("row should exist");
         assert_eq!(item.status, "running");
@@ -671,7 +673,11 @@ mod tests {
         svc.update_status("pull-test-002", "verifying", 1000, Some(2000), None, None)
             .unwrap();
 
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-002")
             .unwrap()
             .expect("row should exist");
         assert_eq!(item.status, "verifying");
@@ -691,7 +697,11 @@ mod tests {
         )
         .unwrap();
 
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-002")
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-002")
             .unwrap()
             .expect("row should exist");
         assert_eq!(item.status, "completed");
@@ -730,9 +740,8 @@ mod tests {
     /// and not derived from string subtraction of timestamps.
     #[test]
     fn test_duration_ms_computed_via_instant() {
-        let tmp = tempfile::tempdir().unwrap();
-        let svc = DownloadQueueService::new(Some(tmp.path().to_path_buf()), 2);
-        let _ = svc.open_conn().unwrap();
+        let mgr = ModelManager::open_in_memory().unwrap();
+        let svc = DownloadQueueService::new(mgr, 2);
 
         // Subscribe before enqueue so we can receive events
         let mut rx = svc.subscribe_events();
@@ -790,8 +799,11 @@ mod tests {
 
         // Verify the DB row has completed_at set (timestamp-based), but
         // duration_ms was computed in Rust via Instant::elapsed()
-        let conn = svc.open_conn().unwrap();
-        let item = crate::db::queries::get_item_by_job_id(&conn, "pull-test-003")
+        let item = svc
+            .model_mgr
+            .lock()
+            .unwrap()
+            .queue_get_by_job_id("pull-test-003")
             .unwrap()
             .expect("row should exist");
         assert_eq!(item.status, "completed");

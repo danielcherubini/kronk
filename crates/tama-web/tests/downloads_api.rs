@@ -17,8 +17,8 @@ fn create_test_state() -> Arc<AppState> {
     let db_dir = tmp.path().to_path_buf();
 
     // Initialize the database
-    let svc = DownloadQueueService::new(Some(db_dir), 2);
-    let _ = svc.open_conn().unwrap();
+    let mgr = tama_core::models::ModelManager::open(&db_dir).unwrap();
+    let svc = DownloadQueueService::new(mgr, 2);
 
     Arc::new(AppState {
         proxy_base_url: "http://localhost:8080".to_string(),
@@ -283,8 +283,7 @@ async fn test_cancel_download_succeeds_for_queued_item() {
     let state = create_test_state();
     seed_test_data(&state);
 
-    let svc = state.download_queue.as_ref().unwrap();
-    let _ = svc.open_conn().unwrap();
+    let _svc = state.download_queue.as_ref().unwrap();
 
     let app = build_download_router(state);
 

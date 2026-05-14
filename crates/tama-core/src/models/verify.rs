@@ -19,10 +19,9 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
-use crate::db::queries::{get_model_files, update_verification, ModelFileRecord};
+use crate::db::queries::ModelFileRecord;
 
 /// Chunk size for streaming reads during hashing.
 /// 8 MiB trades off syscall overhead vs. progress-update granularity.
@@ -144,17 +143,17 @@ pub fn verify_one(filename: &str, path: &Path, expected_lfs_oid: Option<&str>) -
 /// Blocking (DB + hashing). Wrap in `spawn_blocking` from async callers.
 /// Runs files **sequentially** to keep disk I/O predictable on HDDs.
 pub fn verify_model(
-    conn: &Connection,
+    mgr: &crate::models::ModelManager,
     model_id: i64,
     _repo_id: &str,
     model_dir: &Path,
 ) -> Result<Vec<FileVerification>> {
-    let records = get_model_files(conn, model_id)?;
+    let records = mgr.get_files(model_id)?;
     let mut results = Vec::with_capacity(records.len());
 
     for rec in records {
         let result = verify_record(&rec, model_dir);
-        write_verification(conn, model_id, &result)?;
+        write_verification(mgr, model_id, &result)?;
         results.push(result);
     }
 
@@ -169,12 +168,11 @@ pub fn verify_record(rec: &ModelFileRecord, model_dir: &Path) -> FileVerificatio
 
 /// Persist a verification result into the `model_files` verification columns.
 pub fn write_verification(
-    conn: &Connection,
+    mgr: &crate::models::ModelManager,
     model_id: i64,
     result: &FileVerification,
 ) -> Result<()> {
-    update_verification(
-        conn,
+    mgr.update_verification(
         model_id,
         &result.filename,
         result.ok,
@@ -205,8 +203,6 @@ fn short(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::upsert_model_file;
-    use crate::db::{open_in_memory, OpenResult};
     use std::io::Write;
 
     /// SHA-256 of the ASCII string "hello" — verified against a reference
@@ -292,7 +288,7 @@ mod tests {
     /// the DB, and returns one `FileVerification` per tracked file.
     #[test]
     fn test_verify_model_writes_results_to_db() {
-        let OpenResult { conn, .. } = open_in_memory().unwrap();
+        let mgr = crate::models::ModelManager::open_in_memory().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let repo = "test/repo";
 
@@ -302,12 +298,11 @@ mod tests {
             ..Default::default()
         };
         let config_key = repo.to_lowercase().replace('/', "--");
-        let model_id = crate::db::save_model_config(&conn, &config_key, &mc).unwrap();
+        let model_id = mgr.save_model_config(&config_key, &mc).unwrap();
 
         // File with correct hash
         write_tmp(tmp.path(), "good.gguf", b"hello");
-        upsert_model_file(
-            &conn,
+        mgr.upsert_file(
             model_id,
             repo,
             "good.gguf",
@@ -319,26 +314,19 @@ mod tests {
 
         // File with wrong stored hash
         write_tmp(tmp.path(), "bad.gguf", b"hello");
-        upsert_model_file(
-            &conn,
-            model_id,
-            repo,
-            "bad.gguf",
-            None,
-            Some("deadbeef"),
-            Some(5),
-        )
-        .unwrap();
+        mgr.upsert_file(model_id, repo, "bad.gguf", None, Some("deadbeef"), Some(5))
+            .unwrap();
 
         // File with no upstream hash
         write_tmp(tmp.path(), "unknown.gguf", b"hello");
-        upsert_model_file(&conn, model_id, repo, "unknown.gguf", None, None, Some(5)).unwrap();
+        mgr.upsert_file(model_id, repo, "unknown.gguf", None, None, Some(5))
+            .unwrap();
 
-        let results = verify_model(&conn, model_id, repo, tmp.path()).unwrap();
+        let results = verify_model(&mgr, model_id, repo, tmp.path()).unwrap();
         assert_eq!(results.len(), 3);
 
         // Re-read from DB and assert the verification columns were written.
-        let files = get_model_files(&conn, model_id).unwrap();
+        let files = mgr.get_files(model_id).unwrap();
         let good = files.iter().find(|f| f.filename == "good.gguf").unwrap();
         assert_eq!(good.verified_ok, Some(true));
         assert!(good.last_verified_at.is_some());

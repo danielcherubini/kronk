@@ -26,7 +26,7 @@ fn build_backend_options(
 /// Accepts either an integer id or a config_key (double-dash format).
 pub(crate) fn resolve_model_id(
     id_str: &str,
-    conn: &rusqlite::Connection,
+    mgr: &tama_core::models::ModelManager,
 ) -> anyhow::Result<Option<i64>> {
     // Try parsing as integer id first
     if let Ok(id) = id_str.parse::<i64>() {
@@ -34,7 +34,7 @@ pub(crate) fn resolve_model_id(
     }
     // Otherwise treat as config_key (double-dash format) → convert to repo_id and look up
     let repo_id = tama_core::db::config_key_to_repo_id(id_str);
-    let record = tama_core::db::queries::get_model_config_by_repo_id(conn, &repo_id)?;
+    let record = mgr.get_config_by_repo_id(&repo_id)?;
     Ok(record.map(|r| r.id))
 }
 
@@ -51,16 +51,13 @@ struct RepoDbMeta {
 }
 
 /// Load per-repo DB metadata for a model by its integer id.
-fn load_repo_db_meta(config_dir: &std::path::Path, model_id: i64) -> RepoDbMeta {
-    let Ok(open) = tama_core::db::open(config_dir) else {
-        return RepoDbMeta::default();
-    };
+fn load_repo_db_meta(mgr: &tama_core::models::ModelManager, model_id: i64) -> RepoDbMeta {
     let mut meta = RepoDbMeta::default();
-    if let Ok(Some(pull)) = tama_core::db::queries::get_model_pull(&open.conn, model_id) {
+    if let Ok(Some(pull)) = mgr.get_pull(model_id) {
         meta.commit_sha = Some(pull.commit_sha);
         meta.pulled_at = Some(pull.pulled_at);
     }
-    if let Ok(files) = tama_core::db::queries::get_model_files(&open.conn, model_id) {
+    if let Ok(files) = mgr.get_files(model_id) {
         for f in files {
             meta.files.insert(f.filename.clone(), f);
         }
@@ -144,15 +141,14 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
             let backend_options = build_backend_options(&cfg, &config_dir);
 
             // Load models from DB — get records with integer ids
-            let models = match tama_core::db::open(&config_dir) {
-                Ok(open) => {
-                    let records = tama_core::db::queries::get_all_model_configs(&open.conn)
-                        .unwrap_or_default();
+            let models = match tama_core::models::ModelManager::open(&config_dir) {
+                Ok(mgr) => {
+                    let records = mgr.get_all_configs().unwrap_or_default();
                     records
                         .iter()
                         .map(|record| {
                             let m = tama_core::config::ModelConfig::from_db_record(record);
-                            let meta = load_repo_db_meta(&config_dir, record.id);
+                            let meta = load_repo_db_meta(&mgr, record.id);
                             // Populate quants from model_files
                             let mut config = m.clone();
                             for f in meta.files.values() {
@@ -207,8 +203,8 @@ pub async fn get_model(
             let backend_options = build_backend_options(&cfg, &config_dir);
 
             // Resolve id (integer or config_key) to model_id
-            let open = match tama_core::db::open(&config_dir) {
-                Ok(o) => o,
+            let mgr = match tama_core::models::ModelManager::open(&config_dir) {
+                Ok(m) => m,
                 Err(_) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -217,7 +213,7 @@ pub async fn get_model(
                         .into_response();
                 }
             };
-            let model_id = match resolve_model_id(&id_str, &open.conn) {
+            let model_id = match resolve_model_id(&id_str, &mgr) {
                 Ok(Some(id)) => id,
                 Ok(None) => {
                     return (
@@ -236,15 +232,13 @@ pub async fn get_model(
             };
 
             // Load model from DB
-            let model_opt = tama_core::db::queries::get_model_config(&open.conn, model_id)
-                .ok()
-                .flatten();
+            let model_opt = mgr.get_config(model_id).ok().flatten();
 
             match model_opt {
                 Some(record) => {
                     let m = tama_core::config::ModelConfig::from_db_record(&record);
                     let mut config = m.clone();
-                    let meta = load_repo_db_meta(&config_dir, record.id);
+                    let meta = load_repo_db_meta(&mgr, record.id);
                     // Populate quants from model_files
                     for f in meta.files.values() {
                         let quant_key = f.quant.clone().unwrap_or_else(|| f.filename.clone());

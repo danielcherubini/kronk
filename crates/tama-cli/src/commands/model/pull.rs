@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
 use tama_core::models::pull;
-use tama_core::models::{ModelCard, ModelMeta, QuantInfo};
+use tama_core::models::{ModelCard, ModelManager, ModelMeta, QuantInfo};
 
 pub(super) async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     println!("Pulling model...");
@@ -232,18 +231,15 @@ pub(super) async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
     // Record all pull metadata in DB (sync, single connection, after all async work)
     let db_record_result: anyhow::Result<()> = (|| {
         let db_dir = tama_core::config::Config::config_dir()?;
-        let OpenResult {
-            conn,
-            needs_backfill: _,
-        } = tama_core::db::open(&db_dir)?;
+        let mgr = ModelManager::open(&db_dir)?;
 
         // Look up model_id before DB writes
-        let model_id = match tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)? {
+        let model_id = match mgr.get_config_by_repo_id(repo_id)? {
             Some(r) => r.id,
             None => anyhow::bail!("Model not found in DB: {}", repo_id),
         };
 
-        tama_core::db::queries::upsert_model_pull(&conn, model_id, repo_id, &listing.commit_sha)?;
+        mgr.upsert_pull(model_id, repo_id, &listing.commit_sha)?;
 
         let now = super::utils::manual_timestamp();
         for df in &downloaded_files {
@@ -257,8 +253,7 @@ pub(super) async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
                 .and_then(|b| b.size)
                 .unwrap_or(df.size_bytes as i64);
 
-            tama_core::db::queries::upsert_model_file(
-                &conn,
+            mgr.upsert_file(
                 model_id,
                 repo_id,
                 &df.filename,
@@ -269,19 +264,16 @@ pub(super) async fn cmd_pull(config: &Config, repo_id: &str) -> Result<()> {
             // started_at / completed_at are best-effort approximations: individual
             // download timings are not tracked at this level; both fields receive
             // the same timestamp captured before writing to DB.
-            tama_core::db::queries::log_download(
-                &conn,
-                &tama_core::db::queries::DownloadLogEntry {
-                    repo_id: repo_id.to_string(),
-                    filename: df.filename.clone(),
-                    started_at: now.clone(),
-                    completed_at: Some(now.clone()),
-                    size_bytes: Some(df.size_bytes as i64),
-                    duration_ms: None,
-                    success: true,
-                    error_message: None,
-                },
-            )?;
+            mgr.log_download(&tama_core::db::queries::DownloadLogEntry {
+                repo_id: repo_id.to_string(),
+                filename: df.filename.clone(),
+                started_at: now.clone(),
+                completed_at: Some(now.clone()),
+                size_bytes: Some(df.size_bytes as i64),
+                duration_ms: None,
+                success: true,
+                error_message: None,
+            })?;
         }
         Ok(())
     })();
@@ -318,7 +310,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to determine config directory: {e}"))?,
     };
 
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
     let mut added_files = 0;
     let mut removed_files = 0;
@@ -328,7 +320,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
     fn walk_and_reconcile(
         dir: &std::path::Path,
         base_dir: &std::path::Path,
-        conn: &tama_core::db::Connection,
+        mgr: &ModelManager,
         _added: &mut usize,
     ) -> anyhow::Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -336,7 +328,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
             let path = entry.path();
 
             if path.is_dir() {
-                walk_and_reconcile(&path, base_dir, conn, _added)?;
+                walk_and_reconcile(&path, base_dir, mgr, _added)?;
             } else if path.extension().is_some_and(|e| e == "gguf") {
                 let relative_path = path.strip_prefix(base_dir)?;
                 if let Some(repo_id_path) = relative_path.parent() {
@@ -347,9 +339,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                     let filename = path.file_name().unwrap().to_string_lossy().to_string();
 
                     // Get or create model_id
-                    let model_id = match tama_core::db::queries::get_model_config_by_repo_id(
-                        conn, &repo_id,
-                    )? {
+                    let model_id = match mgr.get_config_by_repo_id(&repo_id)? {
                         Some(r) => r.id,
                         None => {
                             let record = tama_core::db::queries::ModelConfigRecord {
@@ -386,18 +376,14 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                                 created_at: super::utils::manual_timestamp(),
                                 updated_at: super::utils::manual_timestamp(),
                             };
-                            tama_core::db::queries::upsert_model_config(conn, &record)?;
-                            tama_core::db::queries::get_model_config_by_repo_id(conn, &repo_id)?
-                                .unwrap()
-                                .id
+                            mgr.upsert_config(&record)?;
+                            mgr.get_config_by_repo_id(&repo_id)?.unwrap().id
                         }
                     };
 
-                    let files = tama_core::db::queries::get_model_files(conn, model_id)?;
+                    let files = mgr.get_files(model_id)?;
                     if !files.iter().any(|f| f.filename == filename) {
-                        tama_core::db::queries::upsert_model_file(
-                            conn, model_id, &repo_id, &filename, None, None, None,
-                        )?;
+                        mgr.upsert_file(model_id, &repo_id, &filename, None, None, None)?;
                     }
                 }
             }
@@ -405,24 +391,24 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
         Ok(())
     }
 
-    walk_and_reconcile(&models_dir, &models_dir, &conn, &mut added_files)?;
+    walk_and_reconcile(&models_dir, &models_dir, &mgr, &mut added_files)?;
 
     // 2. Remove files from DB that are missing on disk
-    let all_files = tama_core::db::queries::get_all_model_files(&conn)?;
+    let all_files = mgr.get_all_files()?;
     let mut repos_to_check = std::collections::HashSet::new();
     for file in all_files {
         let repo_id = file.repo_id;
         let filename = file.filename;
         let path = tama_core::models::repo_path(&models_dir, &repo_id).join(&filename);
         if !path.exists() {
-            tama_core::db::queries::delete_model_file(&conn, file.model_id, &filename)?;
+            mgr.delete_file(file.model_id, &filename)?;
             removed_files += 1;
             repos_to_check.insert(repo_id);
         }
     }
 
     // 3. Remove configs whose directory doesn't exist or is empty
-    let all_configs = tama_core::db::queries::get_all_model_configs(&conn)?;
+    let all_configs = mgr.get_all_configs()?;
     for config in all_configs {
         let repo_id = config.repo_id;
         let model_dir = tama_core::models::repo_path(&models_dir, &repo_id);
@@ -432,7 +418,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                 .map(|mut d| d.next().is_none())
                 .unwrap_or(true)
         {
-            tama_core::db::queries::delete_model_config(&conn, config.id)?;
+            mgr.delete_config(config.id)?;
             removed_configs += 1;
         }
     }

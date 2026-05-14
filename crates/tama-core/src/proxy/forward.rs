@@ -214,8 +214,8 @@ pub async fn forward_request(
             );
             let mut models = state.models.write().await;
             models.remove(server_name);
-            if let Some(conn) = state.open_db() {
-                let _ = crate::db::queries::remove_active_model(&conn, server_name);
+            if let Some(mgr) = state.model_mgr() {
+                let _ = mgr.remove_active(server_name);
             }
             return (
                 StatusCode::BAD_GATEWAY,
@@ -499,8 +499,8 @@ pub async fn forward_request(
                 let mut models = state.models.write().await;
                 models.remove(server_name);
                 // Best-effort DB cleanup
-                if let Some(conn) = state.open_db() {
-                    let _ = crate::db::queries::remove_active_model(&conn, server_name);
+                if let Some(mgr) = state.model_mgr() {
+                    let _ = mgr.remove_active(server_name);
                 }
             } else {
                 // Process is alive — this is a transient error (timeout, busy, etc.)

@@ -1,5 +1,6 @@
 pub mod card;
 pub mod download;
+pub mod manager;
 pub mod pull;
 pub mod registry;
 pub mod search;
@@ -7,6 +8,7 @@ pub mod update;
 pub mod verify;
 
 pub use card::{ModelCard, ModelMeta, QuantInfo};
+pub use manager::ModelManager;
 pub use pull::infer_quant_from_filename;
 pub use registry::{InstalledModel, ModelRegistry};
 pub use search::{search_models, SearchResult, SortBy};

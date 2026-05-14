@@ -30,13 +30,13 @@ pub async fn update_model(
         let (_cfg, config_dir) = load_config_from_state(&state)?;
 
         // Load existing from DB
-        let open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let model_id = resolve_model_id(&id_str, &open.conn)
+        let model_id = resolve_model_id(&id_str, &mgr)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -49,7 +49,8 @@ pub async fn update_model(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let existing_record = tama_core::db::queries::get_model_config(&open.conn, model_id)
+        let existing_record = mgr
+            .get_config(model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -68,15 +69,14 @@ pub async fn update_model(
 
         // Save to DB (save_model_config converts config_key to repo_id internally)
         let config_key = existing_record.repo_id.to_lowercase().replace('/', "--");
-        let new_model_id =
-            tama_core::db::save_model_config(&open.conn, &config_key, &updated_config).map_err(
-                |e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        serde_json::json!({"error": e.to_string()}),
-                    )
-                },
-            )?;
+        let new_model_id = mgr
+            .save_model_config(&config_key, &updated_config)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": e.to_string()}),
+                )
+            })?;
         Ok(serde_json::json!({ "ok": true, "id": new_model_id }))
     })
     .await

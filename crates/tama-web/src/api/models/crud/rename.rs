@@ -27,7 +27,7 @@ pub async fn rename_model(
     match tokio::task::spawn_blocking(move || {
         let (_, config_dir) = load_config_from_state(&state)?;
 
-        let open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
@@ -35,7 +35,7 @@ pub async fn rename_model(
         })?;
 
         // Check source ID exists
-        let model_id = resolve_model_id(&id_str, &open.conn)
+        let model_id = resolve_model_id(&id_str, &mgr)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -48,7 +48,7 @@ pub async fn rename_model(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let existing_record = tama_core::db::queries::get_model_config(&open.conn, model_id)
+        let existing_record = mgr.get_config(model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -84,7 +84,7 @@ pub async fn rename_model(
         }
 
         // Check target repo_id doesn't already exist
-        if tama_core::db::queries::get_model_config_by_repo_id(&open.conn, &new_repo_id)
+        if mgr.get_config_by_repo_id(&new_repo_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,7 +104,7 @@ pub async fn rename_model(
 
         // Save with new repo_id (keeps same integer id)
         let config_key = new_repo_id.to_lowercase().replace('/', "--");
-        let _ = tama_core::db::save_model_config(&open.conn, &config_key, &model_config).map_err(
+        let _ = mgr.save_model_config(&config_key, &model_config).map_err(
             |e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -114,11 +114,7 @@ pub async fn rename_model(
         )?;
 
         // Clean up update_check record for old repo_id
-        let _ = tama_core::db::queries::delete_update_check(
-            &open.conn,
-            "model",
-            &existing_record.repo_id,
-        );
+        let _ = mgr.delete_update_check("model", &existing_record.repo_id);
 
         Ok(serde_json::json!({ "ok": true, "id": model_id }))
     })

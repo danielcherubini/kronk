@@ -42,13 +42,13 @@ pub async fn refresh_model_metadata(
     let state1 = state.clone();
     let resolved = tokio::task::spawn_blocking(move || {
         let (cfg, config_dir) = load_config_from_state(&state1)?;
-        let open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let model_id = resolve_model_id(&id_str, &open.conn)
+        let model_id = resolve_model_id(&id_str, &mgr)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -61,7 +61,8 @@ pub async fn refresh_model_metadata(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let record = tama_core::db::queries::get_model_config(&open.conn, model_id)
+        let record = mgr
+            .get_config(model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -125,12 +126,11 @@ pub async fn refresh_model_metadata(
     let commit_sha = listing.commit_sha.clone();
     let files = listing.files.clone();
     let write = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-        let open = tama_core::db::open(&config_dir_for_db)?;
-        let conn = &open.conn;
-        tama_core::db::queries::upsert_model_pull(conn, model_id, &repo_id_for_db, &commit_sha)?;
+        let mgr = tama_core::models::ModelManager::open(&config_dir_for_db)?;
+        mgr.upsert_pull(model_id, &repo_id_for_db, &commit_sha)?;
 
         // Build a set of filenames already tracked locally.
-        let local_files = tama_core::db::queries::get_model_files(conn, model_id)?;
+        let local_files = mgr.get_files(model_id)?;
         let local_filenames: std::collections::HashSet<&str> =
             local_files.iter().map(|f| f.filename.as_str()).collect();
 
@@ -141,8 +141,7 @@ pub async fn refresh_model_metadata(
                 continue;
             }
             let blob = blobs.get(&file.filename);
-            tama_core::db::queries::upsert_model_file(
-                conn,
+            mgr.upsert_file(
                 model_id,
                 &repo_id_for_db,
                 &file.filename,
@@ -151,8 +150,8 @@ pub async fn refresh_model_metadata(
                 blob.and_then(|b| b.size),
             )?;
         }
-        let files_out = tama_core::db::queries::get_model_files(conn, model_id)?;
-        let pull_out = tama_core::db::queries::get_model_pull(conn, model_id)?;
+        let files_out = mgr.get_files(model_id)?;
+        let pull_out = mgr.get_pull(model_id)?;
         Ok((pull_out, files_out))
     })
     .await;
@@ -196,13 +195,13 @@ pub async fn verify_model_files(
     let state1 = state.clone();
     let resolved = tokio::task::spawn_blocking(move || {
         let (_cfg, config_dir) = load_config_from_state(&state1)?;
-        let open = tama_core::db::open(&config_dir).map_err(|e| {
+        let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        let model_id = resolve_model_id(&id_str, &open.conn)
+        let model_id = resolve_model_id(&id_str, &mgr)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -215,7 +214,8 @@ pub async fn verify_model_files(
                     serde_json::json!({"error": "Model not found"}),
                 )
             })?;
-        let record = tama_core::db::queries::get_model_config(&open.conn, model_id)
+        let record = mgr
+            .get_config(model_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -254,14 +254,10 @@ pub async fn verify_model_files(
     let repo_id_clone = repo_id.clone();
 
     let task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-        let open = tama_core::db::open(&config_dir)?;
-        let results = tama_core::models::verify::verify_model(
-            &open.conn,
-            model_id,
-            &repo_id_clone,
-            &model_dir,
-        )?;
-        let files = tama_core::db::queries::get_model_files(&open.conn, model_id)?;
+        let mgr = tama_core::models::ModelManager::open(&config_dir)?;
+        let results =
+            tama_core::models::verify::verify_model(&mgr, model_id, &repo_id_clone, &model_dir)?;
+        let files = mgr.get_files(model_id)?;
         Ok((results, files))
     })
     .await;

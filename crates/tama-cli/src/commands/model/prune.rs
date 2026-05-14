@@ -1,8 +1,7 @@
 use anyhow::Result;
 use std::collections::HashSet;
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
-use tama_core::models::ModelCard;
+use tama_core::models::{ModelCard, ModelManager};
 
 pub(super) fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()> {
     // Helper to format bytes
@@ -28,8 +27,8 @@ pub(super) fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()>
     // Build set of referenced files: (repo_id, filename)
     let mut referenced_files: HashSet<(String, String)> = HashSet::new();
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
-    let model_configs = tama_core::db::load_model_configs(&conn)?;
+    let mgr = ModelManager::open(&db_dir)?;
+    let model_configs = tama_core::db::load_model_configs(mgr.conn())?;
 
     for model_config in model_configs.values() {
         if let Some(ref repo_id) = model_config.model {
@@ -187,8 +186,8 @@ pub(super) fn cmd_prune(config: &Config, dry_run: bool, yes: bool) -> Result<()>
 
     // Clean up DB records for actually deleted files
     for (repo_id, filename) in &actually_deleted {
-        if let Some(record) = tama_core::db::queries::get_model_config_by_repo_id(&conn, repo_id)? {
-            let _ = tama_core::db::queries::delete_model_file(&conn, record.id, filename);
+        if let Some(record) = mgr.get_config_by_repo_id(repo_id)? {
+            let _ = mgr.delete_file(record.id, filename);
         }
     }
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use tama_core::config::Config;
-use tama_core::db::OpenResult;
+use tama_core::models::ModelManager;
 
 pub(super) async fn cmd_create(
     config: &Config,
@@ -20,7 +20,7 @@ pub(super) async fn cmd_create(
 
     // Resolve DB
     let db_dir = tama_core::config::Config::config_dir()?;
-    let OpenResult { conn, .. } = tama_core::db::open(&db_dir)?;
+    let mgr = ModelManager::open(&db_dir)?;
 
     // Resolve backend
     let resolved_backend_key = match backend_arg {
@@ -90,7 +90,7 @@ pub(super) async fn cmd_create(
         db_id: None,
     };
 
-    tama_core::db::save_model_config(&conn, &server_name, &model_config)?;
+    mgr.save_model_config(&server_name, &model_config)?;
 
     println!("Created.");
     println!();

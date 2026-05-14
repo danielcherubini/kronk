@@ -11,9 +11,11 @@ impl ProxyState {
 
         // Initialize download queue service if db_dir is configured.
         let poll_interval = config.proxy.download_queue_poll_interval_secs;
-        let download_queue = db_dir
-            .as_ref()
-            .map(|dir| Arc::new(DownloadQueueService::new(Some(dir.clone()), poll_interval)));
+        let download_queue = db_dir.as_ref().and_then(|dir| {
+            crate::models::ModelManager::open(dir)
+                .ok()
+                .map(|mm| Arc::new(DownloadQueueService::new(mm, poll_interval)))
+        });
 
         let state = Self {
             config: Arc::new(tokio::sync::RwLock::new(config)),
@@ -207,13 +209,27 @@ impl ProxyState {
     /// This ensures that the in-memory registry stays in sync with mutations
     /// made via the web API or CLI.
     pub async fn reload_model_configs(&self) -> Result<()> {
-        let conn = self
-            .open_db()
+        let mgr = self
+            .model_mgr()
             .with_context(|| "Database directory not configured")?;
-        let configs = crate::db::load_model_configs(&conn)?;
+        let configs = crate::db::load_model_configs(mgr.conn())?;
         let mut model_configs = self.model_configs.write().await;
         *model_configs = configs;
         Ok(())
+    }
+
+    /// Open a ModelManager for model-related database operations.
+    ///
+    /// Returns `None` if `db_dir` is not configured (e.g., in tests).
+    ///
+    /// Each call opens a fresh `ModelManager` (and thus a fresh `rusqlite::Connection`).
+    /// This is deliberate: `Connection` is `Send` but not `Sync`, so we cannot
+    /// share a single instance across threads via `Arc`. For persistent reuse,
+    /// see `DownloadQueueService` which wraps `ModelManager` in `Mutex`.
+    pub fn model_mgr(&self) -> Option<crate::models::ModelManager> {
+        self.db_dir
+            .as_ref()
+            .and_then(|dir| crate::models::ModelManager::open(dir).ok())
     }
 }
 

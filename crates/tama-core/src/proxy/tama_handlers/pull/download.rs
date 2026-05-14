@@ -398,58 +398,46 @@ pub async fn start_download_from_queue(
         // the parent model_configs row exists. Use the id returned by
         // setup_model_after_pull so there's no case-sensitive lookup in
         // between that could miss.
-        match (state_clone.db_dir.as_ref(), model_id) {
-            (Some(dir), Some(mid)) => match crate::db::open(dir) {
-                Ok(open_res) => {
-                    let conn = open_res.conn;
-                    if let Err(e) = crate::db::queries::upsert_model_file(
-                        &conn,
-                        mid,
-                        &repo_id_clone,
-                        &filename_clone,
-                        spec_clone.quant.as_deref(),
-                        outcome.expected_sha.as_deref(),
-                        Some(bytes as i64),
-                    ) {
-                        tracing::error!(
-                            job_id = %job_id_clone,
-                            model_id = mid,
-                            file = %filename_clone,
-                            error = %e,
-                            "upsert_model_file failed"
-                        );
-                    } else {
-                        tracing::info!(
-                            job_id = %job_id_clone,
-                            model_id = mid,
-                            file = %filename_clone,
-                            "model_files row written"
-                        );
-                    }
-                    if let Err(e) = crate::db::queries::update_verification(
-                        &conn,
-                        mid,
-                        &filename_clone,
-                        outcome.ok,
-                        outcome.err.as_deref(),
-                    ) {
-                        tracing::warn!(
-                            job_id = %job_id_clone,
-                            model_id = mid,
-                            file = %filename_clone,
-                            error = %e,
-                            "update_verification failed"
-                        );
-                    }
-                }
-                Err(e) => {
+        match (state_clone.model_mgr(), model_id) {
+            (Some(mgr), Some(mid)) => {
+                if let Err(e) = mgr.upsert_file(
+                    mid,
+                    &repo_id_clone,
+                    &filename_clone,
+                    spec_clone.quant.as_deref(),
+                    outcome.expected_sha.as_deref(),
+                    Some(bytes as i64),
+                ) {
                     tracing::error!(
                         job_id = %job_id_clone,
+                        model_id = mid,
+                        file = %filename_clone,
                         error = %e,
-                        "failed to open DB to persist model_files"
+                        "upsert_model_file failed"
+                    );
+                } else {
+                    tracing::info!(
+                        job_id = %job_id_clone,
+                        model_id = mid,
+                        file = %filename_clone,
+                        "model_files row written"
                     );
                 }
-            },
+                if let Err(e) = mgr.update_verification(
+                    mid,
+                    &filename_clone,
+                    outcome.ok,
+                    outcome.err.as_deref(),
+                ) {
+                    tracing::warn!(
+                        job_id = %job_id_clone,
+                        model_id = mid,
+                        file = %filename_clone,
+                        error = %e,
+                        "update_verification failed"
+                    );
+                }
+            }
             (None, _) => {
                 tracing::warn!(
                     job_id = %job_id_clone,
@@ -1017,10 +1005,10 @@ pub(crate) async fn setup_model_after_pull(
 
     let mut saved_id: Option<i64> = None;
     if let Some(key) = model_key {
-        if let Some(conn) = state.open_db() {
+        if let Some(mgr) = state.model_mgr() {
             let save_result = model_configs
                 .get(&key)
-                .map(|mc| crate::db::save_model_config(&conn, &key, mc));
+                .map(|mc| mgr.save_model_config(&key, mc));
             match save_result {
                 Some(Ok(id)) => {
                     saved_id = Some(id);
