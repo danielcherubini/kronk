@@ -203,7 +203,6 @@ fn short(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::queries::upsert_model_file;
     use std::io::Write;
 
     /// SHA-256 of the ASCII string "hello" — verified against a reference

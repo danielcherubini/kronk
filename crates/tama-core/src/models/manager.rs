@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(record.repo_id, "owner/my-model");
         assert_eq!(record.backend, "llama.cpp");
         assert_eq!(record.display_name, Some("My Model".to_string()));
-        assert_eq!(record.enabled, true);
+        assert!(record.enabled);
         assert_eq!(record.api_name, Some("owner/my-model".to_string()));
     }
 }
