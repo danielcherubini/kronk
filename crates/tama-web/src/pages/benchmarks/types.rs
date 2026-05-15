@@ -11,6 +11,7 @@ pub const BENCHMARK_TYPES: &[(&str, &str)] = &[
     ("context_test", "Context Test"),
     ("spec_scan", "Spec Scan"),
     ("spec_sweep", "Spec Sweep"),
+    ("mtp_sweep", "MTP Sweep"),
 ];
 
 /// Parse a model JSON value into (id, display_name, quant).

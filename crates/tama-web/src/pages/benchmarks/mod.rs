@@ -1,5 +1,6 @@
 //! Benchmarks page — run llama-bench and spec-decoding benchmarks from the web UI.
 
+mod mtp_bench;
 mod spec_bench;
 mod types;
 mod utils;
@@ -10,6 +11,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 
+use self::mtp_bench::MtpBench;
 use self::spec_bench::SpecBench;
 use self::types::{HistoryEntry, BENCHMARK_TYPES, LLAMA_BENCH_PRESETS};
 use self::utils::{format_relative, format_timestamp};
@@ -472,11 +474,17 @@ pub fn Benchmarks() -> impl IntoView {
                     on:click=move |_| active_tab.set("spec-decode")>
                 "Spec Decoding"
             </button>
+            <button class=move || if active_tab.get() == "mtp-testing" { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" }
+                    on:click=move |_| active_tab.set("mtp-testing")>
+                "MTP Testing"
+            </button>
         </div>
 
         // LLaMA-Bench tab content
         {move || {
-            if active_tab.get() == "spec-decode" {
+            if active_tab.get() == "mtp-testing" {
+                view! { <MtpBench /> }.into_any()
+            } else if active_tab.get() == "spec-decode" {
                 view! { <SpecBench /> }.into_any()
             } else {
                 view! {
@@ -1017,8 +1025,8 @@ pub fn Benchmarks() -> impl IntoView {
                                         .unwrap_or_else(|| "llama_bench".to_string());
                                     let when_title_for_row = when_title.clone();
 
-                                    // Engine badge — distinguishes llama-bench from spec-decode runs
-                                    let engine_badge = if engine_text == "llama_cli_spec" {
+                                    // Engine badge — distinguishes llama-bench from spec-decode and MTP runs
+                                    let engine_badge = if engine_text == "llama_cli_spec" || engine_text == "llama_cli_mtp" {
                                         "badge badge-info".to_string()
                                     } else {
                                         "badge badge-muted".to_string()

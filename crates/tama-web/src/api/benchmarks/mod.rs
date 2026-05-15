@@ -4,6 +4,7 @@
 //! streaming progress via SSE, and managing benchmark history.
 
 mod history;
+mod mtp;
 mod run;
 mod spec;
 
@@ -150,5 +151,6 @@ pub struct BenchmarkHistoryEntry {
 pub use history::{
     benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history,
 };
+pub use mtp::run_mtp_benchmark;
 pub use run::{run_benchmark, run_benchmark_inner};
 pub use spec::{run_spec_benchmark, run_spec_benchmark_inner, validate_spec_sweep};

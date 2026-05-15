@@ -8,6 +8,7 @@
 
 pub mod display;
 pub mod llama_bench;
+pub mod llama_cli_mtp;
 pub mod llama_cli_spec;
 pub mod measure;
 pub mod runner;
@@ -277,6 +278,14 @@ pub fn compute_summary(
         n_threads: None,
         n_gpu_layers: None,
     }
+}
+
+/// Find an available port by binding to port 0.
+pub async fn find_available_port() -> anyhow::Result<u16> {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    Ok(addr.port())
 }
 
 /// Build a user message string of approximately `target_tokens` tokens.

@@ -14,7 +14,7 @@
 //! orchestrator [`run_spec_bench`].
 
 mod discovery;
-mod server;
+pub mod server;
 
 pub use discovery::find_llama_server;
 
@@ -34,6 +34,7 @@ pub enum SpecType {
     NgramMod,
     NgramMapK,
     NgramMapK4v,
+    DraftMtp,
 }
 
 impl SpecType {
@@ -44,6 +45,7 @@ impl SpecType {
             SpecType::NgramMod => "ngram-mod",
             SpecType::NgramMapK => "ngram-map-k",
             SpecType::NgramMapK4v => "ngram-map-k4v",
+            SpecType::DraftMtp => "draft-mtp",
         }
     }
 
@@ -75,6 +77,7 @@ impl SpecType {
                 "--spec-ngram-map-k4v-size-m",
                 "--spec-ngram-map-k4v-min-hits",
             ),
+            SpecType::DraftMtp => ("", "", ""),
         }
     }
 }
@@ -327,14 +330,6 @@ fn format_config_label(cfg: &SweepConfig) -> String {
     parts.join(" ")
 }
 
-/// Find an available port by binding to port 0.
-async fn find_available_port() -> Result<u16> {
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    Ok(addr.port())
-}
-
 /// Execute benchmark runs against a running llama-server.
 ///
 /// Makes `config.runs` completion requests and returns timing stats.
@@ -447,7 +442,7 @@ async fn run_single_config(
 ) -> SpecEntry {
     let label = format_config_label(cfg);
 
-    let port = match find_available_port().await {
+    let port = match crate::bench::find_available_port().await {
         Ok(p) => p,
         Err(e) => {
             progress.log(&format!("Failed to find available port: {}", e));
@@ -487,6 +482,7 @@ async fn run_single_config(
         spec_ngram_max: cfg.ngram_max,
         draft_max: draft_max_val,
         draft_min: draft_min_val,
+        spec_draft_ngl: None,
     };
 
     let arg_vec = server_args.to_args();
@@ -580,7 +576,7 @@ pub async fn run_spec_bench(
 
     // Step 2: Run baseline (no spec-decoding) on a dedicated server.
     progress.log("Starting baseline server (no speculative decoding)...");
-    let baseline_port = find_available_port().await?;
+    let baseline_port = crate::bench::find_available_port().await?;
     let baseline_args = server::ServerArgs {
         binary: binary.clone(),
         model_path: config.model_path.clone(),
@@ -595,6 +591,7 @@ pub async fn run_spec_bench(
         spec_ngram_max: None,
         draft_max: None,
         draft_min: None,
+        spec_draft_ngl: None,
     };
     progress.log(&format!(
         "llama-server {} {}",
@@ -891,6 +888,7 @@ mod tests {
         assert_eq!(SpecType::NgramMod.as_str(), "ngram-mod");
         assert_eq!(SpecType::NgramMapK.as_str(), "ngram-map-k");
         assert_eq!(SpecType::NgramMapK4v.as_str(), "ngram-map-k4v");
+        assert_eq!(SpecType::DraftMtp.as_str(), "draft-mtp");
     }
 
     /// Verifies that the sweep matrix produces 3D n-gram-mod entries
@@ -974,5 +972,10 @@ mod tests {
         assert_eq!(sn, "--spec-ngram-map-k4v-size-n");
         assert_eq!(sm, "--spec-ngram-map-k4v-size-m");
         assert_eq!(mh, "--spec-ngram-map-k4v-min-hits");
+
+        let (sn, sm, mh) = SpecType::DraftMtp.spec_ngram_flags();
+        assert_eq!(sn, "");
+        assert_eq!(sm, "");
+        assert_eq!(mh, "");
     }
 }
