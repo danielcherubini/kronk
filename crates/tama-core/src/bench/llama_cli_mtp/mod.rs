@@ -455,7 +455,7 @@ mod tests {
     /// Verifies that MtpAggregate correctly computes accept rate when there are drafts.
     #[test]
     fn test_aggregate_accept_rate_with_drafts() {
-        let entries = vec![
+        let entries = [
             MtpPromptResult {
                 draft_max: 0,
                 name: "baseline".to_string(),
@@ -494,7 +494,7 @@ mod tests {
     /// Verifies that aggregate accept rate is 0.0 when no drafts exist.
     #[test]
     fn test_aggregate_accept_rate_no_drafts() {
-        let entries = vec![MtpPromptResult {
+        let entries = [MtpPromptResult {
             draft_max: 0,
             name: "baseline".to_string(),
             wall_s: 1.0,
