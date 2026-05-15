@@ -15,9 +15,9 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 96
-- **Completed**: 95 ✅
-- **In Progress**: 1 🚧
-- **Remaining**: 1
+- **Completed**: 96 ✅
+- **In Progress**: 0 🚧
+- **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
@@ -25,16 +25,11 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Completed Plans
 
-### In Progress
-
-| Plan | Description | PR / Git References |
-|------|-------------|---------------------|
-| [MTP Benchmark](2026-05-14-mtp-benchmark.md) | Add "MTP Testing" tab to Benchmarks page — sweep --spec-draft-n-max with --spec-type draft-mtp, 9 diverse prompts, per-prompt + aggregate metrics | 🚧 IN PROGRESS |
-
 ### Recently Completed
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
+| [MTP Benchmark](2026-05-14-mtp-benchmark.md) | Add "MTP Testing" tab to Benchmarks page — sweep --spec-draft-n-max with --spec-type draft-mtp, 9 diverse prompts, per-prompt + aggregate metrics | `1ba9510` ✅ COMPLETED |
 | [Remove llama.cpp Hardcoded Defaults](2025-05-14-remove-llama-defaults.md) | Remove hardcoded llama_cpp and ik_llama backend entries from default config and template, making tama backend-agnostic from first boot | `94184d8`, `41bd8b2`, `725758c` ✅ COMPLETED |
 
 | Plan | Description | PR / Git References |
