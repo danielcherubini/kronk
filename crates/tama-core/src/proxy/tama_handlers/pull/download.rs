@@ -382,6 +382,41 @@ pub async fn start_download_from_queue(
     // Calculate duration for DB event
     let duration_ms = Some(download_start.elapsed().as_millis() as u64);
 
+    // Parse GGUF metadata (soft failure — don't fail the download)
+    let gguf_metadata = if outcome.passed {
+        match crate::models::gguf::parse_gguf_metadata(&dest_path) {
+            Ok(meta) => {
+                tracing::info!(
+                    job_id = %job_id_clone,
+                    architecture = ?meta.architecture,
+                    context_length = ?meta.context_length,
+                    "GGUF metadata parsed"
+                );
+                Some(meta)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_id = %job_id_clone,
+                    error = %e,
+                    "GGUF metadata parsing failed — using defaults"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Store GGUF metadata in PullJob for SSE streaming
+    {
+        let mut jobs = pull_jobs_arc.write().await;
+        if let Some(job) = jobs.get_mut(&job_id_clone) {
+            job.gguf_metadata = gguf_metadata.clone();
+            // Also set the serialized field for SSE events (frontend reads this)
+            job.gguf_context_length = gguf_metadata.as_ref().and_then(|m| m.context_length);
+        }
+    }
+
     // Only register the model in config/card once the file is at its
     // destination and known-good. setup_model_after_pull creates the
     // matching model_configs row, which the model_files row below FKs to.
@@ -391,6 +426,7 @@ pub async fn start_download_from_queue(
             &repo_id_clone,
             &spec_clone,
             &dest_dir,
+            gguf_metadata.clone(),
         )
         .await;
 
@@ -728,6 +764,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
+    gguf_metadata: Option<&crate::models::pull::GgufMetadata>,
 ) -> Option<String> {
     let repo_slug = repo_id.replace('/', "--");
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
@@ -775,6 +812,11 @@ pub(crate) async fn _setup_model_after_pull_with_config(
         })
     });
 
+    // Determine context_length: GGUF parsed value > spec value > None
+    let context_length = gguf_metadata
+        .and_then(|m| m.context_length.map(|v| v as u32))
+        .or(spec.context_length);
+
     // Get actual file size from disk
     let size_bytes = std::fs::metadata(dest_dir.join(&spec.filename))
         .ok()
@@ -789,7 +831,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
             file: spec.filename.clone(),
             kind: crate::config::QuantKind::from_filename(&spec.filename),
             size_bytes,
-            context_length: spec.context_length,
+            context_length,
         },
     );
 
@@ -838,7 +880,7 @@ pub(crate) async fn _setup_model_after_pull_with_config(
                     model: Some(repo_id.to_string()),
                     quant: Some(quant_key.clone()),
                     mmproj: None,
-                    context_length: spec.context_length,
+                    context_length,
                     num_parallel: default_num_parallel(),
                     kv_unified: true,
                     enabled: true,
@@ -874,14 +916,21 @@ pub(crate) async fn _setup_model_after_pull_with_config(
             entry.quant = Some(quant_key);
             entry.enabled = true;
         }
-        if entry.context_length.is_none() && spec.context_length.is_some() {
-            entry.context_length = spec.context_length;
+        if entry.context_length.is_none() {
+            entry.context_length = context_length;
         }
         if entry.modalities.is_none() {
             entry.modalities = modalities;
         }
         if entry.display_name.is_none() {
             entry.display_name = Some(display_name);
+        }
+
+        // Populate hf_* informational fields from GGUF metadata
+        if let Some(meta) = gguf_metadata {
+            entry.hf_architecture_type = meta.architecture.clone();
+            entry.hf_context_length = meta.context_length.map(|v| v as u32);
+            entry.hf_num_layers = meta.block_count.map(|v| v as u32);
         }
 
         // Save card (best-effort — download is already marked Completed)
@@ -983,6 +1032,7 @@ pub(crate) async fn setup_model_after_pull(
     repo_id: &str,
     spec: &QuantDownloadSpec,
     dest_dir: &std::path::Path,
+    gguf_metadata: Option<crate::models::pull::GgufMetadata>,
 ) -> Option<i64> {
     let _permit = state.config_write_semaphore.acquire().await.ok()?;
     // Clone needed data from config before awaiting — don't hold the read guard
@@ -1000,6 +1050,7 @@ pub(crate) async fn setup_model_after_pull(
         repo_id,
         spec,
         dest_dir,
+        gguf_metadata.as_ref(),
     )
     .await;
 

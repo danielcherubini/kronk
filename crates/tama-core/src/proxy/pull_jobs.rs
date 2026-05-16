@@ -45,6 +45,14 @@ pub struct PullJob {
     /// `Instant::now().elapsed()`. Not serialized to SSE events.
     #[serde(skip)]
     pub duration_ms: Option<u64>,
+    /// Full GGUF metadata parsed after download verification. `None` if parsing failed
+    /// or the file is not a GGUF (e.g. mmproj). Not serialized to SSE.
+    #[serde(skip)]
+    pub gguf_metadata: Option<crate::models::pull::GgufMetadata>,
+    /// GGUF-parsed context length, serialized to SSE events for the wizard.
+    /// This is the only field from GgufMetadata that the frontend needs inline.
+    #[serde(default)]
+    pub gguf_context_length: Option<u64>,
 }
 
 impl Default for PullJob {
@@ -63,6 +71,8 @@ impl Default for PullJob {
             verify_error: None,
             completed_at: None,
             duration_ms: None,
+            gguf_metadata: None,
+            gguf_context_length: None,
         }
     }
 }
