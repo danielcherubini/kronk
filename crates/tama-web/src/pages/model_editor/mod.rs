@@ -779,32 +779,23 @@ pub fn ModelEditor() -> impl IntoView {
                                     })
                                 });
                                 if let Some(pos) = form.quants.iter().position(|(k, _)| k == &key) {
-                                    // Re-pull: overwrite filename and context_length
-                                    // (the wizard's values reflect the user's latest intent).
+                                    // Re-pull: overwrite filename.
+                                    // Context length is model-level, populated from GGUF parsing.
                                     // Only overwrite size_bytes when we have a value —
                                     // never clobber a known size with None.
                                     let row = &mut form.quants.values_mut().nth(pos).unwrap();
                                     row.file = cq.filename;
                                     row.kind = kind;
-                                    // Only set context_length for model quants;
-                                    // mmprojs don't use it.
-                                    if kind == QuantKind::Model {
-                                        row.context_length = Some(cq.context_length);
-                                    }
                                     if cq.size_bytes.is_some() {
                                         row.size_bytes = cq.size_bytes;
                                     }
                                 } else {
                                     // New row.
+                                    // context_length will be populated from GGUF parsing during download.
                                     form.quants.insert(key, QuantInfo {
                                         file: cq.filename,
                                         kind,
                                         size_bytes: cq.size_bytes,
-                                        context_length: if kind == QuantKind::Model {
-                                            Some(cq.context_length)
-                                        } else {
-                                            None
-                                        },
                                         ..Default::default()
                                     });
                                 }

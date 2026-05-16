@@ -79,7 +79,6 @@ pub fn PullQuantWizard(
 
             let jobs = download_jobs.get_untracked();
             let quants_listing = available_quants.get_untracked();
-            let ctx_map = context_lengths.get_untracked();
             let repo = repo_id.get_untracked();
 
             let completed: Vec<CompletedQuant> = jobs
@@ -90,13 +89,11 @@ pub fn PullQuantWizard(
                     let quant = entry
                         .and_then(|e| e.quant.clone())
                         .or_else(|| infer_quant_from_filename(&j.filename));
-                    let context_length = ctx_map.get(&j.filename).copied().unwrap_or(32768);
                     CompletedQuant {
                         repo_id: repo.clone(),
                         filename: j.filename.clone(),
                         quant,
                         size_bytes: Some(j.bytes_downloaded),
-                        context_length,
                     }
                 })
                 .collect();
@@ -309,39 +306,17 @@ pub fn PullQuantWizard(
                         context_lengths=context_lengths
                         on_next=Callback::new(move |_| {
                             let rid = repo_id.get();
-                            let sel = selected_filenames.get();
-                            let quants_list = available_quants.get();
-                            let ctx_map = context_lengths.get();
-
-                            let mut quants: Vec<QuantRequest> = sel.iter()
-                                .filter_map(|fname| {
-                                    let entry = quants_list.iter().find(|q| &q.filename == fname)?;
-                                    let ctx = ctx_map.get(fname).copied().unwrap_or(32768);
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: ctx,
-                                    })
-                                })
-                                .collect();
-
-                            let available_mmprojs_list = available_mmprojs.get();
-                            let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
+                            let filenames: Vec<String> = selected_filenames.get().into_iter().collect();
+                            let mmproj_filenames: Vec<String> = selected_mmproj_filenames
                                 .get()
-                                .iter()
-                                .filter_map(|fname| {
-                                    let entry = available_mmprojs_list.iter().find(|q| &q.filename == fname)?;
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: 32768,
-                                    })
-                                })
+                                .into_iter()
                                 .collect();
 
-                            quants.extend(selected_mmprojs);
-
-                            let body = PullRequest { repo_id: rid, quants };
+                            let body = PullRequest {
+                                repo_id: rid,
+                                filenames,
+                                mmproj_filenames,
+                            };
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 let build_result = post_request("/tama/v1/pulls")

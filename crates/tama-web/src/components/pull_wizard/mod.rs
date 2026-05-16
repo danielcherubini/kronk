@@ -224,23 +224,20 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 
 // ── Request body type ────────────────────────────────────────────────────────
 
+/// Simplified pull request: just filenames, no per-quant metadata.
+/// Context length is a model-level property populated from GGUF parsing.
 #[derive(Serialize)]
 pub struct PullRequest {
     pub repo_id: String,
-    pub quants: Vec<QuantRequest>,
-}
-
-#[derive(Serialize)]
-pub struct QuantRequest {
-    pub filename: String,
-    pub quant: Option<String>,
-    pub context_length: u32,
+    pub filenames: Vec<String>,
+    pub mmproj_filenames: Vec<String>,
 }
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
 /// A quant that was successfully downloaded by the wizard. Emitted via the
 /// `on_complete` callback so the host can merge new quants into its own state.
+/// Context length is model-level (same for all quants), populated from GGUF parsing.
 #[derive(Clone, Debug)]
 pub struct CompletedQuant {
     #[allow(dead_code)]
@@ -248,7 +245,6 @@ pub struct CompletedQuant {
     pub filename: String,
     pub quant: Option<String>,
     pub size_bytes: Option<u64>,
-    pub context_length: u32,
 }
 
 pub mod components;
