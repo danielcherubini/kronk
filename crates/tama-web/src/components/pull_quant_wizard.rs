@@ -362,6 +362,7 @@ pub fn PullQuantWizard(
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 let payload = serde_json::json!({
+                                    "backend": "llama_cpp",
                                     "context_length": settings.context_length,
                                     "kv_unified": Some(settings.kv_unified),
                                     "cache_type_k": settings.cache_type_k,
