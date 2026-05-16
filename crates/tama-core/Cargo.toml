@@ -44,6 +44,7 @@ lru = "0.12"
 base64 = "0.22"
 futures = "0.3"
 regex.workspace = true
+gguf-parser = { git = "https://github.com/Defilan/gguf-parser", branch = "main" }
 
 
 [dev-dependencies]

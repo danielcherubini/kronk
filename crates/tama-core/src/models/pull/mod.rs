@@ -74,6 +74,7 @@ pub struct HfModelMetadata {
 
 // ── Re-exports from sub-modules ──────────────────────────────────────────────
 
+pub use super::gguf::GgufMetadata;
 pub use api::{
     fetch_blob_metadata, fetch_hf_metadata, fetch_model_pipeline_tag,
     infer_modalities_from_pipeline, list_gguf_files, parse_blob_siblings,
