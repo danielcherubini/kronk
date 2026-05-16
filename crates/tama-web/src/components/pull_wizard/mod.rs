@@ -247,4 +247,18 @@ pub struct CompletedQuant {
     pub size_bytes: Option<u64>,
 }
 
+/// Settings configured in the SetContext step.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ContextSettings {
+    pub context_length: Option<u32>,
+    pub kv_unified: bool,
+    pub cache_type_k: Option<String>,
+    pub cache_type_v: Option<String>,
+}
+
+/// KV quantization options for the dropdown.
+pub const KV_QUANT_OPTIONS: &[&str] = &[
+    "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
+];
+
 pub mod components;

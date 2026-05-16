@@ -53,6 +53,8 @@ pub fn PullQuantWizard(
     let selected_filenames = RwSignal::new(HashSet::<String>::new());
     let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
     let context_lengths = RwSignal::new(HashMap::<String, u32>::new());
+    let gguf_context_length = RwSignal::new(None::<u64>);
+    let context_settings = RwSignal::new(ContextSettings::default());
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
@@ -138,6 +140,8 @@ pub fn PullQuantWizard(
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
             context_lengths.set(std::collections::HashMap::new());
+            gguf_context_length.set(None);
+            context_settings.set(ContextSettings::default());
             download_jobs.set(Vec::new());
             error_msg.set(None);
             did_complete.set(false);
@@ -231,6 +235,8 @@ pub fn PullQuantWizard(
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
                             context_lengths.set(std::collections::HashMap::new());
+                            gguf_context_length.set(None);
+                            context_settings.set(ContextSettings::default());
                             available_quants.set(Vec::new());
                             wizard_step.set(WizardStep::LoadingQuants);
                             wasm_bindgen_futures::spawn_local(async move {
@@ -285,12 +291,6 @@ pub fn PullQuantWizard(
                         selected_filenames=selected_filenames
                         selected_mmproj_filenames=selected_mmproj_filenames
                         on_next=Callback::new(move |_| {
-                            let sel = selected_filenames.get();
-                            let mut ctx = HashMap::new();
-                            for fname in &sel {
-                                ctx.insert(fname.clone(), 32768u32);
-                            }
-                            context_lengths.set(ctx);
                             wizard_step.set(WizardStep::SetContext);
                         })
                         on_back=Callback::new(move |_| {
@@ -301,9 +301,9 @@ pub fn PullQuantWizard(
 
                 WizardStep::SetContext => view! {
                     <ContextStep
-                        selected_filenames=selected_filenames.into()
-                        available_quants=available_quants.into()
-                        context_lengths=context_lengths
+                        gguf_context_length=gguf_context_length.into()
+                        download_jobs=download_jobs.into()
+                        settings=context_settings
                         on_next=Callback::new(move |_| {
                             let rid = repo_id.get();
                             let filenames: Vec<String> = selected_filenames.get().into_iter().collect();
