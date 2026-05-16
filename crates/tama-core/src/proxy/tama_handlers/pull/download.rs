@@ -383,7 +383,12 @@ pub async fn start_download_from_queue(
     let duration_ms = Some(download_start.elapsed().as_millis() as u64);
 
     // Parse GGUF metadata (soft failure — don't fail the download)
-    let gguf_metadata = if outcome.passed {
+    // Skip mmproj files — they're vision projectors, not LLM models.
+    let is_mmproj = matches!(
+        crate::config::QuantKind::from_filename(&filename_clone),
+        crate::config::QuantKind::Mmproj
+    );
+    let gguf_metadata = if outcome.passed && !is_mmproj {
         match crate::models::gguf::parse_gguf_metadata(&dest_path) {
             Ok(meta) => {
                 tracing::info!(
