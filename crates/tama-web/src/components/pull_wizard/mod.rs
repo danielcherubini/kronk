@@ -49,6 +49,9 @@ pub struct SsePayload {
     pub bytes_downloaded: u64,
     pub total_bytes: Option<u64>,
     pub error: Option<String>,
+    /// GGUF-parsed context length from the backend (set during download completion).
+    #[serde(default)]
+    pub gguf_context_length: Option<u64>,
 }
 
 // ── Wizard step enum ─────────────────────────────────────────────────────────
@@ -58,8 +61,8 @@ pub enum WizardStep {
     RepoInput,
     LoadingQuants,
     SelectQuants,
-    SetContext,
     Downloading,
+    SetContext,
     Done,
 }
 
@@ -80,8 +83,8 @@ pub fn step_class(current: &WizardStep, target: &WizardStep, target_idx: usize) 
         WizardStep::RepoInput,
         WizardStep::LoadingQuants,
         WizardStep::SelectQuants,
-        WizardStep::SetContext,
         WizardStep::Downloading,
+        WizardStep::SetContext,
         WizardStep::Done,
     ];
     let current_idx = order.iter().position(|s| s == current).unwrap_or(0);

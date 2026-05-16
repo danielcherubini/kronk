@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use crate::utils::post_request;
+use crate::utils::{post_request, put_request};
 
 use crate::components::pull_wizard::*;
 
@@ -104,10 +104,9 @@ pub fn PullQuantWizard(
         });
     }
 
-    // ── Done-step transition Effect ─────────────────────────────────────────
+    // ── Downloading → SetContext transition Effect ──────────────────────────
     // Watches download_jobs for terminal-state transitions and advances to
-    // WizardStep::Done. This replaces the on_done callback that was previously
-    // called inside a view closure.
+    // WizardStep::SetContext so the user can configure model settings.
     Effect::new(move |_| {
         let jobs = download_jobs.get();
         if jobs.is_empty() {
@@ -122,7 +121,7 @@ pub fn PullQuantWizard(
         // Only transition if we're currently on the Downloading step.
         let current_step = wizard_step.get();
         if current_step == WizardStep::Downloading {
-            wizard_step.set(WizardStep::Done);
+            wizard_step.set(WizardStep::SetContext);
         }
     });
 
@@ -211,11 +210,11 @@ pub fn PullQuantWizard(
                     <div class=step_class(&step, &WizardStep::SelectQuants, 2)>
                         "3. Select"
                     </div>
-                    <div class=step_class(&step, &WizardStep::SetContext, 3)>
-                        "4. Context"
+                    <div class=step_class(&step, &WizardStep::Downloading, 3)>
+                        "4. Download"
                     </div>
-                    <div class=step_class(&step, &WizardStep::Downloading, 4)>
-                        "5. Download"
+                    <div class=step_class(&step, &WizardStep::SetContext, 4)>
+                        "5. Configure"
                     </div>
                     <div class=step_class(&step, &WizardStep::Done, 5)>
                         "6. Done"
@@ -291,20 +290,6 @@ pub fn PullQuantWizard(
                         selected_filenames=selected_filenames
                         selected_mmproj_filenames=selected_mmproj_filenames
                         on_next=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::SetContext);
-                        })
-                        on_back=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::RepoInput);
-                        })
-                    />
-                }.into_any(),
-
-                WizardStep::SetContext => view! {
-                    <ContextStep
-                        gguf_context_length=gguf_context_length.into()
-                        download_jobs=download_jobs.into()
-                        settings=context_settings
-                        on_next=Callback::new(move |_| {
                             let rid = repo_id.get();
                             let filenames: Vec<String> = selected_filenames.get().into_iter().collect();
                             let mmproj_filenames: Vec<String> = selected_mmproj_filenames
@@ -348,7 +333,7 @@ pub fn PullQuantWizard(
 
                                                 // Open SSE stream for each job with per-job reconnection via sse_stream.
                                                 #[cfg(not(feature = "ssr"))]
-                                                spawn_sse_streams(entries, download_jobs, wizard_step, cancelled);
+                                                spawn_sse_streams(entries, download_jobs, wizard_step, cancelled, gguf_context_length);
                                                 #[cfg(feature = "ssr")]
                                                 let _ = entries;
                                             }
@@ -364,7 +349,56 @@ pub fn PullQuantWizard(
                             });
                         })
                         on_back=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::SelectQuants);
+                            wizard_step.set(WizardStep::RepoInput);
+                        })
+                    />
+                }.into_any(),
+
+                WizardStep::SetContext => view! {
+                    <ContextStep
+                        gguf_context_length=gguf_context_length.into()
+                        download_jobs=download_jobs.into()
+                        settings=context_settings
+                        on_next=Callback::new(move |_| {
+                            let settings = context_settings.get();
+                            let repo = repo_id.get();
+
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let payload = serde_json::json!({
+                                    "context_length": settings.context_length,
+                                    "kv_unified": Some(settings.kv_unified),
+                                    "cache_type_k": settings.cache_type_k,
+                                    "cache_type_v": settings.cache_type_v,
+                                });
+
+                                // Model key is the repo slug (lowercase, / replaced with --)
+                                let model_key = repo.replace('/', "--").to_lowercase();
+
+                                match put_request(&format!("/tama/v1/models/{}", model_key))
+                                    .json(&payload)
+                                {
+                                    Ok(req) => {
+                                        match req.send().await {
+                                            Ok(resp) => {
+                                                if resp.status() < 400 {
+                                                    wizard_step.set(WizardStep::Done);
+                                                } else {
+                                                    error_msg.set(Some(format!("Failed to save settings (HTTP {})", resp.status())));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error_msg.set(Some(format!("Failed to save settings: {}", e)));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error_msg.set(Some(format!("Failed to build request: {}", e)));
+                                    }
+                                }
+                            });
+                        })
+                        on_back=Callback::new(move |_| {
+                            wizard_step.set(WizardStep::Downloading);
                         })
                     />
                 }.into_any(),
@@ -407,6 +441,7 @@ fn spawn_sse_streams(
     dj: RwSignal<Vec<JobProgress>>,
     ws: RwSignal<WizardStep>,
     cancel: RwSignal<bool>,
+    gguf_ctx: RwSignal<Option<u64>>,
 ) {
     for entry in entries {
         let job_id_str = entry.job_id.clone();
@@ -476,6 +511,10 @@ fn spawn_sse_streams(
                                                 j.error = p.error.clone();
                                             }
                                         });
+                                        // Capture GGUF context_length from any job (they're all the same model)
+                                        if let Some(ctx) = p.gguf_context_length {
+                                            gguf_ctx.set(Some(ctx));
+                                        }
                                     }
                                 }
                                 futures_util::future::Either::Right((Some(Ok(event)), _)) => {
@@ -491,6 +530,10 @@ fn spawn_sse_streams(
                                                 j.error = p.error.clone();
                                             }
                                         });
+                                        // Capture GGUF context_length from any job (they're all the same model)
+                                        if let Some(ctx) = p.gguf_context_length {
+                                            gguf_ctx.set(Some(ctx));
+                                        }
                                     }
                                     // Done event received — mark job as complete
                                     job_done = true;
