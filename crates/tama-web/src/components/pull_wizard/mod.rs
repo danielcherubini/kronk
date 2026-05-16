@@ -232,6 +232,9 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 #[derive(Serialize)]
 pub struct PullRequest {
     pub repo_id: String,
+    /// Pre-created model DB id (from POST /tama/v1/models). When set, updates existing row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<u32>,
     pub filenames: Vec<String>,
     pub mmproj_filenames: Vec<String>,
 }

@@ -14,7 +14,7 @@ use crate::utils::sse_stream;
 // Re-export CompletedQuant for use in pages
 use crate::components::pull_wizard::components::{
     context_step::ContextStep, done_step::DoneStep, download_step::DownloadStep,
-    loading_step::LoadingStep, repo_input::RepoInput, selection_step::SelectionStep,
+    repo_input::RepoInput, selection_step::SelectionStep,
 };
 pub use crate::components::pull_wizard::CompletedQuant;
 
@@ -54,6 +54,7 @@ pub fn PullQuantWizard(
     let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
     let gguf_context_length = RwSignal::new(None::<u64>);
     let context_settings = RwSignal::new(ContextSettings::default());
+    let model_id = RwSignal::new(None::<u32>);
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
@@ -138,6 +139,7 @@ pub fn PullQuantWizard(
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
             gguf_context_length.set(None);
+            model_id.set(None);
             context_settings.set(ContextSettings::default());
             download_jobs.set(Vec::new());
             error_msg.set(None);
@@ -202,20 +204,17 @@ pub fn PullQuantWizard(
                             "1. Repo"
                         </div>
                     })}
-                    <div class=step_class(&step, &WizardStep::LoadingQuants, 1)>
-                        "2. Loading"
+                    <div class=step_class(&step, &WizardStep::SelectQuants, 1)>
+                        "2. Select"
                     </div>
-                    <div class=step_class(&step, &WizardStep::SelectQuants, 2)>
-                        "3. Select"
+                    <div class=step_class(&step, &WizardStep::Downloading, 2)>
+                        "3. Download"
                     </div>
-                    <div class=step_class(&step, &WizardStep::Downloading, 3)>
-                        "4. Download"
+                    <div class=step_class(&step, &WizardStep::SetContext, 3)>
+                        "4. Configure"
                     </div>
-                    <div class=step_class(&step, &WizardStep::SetContext, 4)>
-                        "5. Configure"
-                    </div>
-                    <div class=step_class(&step, &WizardStep::Done, 5)>
-                        "6. Done"
+                    <div class=step_class(&step, &WizardStep::Done, 4)>
+                        "5. Done"
                     </div>
                 }
             }}
@@ -232,12 +231,40 @@ pub fn PullQuantWizard(
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
                             gguf_context_length.set(None);
+                            model_id.set(None);
                             context_settings.set(ContextSettings::default());
                             available_quants.set(Vec::new());
-                            wizard_step.set(WizardStep::LoadingQuants);
+                            // Fetch quants + create stub model in parallel, then go straight to SelectQuants
                             wasm_bindgen_futures::spawn_local(async move {
                                 let url = format!("/tama/v1/hf/{}", rid);
-                                match gloo_net::http::Request::get(&url).send().await {
+                                let quants_future = gloo_net::http::Request::get(&url).send();
+                                let stub_body = serde_json::json!({
+                                    "repo_id": &rid,
+                                    "backend": "llama_cpp",
+                                });
+                                let stub_future = post_request("/tama/v1/models")
+                                    .json(&stub_body)
+                                    .unwrap()
+                                    .send();
+
+                                let (quants_resp, stub_resp) = futures_util::join!(quants_future, stub_future);
+
+                                // Handle stub creation response
+                                match stub_resp {
+                                    Ok(r) if r.status() == 200 => {
+                                        if let Ok(json) = r.json::<serde_json::Value>().await {
+                                            if let Some(id) = json.get("id").and_then(|v| v.as_u64()) {
+                                                model_id.set(Some(id as u32));
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        log::warn!("Failed to create stub model for '{}'", rid);
+                                    }
+                                }
+
+                                // Handle quant list response
+                                match quants_resp {
                                     Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
                                         Ok(quants) => {
                                             if quants.is_empty() {
@@ -275,9 +302,11 @@ pub fn PullQuantWizard(
                     />
                 }.into_any(),
 
-                WizardStep::LoadingQuants => view! {
-                    <LoadingStep />
-                }.into_any(),
+                WizardStep::LoadingQuants => {
+                    // Folded into RepoInput — stub model created during search.
+                    // This arm is unreachable in normal flow, retained for safety.
+                    view! { <div></div> }.into_any()
+                },
 
                 WizardStep::SelectQuants => view! {
                     <SelectionStep
@@ -296,6 +325,7 @@ pub fn PullQuantWizard(
 
                             let body = PullRequest {
                                 repo_id: rid,
+                                model_id: model_id.get_untracked(),
                                 filenames,
                                 mmproj_filenames,
                             };
@@ -358,7 +388,8 @@ pub fn PullQuantWizard(
                         settings=context_settings
                         on_next=Callback::new(move |_| {
                             let settings = context_settings.get();
-                            let repo = repo_id.get();
+                            let mid = model_id.get_untracked();
+                            let repo = repo_id.get_untracked();
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 let payload = serde_json::json!({
@@ -369,8 +400,12 @@ pub fn PullQuantWizard(
                                     "cache_type_v": settings.cache_type_v,
                                 });
 
-                                // Model key is the repo slug (lowercase, / replaced with --)
-                                let model_key = repo.replace('/', "--").to_lowercase();
+                                // Use numeric DB id for the PUT
+                                let model_key = if let Some(id) = mid {
+                                    id.to_string()
+                                } else {
+                                    repo.replace('/', "--").to_lowercase()
+                                };
 
                                 match put_request(&format!("/tama/v1/models/{}", model_key))
                                     .json(&payload)

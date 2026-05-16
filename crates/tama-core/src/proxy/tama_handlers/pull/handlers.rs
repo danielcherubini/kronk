@@ -108,6 +108,7 @@ pub async fn handle_tama_pull_model(
                 job_id: job_id.clone(),
                 repo_id: repo_id.clone(),
                 filename: filename.clone(),
+                model_id: request.model_id,
                 ..Default::default()
             };
 
@@ -231,6 +232,7 @@ pub async fn handle_tama_pull_model(
                 job_id: job_id.clone(),
                 repo_id: repo_id.clone(),
                 filename: spec.filename.clone(),
+                model_id: request.model_id,
                 ..Default::default()
             };
 
@@ -359,6 +361,7 @@ pub async fn handle_tama_pull_model(
         job_id: job_id.clone(),
         repo_id: repo_id.clone(),
         filename: filename.clone(),
+        model_id: request.model_id,
         ..Default::default()
     };
 

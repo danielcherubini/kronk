@@ -53,6 +53,10 @@ pub struct PullJob {
     /// This is the only field from GgufMetadata that the frontend needs inline.
     #[serde(default)]
     pub gguf_context_length: Option<u64>,
+    /// DB id of the model this job belongs to. Populated from PullRequest.model_id.
+    /// Used by the wizard for subsequent PUT calls.
+    #[serde(default)]
+    pub model_id: Option<u32>,
 }
 
 impl Default for PullJob {
@@ -73,6 +77,7 @@ impl Default for PullJob {
             duration_ms: None,
             gguf_metadata: None,
             gguf_context_length: None,
+            model_id: None,
         }
     }
 }

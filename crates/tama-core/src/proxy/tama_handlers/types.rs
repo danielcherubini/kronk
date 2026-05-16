@@ -39,6 +39,10 @@ pub struct QuantDownloadSpec {
 #[derive(Debug, Deserialize)]
 pub struct PullRequest {
     pub repo_id: String,
+    /// DB id of a pre-created model stub (created before downloading).
+    /// When set, `setup_model_after_pull` updates the existing row instead of creating a new one.
+    #[serde(default)]
+    pub model_id: Option<u32>,
     /// Legacy single-quant support (kept for backward compat).
     #[serde(default)]
     pub quant: Option<String>,
