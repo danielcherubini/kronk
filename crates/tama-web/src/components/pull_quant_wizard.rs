@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::utils::{post_request, put_request};
 
@@ -52,7 +52,6 @@ pub fn PullQuantWizard(
     let available_mmprojs = RwSignal::new(Vec::<QuantEntry>::new());
     let selected_filenames = RwSignal::new(HashSet::<String>::new());
     let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
-    let context_lengths = RwSignal::new(HashMap::<String, u32>::new());
     let gguf_context_length = RwSignal::new(None::<u64>);
     let context_settings = RwSignal::new(ContextSettings::default());
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
@@ -138,7 +137,6 @@ pub fn PullQuantWizard(
             }
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
-            context_lengths.set(std::collections::HashMap::new());
             gguf_context_length.set(None);
             context_settings.set(ContextSettings::default());
             download_jobs.set(Vec::new());
@@ -233,7 +231,6 @@ pub fn PullQuantWizard(
                         on_search=Callback::new(move |rid| {
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
-                            context_lengths.set(std::collections::HashMap::new());
                             gguf_context_length.set(None);
                             context_settings.set(ContextSettings::default());
                             available_quants.set(Vec::new());
