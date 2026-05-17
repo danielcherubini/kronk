@@ -493,7 +493,7 @@ pub fn PullQuantWizard(
 
 /// Helper: advance to Done step when all jobs are in a terminal state.
 fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<WizardStep>) {
-    let jobs = dj.get();
+    let jobs = dj.get_untracked();
     if !jobs.is_empty()
         && jobs
             .iter()
@@ -523,9 +523,11 @@ fn spawn_poll_fallback(
             }
 
             // Check if all jobs are terminal — if so, stop polling
-            let all_terminal = dj.get().iter().all(|j| {
-                let id_match = job_ids.contains(&j.job_id);
-                id_match && (j.status == "completed" || j.status == "failed")
+            let all_terminal = dj.with_untracked(|jobs| {
+                jobs.iter().all(|j| {
+                    let id_match = job_ids.contains(&j.job_id);
+                    id_match && (j.status == "completed" || j.status == "failed")
+                })
             });
             if all_terminal && !job_ids.is_empty() {
                 break;
@@ -540,8 +542,10 @@ fn spawn_poll_fallback(
                 }
 
                 // Check if this job is already terminal
-                let is_terminal = dj.get().iter().any(|j| {
-                    j.job_id == *job_id && (j.status == "completed" || j.status == "failed")
+                let is_terminal = dj.with_untracked(|jobs| {
+                    jobs.iter().any(|j| {
+                        j.job_id == *job_id && (j.status == "completed" || j.status == "failed")
+                    })
                 });
                 if is_terminal {
                     continue;
@@ -554,7 +558,7 @@ fn spawn_poll_fallback(
                 {
                     Ok(resp) if (200..300).contains(&resp.status()) => {
                         if let Ok(p) = resp.json::<SsePayload>().await {
-                            let old_status = dj.with(|jobs| {
+                            let old_status = dj.with_untracked(|jobs| {
                                 jobs.iter()
                                     .find(|j| j.job_id == p.job_id)
                                     .map(|j| j.status.clone())

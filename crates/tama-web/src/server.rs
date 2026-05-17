@@ -338,7 +338,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         // HF metadata endpoint — must come before catch-all proxy_tama
-        .route("/tama/v1/hf/:repo_id/metadata", get(api::hf::hf_metadata))
+        // HF metadata endpoint — wildcard captures `owner/repo` with embedded slash
+        .route("/tama/v1/hf/*repo_id", get(api::hf::hf_metadata))
         // Self-update GET routes (safe methods, no CSRF protection needed)
         .route(
             "/tama/v1/self-update/check",
