@@ -234,11 +234,13 @@ pub fn App() -> impl IntoView {
                                         .await
                                     {
                                         // Only replace if this job isn't already in the list
-                                        pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
-                                            if !items.iter().any(|i| i.job_id == job_id) {
-                                                pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
-                                            }
-                                        });
+                                        let job_exists = pages::downloads::ACTIVE_DOWNLOADS
+                                            .with_untracked(|items| {
+                                                items.iter().any(|i| i.job_id == job_id)
+                                            });
+                                        if !job_exists {
+                                            pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
+                                        }
                                     }
                                 }
                             });
