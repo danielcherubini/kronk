@@ -936,10 +936,6 @@ pub(crate) async fn _setup_model_after_pull_with_config(
             entry.hf_architecture_type = meta.architecture.clone();
             entry.hf_context_length = meta.context_length.map(|v| v as u32);
             entry.hf_num_layers = meta.block_count.map(|v| v as u32);
-            // Use GGUF name for display_name if available (more accurate than repo-derived name)
-            if let Some(ref name) = meta.name {
-                entry.display_name = Some(name.clone());
-            }
         }
 
         // Save card (best-effort — download is already marked Completed)
