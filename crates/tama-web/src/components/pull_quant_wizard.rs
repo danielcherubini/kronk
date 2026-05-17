@@ -515,6 +515,7 @@ fn spawn_poll_fallback(
 ) {
     wasm_bindgen_futures::spawn_local(async move {
         let job_ids: Vec<String> = entries.iter().map(|e| e.job_id.clone()).collect();
+        web_sys::console::log_1(&format!("[poll] started for {} jobs", job_ids.len()).into());
 
         loop {
             if cancel.get_untracked() {
@@ -553,6 +554,11 @@ fn spawn_poll_fallback(
                 {
                     Ok(resp) if (200..300).contains(&resp.status()) => {
                         if let Ok(p) = resp.json::<SsePayload>().await {
+                            let old_status = dj.with(|jobs| {
+                                jobs.iter()
+                                    .find(|j| j.job_id == p.job_id)
+                                    .map(|j| j.status.clone())
+                            });
                             dj.update(|jobs| {
                                 if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
                                     j.bytes_downloaded = p.bytes_downloaded;
@@ -564,7 +570,22 @@ fn spawn_poll_fallback(
                             if let Some(ctx) = p.gguf_context_length {
                                 gguf_ctx.set(Some(ctx));
                             }
+                            // Log status changes for debugging
+                            if old_status.as_deref() != Some(&p.status) {
+                                web_sys::console::log_1(
+                                    &format!(
+                                        "[poll] {} {} -> {}",
+                                        job_id,
+                                        old_status.unwrap_or_default(),
+                                        p.status
+                                    )
+                                    .into(),
+                                );
+                            }
                         }
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[poll] GET failed: {}", e).into());
                     }
                     _ => {}
                 }
