@@ -281,9 +281,9 @@ pub fn SparklineChart(
         })
     };
 
-    // Data path fill and stroke colors (read from signal for reactivity)
-    let fill_color = color_signal.get();
-    let stroke_color = color_signal.get();
+    // Data path fill and stroke colors (read once at render, no reactivity needed)
+    let fill_color = color_signal.get_untracked();
+    let stroke_color = color_signal.get_untracked();
 
     view! {
         <div class="sparkline-container">
