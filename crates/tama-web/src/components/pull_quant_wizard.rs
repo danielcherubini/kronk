@@ -393,7 +393,10 @@ pub fn PullQuantWizard(
 
                                                 // Open SSE stream for each job with per-job reconnection via sse_stream.
                                                 #[cfg(not(feature = "ssr"))]
-                                                spawn_sse_streams(entries, download_jobs, wizard_step, cancelled, gguf_context_length);
+                                                spawn_sse_streams(entries.clone(), download_jobs.clone(), wizard_step.clone(), cancelled.clone(), gguf_context_length.clone());
+                                                // Polling fallback: poll job status every 2s to catch any SSE events missed.
+                                                #[cfg(not(feature = "ssr"))]
+                                                spawn_poll_fallback(entries, download_jobs, wizard_step, cancelled, gguf_context_length);
                                                 #[cfg(feature = "ssr")]
                                                 let _ = entries;
                                             }
@@ -498,6 +501,79 @@ fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<Wizard
     {
         ws.set(WizardStep::Done);
     }
+}
+
+/// Polling fallback: poll job status via REST GET every 2s.
+/// Catches any SSE events missed (e.g., job completes before SSE connects).
+#[cfg(not(feature = "ssr"))]
+fn spawn_poll_fallback(
+    entries: Vec<PullJobEntry>,
+    dj: RwSignal<Vec<JobProgress>>,
+    ws: RwSignal<WizardStep>,
+    cancel: RwSignal<bool>,
+    gguf_ctx: RwSignal<Option<u64>>,
+) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let job_ids: Vec<String> = entries.iter().map(|e| e.job_id.clone()).collect();
+
+        loop {
+            if cancel.get_untracked() {
+                break;
+            }
+
+            // Check if all jobs are terminal — if so, stop polling
+            let all_terminal = dj.get().iter().all(|j| {
+                let id_match = job_ids.contains(&j.job_id);
+                id_match && (j.status == "completed" || j.status == "failed")
+            });
+            if all_terminal && !job_ids.is_empty() {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+            // Poll each non-terminal job
+            for job_id in &job_ids {
+                if cancel.get_untracked() {
+                    break;
+                }
+
+                // Check if this job is already terminal
+                let is_terminal = dj.get().iter().any(|j| {
+                    j.job_id == *job_id && (j.status == "completed" || j.status == "failed")
+                });
+                if is_terminal {
+                    continue;
+                }
+
+                // Poll via REST GET
+                match gloo_net::http::Request::get(&format!("/tama/v1/pulls/{}", job_id))
+                    .send()
+                    .await
+                {
+                    Ok(resp) if (200..300).contains(&resp.status()) => {
+                        if let Ok(p) = resp.json::<SsePayload>().await {
+                            dj.update(|jobs| {
+                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
+                                    j.bytes_downloaded = p.bytes_downloaded;
+                                    j.total_bytes = p.total_bytes;
+                                    j.status = p.status.clone();
+                                    j.error = p.error.clone();
+                                }
+                            });
+                            if let Some(ctx) = p.gguf_context_length {
+                                gguf_ctx.set(Some(ctx));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // After polling stops, check if all jobs are terminal and advance
+        advance_if_all_terminal(&dj, &ws);
+    });
 }
 
 /// Spawn an SSE stream per download job using sse_stream with max 10 reconnect attempts.
