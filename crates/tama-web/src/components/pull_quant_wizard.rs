@@ -530,7 +530,7 @@ fn spawn_poll_fallback(
                 break;
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            gloo_timers::future::TimeoutFuture::new(2000).await;
 
             // Poll each non-terminal job
             for job_id in &job_ids {
