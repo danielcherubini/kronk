@@ -55,6 +55,7 @@ pub fn PullQuantWizard(
     let gguf_context_length = RwSignal::new(None::<u64>);
     let context_settings = RwSignal::new(ContextSettings::default());
     let model_id = RwSignal::new(None::<u32>);
+    let hf_metadata = RwSignal::new(HfModelMetadata::default());
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
@@ -140,6 +141,7 @@ pub fn PullQuantWizard(
             selected_mmproj_filenames.set(std::collections::HashSet::new());
             gguf_context_length.set(None);
             model_id.set(None);
+            hf_metadata.set(HfModelMetadata::default());
             context_settings.set(ContextSettings::default());
             download_jobs.set(Vec::new());
             error_msg.set(None);
@@ -233,25 +235,51 @@ pub fn PullQuantWizard(
                             gguf_context_length.set(None);
                             model_id.set(None);
                             context_settings.set(ContextSettings::default());
+                            hf_metadata.set(HfModelMetadata::default());
                             available_quants.set(Vec::new());
-                            // Fetch quants + create stub model in parallel, then go straight to SelectQuants
+                            // Fetch quants + metadata in parallel, then create stub with metadata
                             wasm_bindgen_futures::spawn_local(async move {
-                                let url = format!("/tama/v1/hf/{}", rid);
-                                let quants_future = gloo_net::http::Request::get(&url).send();
+                                let quants_url = format!("/tama/v1/hf/{}", rid);
+                                let metadata_url = format!("/tama/v1/hf/{}/metadata", rid);
+                                let quants_future = gloo_net::http::Request::get(&quants_url).send();
+                                let metadata_future =
+                                    gloo_net::http::Request::get(&metadata_url).send();
+
+                                let (quants_resp, metadata_resp) =
+                                    futures_util::join!(quants_future, metadata_future);
+
+                                // Parse metadata (soft failure — stub still created without it)
+                                let metadata = match metadata_resp {
+                                    Ok(r) if (200..300).contains(&r.status()) => {
+                                        match r.json::<HfModelMetadata>().await {
+                                            Ok(m) => Some(m),
+                                            Err(e) => {
+                                                log::warn!("Failed to parse metadata: {}", e);
+                                                None
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        log::warn!("Failed to fetch metadata for '{}'", rid);
+                                        None
+                                    }
+                                };
+
+                                // Create stub model with metadata
                                 let stub_body = serde_json::json!({
                                     "repo_id": &rid,
                                     "backend": "llama_cpp",
+                                    "metadata": metadata,
                                 });
-                                let stub_future = post_request("/tama/v1/models")
+                                let stub_resp = post_request("/tama/v1/models")
                                     .json(&stub_body)
                                     .unwrap()
-                                    .send();
-
-                                let (quants_resp, stub_resp) = futures_util::join!(quants_future, stub_future);
+                                    .send()
+                                    .await;
 
                                 // Handle stub creation response
                                 match stub_resp {
-                                    Ok(r) if r.status() == 200 => {
+                                    Ok(r) if (200..300).contains(&r.status()) => {
                                         if let Ok(json) = r.json::<serde_json::Value>().await {
                                             if let Some(id) = json.get("id").and_then(|v| v.as_u64()) {
                                                 model_id.set(Some(id as u32));
@@ -261,6 +289,11 @@ pub fn PullQuantWizard(
                                     _ => {
                                         log::warn!("Failed to create stub model for '{}'", rid);
                                     }
+                                }
+
+                                // Store metadata for later use
+                                if let Some(m) = metadata {
+                                    hf_metadata.set(m);
                                 }
 
                                 // Handle quant list response

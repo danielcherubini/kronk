@@ -14,6 +14,29 @@ pub enum QuantKind {
     Mmproj,
 }
 
+/// Mirrors `tama_core::models::pull::HfModelMetadata` for frontend use.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct HfModelMetadata {
+    #[serde(default)]
+    pub hf_format: Option<String>,
+    #[serde(default)]
+    pub hf_base_model: Option<String>,
+    #[serde(default)]
+    pub hf_pipeline_tag: Option<String>,
+    #[serde(default)]
+    pub hf_total_params: Option<String>,
+    #[serde(default)]
+    pub hf_active_params: Option<String>,
+    #[serde(default)]
+    pub hf_architecture_type: Option<String>,
+    #[serde(default)]
+    pub hf_context_length: Option<u32>,
+    #[serde(default)]
+    pub hf_num_layers: Option<u32>,
+    #[serde(default)]
+    pub hf_last_modified: Option<String>,
+}
+
 #[derive(Deserialize, Clone, Debug)]
 pub struct QuantEntry {
     pub filename: String,

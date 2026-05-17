@@ -7,6 +7,7 @@ pub mod backends;
 pub mod backup;
 pub mod benchmarks;
 pub mod downloads;
+pub mod hf;
 pub mod logs;
 pub mod middleware;
 pub mod models;

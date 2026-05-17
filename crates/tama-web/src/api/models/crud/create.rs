@@ -10,6 +10,10 @@ use crate::server::AppState;
 #[derive(serde::Deserialize)]
 pub struct CreateModelBody {
     pub repo_id: String,
+    /// Optional HuggingFace metadata (README + API) to populate the stub.
+    /// When provided, hf_* fields are merged into the model config.
+    #[serde(default)]
+    pub metadata: Option<tama_core::models::pull::HfModelMetadata>,
     #[serde(flatten)]
     pub model: ModelBody,
 }
@@ -70,6 +74,40 @@ pub async fn create_model(
         }
 
         let model_config = apply_model_body(body.model, None);
+        // Merge HF metadata into model config if provided
+        let model_config = if let Some(ref meta) = body.metadata {
+            let mut mc = model_config;
+            if mc.hf_format.is_none() {
+                mc.hf_format = meta.hf_format.clone();
+            }
+            if mc.hf_base_model.is_none() {
+                mc.hf_base_model = meta.hf_base_model.clone();
+            }
+            if mc.hf_pipeline_tag.is_none() {
+                mc.hf_pipeline_tag = meta.hf_pipeline_tag.clone();
+            }
+            if mc.hf_total_params.is_none() {
+                mc.hf_total_params = meta.hf_total_params.clone();
+            }
+            if mc.hf_active_params.is_none() {
+                mc.hf_active_params = meta.hf_active_params.clone();
+            }
+            if mc.hf_architecture_type.is_none() {
+                mc.hf_architecture_type = meta.hf_architecture_type.clone();
+            }
+            if mc.hf_context_length.is_none() {
+                mc.hf_context_length = meta.hf_context_length;
+            }
+            if mc.hf_num_layers.is_none() {
+                mc.hf_num_layers = meta.hf_num_layers;
+            }
+            if mc.hf_last_modified.is_none() {
+                mc.hf_last_modified = meta.hf_last_modified.clone();
+            }
+            mc
+        } else {
+            model_config
+        };
         let model_id = mgr.save_model_config(&repo_id, &model_config)
             .map_err(|e| {
                 (

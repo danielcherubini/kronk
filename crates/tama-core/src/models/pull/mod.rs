@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use hf_hub::api::tokio::{Api, ApiBuilder};
+use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 pub mod api;
@@ -59,7 +60,7 @@ pub struct BlobInfo {
 
 /// Metadata extracted from HuggingFace API and README for a model.
 /// Internal data-transfer type between the fetcher and the DB update helper.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HfModelMetadata {
     pub hf_format: Option<String>,
     pub hf_base_model: Option<String>,
