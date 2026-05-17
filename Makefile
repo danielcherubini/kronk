@@ -1,18 +1,8 @@
 .PHONY: build install update test check fmt clippy clean build-web build-web-dev wasm-target coverage dev run
 
-# Run tama in dev mode: proxy (:11434) + web UI (:11435)
-# Proxy runs in background, web in foreground — Ctrl+C stops web, `make stop` stops proxy.
+# Run tama in dev mode: proxy (:11434) + web UI (:11435) as a single foreground process
 run: build-frontend-dev
-	@echo "Starting tama proxy on :11434..."
-	@cargo run --bin tama serve --port 11434 &
-	@sleep 1
-	@echo "Starting web UI on :11435..."
-	@cargo run --bin tama web --port 11435 --proxy-url http://127.0.0.1:11434
-
-# Stop the background proxy process started by `make run`
-stop:
-	@pkill -f "cargo run --bin tama serve" 2>/dev/null || true
-	@echo "Stopped tama proxy"
+	cargo run --bin tama serve
 
 # Run Leptos frontend dev server with hot reload on http://localhost:8080
 dev: wasm-target
