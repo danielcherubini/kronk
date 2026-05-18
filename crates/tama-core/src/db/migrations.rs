@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 23;
+pub const LATEST_VERSION: i32 = 24;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -544,6 +544,12 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
                     UNIQUE(name, gpu_variant)
                 );
                 CREATE INDEX idx_backend_configs_name_variant ON backend_configs(name, gpu_variant);
+            "#,
+        ),
+        (
+            24,
+            r#"
+                ALTER TABLE model_configs ADD COLUMN spec_decoding TEXT;
             "#,
         ),
     ];
@@ -1164,5 +1170,87 @@ mod tests {
             )
             .unwrap();
         assert_eq!(version, "b8407");
+    }
+
+    /// Regression test: migration v24 must add spec_decoding column to model_configs.
+    #[test]
+    fn test_migration_v24_adds_spec_decoding_column() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring DB up to v23 (pre-v24 schema)
+        run_up_to(&conn, 23).unwrap();
+
+        // Verify spec_decoding column does NOT exist yet
+        let col_before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('model_configs') WHERE name='spec_decoding'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(col_before, 0, "spec_decoding should not exist before v24");
+
+        // Insert a row before v24
+        conn.execute(
+            "INSERT INTO model_configs (repo_id, backend) VALUES ('test/model', 'llama_cpp')",
+            [],
+        )
+        .unwrap();
+
+        // Apply v24
+        run(&conn).unwrap();
+
+        // Verify spec_decoding column now exists
+        let col_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('model_configs') WHERE name='spec_decoding'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(col_after, 1, "spec_decoding column must exist after v24");
+
+        // Existing row should have NULL for spec_decoding
+        let null_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM model_configs WHERE spec_decoding IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            null_count, 1,
+            "existing rows should have NULL spec_decoding"
+        );
+
+        // Insert a row with JSON spec_decoding
+        let json = serde_json::json!({
+            "specTypes": ["draft-mtp", "ngram-simple"],
+            "nMax": 4,
+            "nMin": 2,
+            "draftNgl": 16
+        });
+        conn.execute(
+            "INSERT INTO model_configs (repo_id, backend, spec_decoding) VALUES ('test/model2', 'llama_cpp', ?)",
+            [json.to_string()],
+        )
+        .unwrap();
+
+        // Verify round-trip
+        let stored: String = conn
+            .query_row(
+                "SELECT spec_decoding FROM model_configs WHERE repo_id = 'test/model2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            parsed["specTypes"],
+            serde_json::json!(["draft-mtp", "ngram-simple"])
+        );
+        assert_eq!(parsed["nMax"], 4);
+        assert_eq!(parsed["nMin"], 2);
+        assert_eq!(parsed["draftNgl"], 16);
     }
 }

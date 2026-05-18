@@ -38,6 +38,7 @@ fn make_test_record(repo_id: &str) -> ModelConfigRecord {
         hf_context_length: None,
         hf_num_layers: None,
         hf_last_modified: None,
+        spec_decoding: None,
         created_at: now.clone(),
         updated_at: now,
     }

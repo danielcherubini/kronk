@@ -33,6 +33,7 @@ pub struct ModelConfigRecord {
     pub hf_context_length: Option<u32>,
     pub hf_num_layers: Option<u32>,
     pub hf_last_modified: Option<String>,
+    pub spec_decoding: Option<String>, // raw JSON string
     pub created_at: String,
     pub updated_at: String,
 }
