@@ -170,7 +170,7 @@ pub fn ModelEditorGeneralForm(
                     } else {
                         opt.name.clone()
                     };
-                    let selected = form.get().as_ref().map(|f| {
+                    let selected = form.get_untracked().as_ref().map(|f| {
                         let expected = if let Some(ref v) = f.gpu_variant {
                             format!("{}:{}", f.backend, v)
                         } else {
@@ -256,7 +256,7 @@ pub fn ModelEditorGeneralForm(
             >
                 <option value="">"Default (f16)"</option>
                 {KV_QUANT_OPTIONS.iter().map(|opt| {
-                    let selected = form.get().as_ref()
+                    let selected = form.get_untracked().as_ref()
                         .and_then(|f| f.cache_type_k.as_deref())
                         == Some(*opt);
                     let opt_str = *opt;
@@ -292,7 +292,7 @@ pub fn ModelEditorGeneralForm(
             >
                 <option value="">"Default (f16)"</option>
                 {KV_QUANT_OPTIONS.iter().map(|opt| {
-                    let selected = form.get().as_ref()
+                    let selected = form.get_untracked().as_ref()
                         .and_then(|f| f.cache_type_v.as_deref())
                         == Some(*opt);
                     let opt_str = *opt;
