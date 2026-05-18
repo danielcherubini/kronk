@@ -627,7 +627,7 @@ fn spawn_poll_fallback(
             }
         }
 
-        web_sys::console::log_1("[poll] loop exited".into());
+        web_sys::console::log_1(&"[poll] loop exited".into());
         // After polling stops, check if all jobs are terminal and advance
         advance_if_all_terminal(&dj, &ws);
     });
