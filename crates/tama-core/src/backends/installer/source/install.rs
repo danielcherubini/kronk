@@ -6,6 +6,8 @@ use anyhow::{anyhow, Result};
 use super::build::build_cmake_args;
 use super::build::emit;
 use super::detect::detect_hip_env;
+use super::detect::detect_rocm_lib_dir;
+use super::detect::register_rocm_ldconfig;
 use crate::backends::installer::extract::find_backend_binary;
 use crate::backends::installer::prebuilt::prepare_target_dir;
 use crate::backends::types::BackendType;
@@ -96,6 +98,31 @@ pub async fn install_from_source(
 
     // Build
     build_cmake(&build_output, progress).await?;
+
+    // Register ROCm library path with ldconfig so the built binary can find
+    // shared libraries like libhipblas.so at runtime.
+    #[cfg(not(target_os = "windows"))]
+    if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
+        if let Some(lib_dir) = detect_rocm_lib_dir() {
+            match register_rocm_ldconfig(&lib_dir) {
+                Ok(()) => {
+                    tracing::info!("Registered ROCm library path: {}", lib_dir);
+                }
+                Err(e) => {
+                    emit(
+                        progress,
+                        format!(
+                            "Warning: Could not register ROCm library path with ldconfig: {}.\n\n\
+                             The built binary may fail with 'cannot open shared object file' errors.\n\
+                             Fix: run as root:  echo '{lib_dir}' > /etc/ld.so.conf.d/rocm.conf && ldconfig\n\
+                             Or set LD_LIBRARY_PATH:  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{lib_dir}",
+                            e
+                        ),
+                    );
+                }
+            }
+        }
+    }
 
     // Install binary
     let result = install_binary(&build_output, options, progress).await;
