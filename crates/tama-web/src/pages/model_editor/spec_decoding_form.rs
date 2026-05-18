@@ -4,6 +4,9 @@ use wasm_bindgen::JsCast;
 use super::types::ModelForm;
 use crate::utils::target_value;
 
+const SPEC_TYPE_DRAFT_MTP: &str = "draft-mtp";
+const SPEC_TYPE_NGRAM_SIMPLE: &str = "ngram-simple";
+
 /// Speculative decoding form section for the model editor.
 #[component]
 pub fn ModelEditorSpecDecodingForm(form: RwSignal<Option<ModelForm>>) -> impl IntoView {
@@ -40,7 +43,7 @@ pub fn ModelEditorSpecDecodingForm(form: RwSignal<Option<ModelForm>>) -> impl In
             .map(|f| {
                 f.spec_decoding
                     .spec_types
-                    .contains(&"draft-mtp".to_string())
+                    .contains(&SPEC_TYPE_DRAFT_MTP.to_string())
             })
             .unwrap_or(false)
     });
@@ -58,11 +61,11 @@ pub fn ModelEditorSpecDecodingForm(form: RwSignal<Option<ModelForm>>) -> impl In
                         prop:checked=move || {
                             form.get()
                                 .as_ref()
-                                .map(|f| f.spec_decoding.spec_types.contains(&"draft-mtp".to_string()))
+                                .map(|f| f.spec_decoding.spec_types.contains(&SPEC_TYPE_DRAFT_MTP.to_string()))
                                 .unwrap_or(false)
                         }
                         on:change=move |e| {
-                            toggle_spec_type(e, "draft-mtp".to_string());
+                            toggle_spec_type(e, SPEC_TYPE_DRAFT_MTP.to_string());
                         }
                     />
                     <label class="form-check-label" for="field-spec-draft-mtp">
@@ -79,11 +82,11 @@ pub fn ModelEditorSpecDecodingForm(form: RwSignal<Option<ModelForm>>) -> impl In
                         prop:checked=move || {
                             form.get()
                                 .as_ref()
-                                .map(|f| f.spec_decoding.spec_types.contains(&"ngram-simple".to_string()))
+                                .map(|f| f.spec_decoding.spec_types.contains(&SPEC_TYPE_NGRAM_SIMPLE.to_string()))
                                 .unwrap_or(false)
                         }
                         on:change=move |e| {
-                            toggle_spec_type(e, "ngram-simple".to_string());
+                            toggle_spec_type(e, SPEC_TYPE_NGRAM_SIMPLE.to_string());
                         }
                     />
                     <label class="form-check-label" for="field-spec-ngram-simple">
