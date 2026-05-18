@@ -4,6 +4,7 @@ mod general_form;
 mod quants_vision_form;
 mod sampling_form;
 mod sections;
+mod spec_decoding_form;
 mod types;
 
 use leptos::prelude::*;
@@ -19,6 +20,7 @@ use self::extra_args_form::ModelEditorExtraArgsForm;
 use self::general_form::ModelEditorGeneralForm;
 use self::quants_vision_form::ModelEditorQuantsVisionForm;
 use self::sampling_form::ModelEditorSamplingForm;
+use self::spec_decoding_form::ModelEditorSpecDecodingForm;
 use self::types::*;
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -168,6 +170,14 @@ pub fn ModelEditor() -> impl IntoView {
                         output: Vec::new(),
                     });
                 }
+
+                // Parse spec_decoding from ModelDetail
+                let spec_decoding = if let Some(sd_json) = &d.spec_decoding {
+                    serde_json::from_value(sd_json.clone()).unwrap_or_default()
+                } else {
+                    SpecDecodingForm::default()
+                };
+
                 form.set(Some(ModelForm {
                     id: d.id.to_string(),
                     backend: d.backend.clone(),
@@ -190,6 +200,7 @@ pub fn ModelEditor() -> impl IntoView {
                     hf_context_length: d.hf_context_length,
                     quants: d.quants.clone(),
                     modalities,
+                    spec_decoding,
                 }));
 
                 repo_commit_sha.set(d.repo_commit_sha.clone());
@@ -364,6 +375,7 @@ pub fn ModelEditor() -> impl IntoView {
                 hf_context_length: initial_form.hf_context_length,
                 quants: initial_form.quants.clone(),
                 modalities: initial_form.modalities.clone(),
+                spec_decoding: initial_form.spec_decoding.clone(),
             };
 
             let new_id = form_data.id.clone();
@@ -643,6 +655,22 @@ pub fn ModelEditor() -> impl IntoView {
                                 </button>
                                 <button
                                     class="nav-btn"
+                                    class:nav-btn--active=move || active_section.get() == Section::SpecDecoding
+                                    on:click=move |_| {
+                                        active_section.set(Section::SpecDecoding);
+                                        if let Some(el) = web_sys::window()
+                                            .and_then(|w| w.document())
+                                            .and_then(|d| d.get_element_by_id("section-spec-decoding"))
+                                        {
+                                            el.scroll_into_view_with_bool(true);
+                                        }
+                                    }
+                                >
+                                    <span class="nav-btn__icon">{Section::SpecDecoding.icon()}</span>
+                                    <span class="nav-btn__text">{Section::SpecDecoding.name()}</span>
+                                </button>
+                                <button
+                                    class="nav-btn"
                                     class:nav-btn--active=move || active_section.get() == Section::QuantsVision
                                     on:click=move |_| {
                                         active_section.set(Section::QuantsVision);
@@ -692,6 +720,11 @@ pub fn ModelEditor() -> impl IntoView {
                                         templates=templates
                                         load_preset_action=load_preset_action
                                     />
+                                </div>
+
+                                <div id="section-spec-decoding" class="card mt-2">
+                                    <h2 class="card__title">"Spec Decoding"</h2>
+                                    <ModelEditorSpecDecodingForm form=form />
                                 </div>
 
                                 <div id="section-quants" class="card mt-2">
