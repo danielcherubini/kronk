@@ -5,12 +5,6 @@ use crate::utils::{post_request, put_request};
 
 use crate::components::pull_wizard::*;
 
-#[cfg(not(feature = "ssr"))]
-use futures_util::StreamExt;
-
-#[cfg(not(feature = "ssr"))]
-use crate::utils::sse_stream;
-
 // Re-export CompletedQuant for use in pages
 use crate::components::pull_wizard::components::{
     context_step::ContextStep, done_step::DoneStep, download_step::DownloadStep,
@@ -391,12 +385,9 @@ pub fn PullQuantWizard(
                                                 download_jobs.set(jobs);
                                                 wizard_step.set(WizardStep::Downloading);
 
-                                                // Open SSE stream for each job with per-job reconnection via sse_stream.
+                                                // Subscribe to global download events SSE stream.
                                                 #[cfg(not(feature = "ssr"))]
-                                                spawn_sse_streams(entries.clone(), download_jobs.clone(), wizard_step.clone(), cancelled.clone(), gguf_context_length.clone());
-                                                // Polling fallback: poll job status every 2s to catch any SSE events missed.
-                                                #[cfg(not(feature = "ssr"))]
-                                                spawn_poll_fallback(entries, download_jobs, wizard_step, cancelled, gguf_context_length);
+                                                spawn_download_events_listener(entries, download_jobs, wizard_step, cancelled);
                                                 #[cfg(feature = "ssr")]
                                                 let _ = entries;
                                             }
@@ -503,272 +494,129 @@ fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<Wizard
     }
 }
 
-/// Polling fallback: poll job status via REST GET every 2s.
-/// Catches any SSE events missed (e.g., job completes before SSE connects).
+/// Subscribe to the global download events SSE stream and update job progress.
+/// Replaces per-job SSE streams + polling fallback with a single EventSource.
 #[cfg(not(feature = "ssr"))]
-fn spawn_poll_fallback(
+fn spawn_download_events_listener(
     entries: Vec<PullJobEntry>,
     dj: RwSignal<Vec<JobProgress>>,
     ws: RwSignal<WizardStep>,
     cancel: RwSignal<bool>,
-    gguf_ctx: RwSignal<Option<u64>>,
 ) {
-    wasm_bindgen_futures::spawn_local(async move {
-        let job_ids: Vec<String> = entries.iter().map(|e| e.job_id.clone()).collect();
-        web_sys::console::log_1(&format!("[poll] started for {} jobs", job_ids.len()).into());
+    let job_ids: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.job_id.clone()).collect();
 
-        loop {
-            if cancel.get_untracked() {
-                break;
-            }
+    web_sys::console::log_1(&format!("[events] listening for {} jobs", job_ids.len()).into());
 
-            // Check if all jobs are terminal — if so, stop polling
-            let all_terminal = dj.with_untracked(|jobs| {
-                jobs.iter().all(|j| {
-                    let id_match = job_ids.contains(&j.job_id);
-                    id_match && (j.status == "completed" || j.status == "failed")
-                })
-            });
-            web_sys::console::log_1(
-                &format!(
-                    "[poll] check: all_terminal={}, jobs={}",
-                    all_terminal,
-                    job_ids.len()
-                )
-                .into(),
-            );
-            if all_terminal && !job_ids.is_empty() {
-                web_sys::console::log_1(&"[poll] all terminal, stopping".into());
-                break;
-            }
-
-            gloo_timers::future::TimeoutFuture::new(2000).await;
-
-            // Poll each non-terminal job
-            for job_id in &job_ids {
-                if cancel.get_untracked() {
-                    break;
-                }
-
-                // Check if this job is already terminal
-                let is_terminal = dj.with_untracked(|jobs| {
-                    jobs.iter().any(|j| {
-                        j.job_id == *job_id && (j.status == "completed" || j.status == "failed")
-                    })
-                });
-                if is_terminal {
-                    continue;
-                }
-
-                // Poll via REST GET
-                web_sys::console::log_1(&format!("[poll] polling {}", job_id).into());
-                let resp_result =
-                    gloo_net::http::Request::get(&format!("/tama/v1/pulls/{}", job_id))
-                        .send()
-                        .await;
-                match resp_result {
-                    Ok(ref resp) => {
-                        web_sys::console::log_1(
-                            &format!("[poll] {} response status={}", job_id, resp.status()).into(),
-                        );
-                    }
-                    _ => {}
-                }
-                match resp_result {
-                    Ok(resp) if (200..300).contains(&resp.status()) => {
-                        match resp.json::<SsePayload>().await {
-                            Ok(p) => {
-                                let old_status = dj.with_untracked(|jobs| {
-                                    jobs.iter()
-                                        .find(|j| j.job_id == p.job_id)
-                                        .map(|j| j.status.clone())
-                                });
-                                dj.update(|jobs| {
-                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id)
-                                    {
-                                        j.bytes_downloaded = p.bytes_downloaded;
-                                        j.total_bytes = p.total_bytes;
-                                        j.status = p.status.clone();
-                                        j.error = p.error.clone();
-                                    }
-                                });
-                                if let Some(ctx) = p.gguf_context_length {
-                                    gguf_ctx.set(Some(ctx));
-                                }
-                                // Log status changes for debugging
-                                if old_status.as_deref() != Some(&p.status) {
-                                    web_sys::console::log_1(
-                                        &format!(
-                                            "[poll] {} {} -> {}",
-                                            job_id,
-                                            old_status.unwrap_or_default(),
-                                            p.status
-                                        )
-                                        .into(),
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                web_sys::console::warn_1(
-                                    &format!("[poll] {} parse failed: {}", job_id, e).into(),
-                                );
-                            }
-                        }
-                    }
-                    Ok(resp) => {
-                        web_sys::console::warn_1(
-                            &format!("[poll] {} HTTP {}", job_id, resp.status()).into(),
-                        );
-                    }
-                    Err(e) => {
-                        web_sys::console::warn_1(&format!("[poll] GET failed: {}", e).into());
-                    }
-                }
-            }
+    let es = match web_sys::EventSource::new("/tama/v1/downloads/events") {
+        Ok(es) => es,
+        Err(e) => {
+            web_sys::console::warn_1(&format!("[events] failed to connect: {}", e).into());
+            return;
         }
+    };
 
-        web_sys::console::log_1(&"[poll] loop exited".into());
-        // After polling stops, check if all jobs are terminal and advance
-        advance_if_all_terminal(&dj, &ws);
-    });
-}
+    // Register handlers for each event type
+    for event_name in [
+        "Started",
+        "Progress",
+        "Verifying",
+        "Completed",
+        "Failed",
+        "Cancelled",
+    ] {
+        let es = es.clone();
+        let job_ids = job_ids.clone();
+        let dj = dj.clone();
+        let ws = ws.clone();
+        let cancel = cancel.clone();
+        let event_name = event_name.to_string();
 
-/// Spawn an SSE stream per download job using sse_stream with max 10 reconnect attempts.
-#[cfg(not(feature = "ssr"))]
-fn spawn_sse_streams(
-    entries: Vec<PullJobEntry>,
-    dj: RwSignal<Vec<JobProgress>>,
-    ws: RwSignal<WizardStep>,
-    cancel: RwSignal<bool>,
-    gguf_ctx: RwSignal<Option<u64>>,
-) {
-    for entry in entries {
-        let job_id_str = entry.job_id.clone();
-
-        wasm_bindgen_futures::spawn_local(async move {
-            let config = sse_stream::SseReconnectConfig {
-                max_attempts: Some(10),
-                ..Default::default()
-            };
-            let url = format!("/tama/v1/pulls/{}/stream", job_id_str);
-            let conn = sse_stream::create(url, cancel, Some(config));
-
-            loop {
+        let closure =
+            wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
                 if cancel.get_untracked() {
-                    break;
+                    return;
                 }
 
-                // Connect (or reconnect) with exponential backoff
-                match conn.connect_once().await {
-                    Ok(()) => {
-                        // Reset error on successful connection
-                        dj.update(|jobs| {
-                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                j.error = None;
-                                if j.status == "reconnecting" {
-                                    j.status = "downloading".to_string();
-                                }
-                            }
-                        });
+                let data = match event.data().as_string() {
+                    Some(d) => d,
+                    None => return,
+                };
 
-                        // Subscribe to channels
-                        let mut progress_stream = match conn.subscribe("progress") {
-                            Ok(s) => s,
-                            Err(_) => {
-                                continue; // connection dropped, loop back
-                            }
-                        };
-                        let mut done_stream = match conn.subscribe("done") {
-                            Ok(s) => s,
-                            Err(_) => {
-                                continue; // connection dropped, loop back
-                            }
-                        };
-
-                        // Inner event processing loop
-                        let mut job_done = false;
-                        loop {
-                            if cancel.get_untracked() {
-                                break;
-                            }
-
-                            let next_progress = progress_stream.next();
-                            let next_done = done_stream.next();
-                            futures_util::pin_mut!(next_progress, next_done);
-
-                            match futures_util::future::select(next_progress, next_done).await {
-                                futures_util::future::Either::Left((Some(Ok(event)), _)) => {
-                                    let data = event.data.clone();
-                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                        dj.update(|jobs| {
-                                            if let Some(j) =
-                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
-                                            {
-                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                j.total_bytes = p.total_bytes;
-                                                j.status = p.status.clone();
-                                                j.error = p.error.clone();
-                                            }
-                                        });
-                                        // Capture GGUF context_length from any job (they're all the same model)
-                                        if let Some(ctx) = p.gguf_context_length {
-                                            gguf_ctx.set(Some(ctx));
-                                        }
-                                    }
-                                }
-                                futures_util::future::Either::Right((Some(Ok(event)), _)) => {
-                                    let data = event.data.clone();
-                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                        dj.update(|jobs| {
-                                            if let Some(j) =
-                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
-                                            {
-                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                j.total_bytes = p.total_bytes;
-                                                j.status = p.status.clone();
-                                                j.error = p.error.clone();
-                                            }
-                                        });
-                                        // Capture GGUF context_length from any job (they're all the same model)
-                                        if let Some(ctx) = p.gguf_context_length {
-                                            gguf_ctx.set(Some(ctx));
-                                        }
-                                    }
-                                    // Done event received — mark job as complete
-                                    web_sys::console::log_1(
-                                        &format!("[sse] done event for {}", job_id_str).into(),
-                                    );
-                                    job_done = true;
-                                    break;
-                                }
-                                _ => {
-                                    // Stream ended — loop back for reconnect
-                                    break;
-                                }
-                            }
-                        }
-                        // If the job received a "done" event, stop reconnecting.
-                        // Otherwise (stream ended unexpectedly), outer loop reconnects.
-                        if job_done {
-                            break;
-                        }
-                    }
+                // Parse as generic JSON to extract job_id
+                let json: serde_json::Value = match serde_json::from_str(&data) {
+                    Ok(v) => v,
                     Err(e) => {
-                        // Max attempts exhausted — mark as terminal failure
-                        dj.update(|jobs| {
-                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                j.status = "failed".to_string();
-                                j.error = Some(format!(
-                                    "SSE stream for job {} failed after max attempts: {e}",
-                                    job_id_str
-                                ));
-                            }
-                        });
-                        advance_if_all_terminal(&dj, &ws);
-                        break;
+                        web_sys::console::warn_1(&format!("[events] parse error: {}", e).into());
+                        return;
                     }
+                };
+
+                let job_id = match json.get("job_id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return,
+                };
+
+                // Only process events for our jobs
+                if !job_ids.contains(job_id) {
+                    return;
                 }
-            }
-        });
+
+                web_sys::console::log_1(&format!("[events] {} for {}", event_name, job_id).into());
+
+                // Update job progress based on event type
+                dj.update(|jobs| {
+                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+                        match event_name.as_str() {
+                            "Started" => {
+                                j.status = "running".to_string();
+                                if let Some(tb) = json.get("total_bytes").and_then(|v| v.as_u64()) {
+                                    j.total_bytes = Some(tb);
+                                }
+                            }
+                            "Progress" => {
+                                j.status = "running".to_string();
+                                if let Some(bd) =
+                                    json.get("bytes_downloaded").and_then(|v| v.as_u64())
+                                {
+                                    j.bytes_downloaded = bd;
+                                }
+                                if let Some(tb) = json.get("total_bytes").and_then(|v| v.as_u64()) {
+                                    j.total_bytes = Some(tb);
+                                }
+                            }
+                            "Verifying" => {
+                                j.status = "verifying".to_string();
+                            }
+                            "Completed" => {
+                                j.status = "completed".to_string();
+                                if let Some(sb) = json.get("size_bytes").and_then(|v| v.as_u64()) {
+                                    j.bytes_downloaded = sb;
+                                    j.total_bytes = Some(sb);
+                                }
+                            }
+                            "Failed" => {
+                                j.status = "failed".to_string();
+                                if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
+                                    j.error = Some(err.to_string());
+                                }
+                            }
+                            "Cancelled" => {
+                                j.status = "failed".to_string();
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+
+                // Check if all jobs are terminal
+                advance_if_all_terminal(&dj, &ws);
+            }) as Box<dyn FnMut(_)>);
+        let _ = es.add_event_listener_with_callback(&event_name, closure.as_ref().unchecked_ref());
+        closure.forget(); // Keep the closure alive
     }
+
+    // Store EventSource reference so it doesn't get garbage collected.
+    // It will be closed when the wizard resets (cancel signal flips).
+    let _ = es;
 }
