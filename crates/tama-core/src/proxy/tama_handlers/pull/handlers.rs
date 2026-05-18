@@ -411,7 +411,7 @@ pub async fn handle_tama_get_pull_job(
 ) -> Response {
     let jobs = state.pull_jobs.read().await;
     let map_ptr = &*jobs as *const _;
-    tracing::debug!(
+    tracing::info!(
         job_id = %job_id,
         map_size = jobs.len(),
         map_addr = ?map_ptr,
@@ -428,7 +428,7 @@ pub async fn handle_tama_get_pull_job(
                 crate::proxy::pull_jobs::PullJobStatus::Completed => "completed",
                 crate::proxy::pull_jobs::PullJobStatus::Failed => "failed",
             };
-            tracing::debug!(
+            tracing::info!(
                 job_id = %job_id,
                 status = status_str,
                 bytes_downloaded = j.bytes_downloaded,
@@ -447,16 +447,19 @@ pub async fn handle_tama_get_pull_job(
             }))
             .into_response()
         }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": {
-                    "message": "Pull job not found",
-                    "type": "NotFoundError"
-                }
-            })),
-        )
-            .into_response(),
+        None => {
+            tracing::warn!(job_id = %job_id, "GET pull job - not found in map");
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "Pull job not found",
+                        "type": "NotFoundError"
+                    }
+                })),
+            )
+                .into_response()
+        }
     }
 }
 
