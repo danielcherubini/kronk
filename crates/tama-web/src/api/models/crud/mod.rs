@@ -64,7 +64,6 @@ pub struct ModelBody {
     pub cache_type_k: Option<String>,
     #[serde(default)]
     pub cache_type_v: Option<String>,
-    #[serde(default)]
     pub spec_decoding: Option<tama_core::config::SpecDecodingConfig>,
 }
 
