@@ -761,4 +761,87 @@ backend = "llama.cpp"
         // quants should be empty as it's not persisted
         assert!(round_trip.quants.is_empty());
     }
+
+    /// Test that SpecDecodingConfig survives a round-trip through the DB record.
+    #[test]
+    fn test_model_config_spec_decoding_db_roundtrip() {
+        let spec = SpecDecodingConfig {
+            spec_types: vec!["draft-mtp".to_string(), "ngram-simple".to_string()],
+            n_max: Some(4),
+            n_min: Some(2),
+            draft_ngl: Some(16),
+        };
+        let mc = ModelConfig {
+            backend: "llama.cpp".to_string(),
+            spec_decoding: spec.clone(),
+            ..Default::default()
+        };
+
+        let record = mc.to_db_record("owner/repo");
+        let round_trip = ModelConfig::from_db_record(&record);
+
+        assert_eq!(round_trip.spec_decoding, spec);
+    }
+
+    /// Test that SpecDecodingConfig serializes to camelCase JSON and deserializes back.
+    #[test]
+    fn test_spec_decoding_json_camel_case_roundtrip() {
+        let spec = SpecDecodingConfig {
+            spec_types: vec!["draft-mtp".to_string(), "ngram-simple".to_string()],
+            n_max: Some(4),
+            n_min: Some(2),
+            draft_ngl: Some(16),
+        };
+
+        let json = serde_json::to_string(&spec).expect("Failed to serialize SpecDecodingConfig");
+
+        // Verify camelCase keys in JSON output
+        assert!(
+            json.contains("\"specTypes\""),
+            "Expected 'specTypes' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"nMax\""),
+            "Expected 'nMax' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"nMin\""),
+            "Expected 'nMin' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"draftNgl\""),
+            "Expected 'draftNgl' key in JSON: {}",
+            json
+        );
+
+        // Verify no snake_case keys
+        assert!(
+            !json.contains("spec_types"),
+            "Should not contain snake_case 'spec_types': {}",
+            json
+        );
+        assert!(
+            !json.contains("n_max"),
+            "Should not contain snake_case 'n_max': {}",
+            json
+        );
+        assert!(
+            !json.contains("n_min"),
+            "Should not contain snake_case 'n_min': {}",
+            json
+        );
+        assert!(
+            !json.contains("draft_ngl"),
+            "Should not contain snake_case 'draft_ngl': {}",
+            json
+        );
+
+        // Deserialize back and verify
+        let deserialized: SpecDecodingConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize SpecDecodingConfig");
+        assert_eq!(deserialized, spec);
+    }
 }
