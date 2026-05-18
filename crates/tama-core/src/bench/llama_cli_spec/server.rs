@@ -36,6 +36,8 @@ pub struct ServerArgs {
     pub draft_min: Option<u32>,
     /// Spec draft NGL for MTP (maps to --spec-draft-ngl).
     pub spec_draft_ngl: Option<u32>,
+    /// Context size (maps to -c). None = use server default.
+    pub context_size: Option<u32>,
 }
 
 impl ServerArgs {
@@ -60,6 +62,12 @@ impl ServerArgs {
 
         // Disable web UI — we only need the API.
         args.push("--no-webui".to_string());
+
+        // Context size.
+        if let Some(ctx) = self.context_size {
+            args.push("-c".to_string());
+            args.push(ctx.to_string());
+        }
 
         // Speculative decoding flags.
         if let Some(spec_type) = &self.spec_type {

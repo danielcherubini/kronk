@@ -483,6 +483,7 @@ async fn run_single_config(
         draft_max: draft_max_val,
         draft_min: draft_min_val,
         spec_draft_ngl: None,
+        context_size: None,
     };
 
     let arg_vec = server_args.to_args();
@@ -592,6 +593,7 @@ pub async fn run_spec_bench(
         draft_max: None,
         draft_min: None,
         spec_draft_ngl: None,
+        context_size: None,
     };
     progress.log(&format!(
         "llama-server {} {}",

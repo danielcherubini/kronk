@@ -71,6 +71,13 @@ pub struct MtpBenchConfig {
     /// Flash attention toggle (maps to -fa). Default true.
     #[serde(default = "default_flash_attn")]
     pub flash_attn: bool,
+    /// Context size (maps to -c). Default Some(32768).
+    #[serde(default = "default_context_size")]
+    pub context_size: Option<u32>,
+}
+
+fn default_context_size() -> Option<u32> {
+    Some(32768)
 }
 
 fn default_flash_attn() -> bool {
@@ -223,6 +230,7 @@ async fn run_prompts_for_config(
         draft_max: Some(draft_max),
         draft_min: None,
         spec_draft_ngl: config.draft_ngl,
+        context_size: config.context_size,
     };
 
     let arg_vec = server_args.to_args();
@@ -588,6 +596,7 @@ mod tests {
             ngl: Some(99),
             draft_ngl: Some(99),
             flash_attn: true,
+            context_size: Some(32768),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -598,6 +607,7 @@ mod tests {
         assert_eq!(deserialized.ngl, config.ngl);
         assert_eq!(deserialized.draft_ngl, config.draft_ngl);
         assert_eq!(deserialized.flash_attn, config.flash_attn);
+        assert_eq!(deserialized.context_size, config.context_size);
     }
 
     /// Verifies that MtpBenchConfig with default flash_attn deserializes correctly.
