@@ -511,7 +511,7 @@ fn spawn_download_events_listener(
     let es = match web_sys::EventSource::new("/tama/v1/downloads/events") {
         Ok(es) => es,
         Err(e) => {
-            web_sys::console::warn_1(&format!("[events] failed to connect: {}", e).into());
+            web_sys::console::warn_1(&format!("[events] failed to connect: {:?}", e).into());
             return;
         }
     };
@@ -531,6 +531,7 @@ fn spawn_download_events_listener(
         let ws = ws.clone();
         let cancel = cancel.clone();
         let event_name = event_name.to_string();
+        let event_name_for_log = event_name.clone();
 
         let closure =
             wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
@@ -562,7 +563,9 @@ fn spawn_download_events_listener(
                     return;
                 }
 
-                web_sys::console::log_1(&format!("[events] {} for {}", event_name, job_id).into());
+                web_sys::console::log_1(
+                    &format!("[events] {} for {}", event_name_for_log, job_id).into(),
+                );
 
                 // Update job progress based on event type
                 dj.update(|jobs| {
