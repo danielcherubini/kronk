@@ -491,9 +491,9 @@ pub fn ModelEditor() -> impl IntoView {
             // Use the persisted id, not the editable form_id — otherwise
             // mid-rename edits would cause the backend to look up a model
             // that isn't saved yet.
-            let persisted = original_id.get();
+            let persisted = original_id.get_untracked();
             let id = if persisted.is_empty() {
-                form.get().map(|f| f.id).unwrap_or_default()
+                form.get_untracked().map(|f| f.id).unwrap_or_default()
             } else {
                 persisted
             };
@@ -520,9 +520,9 @@ pub fn ModelEditor() -> impl IntoView {
             verify_busy.set(true);
             verify_status.set(None);
             // Same reasoning as refresh_action: target the saved id.
-            let persisted = original_id.get();
+            let persisted = original_id.get_untracked();
             let id = if persisted.is_empty() {
-                form.get().map(|f| f.id).unwrap_or_default()
+                form.get_untracked().map(|f| f.id).unwrap_or_default()
             } else {
                 persisted
             };
