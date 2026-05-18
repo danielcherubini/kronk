@@ -538,7 +538,7 @@ fn spawn_poll_fallback(
                 .into(),
             );
             if all_terminal && !job_ids.is_empty() {
-                web_sys::console::log_1("[poll] all terminal, stopping".into());
+                web_sys::console::log_1(&"[poll] all terminal, stopping".into());
                 break;
             }
 
