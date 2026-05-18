@@ -529,7 +529,16 @@ fn spawn_poll_fallback(
                     id_match && (j.status == "completed" || j.status == "failed")
                 })
             });
+            web_sys::console::log_1(
+                &format!(
+                    "[poll] check: all_terminal={}, jobs={}",
+                    all_terminal,
+                    job_ids.len()
+                )
+                .into(),
+            );
             if all_terminal && !job_ids.is_empty() {
+                web_sys::console::log_1("[poll] all terminal, stopping".into());
                 break;
             }
 
@@ -552,6 +561,7 @@ fn spawn_poll_fallback(
                 }
 
                 // Poll via REST GET
+                web_sys::console::log_1(&format!("[poll] polling {}", job_id).into());
                 match gloo_net::http::Request::get(&format!("/tama/v1/pulls/{}", job_id))
                     .send()
                     .await
@@ -703,6 +713,9 @@ fn spawn_sse_streams(
                                         }
                                     }
                                     // Done event received — mark job as complete
+                                    web_sys::console::log_1(
+                                        &format!("[sse] done event for {}", job_id_str).into(),
+                                    );
                                     job_done = true;
                                     break;
                                 }
