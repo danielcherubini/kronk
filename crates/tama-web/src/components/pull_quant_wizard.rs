@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 use std::collections::HashSet;
+#[cfg(not(feature = "ssr"))]
+use wasm_bindgen::JsCast;
 
 use crate::utils::{post_request, put_request};
 
