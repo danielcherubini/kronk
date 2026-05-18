@@ -81,9 +81,14 @@ pub async fn start_download_from_queue(
     // Update status to Running
     {
         let mut jobs = pull_jobs_arc.write().await;
+        let map_ptr = &*jobs as *const _;
         if let Some(job) = jobs.get_mut(&job_id_clone) {
             job.status = crate::proxy::pull_jobs::PullJobStatus::Running;
-            tracing::info!(job_id = %job_id_clone, "Job transitioned to Running");
+            tracing::info!(
+                job_id = %job_id_clone,
+                map_addr = ?map_ptr,
+                "Job transitioned to Running"
+            );
         } else {
             tracing::warn!(job_id = %job_id_clone, "Job not found when setting Running");
             return;
@@ -716,13 +721,20 @@ async fn run_verification(
         }
 
         let mut jobs = pull_jobs.write().await;
+        let map_ptr = &*jobs as *const _;
         if let Some(job) = jobs.get_mut(&job_id) {
             job.verify_bytes_hashed = bytes;
             job.verified_ok = ok;
             job.verify_error = None;
             job.completed_at = Some(Instant::now());
             job.status = crate::proxy::pull_jobs::PullJobStatus::Completed;
-            tracing::info!(job_id = %job_id, verified_ok = ?ok, "Job completed");
+            tracing::info!(
+                job_id = %job_id,
+                verified_ok = ?ok,
+                bytes_downloaded = job.bytes_downloaded,
+                map_addr = ?map_ptr,
+                "Job completed"
+            );
         }
         VerificationOutcome {
             passed: true,

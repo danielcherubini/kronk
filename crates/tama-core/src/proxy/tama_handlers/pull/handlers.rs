@@ -410,6 +410,13 @@ pub async fn handle_tama_get_pull_job(
     Path(job_id): Path<String>,
 ) -> Response {
     let jobs = state.pull_jobs.read().await;
+    let map_ptr = &*jobs as *const _;
+    tracing::debug!(
+        job_id = %job_id,
+        map_size = jobs.len(),
+        map_addr = ?map_ptr,
+        "GET pull job - map state"
+    );
     let job = jobs.get(&job_id).cloned();
 
     match job {
