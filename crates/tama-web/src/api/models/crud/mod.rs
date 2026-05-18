@@ -72,40 +72,42 @@ fn apply_model_body(
     body: ModelBody,
     existing: Option<tama_core::config::ModelConfig>,
 ) -> tama_core::config::ModelConfig {
-    let base = existing.unwrap_or_else(|| tama_core::config::ModelConfig {
-        gpu_variant: None,
-        backend: String::new(),
-        args: vec![],
-        sampling: None,
-        model: None,
-        quant: None,
-        mmproj: None,
-        port: None,
-        health_check: None,
-        enabled: true,
-        context_length: None,
-        num_parallel: None,
-        profile: None,
-        api_name: None,
-        gpu_layers: None,
-        quants: std::collections::BTreeMap::new(),
-        modalities: None,
-        display_name: None,
-        kv_unified: true,
-        cache_type_k: None,
-        cache_type_v: None,
-        hf_format: None,
-        hf_base_model: None,
-        hf_pipeline_tag: None,
-        hf_total_params: None,
-        hf_active_params: None,
-        hf_architecture_type: None,
-        hf_context_length: None,
-        hf_num_layers: None,
-        hf_last_modified: None,
-        db_id: None,
-        spec_decoding: Default::default(),
-    });
+    let base = existing
+        .clone()
+        .unwrap_or_else(|| tama_core::config::ModelConfig {
+            gpu_variant: None,
+            backend: String::new(),
+            args: vec![],
+            sampling: None,
+            model: None,
+            quant: None,
+            mmproj: None,
+            port: None,
+            health_check: None,
+            enabled: true,
+            context_length: None,
+            num_parallel: None,
+            profile: None,
+            api_name: None,
+            gpu_layers: None,
+            quants: std::collections::BTreeMap::new(),
+            modalities: None,
+            display_name: None,
+            kv_unified: true,
+            cache_type_k: None,
+            cache_type_v: None,
+            hf_format: None,
+            hf_base_model: None,
+            hf_pipeline_tag: None,
+            hf_total_params: None,
+            hf_active_params: None,
+            hf_architecture_type: None,
+            hf_context_length: None,
+            hf_num_layers: None,
+            hf_last_modified: None,
+            db_id: None,
+            spec_decoding: Default::default(),
+        });
 
     // Handle sampling from body
     let sampling = body.sampling;
@@ -177,8 +179,7 @@ fn apply_model_body(
         db_id: base.db_id,
         spec_decoding: body
             .spec_decoding
-            .or_else(|| existing.map(|m| m.spec_decoding.clone()))
-            .unwrap_or_default(),
+            .unwrap_or_else(|| base.spec_decoding.clone()),
     }
 }
 
