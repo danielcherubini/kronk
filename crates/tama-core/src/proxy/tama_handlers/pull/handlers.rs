@@ -421,6 +421,12 @@ pub async fn handle_tama_get_pull_job(
                 crate::proxy::pull_jobs::PullJobStatus::Completed => "completed",
                 crate::proxy::pull_jobs::PullJobStatus::Failed => "failed",
             };
+            tracing::debug!(
+                job_id = %job_id,
+                status = status_str,
+                bytes_downloaded = j.bytes_downloaded,
+                "GET pull job"
+            );
 
             Json(serde_json::json!({
                 "job_id": j.job_id,
@@ -429,7 +435,8 @@ pub async fn handle_tama_get_pull_job(
                 "filename": j.filename,
                 "bytes_downloaded": j.bytes_downloaded,
                 "total_bytes": j.total_bytes,
-                "error": j.error
+                "error": j.error,
+                "gguf_context_length": j.gguf_context_length,
             }))
             .into_response()
         }
