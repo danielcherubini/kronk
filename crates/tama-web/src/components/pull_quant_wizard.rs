@@ -534,6 +534,7 @@ fn spawn_download_events_listener(
         let cancel = cancel.clone();
         let event_name = event_name.to_string();
         let event_name_for_log = event_name.clone();
+        let event_name_for_listener = event_name.clone();
 
         let closure =
             wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
@@ -617,7 +618,7 @@ fn spawn_download_events_listener(
                 // Check if all jobs are terminal
                 advance_if_all_terminal(&dj, &ws);
             }) as Box<dyn FnMut(_)>);
-        let _ = es.add_event_listener_with_callback(&event_name, closure.as_ref().unchecked_ref());
+        let _ = es.add_event_listener_with_callback(&event_name_for_listener, closure.as_ref().unchecked_ref());
         closure.forget(); // Keep the closure alive
     }
 
