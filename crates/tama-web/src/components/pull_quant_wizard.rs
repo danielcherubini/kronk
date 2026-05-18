@@ -484,9 +484,16 @@ pub fn PullQuantWizard(
     }
 }
 
-/// Helper: advance to Done step when all jobs are in a terminal state.
+/// Helper: advance to Done step when all jobs are terminal AND we're past the Downloading step.
+/// The Downloading → SetContext transition is handled by the dedicated Effect, not this function.
 fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<WizardStep>) {
     let jobs = dj.get_untracked();
+    let current_step = ws.get_untracked();
+    // Only advance to Done if we're on SetContext (user already configured settings).
+    // If still on Downloading, let the transition Effect handle Downloading → SetContext.
+    if current_step != WizardStep::SetContext {
+        return;
+    }
     if !jobs.is_empty()
         && jobs
             .iter()
@@ -598,7 +605,10 @@ fn spawn_download_events_listener(
                                 j.status = "completed".to_string();
                                 if let Some(sb) = json.get("size_bytes").and_then(|v| v.as_u64()) {
                                     j.bytes_downloaded = sb;
-                                    j.total_bytes = Some(sb);
+                                    // Use size_bytes as total if we never got it from Progress
+                                    if j.total_bytes.is_none() {
+                                        j.total_bytes = Some(sb);
+                                    }
                                 }
                             }
                             "Failed" => {
@@ -618,7 +628,10 @@ fn spawn_download_events_listener(
                 // Check if all jobs are terminal
                 advance_if_all_terminal(&dj, &ws);
             }) as Box<dyn FnMut(_)>);
-        let _ = es.add_event_listener_with_callback(&event_name_for_listener, closure.as_ref().unchecked_ref());
+        let _ = es.add_event_listener_with_callback(
+            &event_name_for_listener,
+            closure.as_ref().unchecked_ref(),
+        );
         closure.forget(); // Keep the closure alive
     }
 

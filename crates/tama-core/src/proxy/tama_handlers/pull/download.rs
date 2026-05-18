@@ -265,9 +265,10 @@ pub async fn start_download_from_queue(
         }
     };
 
-    // Create progress callback that updates job status directly
+    // Create progress callback that updates job status and emits SSE events
     let progress_jobs = Arc::clone(&pull_jobs_arc);
     let progress_job_id = job_id_clone.clone();
+    let progress_queue = state_clone.download_queue.clone();
     let progress_callback: crate::models::download::ProgressCallback =
         Arc::new(move |downloaded: u64, total: u64| {
             let job_id = progress_job_id.clone();
@@ -279,6 +280,10 @@ pub async fn start_download_from_queue(
                         job.total_bytes = Some(total);
                     }
                 }
+            }
+            // Emit SSE progress event directly (throttled by hf-hub's callback frequency)
+            if let Some(ref svc) = progress_queue {
+                let _ = svc.update_progress(&job_id, downloaded as i64, Some(total as i64));
             }
         });
 
