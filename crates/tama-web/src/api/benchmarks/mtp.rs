@@ -20,6 +20,8 @@ pub struct MtpBenchmarkRunRequest {
     pub draft_ngl: Option<u32>,
     #[serde(default = "default_flash_attn")]
     pub flash_attn: bool,
+    #[serde(default = "default_context_size")]
+    pub context_size: Option<u32>,
     #[serde(default)]
     pub benchmark_type: Option<String>,
 }
@@ -35,6 +37,9 @@ fn default_draft_ngl() -> Option<u32> {
 }
 fn default_flash_attn() -> bool {
     true
+}
+fn default_context_size() -> Option<u32> {
+    Some(32768)
 }
 
 // ── Handler: Submit MTP benchmark job ─────────────────────────────────
@@ -172,6 +177,7 @@ pub async fn run_mtp_benchmark_inner(
         ngl: req.ngl,
         draft_ngl: req.draft_ngl,
         flash_attn: req.flash_attn,
+        context_size: req.context_size,
     };
 
     // Create progress sink adapter (same pattern as spec.rs)
