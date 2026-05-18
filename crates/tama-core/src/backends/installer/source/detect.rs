@@ -51,31 +51,42 @@ pub(super) fn detect_rocm_lib_dir() -> Option<String> {
     Some(format!("{}/lib", root))
 }
 
-/// Register the ROCm library path with the system dynamic linker (ldconfig).
+/// Register a library path with the system dynamic linker (ldconfig).
 ///
-/// Writes the lib path to `/etc/ld.so.conf.d/rocm.conf` and runs `ldconfig`.
-/// Requires root privileges. Returns Ok if successful, Err if ldconfig fails
-/// or the path is already registered.
+/// Appends the path to `/etc/ld.so.conf.d/<conf_name>` if not already present,
+/// then runs `ldconfig`. Requires root privileges. Returns Ok if successful,
+/// Err if ldconfig fails or the file can't be written.
 #[cfg(not(target_os = "windows"))]
-pub(super) fn register_rocm_ldconfig(lib_dir: &str) -> std::io::Result<()> {
+pub(super) fn register_ldconfig_path(path: &str, conf_name: &str) -> std::io::Result<()> {
     use std::io::Write;
 
-    let conf_path = "/etc/ld.so.conf.d/rocm.conf";
+    let conf_path = format!("/etc/ld.so.conf.d/{}", conf_name);
 
-    // Check if already registered
-    if let Ok(contents) = std::fs::read_to_string(conf_path) {
-        if contents.trim() == lib_dir {
-            return Ok(());
-        }
+    // Read existing paths, deduplicate
+    let mut paths: Vec<String> = Vec::new();
+    if let Ok(contents) = std::fs::read_to_string(&conf_path) {
+        paths = contents
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
     }
 
+    // Skip if already registered
+    if paths.iter().any(|p| p == path) {
+        return Ok(());
+    }
+
+    paths.push(path.to_string());
+
     // Write the config file
-    let mut file = std::fs::File::create(conf_path)?;
-    writeln!(file, "{}", lib_dir)?;
+    let mut file = std::fs::File::create(&conf_path)?;
+    for p in &paths {
+        writeln!(file, "{}", p)?;
+    }
 
     // Run ldconfig
-    let status = std::process::Command::new("ldconfig")
-        .status()?;
+    let status = std::process::Command::new("ldconfig").status()?;
     if !status.success() {
         return Err(std::io::Error::other("ldconfig failed"));
     }
