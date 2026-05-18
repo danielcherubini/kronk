@@ -515,8 +515,6 @@ fn spawn_download_events_listener(
     let job_ids: std::collections::HashSet<String> =
         entries.iter().map(|e| e.job_id.clone()).collect();
 
-    web_sys::console::log_1(&format!("[events] listening for {} jobs", job_ids.len()).into());
-
     let es = match web_sys::EventSource::new("/tama/v1/downloads/events") {
         Ok(es) => es,
         Err(e) => {
@@ -540,7 +538,6 @@ fn spawn_download_events_listener(
         let ws = ws.clone();
         let cancel = cancel.clone();
         let event_name = event_name.to_string();
-        let event_name_for_log = event_name.clone();
         let event_name_for_listener = event_name.clone();
 
         let closure =
@@ -572,10 +569,6 @@ fn spawn_download_events_listener(
                 if !job_ids.contains(job_id) {
                     return;
                 }
-
-                web_sys::console::log_1(
-                    &format!("[events] {} for {}", event_name_for_log, job_id).into(),
-                );
 
                 // Update job progress based on event type
                 dj.update(|jobs| {
