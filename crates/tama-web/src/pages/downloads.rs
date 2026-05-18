@@ -97,8 +97,8 @@ pub fn Downloads() -> impl IntoView {
         let limit = history_limit.clone();
         let page = history_page.clone();
         move || {
-            let limit_val: i64 = limit.get();
-            let page_val: i64 = page.get();
+            let limit_val: i64 = limit.get_untracked();
+            let page_val: i64 = page.get_untracked();
             let items_c = items.clone();
             let total_c = total.clone();
             wasm_bindgen_futures::spawn_local(async move {

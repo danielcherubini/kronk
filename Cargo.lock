@@ -1309,6 +1309,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gguf-parser"
+version = "0.1.0"
+source = "git+https://github.com/Defilan/gguf-parser?branch=main#a69d2d0c6938f4576204acbacb81ba0533fa46ab"
+dependencies = [
+ "byteorder",
+ "clap",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3771,6 +3781,7 @@ dependencies = [
  "flate2",
  "futures",
  "futures-util",
+ "gguf-parser",
  "glob",
  "hf-hub",
  "http",

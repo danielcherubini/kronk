@@ -11,6 +11,10 @@ const MODELCARDS_BASE_URL: &str =
 
 /// Parse a HuggingFace README markdown to extract model metadata.
 ///
+/// This is a FALLBACK when GGUF header parsing is unavailable (file not yet
+/// downloaded, parse failure, etc.). GGUF-parsed values take priority.
+/// README parsing provides total_params and active_params which are NOT in GGUF.
+///
 /// This is a pure function — no I/O. Returns a `HfModelMetadata` with fields
 /// populated from whatever could be extracted. Missing values are `None`.
 ///

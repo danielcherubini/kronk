@@ -1,8 +1,8 @@
 .PHONY: build install update test check fmt clippy clean build-web build-web-dev wasm-target coverage dev run
 
-# Build and run tama (frontend + backend)
-run: build
-	cargo run --release --bin tama service-run --proxy
+# Run tama in dev mode: proxy (:11434) + web UI (:11435) as a single foreground process
+run: build-frontend-dev
+	cargo run --bin tama serve
 
 # Run Leptos frontend dev server with hot reload on http://localhost:8080
 dev: wasm-target

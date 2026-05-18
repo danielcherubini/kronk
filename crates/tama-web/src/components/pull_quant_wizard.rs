@@ -1,20 +1,16 @@
 use leptos::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+#[cfg(not(feature = "ssr"))]
+use wasm_bindgen::JsCast;
 
-use crate::utils::post_request;
+use crate::utils::{post_request, put_request};
 
 use crate::components::pull_wizard::*;
-
-#[cfg(not(feature = "ssr"))]
-use futures_util::StreamExt;
-
-#[cfg(not(feature = "ssr"))]
-use crate::utils::sse_stream;
 
 // Re-export CompletedQuant for use in pages
 use crate::components::pull_wizard::components::{
     context_step::ContextStep, done_step::DoneStep, download_step::DownloadStep,
-    loading_step::LoadingStep, repo_input::RepoInput, selection_step::SelectionStep,
+    repo_input::RepoInput, selection_step::SelectionStep,
 };
 pub use crate::components::pull_wizard::CompletedQuant;
 
@@ -52,7 +48,10 @@ pub fn PullQuantWizard(
     let available_mmprojs = RwSignal::new(Vec::<QuantEntry>::new());
     let selected_filenames = RwSignal::new(HashSet::<String>::new());
     let selected_mmproj_filenames = RwSignal::new(HashSet::<String>::new());
-    let context_lengths = RwSignal::new(HashMap::<String, u32>::new());
+    let gguf_context_length = RwSignal::new(None::<u64>);
+    let context_settings = RwSignal::new(ContextSettings::default());
+    let model_id = RwSignal::new(None::<u32>);
+    let hf_metadata = RwSignal::new(HfModelMetadata::default());
     let download_jobs = RwSignal::new(Vec::<JobProgress>::new());
     let error_msg = RwSignal::new(Option::<String>::None);
     let did_complete = RwSignal::new(false);
@@ -79,7 +78,6 @@ pub fn PullQuantWizard(
 
             let jobs = download_jobs.get_untracked();
             let quants_listing = available_quants.get_untracked();
-            let ctx_map = context_lengths.get_untracked();
             let repo = repo_id.get_untracked();
 
             let completed: Vec<CompletedQuant> = jobs
@@ -90,13 +88,11 @@ pub fn PullQuantWizard(
                     let quant = entry
                         .and_then(|e| e.quant.clone())
                         .or_else(|| infer_quant_from_filename(&j.filename));
-                    let context_length = ctx_map.get(&j.filename).copied().unwrap_or(32768);
                     CompletedQuant {
                         repo_id: repo.clone(),
                         filename: j.filename.clone(),
                         quant,
                         size_bytes: Some(j.bytes_downloaded),
-                        context_length,
                     }
                 })
                 .collect();
@@ -105,10 +101,9 @@ pub fn PullQuantWizard(
         });
     }
 
-    // ── Done-step transition Effect ─────────────────────────────────────────
+    // ── Downloading → SetContext transition Effect ──────────────────────────
     // Watches download_jobs for terminal-state transitions and advances to
-    // WizardStep::Done. This replaces the on_done callback that was previously
-    // called inside a view closure.
+    // WizardStep::SetContext so the user can configure model settings.
     Effect::new(move |_| {
         let jobs = download_jobs.get();
         if jobs.is_empty() {
@@ -123,7 +118,7 @@ pub fn PullQuantWizard(
         // Only transition if we're currently on the Downloading step.
         let current_step = wizard_step.get();
         if current_step == WizardStep::Downloading {
-            wizard_step.set(WizardStep::Done);
+            wizard_step.set(WizardStep::SetContext);
         }
     });
 
@@ -140,7 +135,10 @@ pub fn PullQuantWizard(
             }
             selected_filenames.set(std::collections::HashSet::new());
             selected_mmproj_filenames.set(std::collections::HashSet::new());
-            context_lengths.set(std::collections::HashMap::new());
+            gguf_context_length.set(None);
+            model_id.set(None);
+            hf_metadata.set(HfModelMetadata::default());
+            context_settings.set(ContextSettings::default());
             download_jobs.set(Vec::new());
             error_msg.set(None);
             did_complete.set(false);
@@ -204,20 +202,17 @@ pub fn PullQuantWizard(
                             "1. Repo"
                         </div>
                     })}
-                    <div class=step_class(&step, &WizardStep::LoadingQuants, 1)>
-                        "2. Loading"
+                    <div class=step_class(&step, &WizardStep::SelectQuants, 1)>
+                        "2. Select"
                     </div>
-                    <div class=step_class(&step, &WizardStep::SelectQuants, 2)>
-                        "3. Select"
+                    <div class=step_class(&step, &WizardStep::Downloading, 2)>
+                        "3. Download"
                     </div>
                     <div class=step_class(&step, &WizardStep::SetContext, 3)>
-                        "4. Context"
+                        "4. Configure"
                     </div>
-                    <div class=step_class(&step, &WizardStep::Downloading, 4)>
-                        "5. Download"
-                    </div>
-                    <div class=step_class(&step, &WizardStep::Done, 5)>
-                        "6. Done"
+                    <div class=step_class(&step, &WizardStep::Done, 4)>
+                        "5. Done"
                     </div>
                 }
             }}
@@ -233,12 +228,72 @@ pub fn PullQuantWizard(
                         on_search=Callback::new(move |rid| {
                             error_msg.set(None);
                             selected_filenames.set(std::collections::HashSet::new());
-                            context_lengths.set(std::collections::HashMap::new());
+                            gguf_context_length.set(None);
+                            model_id.set(None);
+                            context_settings.set(ContextSettings::default());
+                            hf_metadata.set(HfModelMetadata::default());
                             available_quants.set(Vec::new());
-                            wizard_step.set(WizardStep::LoadingQuants);
+                            // Fetch quants + metadata in parallel, then create stub with metadata
                             wasm_bindgen_futures::spawn_local(async move {
-                                let url = format!("/tama/v1/hf/{}", rid);
-                                match gloo_net::http::Request::get(&url).send().await {
+                                let quants_url = format!("/tama/v1/hf/{}", rid);
+                                let metadata_url = format!("/tama/v1/hf/{}/metadata", rid);
+                                let quants_future = gloo_net::http::Request::get(&quants_url).send();
+                                let metadata_future =
+                                    gloo_net::http::Request::get(&metadata_url).send();
+
+                                let (quants_resp, metadata_resp) =
+                                    futures_util::join!(quants_future, metadata_future);
+
+                                // Parse metadata (soft failure — stub still created without it)
+                                let metadata = match metadata_resp {
+                                    Ok(r) if (200..300).contains(&r.status()) => {
+                                        match r.json::<HfModelMetadata>().await {
+                                            Ok(m) => Some(m),
+                                            Err(e) => {
+                                                log::warn!("Failed to parse metadata: {}", e);
+                                                None
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        log::warn!("Failed to fetch metadata for '{}'", rid);
+                                        None
+                                    }
+                                };
+
+                                // Create stub model with metadata
+                                let stub_body = serde_json::json!({
+                                    "repo_id": &rid,
+                                    "backend": "llama_cpp",
+                                    "metadata": metadata,
+                                });
+                                let stub_resp = post_request("/tama/v1/models")
+                                    .json(&stub_body)
+                                    .unwrap()
+                                    .send()
+                                    .await;
+
+                                // Handle stub creation response
+                                match stub_resp {
+                                    Ok(r) if (200..300).contains(&r.status()) => {
+                                        if let Ok(json) = r.json::<serde_json::Value>().await {
+                                            if let Some(id) = json.get("id").and_then(|v| v.as_u64()) {
+                                                model_id.set(Some(id as u32));
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        log::warn!("Failed to create stub model for '{}'", rid);
+                                    }
+                                }
+
+                                // Store metadata for later use
+                                if let Some(m) = metadata {
+                                    hf_metadata.set(m);
+                                }
+
+                                // Handle quant list response
+                                match quants_resp {
                                     Ok(resp) => match resp.json::<Vec<QuantEntry>>().await {
                                         Ok(quants) => {
                                             if quants.is_empty() {
@@ -276,9 +331,11 @@ pub fn PullQuantWizard(
                     />
                 }.into_any(),
 
-                WizardStep::LoadingQuants => view! {
-                    <LoadingStep />
-                }.into_any(),
+                WizardStep::LoadingQuants => {
+                    // Folded into RepoInput — stub model created during search.
+                    // This arm is unreachable in normal flow, retained for safety.
+                    view! { <div></div> }.into_any()
+                },
 
                 WizardStep::SelectQuants => view! {
                     <SelectionStep
@@ -288,60 +345,19 @@ pub fn PullQuantWizard(
                         selected_filenames=selected_filenames
                         selected_mmproj_filenames=selected_mmproj_filenames
                         on_next=Callback::new(move |_| {
-                            let sel = selected_filenames.get();
-                            let mut ctx = HashMap::new();
-                            for fname in &sel {
-                                ctx.insert(fname.clone(), 32768u32);
-                            }
-                            context_lengths.set(ctx);
-                            wizard_step.set(WizardStep::SetContext);
-                        })
-                        on_back=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::RepoInput);
-                        })
-                    />
-                }.into_any(),
-
-                WizardStep::SetContext => view! {
-                    <ContextStep
-                        selected_filenames=selected_filenames.into()
-                        available_quants=available_quants.into()
-                        context_lengths=context_lengths
-                        on_next=Callback::new(move |_| {
                             let rid = repo_id.get();
-                            let sel = selected_filenames.get();
-                            let quants_list = available_quants.get();
-                            let ctx_map = context_lengths.get();
-
-                            let mut quants: Vec<QuantRequest> = sel.iter()
-                                .filter_map(|fname| {
-                                    let entry = quants_list.iter().find(|q| &q.filename == fname)?;
-                                    let ctx = ctx_map.get(fname).copied().unwrap_or(32768);
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: ctx,
-                                    })
-                                })
-                                .collect();
-
-                            let available_mmprojs_list = available_mmprojs.get();
-                            let selected_mmprojs: Vec<QuantRequest> = selected_mmproj_filenames
+                            let filenames: Vec<String> = selected_filenames.get().into_iter().collect();
+                            let mmproj_filenames: Vec<String> = selected_mmproj_filenames
                                 .get()
-                                .iter()
-                                .filter_map(|fname| {
-                                    let entry = available_mmprojs_list.iter().find(|q| &q.filename == fname)?;
-                                    Some(QuantRequest {
-                                        filename: fname.clone(),
-                                        quant: entry.quant.clone(),
-                                        context_length: 32768,
-                                    })
-                                })
+                                .into_iter()
                                 .collect();
 
-                            quants.extend(selected_mmprojs);
-
-                            let body = PullRequest { repo_id: rid, quants };
+                            let body = PullRequest {
+                                repo_id: rid,
+                                model_id: model_id.get_untracked(),
+                                filenames,
+                                mmproj_filenames,
+                            };
 
                             wasm_bindgen_futures::spawn_local(async move {
                                 let build_result = post_request("/tama/v1/pulls")
@@ -371,9 +387,9 @@ pub fn PullQuantWizard(
                                                 download_jobs.set(jobs);
                                                 wizard_step.set(WizardStep::Downloading);
 
-                                                // Open SSE stream for each job with per-job reconnection via sse_stream.
+                                                // Subscribe to global download events SSE stream.
                                                 #[cfg(not(feature = "ssr"))]
-                                                spawn_sse_streams(entries, download_jobs, wizard_step, cancelled);
+                                                spawn_download_events_listener(entries, download_jobs, wizard_step, cancelled);
                                                 #[cfg(feature = "ssr")]
                                                 let _ = entries;
                                             }
@@ -389,7 +405,62 @@ pub fn PullQuantWizard(
                             });
                         })
                         on_back=Callback::new(move |_| {
-                            wizard_step.set(WizardStep::SelectQuants);
+                            wizard_step.set(WizardStep::RepoInput);
+                        })
+                    />
+                }.into_any(),
+
+                WizardStep::SetContext => view! {
+                    <ContextStep
+                        gguf_context_length=gguf_context_length.into()
+                        download_jobs=download_jobs.into()
+                        settings=context_settings
+                        on_next=Callback::new(move |_| {
+                            let settings = context_settings.get();
+                            let mid = model_id.get_untracked();
+                            let repo = repo_id.get_untracked();
+
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let payload = serde_json::json!({
+                                    "backend": "llama_cpp",
+                                    "context_length": settings.context_length,
+                                    "kv_unified": Some(settings.kv_unified),
+                                    "cache_type_k": settings.cache_type_k,
+                                    "cache_type_v": settings.cache_type_v,
+                                });
+
+                                // Use numeric DB id for the PUT
+                                let model_key = if let Some(id) = mid {
+                                    id.to_string()
+                                } else {
+                                    repo.replace('/', "--").to_lowercase()
+                                };
+
+                                match put_request(&format!("/tama/v1/models/{}", model_key))
+                                    .json(&payload)
+                                {
+                                    Ok(req) => {
+                                        match req.send().await {
+                                            Ok(resp) => {
+                                                if resp.status() < 400 {
+                                                    wizard_step.set(WizardStep::Done);
+                                                } else {
+                                                    error_msg.set(Some(format!("Failed to save settings (HTTP {})", resp.status())));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error_msg.set(Some(format!("Failed to save settings: {}", e)));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error_msg.set(Some(format!("Failed to build request: {}", e)));
+                                    }
+                                }
+                            });
+                        })
+                        on_back=Callback::new(move |_| {
+                            wizard_step.set(WizardStep::Downloading);
                         })
                     />
                 }.into_any(),
@@ -413,9 +484,16 @@ pub fn PullQuantWizard(
     }
 }
 
-/// Helper: advance to Done step when all jobs are in a terminal state.
+/// Helper: advance to Done step when all jobs are terminal AND we're past the Downloading step.
+/// The Downloading → SetContext transition is handled by the dedicated Effect, not this function.
 fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<WizardStep>) {
-    let jobs = dj.get();
+    let jobs = dj.get_untracked();
+    let current_step = ws.get_untracked();
+    // Only advance to Done if we're on SetContext (user already configured settings).
+    // If still on Downloading, let the transition Effect handle Downloading → SetContext.
+    if current_step != WizardStep::SetContext {
+        return;
+    }
     if !jobs.is_empty()
         && jobs
             .iter()
@@ -425,130 +503,132 @@ fn advance_if_all_terminal(dj: &RwSignal<Vec<JobProgress>>, ws: &RwSignal<Wizard
     }
 }
 
-/// Spawn an SSE stream per download job using sse_stream with max 10 reconnect attempts.
+/// Subscribe to the global download events SSE stream and update job progress.
+/// Replaces per-job SSE streams + polling fallback with a single EventSource.
 #[cfg(not(feature = "ssr"))]
-fn spawn_sse_streams(
+fn spawn_download_events_listener(
     entries: Vec<PullJobEntry>,
     dj: RwSignal<Vec<JobProgress>>,
     ws: RwSignal<WizardStep>,
     cancel: RwSignal<bool>,
 ) {
-    for entry in entries {
-        let job_id_str = entry.job_id.clone();
+    let job_ids: std::collections::HashSet<String> =
+        entries.iter().map(|e| e.job_id.clone()).collect();
 
-        wasm_bindgen_futures::spawn_local(async move {
-            let config = sse_stream::SseReconnectConfig {
-                max_attempts: Some(10),
-                ..Default::default()
-            };
-            let url = format!("/tama/v1/pulls/{}/stream", job_id_str);
-            let conn = sse_stream::create(url, cancel, Some(config));
+    let es = match web_sys::EventSource::new("/tama/v1/downloads/events") {
+        Ok(es) => es,
+        Err(e) => {
+            web_sys::console::warn_1(&format!("[events] failed to connect: {:?}", e).into());
+            return;
+        }
+    };
 
-            loop {
+    // Register handlers for each event type
+    for event_name in [
+        "Started",
+        "Progress",
+        "Verifying",
+        "Completed",
+        "Failed",
+        "Cancelled",
+    ] {
+        let es = es.clone();
+        let job_ids = job_ids.clone();
+        let dj = dj.clone();
+        let ws = ws.clone();
+        let cancel = cancel.clone();
+        let event_name = event_name.to_string();
+        let event_name_for_listener = event_name.clone();
+
+        let closure =
+            wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
                 if cancel.get_untracked() {
-                    break;
+                    return;
                 }
 
-                // Connect (or reconnect) with exponential backoff
-                match conn.connect_once().await {
-                    Ok(()) => {
-                        // Reset error on successful connection
-                        dj.update(|jobs| {
-                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                j.error = None;
-                                if j.status == "reconnecting" {
-                                    j.status = "downloading".to_string();
-                                }
-                            }
-                        });
+                let data = match event.data().as_string() {
+                    Some(d) => d,
+                    None => return,
+                };
 
-                        // Subscribe to channels
-                        let mut progress_stream = match conn.subscribe("progress") {
-                            Ok(s) => s,
-                            Err(_) => {
-                                continue; // connection dropped, loop back
-                            }
-                        };
-                        let mut done_stream = match conn.subscribe("done") {
-                            Ok(s) => s,
-                            Err(_) => {
-                                continue; // connection dropped, loop back
-                            }
-                        };
-
-                        // Inner event processing loop
-                        let mut job_done = false;
-                        loop {
-                            if cancel.get_untracked() {
-                                break;
-                            }
-
-                            let next_progress = progress_stream.next();
-                            let next_done = done_stream.next();
-                            futures_util::pin_mut!(next_progress, next_done);
-
-                            match futures_util::future::select(next_progress, next_done).await {
-                                futures_util::future::Either::Left((Some(Ok(event)), _)) => {
-                                    let data = event.data.clone();
-                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                        dj.update(|jobs| {
-                                            if let Some(j) =
-                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
-                                            {
-                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                j.total_bytes = p.total_bytes;
-                                                j.status = p.status.clone();
-                                                j.error = p.error.clone();
-                                            }
-                                        });
-                                    }
-                                }
-                                futures_util::future::Either::Right((Some(Ok(event)), _)) => {
-                                    let data = event.data.clone();
-                                    if let Ok(p) = serde_json::from_str::<SsePayload>(&data) {
-                                        dj.update(|jobs| {
-                                            if let Some(j) =
-                                                jobs.iter_mut().find(|j| j.job_id == p.job_id)
-                                            {
-                                                j.bytes_downloaded = p.bytes_downloaded;
-                                                j.total_bytes = p.total_bytes;
-                                                j.status = p.status.clone();
-                                                j.error = p.error.clone();
-                                            }
-                                        });
-                                    }
-                                    // Done event received — mark job as complete
-                                    job_done = true;
-                                    break;
-                                }
-                                _ => {
-                                    // Stream ended — loop back for reconnect
-                                    break;
-                                }
-                            }
-                        }
-                        // If the job received a "done" event, stop reconnecting.
-                        // Otherwise (stream ended unexpectedly), outer loop reconnects.
-                        if job_done {
-                            break;
-                        }
-                    }
+                // Parse as generic JSON to extract job_id
+                let json: serde_json::Value = match serde_json::from_str(&data) {
+                    Ok(v) => v,
                     Err(e) => {
-                        // Max attempts exhausted — mark as terminal failure
-                        dj.update(|jobs| {
-                            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id_str) {
-                                j.status = "failed".to_string();
-                                j.error = Some(format!(
-                                    "SSE stream for job {} failed after max attempts: {e}",
-                                    job_id_str
-                                ));
-                            }
-                        });
-                        advance_if_all_terminal(&dj, &ws);
-                        break;
+                        web_sys::console::warn_1(&format!("[events] parse error: {}", e).into());
+                        return;
                     }
+                };
+
+                let job_id = match json.get("job_id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return,
+                };
+
+                // Only process events for our jobs
+                if !job_ids.contains(job_id) {
+                    return;
                 }
-            }
-        });
+
+                // Update job progress based on event type
+                dj.update(|jobs| {
+                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+                        match event_name.as_str() {
+                            "Started" => {
+                                j.status = "running".to_string();
+                                if let Some(tb) = json.get("total_bytes").and_then(|v| v.as_u64()) {
+                                    j.total_bytes = Some(tb);
+                                }
+                            }
+                            "Progress" => {
+                                j.status = "running".to_string();
+                                if let Some(bd) =
+                                    json.get("bytes_downloaded").and_then(|v| v.as_u64())
+                                {
+                                    j.bytes_downloaded = bd;
+                                }
+                                if let Some(tb) = json.get("total_bytes").and_then(|v| v.as_u64()) {
+                                    j.total_bytes = Some(tb);
+                                }
+                            }
+                            "Verifying" => {
+                                j.status = "verifying".to_string();
+                            }
+                            "Completed" => {
+                                j.status = "completed".to_string();
+                                if let Some(sb) = json.get("size_bytes").and_then(|v| v.as_u64()) {
+                                    j.bytes_downloaded = sb;
+                                    // Use size_bytes as total if we never got it from Progress
+                                    if j.total_bytes.is_none() {
+                                        j.total_bytes = Some(sb);
+                                    }
+                                }
+                            }
+                            "Failed" => {
+                                j.status = "failed".to_string();
+                                if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
+                                    j.error = Some(err.to_string());
+                                }
+                            }
+                            "Cancelled" => {
+                                j.status = "failed".to_string();
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+
+                // Check if all jobs are terminal
+                advance_if_all_terminal(&dj, &ws);
+            }) as Box<dyn FnMut(_)>);
+        let _ = es.add_event_listener_with_callback(
+            &event_name_for_listener,
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget(); // Keep the closure alive
     }
+
+    // Store EventSource reference so it doesn't get garbage collected.
+    // It will be closed when the wizard resets (cancel signal flips).
+    let _ = es;
 }

@@ -37,7 +37,8 @@ async fn test_setup_model_creates_card() {
 
     // Call the inner helper directly (avoids relying on system Config::load())
     let mut models = std::collections::HashMap::new();
-    _setup_model_after_pull_with_config(&configs_dir, &mut models, repo_id, &spec, &dest_dir).await;
+    _setup_model_after_pull_with_config(&configs_dir, &mut models, repo_id, &spec, &dest_dir, None)
+        .await;
 
     // Assert the card file exists
     let card_path = configs_dir.join(format!("{}.toml", repo_slug));
@@ -106,6 +107,7 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
         repo_id,
         &parent_spec,
         &dest_dir,
+        None,
     )
     .await;
 
@@ -125,6 +127,7 @@ async fn test_mmproj_pull_auto_enables_vision_on_parent() {
         repo_id,
         &mmproj_spec,
         &dest_dir,
+        None,
     )
     .await;
 
@@ -179,6 +182,7 @@ async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
         repo_id,
         &mmproj_spec,
         &dest_dir,
+        None,
     )
     .await;
 
@@ -204,6 +208,7 @@ async fn test_mmproj_pull_before_parent_creates_stub_then_promotes() {
         repo_id,
         &parent_spec,
         &dest_dir,
+        None,
     )
     .await;
 
@@ -270,6 +275,12 @@ fn test_pull_job_serializes_for_sse() {
     assert!(
         json.contains("\"verify_error\""),
         "missing verify_error in: {json}"
+    );
+    // GGUF metadata fields must be present in the SSE payload so the
+    // wizard can display auto-detected context length.
+    assert!(
+        json.contains("\"gguf_context_length\""),
+        "missing gguf_context_length in: {json}"
     );
 }
 

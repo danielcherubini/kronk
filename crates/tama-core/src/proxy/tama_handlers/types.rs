@@ -29,6 +29,9 @@ pub struct QuantEntry {
 pub struct QuantDownloadSpec {
     pub filename: String,
     pub quant: Option<String>,
+    /// Kept for backward compat with DB queue. Always None from new wizard requests.
+    /// Populated from GGUF parsing during download.
+    #[serde(default)]
     pub context_length: Option<u32>,
 }
 
@@ -36,13 +39,22 @@ pub struct QuantDownloadSpec {
 #[derive(Debug, Deserialize)]
 pub struct PullRequest {
     pub repo_id: String,
-    /// Quant to download, e.g. "Q4_K_M". Required — omitting returns a 422 with available quants.
+    /// DB id of a pre-created model stub (created before downloading).
+    /// When set, `setup_model_after_pull` updates the existing row instead of creating a new one.
+    #[serde(default)]
+    pub model_id: Option<u32>,
     /// Legacy single-quant support (kept for backward compat).
     #[serde(default)]
     pub quant: Option<String>,
-    /// New multi-quant wizard format: list of quants to download.
+    /// Legacy multi-quant wizard format: list of quants to download.
     #[serde(default)]
     pub quants: Vec<QuantDownloadSpec>,
+    /// New simplified format: just filenames (model quants)
+    #[serde(default)]
+    pub filenames: Vec<String>,
+    /// Vision projector files
+    #[serde(default)]
+    pub mmproj_filenames: Vec<String>,
     #[serde(default)]
     pub context_length: Option<u32>,
 }

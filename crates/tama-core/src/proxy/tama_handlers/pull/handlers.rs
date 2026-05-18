@@ -20,7 +20,138 @@ pub async fn handle_tama_pull_model(
 ) -> Response {
     let repo_id = request.repo_id.clone();
 
-    // Multi-quant path: when `quants` is non-empty, spawn one job per entry.
+    // Simplified format path: when `filenames` or `mmproj_filenames` is non-empty,
+    // use the new simplified format (no per-quant context_length).
+    if !request.filenames.is_empty() || !request.mmproj_filenames.is_empty() {
+        let all_files: Vec<_> = request
+            .filenames
+            .iter()
+            .chain(request.mmproj_filenames.iter())
+            .cloned()
+            .collect();
+
+        let max_pulls = max_concurrent_pulls();
+        if all_files.len() > max_pulls {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Too many files requested. Maximum is {}.", max_pulls)
+                })),
+            )
+                .into_response();
+        }
+
+        // Fetch the HF listing once and validate every requested filename against it.
+        let listing = match crate::models::pull::list_gguf_files(&repo_id).await {
+            Ok(l) => l,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("Failed to fetch file list from HuggingFace: {}", e),
+                            "type": "UpstreamError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        let allowed_filenames: std::collections::HashSet<&str> =
+            listing.files.iter().map(|f| f.filename.as_str()).collect();
+
+        for filename in &all_files {
+            if !allowed_filenames.contains(filename.as_str()) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!(
+                                "Filename '{}' is not a valid GGUF file for repo '{}'",
+                                filename, repo_id
+                            ),
+                            "type": "ValidationError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+
+        // Reject if the request contains duplicate filenames
+        {
+            let mut seen = std::collections::HashSet::new();
+            for filename in &all_files {
+                if !seen.insert(filename.as_str()) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!(
+                                    "Duplicate filename '{}' in request",
+                                    filename
+                                ),
+                                "type": "ValidationError"
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+
+        let mut job_entries = Vec::with_capacity(all_files.len());
+
+        for filename in &all_files {
+            let job_id = format!("pull-{}", uuid::Uuid::new_v4().hyphenated());
+            let pull_job = PullJob {
+                job_id: job_id.clone(),
+                repo_id: repo_id.clone(),
+                filename: filename.clone(),
+                model_id: request.model_id,
+                ..Default::default()
+            };
+
+            {
+                let mut jobs = state.pull_jobs.write().await;
+                jobs.insert(job_id.clone(), pull_job);
+            }
+
+            // Infer quant from filename for display name lookup
+            let quant = crate::models::pull::infer_quant_from_filename(filename);
+            let display_name = state
+                .model_configs
+                .read()
+                .await
+                .get(&format!(
+                    "{}--{}",
+                    repo_id.replace('/', "--"),
+                    quant.as_deref().unwrap_or("unknown")
+                ))
+                .and_then(|mc| mc.display_name.clone());
+
+            // Enqueue with context_length = None (will be filled from GGUF parsing)
+            let _ = enqueue_download(
+                &state,
+                job_id.clone(),
+                repo_id.clone(),
+                filename,
+                display_name.as_deref(),
+                quant.as_deref(),
+                None, // context_length: None — populated from GGUF during download
+            );
+
+            job_entries.push(serde_json::json!({
+                "job_id": job_id,
+                "filename": filename,
+                "status": "pending"
+            }));
+        }
+
+        return Json(serde_json::Value::Array(job_entries)).into_response();
+    }
+
+    // Legacy multi-quant path: when `quants` is non-empty, spawn one job per entry.
     if !request.quants.is_empty() {
         let max_pulls = max_concurrent_pulls();
         if request.quants.len() > max_pulls {
@@ -101,6 +232,7 @@ pub async fn handle_tama_pull_model(
                 job_id: job_id.clone(),
                 repo_id: repo_id.clone(),
                 filename: spec.filename.clone(),
+                model_id: request.model_id,
                 ..Default::default()
             };
 
@@ -229,6 +361,7 @@ pub async fn handle_tama_pull_model(
         job_id: job_id.clone(),
         repo_id: repo_id.clone(),
         filename: filename.clone(),
+        model_id: request.model_id,
         ..Default::default()
     };
 
@@ -277,6 +410,13 @@ pub async fn handle_tama_get_pull_job(
     Path(job_id): Path<String>,
 ) -> Response {
     let jobs = state.pull_jobs.read().await;
+    let map_ptr = &*jobs as *const _;
+    tracing::info!(
+        job_id = %job_id,
+        map_size = jobs.len(),
+        map_addr = ?map_ptr,
+        "GET pull job - map state"
+    );
     let job = jobs.get(&job_id).cloned();
 
     match job {
@@ -288,6 +428,12 @@ pub async fn handle_tama_get_pull_job(
                 crate::proxy::pull_jobs::PullJobStatus::Completed => "completed",
                 crate::proxy::pull_jobs::PullJobStatus::Failed => "failed",
             };
+            tracing::info!(
+                job_id = %job_id,
+                status = status_str,
+                bytes_downloaded = j.bytes_downloaded,
+                "GET pull job"
+            );
 
             Json(serde_json::json!({
                 "job_id": j.job_id,
@@ -296,20 +442,24 @@ pub async fn handle_tama_get_pull_job(
                 "filename": j.filename,
                 "bytes_downloaded": j.bytes_downloaded,
                 "total_bytes": j.total_bytes,
-                "error": j.error
+                "error": j.error,
+                "gguf_context_length": j.gguf_context_length,
             }))
             .into_response()
         }
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": {
-                    "message": "Pull job not found",
-                    "type": "NotFoundError"
-                }
-            })),
-        )
-            .into_response(),
+        None => {
+            tracing::warn!(job_id = %job_id, "GET pull job - not found in map");
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": "Pull job not found",
+                        "type": "NotFoundError"
+                    }
+                })),
+            )
+                .into_response()
+        }
     }
 }
 

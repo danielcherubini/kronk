@@ -14,6 +14,29 @@ pub enum QuantKind {
     Mmproj,
 }
 
+/// Mirrors `tama_core::models::pull::HfModelMetadata` for frontend use.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct HfModelMetadata {
+    #[serde(default)]
+    pub hf_format: Option<String>,
+    #[serde(default)]
+    pub hf_base_model: Option<String>,
+    #[serde(default)]
+    pub hf_pipeline_tag: Option<String>,
+    #[serde(default)]
+    pub hf_total_params: Option<String>,
+    #[serde(default)]
+    pub hf_active_params: Option<String>,
+    #[serde(default)]
+    pub hf_architecture_type: Option<String>,
+    #[serde(default)]
+    pub hf_context_length: Option<u32>,
+    #[serde(default)]
+    pub hf_num_layers: Option<u32>,
+    #[serde(default)]
+    pub hf_last_modified: Option<String>,
+}
+
 #[derive(Deserialize, Clone, Debug)]
 pub struct QuantEntry {
     pub filename: String,
@@ -49,6 +72,9 @@ pub struct SsePayload {
     pub bytes_downloaded: u64,
     pub total_bytes: Option<u64>,
     pub error: Option<String>,
+    /// GGUF-parsed context length from the backend (set during download completion).
+    #[serde(default)]
+    pub gguf_context_length: Option<u64>,
 }
 
 // ── Wizard step enum ─────────────────────────────────────────────────────────
@@ -58,8 +84,8 @@ pub enum WizardStep {
     RepoInput,
     LoadingQuants,
     SelectQuants,
-    SetContext,
     Downloading,
+    SetContext,
     Done,
 }
 
@@ -80,8 +106,8 @@ pub fn step_class(current: &WizardStep, target: &WizardStep, target_idx: usize) 
         WizardStep::RepoInput,
         WizardStep::LoadingQuants,
         WizardStep::SelectQuants,
-        WizardStep::SetContext,
         WizardStep::Downloading,
+        WizardStep::SetContext,
         WizardStep::Done,
     ];
     let current_idx = order.iter().position(|s| s == current).unwrap_or(0);
@@ -224,23 +250,23 @@ pub fn infer_quant_from_filename(filename: &str) -> Option<String> {
 
 // ── Request body type ────────────────────────────────────────────────────────
 
+/// Simplified pull request: just filenames, no per-quant metadata.
+/// Context length is a model-level property populated from GGUF parsing.
 #[derive(Serialize)]
 pub struct PullRequest {
     pub repo_id: String,
-    pub quants: Vec<QuantRequest>,
-}
-
-#[derive(Serialize)]
-pub struct QuantRequest {
-    pub filename: String,
-    pub quant: Option<String>,
-    pub context_length: u32,
+    /// Pre-created model DB id (from POST /tama/v1/models). When set, updates existing row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<u32>,
+    pub filenames: Vec<String>,
+    pub mmproj_filenames: Vec<String>,
 }
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
 /// A quant that was successfully downloaded by the wizard. Emitted via the
 /// `on_complete` callback so the host can merge new quants into its own state.
+/// Context length is model-level (same for all quants), populated from GGUF parsing.
 #[derive(Clone, Debug)]
 pub struct CompletedQuant {
     #[allow(dead_code)]
@@ -248,7 +274,20 @@ pub struct CompletedQuant {
     pub filename: String,
     pub quant: Option<String>,
     pub size_bytes: Option<u64>,
-    pub context_length: u32,
 }
+
+/// Settings configured in the SetContext step.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ContextSettings {
+    pub context_length: Option<u32>,
+    pub kv_unified: bool,
+    pub cache_type_k: Option<String>,
+    pub cache_type_v: Option<String>,
+}
+
+/// KV quantization options for the dropdown.
+pub const KV_QUANT_OPTIONS: &[&str] = &[
+    "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
+];
 
 pub mod components;

@@ -234,11 +234,13 @@ pub fn App() -> impl IntoView {
                                         .await
                                     {
                                         // Only replace if this job isn't already in the list
-                                        pages::downloads::ACTIVE_DOWNLOADS.update(|items| {
-                                            if !items.iter().any(|i| i.job_id == job_id) {
-                                                pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
-                                            }
-                                        });
+                                        let job_exists = pages::downloads::ACTIVE_DOWNLOADS
+                                            .with_untracked(|items| {
+                                                items.iter().any(|i| i.job_id == job_id)
+                                            });
+                                        if !job_exists {
+                                            pages::downloads::ACTIVE_DOWNLOADS.set(data.items);
+                                        }
                                     }
                                 }
                             });
@@ -250,9 +252,9 @@ pub fn App() -> impl IntoView {
                             event_json.event.as_str(),
                             "Completed" | "Failed" | "Cancelled"
                         ) {
-                            let limit = pages::downloads::HISTORY_LIMIT.get();
-                            let offset = pages::downloads::HISTORY_PAGE.get()
-                                * pages::downloads::HISTORY_LIMIT.get();
+                            let limit = pages::downloads::HISTORY_LIMIT.get_untracked();
+                            let offset = pages::downloads::HISTORY_PAGE.get_untracked()
+                                * pages::downloads::HISTORY_LIMIT.get_untracked();
                             wasm_bindgen_futures::spawn_local(async move {
                                 if let Ok(resp) = gloo_net::http::Request::get(&format!(
                                     "/tama/v1/downloads/history?limit={}&offset={}",

@@ -109,22 +109,22 @@ fn apply_model_body(
 
     tama_core::config::ModelConfig {
         backend: body.backend,
-        gpu_variant: body.gpu_variant,
-        model: body.model,
-        quant: body.quant,
-        mmproj: body.mmproj,
+        gpu_variant: body.gpu_variant.or(base.gpu_variant),
+        model: body.model.or(base.model),
+        quant: body.quant.or(base.quant),
+        mmproj: body.mmproj.or(base.mmproj),
         args: body.args,
         sampling,
         enabled: body.enabled.unwrap_or(base.enabled),
         context_length: body.context_length,
-        num_parallel: body.num_parallel,
-        port: body.port,
+        num_parallel: body.num_parallel.or(base.num_parallel),
+        port: body.port.or(base.port),
         health_check: base.health_check,
         profile: None,
-        api_name: body.api_name,
-        gpu_layers: body.gpu_layers,
-        modalities: body.modalities,
-        display_name: body.display_name,
+        api_name: body.api_name.or(base.api_name),
+        gpu_layers: body.gpu_layers.or(base.gpu_layers),
+        modalities: body.modalities.or(base.modalities),
+        display_name: body.display_name.or(base.display_name),
         // Preserve server-side `size_bytes` on update: the UI exposes the field
         // read-only and callers must not be able to rewrite it via the API. The
         // authoritative value comes from the download pipeline
@@ -134,7 +134,7 @@ fn apply_model_body(
         // freshly-created entries that don't yet have a stored size.
         quants: body
             .quants
-            .unwrap_or_default()
+            .unwrap_or_else(|| base.quants.clone())
             .into_iter()
             .map(|(k, v)| {
                 let preserved_size = base
@@ -162,15 +162,15 @@ fn apply_model_body(
             .cache_type_v
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s != "__custom"),
-        hf_format: None,
-        hf_base_model: None,
-        hf_pipeline_tag: None,
-        hf_total_params: None,
-        hf_active_params: None,
-        hf_architecture_type: None,
-        hf_context_length: None,
-        hf_num_layers: None,
-        hf_last_modified: None,
+        hf_format: base.hf_format,
+        hf_base_model: base.hf_base_model,
+        hf_pipeline_tag: base.hf_pipeline_tag,
+        hf_total_params: base.hf_total_params,
+        hf_active_params: base.hf_active_params,
+        hf_architecture_type: base.hf_architecture_type,
+        hf_context_length: base.hf_context_length,
+        hf_num_layers: base.hf_num_layers,
+        hf_last_modified: base.hf_last_modified,
         db_id: base.db_id,
     }
 }
