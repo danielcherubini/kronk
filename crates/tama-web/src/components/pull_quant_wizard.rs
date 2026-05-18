@@ -562,50 +562,72 @@ fn spawn_poll_fallback(
 
                 // Poll via REST GET
                 web_sys::console::log_1(&format!("[poll] polling {}", job_id).into());
-                match gloo_net::http::Request::get(&format!("/tama/v1/pulls/{}", job_id))
-                    .send()
-                    .await
-                {
+                let resp_result =
+                    gloo_net::http::Request::get(&format!("/tama/v1/pulls/{}", job_id))
+                        .send()
+                        .await;
+                match resp_result {
+                    Ok(ref resp) => {
+                        web_sys::console::log_1(
+                            &format!("[poll] {} response status={}", job_id, resp.status()).into(),
+                        );
+                    }
+                    _ => {}
+                }
+                match resp_result {
                     Ok(resp) if (200..300).contains(&resp.status()) => {
-                        if let Ok(p) = resp.json::<SsePayload>().await {
-                            let old_status = dj.with_untracked(|jobs| {
-                                jobs.iter()
-                                    .find(|j| j.job_id == p.job_id)
-                                    .map(|j| j.status.clone())
-                            });
-                            dj.update(|jobs| {
-                                if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id) {
-                                    j.bytes_downloaded = p.bytes_downloaded;
-                                    j.total_bytes = p.total_bytes;
-                                    j.status = p.status.clone();
-                                    j.error = p.error.clone();
+                        match resp.json::<SsePayload>().await {
+                            Ok(p) => {
+                                let old_status = dj.with_untracked(|jobs| {
+                                    jobs.iter()
+                                        .find(|j| j.job_id == p.job_id)
+                                        .map(|j| j.status.clone())
+                                });
+                                dj.update(|jobs| {
+                                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == p.job_id)
+                                    {
+                                        j.bytes_downloaded = p.bytes_downloaded;
+                                        j.total_bytes = p.total_bytes;
+                                        j.status = p.status.clone();
+                                        j.error = p.error.clone();
+                                    }
+                                });
+                                if let Some(ctx) = p.gguf_context_length {
+                                    gguf_ctx.set(Some(ctx));
                                 }
-                            });
-                            if let Some(ctx) = p.gguf_context_length {
-                                gguf_ctx.set(Some(ctx));
+                                // Log status changes for debugging
+                                if old_status.as_deref() != Some(&p.status) {
+                                    web_sys::console::log_1(
+                                        &format!(
+                                            "[poll] {} {} -> {}",
+                                            job_id,
+                                            old_status.unwrap_or_default(),
+                                            p.status
+                                        )
+                                        .into(),
+                                    );
+                                }
                             }
-                            // Log status changes for debugging
-                            if old_status.as_deref() != Some(&p.status) {
-                                web_sys::console::log_1(
-                                    &format!(
-                                        "[poll] {} {} -> {}",
-                                        job_id,
-                                        old_status.unwrap_or_default(),
-                                        p.status
-                                    )
-                                    .into(),
+                            Err(e) => {
+                                web_sys::console::warn_1(
+                                    &format!("[poll] {} parse failed: {}", job_id, e).into(),
                                 );
                             }
                         }
                     }
+                    Ok(resp) => {
+                        web_sys::console::warn_1(
+                            &format!("[poll] {} HTTP {}", job_id, resp.status()).into(),
+                        );
+                    }
                     Err(e) => {
                         web_sys::console::warn_1(&format!("[poll] GET failed: {}", e).into());
                     }
-                    _ => {}
                 }
             }
         }
 
+        web_sys::console::log_1("[poll] loop exited".into());
         // After polling stops, check if all jobs are terminal and advance
         advance_if_all_terminal(&dj, &ws);
     });
