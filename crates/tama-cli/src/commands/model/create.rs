@@ -88,6 +88,7 @@ pub(super) async fn cmd_create(
         hf_num_layers: None,
         hf_last_modified: None,
         db_id: None,
+        spec_decoding: Default::default(),
     };
 
     mgr.save_model_config(&server_name, &model_config)?;

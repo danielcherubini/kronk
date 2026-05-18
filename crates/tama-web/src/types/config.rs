@@ -554,6 +554,7 @@ impl From<ModelConfig> for CoreModelConfig {
             hf_num_layers: None,
             hf_last_modified: None,
             db_id: None, // not carried through mirror types
+            spec_decoding: Default::default(),
         }
     }
 }

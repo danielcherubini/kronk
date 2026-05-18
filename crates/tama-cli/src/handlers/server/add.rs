@@ -168,6 +168,7 @@ pub async fn cmd_server_add(
         hf_num_layers: None,
         hf_last_modified: None,
         db_id: None,
+        spec_decoding: Default::default(),
     };
 
     tama_core::db::save_model_config(&conn, name, &model_config)?;

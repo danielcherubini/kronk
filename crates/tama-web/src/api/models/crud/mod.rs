@@ -102,6 +102,7 @@ fn apply_model_body(
         hf_num_layers: None,
         hf_last_modified: None,
         db_id: None,
+        spec_decoding: Default::default(),
     });
 
     // Handle sampling from body
@@ -172,6 +173,7 @@ fn apply_model_body(
         hf_num_layers: base.hf_num_layers,
         hf_last_modified: base.hf_last_modified,
         db_id: base.db_id,
+        spec_decoding: base.spec_decoding,
     }
 }
 
@@ -345,6 +347,7 @@ mod tests {
             hf_num_layers: None,
             hf_last_modified: None,
             db_id: None,
+            spec_decoding: Default::default(),
         }
     }
 
