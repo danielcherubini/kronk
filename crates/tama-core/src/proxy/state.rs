@@ -316,23 +316,11 @@ impl ProxyState {
         let record = self
             .model_mgr()
             .and_then(|mgr| mgr.get_last_used().ok())
-            .flatten();
-
-        if let Some(record) = record {
-            // Use record.model_name (the identifier load_model can resolve)
-            match self.load_model(&record.model_name, None).await {
-                Ok(server_name) => Ok(server_name),
-                Err(_) => Err(anyhow::anyhow!(
-                    "No model available for '{}'",
-                    WILDCARD_MODEL_NAME
-                )),
-            }
-        } else {
-            Err(anyhow::anyhow!(
-                "No model available for '{}'",
-                WILDCARD_MODEL_NAME
-            ))
-        }
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("No model available for '{}'", WILDCARD_MODEL_NAME))?;
+        self.load_model(&record.model_name, None)
+            .await
+            .map_err(|_| anyhow::anyhow!("No model available for '{}'", WILDCARD_MODEL_NAME))
     }
 }
 
