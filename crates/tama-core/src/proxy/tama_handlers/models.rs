@@ -222,92 +222,148 @@ pub async fn handle_tama_unload_model(
     }
 }
 
+/// Build a model JSON entry from a config entry.
+async fn build_model_entry(
+    state: &ProxyState,
+    id: &str,
+    cfg: &crate::config::ModelConfig,
+) -> Option<serde_json::Value> {
+    // Use model field first, fall back to api_name.
+    let hf_repo = cfg.model.as_deref().or(cfg.api_name.as_deref())?;
+
+    let context_length = if let Some(ctx) = cfg.context_length {
+        Some(ctx)
+    } else {
+        let card = state.get_model_card(id).await;
+        card.and_then(|c| {
+            let quant_key = cfg.quant.as_deref().unwrap_or_default();
+            c.quants
+                .get(quant_key)
+                .and_then(|q| q.context_length)
+                .or(c.model.default_context_length)
+        })
+    };
+    let modalities = cfg.modalities.as_ref().map(|m| {
+        serde_json::json!({
+            "input": m.input,
+            "output": m.output
+        })
+    });
+
+    // Output limit: 1/8 of context window, floored at 16K and capped at 32K.
+    let output_limit = context_length.map(|ctx| (ctx / 8).clamp(16384, 32768));
+
+    // API id: prefer api_name (lowercased), fall back to model (lowercased).
+    let api_id = cfg
+        .api_name
+        .as_ref()
+        .map(|s| s.to_lowercase())
+        .or_else(|| cfg.model.as_ref().map(|s| s.to_lowercase()));
+
+    // Generate a pretty display name with org prefix.
+    let parts: Vec<&str> = hf_repo.split('/').collect();
+    let (org, model_name) = if parts.len() >= 2 {
+        (parts[0], parts[1])
+    } else {
+        (hf_repo, hf_repo)
+    };
+
+    let model_name_processed = model_name
+        .replace(['-', '_'], " ")
+        .split_whitespace()
+        .filter(|word| !word.eq_ignore_ascii_case("GGUF"))
+        .map(capitalize_first)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let pretty_name = format!("{}: {}", capitalize_first(org), model_name_processed);
+
+    let mut model_json = serde_json::json!({
+        "id": api_id,
+        "name": pretty_name,
+        "model": cfg.model,
+        "backend": cfg.backend,
+        "context_length": context_length,
+        "limit": {
+            "context": context_length,
+            "output": output_limit,
+        },
+        "quant": cfg.quant,
+        "gpu_layers": cfg.gpu_layers,
+    });
+
+    if let Some(m) = modalities {
+        model_json["modalities"] = m;
+    }
+
+    Some(model_json)
+}
+
 /// Handle listing all enabled models for OpenCode plugin discovery.
 /// Returns rich metadata including context limits, modalities, and capabilities.
 pub async fn handle_opencode_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
     let model_configs = state.model_configs.read().await;
+    let loaded_models = state.models.read().await;
     let _config = state.config.read().await;
 
     let mut models: Vec<serde_json::Value> = Vec::new();
 
-    for (id, cfg) in model_configs.iter().filter(|(_, cfg)| cfg.enabled) {
-        // Use model field first, fall back to api_name — either is sufficient for HF repo identification.
-        let Some(hf_repo) = cfg.model.clone().or(cfg.api_name.clone()) else {
-            continue;
-        };
+    // Virtual wildcard entry: routes to whatever LLM model is active.
+    // Find the most-recently-accessed Ready/Starting non-TTS model (same logic as resolve_wildcard_model).
+    let wildcard_target = loaded_models
+        .iter()
+        .filter(|(_, s)| {
+            !s.is_tts_backend()
+                && (s.is_ready() || matches!(s, crate::proxy::ModelState::Starting { .. }))
+        })
+        .max_by_key(|(_, s)| s.last_accessed())
+        .map(|(server_name, _)| server_name.clone());
 
-        let context_length = if let Some(ctx) = cfg.context_length {
-            Some(ctx)
+    let wildcard_entry = if let Some(server_name) = &wildcard_target {
+        // Look up the config for the target model and build full metadata.
+        if let Some(cfg) = model_configs.get(server_name) {
+            if let Some(mut entry) = build_model_entry(&state, server_name, cfg).await {
+                // Override id and name for the virtual entry.
+                entry["id"] = serde_json::json!(crate::proxy::WILDCARD_MODEL_NAME);
+                entry["name"] = serde_json::json!("Whatever's Hot 'n Fresh");
+                entry
+            } else {
+                serde_json::json!({
+                    "id": crate::proxy::WILDCARD_MODEL_NAME,
+                    "name": "Whatever's Hot 'n Fresh",
+                    "ready": true,
+                })
+            }
         } else {
-            let card = state.get_model_card(id).await;
-            card.and_then(|c| {
-                let quant_key = cfg.quant.as_deref().unwrap_or_default();
-                c.quants
-                    .get(quant_key)
-                    .and_then(|q| q.context_length)
-                    .or(c.model.default_context_length)
-            })
-        };
-        let modalities = cfg.modalities.as_ref().map(|m| {
             serde_json::json!({
-                "input": m.input,
-                "output": m.output
+                "id": crate::proxy::WILDCARD_MODEL_NAME,
+                "name": "Whatever's Hot 'n Fresh",
+                "ready": true,
             })
-        });
-
-        // Output limit: 1/8 of context window, floored at 16K and capped at 32K.
-        let output_limit = context_length.map(|ctx| (ctx / 8).clamp(16384, 32768));
-
-        // API id: prefer api_name (lowercased), fall back to model (lowercased).
-        // This ensures the model.id used in API calls matches the configured
-        // api_name rather than the raw HF repo model field.
-        let api_id = cfg
-            .api_name
-            .as_ref()
-            .map(|s| s.to_lowercase())
-            .or_else(|| cfg.model.as_ref().map(|s| s.to_lowercase()));
-
-        // Generate a pretty display name with org prefix.
-        // e.g., "unsloth/Qwen3.5-35B-A3B-GGUF" -> "Unsloth: Qwen3.5 35B A3B"
-        // e.g., "mudler/Qwen3.5-35B-A3B-APEX-GGUF" -> "Mudler: Qwen3.5 35B A3B APEX"
-        // Strips common file suffixes like "GGUF" since they add no meaning.
-        let parts: Vec<&str> = hf_repo.split('/').collect();
-        let (org, model_name) = if parts.len() >= 2 {
-            (parts[0], parts[1])
-        } else {
-            (hf_repo.as_str(), hf_repo.as_str())
-        };
-
-        let model_name_processed = model_name
-            .replace(['-', '_'], " ")
-            .split_whitespace()
-            .filter(|word| !word.eq_ignore_ascii_case("GGUF"))
-            .map(capitalize_first)
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        let pretty_name = format!("{}: {}", capitalize_first(org), model_name_processed);
-
-        let mut model_json = serde_json::json!({
-            "id": api_id,
-            "name": pretty_name,
-            "model": cfg.model,
-            "backend": cfg.backend,
-            "context_length": context_length,
-            "limit": {
-                "context": context_length,
-                "output": output_limit,
-            },
-            "quant": cfg.quant,
-            "gpu_layers": cfg.gpu_layers,
-        });
-
-        // Only include modalities if explicitly configured.
-        if let Some(m) = modalities {
-            model_json["modalities"] = m;
         }
+    } else {
+        serde_json::json!({
+            "id": crate::proxy::WILDCARD_MODEL_NAME,
+            "name": "Whatever's Hot 'n Fresh",
+            "ready": false,
+        })
+    };
+    models.push(wildcard_entry);
 
-        models.push(model_json);
+    // Drop locks before the per-model async loop.
+    drop(loaded_models);
+    drop(model_configs);
+
+    for (id, cfg) in state
+        .model_configs
+        .read()
+        .await
+        .iter()
+        .filter(|(_, cfg)| cfg.enabled)
+    {
+        if let Some(entry) = build_model_entry(&state, id, cfg).await {
+            models.push(entry);
+        }
     }
 
     Json(serde_json::json!({
