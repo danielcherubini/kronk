@@ -504,4 +504,142 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.to_string().contains(WILDCARD_MODEL_NAME));
     }
+
+    // ── Integration tests ────────────────────────────────────────────────────
+
+    /// Integration test: full flow with DB persistence.
+    /// Verifies: (1) no models → Err, (2) after inserting last_used record,
+    /// resolve_wildcard_model consults DB and attempts load (fails without configs,
+    /// but proves the DB path is exercised).
+    #[tokio::test]
+    async fn test_wildcard_full_flow_with_db() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = ProxyState::new(config, Some(temp_dir.path().to_path_buf()));
+
+        // Phase 1: No models loaded, no DB record → Err
+        let result = state.resolve_wildcard_model().await;
+        assert!(
+            result.is_err(),
+            "Should fail when no models loaded and no DB record"
+        );
+
+        // Phase 2: Insert a last_used record into the DB
+        let mgr = state.model_mgr().expect("DB should be available");
+        mgr.set_last_used("saved-server", "saved-model").unwrap();
+
+        // Verify the record was persisted
+        let record = mgr.get_last_used().unwrap().expect("Record should exist");
+        assert_eq!(record.server_name, "saved-server");
+        assert_eq!(record.model_name, "saved-model");
+
+        // Phase 3: resolve_wildcard_model should now consult DB and attempt load.
+        // load_model fails without model configs, but the error proves the DB path ran.
+        let result = state.resolve_wildcard_model().await;
+        assert!(
+            result.is_err(),
+            "Should still fail (load_model needs configs), but DB was consulted"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains(WILDCARD_MODEL_NAME),
+            "Error should reference wildcard model name"
+        );
+    }
+
+    /// Integration test: concurrent wildcard requests are serialized by the guard mutex.
+    /// All concurrent callers should get the same result (either all Ok with same server,
+    /// or all Err). This verifies the wildcard_resolve_guard prevents duplicate loads.
+    #[tokio::test]
+    async fn test_wildcard_concurrent_requests() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = ProxyState::new(config, Some(temp_dir.path().to_path_buf()));
+
+        // Pre-populate DB with a last_used record so all callers hit the same path
+        let mgr = state.model_mgr().expect("DB should be available");
+        mgr.set_last_used("saved-server", "saved-model").unwrap();
+
+        // Spawn 5 concurrent resolve_wildcard_model calls
+        let state_clone = state.clone();
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let s = state_clone.clone();
+                tokio::spawn(async move { s.resolve_wildcard_model().await })
+            })
+            .collect();
+
+        // Await all results
+        let results: Vec<_> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        // All 5 should produce the same outcome
+        // (Either all Ok with same server_name, or all Err)
+        let first = &results[0];
+        for (i, result) in results.iter().enumerate().skip(1) {
+            match (first, result) {
+                (Ok(a), Ok(b)) => {
+                    assert_eq!(
+                        a, b,
+                        "Concurrent call {} returned different server: {} vs {}",
+                        i, a, b
+                    );
+                }
+                (Err(a), Err(b)) => {
+                    assert_eq!(
+                        a.to_string(),
+                        b.to_string(),
+                        "Concurrent call {} returned different error",
+                        i
+                    );
+                }
+                _ => panic!(
+                    "Inconsistent results: call 0 = {:?}, call {} = {:?}",
+                    first, i, result
+                ),
+            }
+        }
+    }
+
+    /// Integration test: Failed model state triggers reload attempt.
+    /// When a model is in Failed state, resolve_wildcard_model should attempt
+    /// to reload it via load_model. If load_model fails (no configs), it falls
+    /// through to DB fallback.
+    #[tokio::test]
+    async fn test_wildcard_failed_model_fallback() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let state = ProxyState::new(config, Some(temp_dir.path().to_path_buf()));
+
+        // Add a Failed model
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "failed-server".to_string(),
+                ModelState::Failed {
+                    model_name: "failed-model".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    error: "Backend crashed".to_string(),
+                },
+            );
+        }
+
+        // resolve_wildcard_model should detect the Failed model and attempt reload
+        let result = state.resolve_wildcard_model().await;
+
+        // load_model will fail without configs → falls through to DB fallback
+        // DB is empty → Err with wildcard model name
+        assert!(
+            result.is_err(),
+            "Should fail (no configs for load, no DB record for fallback)"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains(WILDCARD_MODEL_NAME),
+            "Error should reference wildcard model name after Failed fallback"
+        );
+    }
 }

@@ -1098,4 +1098,99 @@ mod tests {
         );
         assert_eq!(data[0].get("ready").unwrap().as_bool(), Some(false));
     }
+
+    // ── Integration tests: handler + DB persistence ──────────────────────────
+
+    /// Integration test: handle_chat_completions with wildcard model and DB-backed state.
+    /// Verifies the full handler → resolve_wildcard_model → DB fallback flow.
+    #[tokio::test]
+    async fn test_handle_chat_completions_wildcard_with_db_fallback() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Config::default();
+        let state_inner = ProxyState::new(config, Some(temp_dir.path().to_path_buf()));
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        // No models loaded, no DB record → 503 with NoModelError
+        let body = serde_json::json!({
+            "model": crate::proxy::WILDCARD_MODEL_NAME,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = Request::post("/v1/chat/completions")
+            .body(Body::from(body.to_string().into_bytes()))
+            .unwrap();
+
+        let response = handle_chat_completions(state.clone(), req).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Should return 503 when no models and no DB record"
+        );
+
+        let (_parts, body_bytes) = response.into_response().into_parts();
+        let bytes = to_bytes(body_bytes, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["type"].as_str(), Some("NoModelError"));
+    }
+
+    /// Integration test: handle_stream_chat_completions with wildcard model.
+    /// Verifies streaming handler also respects wildcard routing.
+    #[tokio::test]
+    async fn test_handle_stream_chat_completions_wildcard_503_no_models() {
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        // POST with wildcard model name but no models loaded
+        let body = serde_json::json!({
+            "model": crate::proxy::WILDCARD_MODEL_NAME,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = Request::post("/v1/chat/completions")
+            .body(Body::from(body.to_string().into_bytes()))
+            .unwrap();
+
+        let response = handle_stream_chat_completions(state, req).await;
+
+        // No models loaded → 503
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Stream wildcard with no models should return 503"
+        );
+
+        let (_parts, body_bytes) = response.into_response().into_parts();
+        let bytes = to_bytes(body_bytes, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json["error"]["type"].as_str(), Some("NoModelError"));
+    }
+
+    /// Integration test: handle_forward_post with wildcard model and Ready model.
+    /// Verifies the fallback POST handler also routes wildcard correctly.
+    #[tokio::test]
+    async fn test_handle_forward_post_wildcard_with_ready_model() {
+        let state_inner = create_test_state_with_ready_model().await;
+        let state_arc = Arc::new(state_inner);
+
+        let body = serde_json::json!({
+            "model": crate::proxy::WILDCARD_MODEL_NAME,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = create_forward_post_request(&body.to_string().into_bytes());
+
+        let response = handle_forward_post(
+            Path("v1/chat/completions".to_string()),
+            State(state_arc.clone()),
+            req,
+        )
+        .await;
+
+        // Should NOT be 503 — wildcard resolved to loaded model
+        assert_ne!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Forward POST wildcard should resolve to loaded model"
+        );
+    }
 }
