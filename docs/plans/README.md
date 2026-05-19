@@ -31,7 +31,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 |------|-------------|---------------------|
 | [GGUF Metadata Parsing](2025-05-15-gguf-metadata-parsing.md) | Parse GGUF file headers for authoritative model metadata, download queue with sequential processing, pull wizard rewrite with global SSE events, KV cache quantization in wizard | #90 ✅ COMPLETED |
 | [MTP Benchmark](2026-05-14-mtp-benchmark.md) | Add "MTP Testing" tab to Benchmarks page — sweep --spec-draft-n-max with --spec-type draft-mtp, 9 diverse prompts, per-prompt + aggregate metrics | `1ba9510` ✅ COMPLETED |
-| [Spec Decoding Config](2026-05-18-spec-decoding-config.md) | Add "Spec Decoding" section to model editor — checkboxes for draft-mtp/ngram-simple, n-max/n-min/draft-ngl params, injected as CLI flags | ✅ COMPLETED |
+| [Spec Decoding Config](2026-05-18-spec-decoding-config.md) | Add "Spec Decoding" section to model editor — checkboxes for draft-mtp/ngram-simple, n-max/n-min/draft-ngl params, injected as CLI flags | #91 ✅ COMPLETED |
 | [Remove llama.cpp Hardcoded Defaults](2025-05-14-remove-llama-defaults.md) | Remove hardcoded llama_cpp and ik_llama backend entries from default config and template, making tama backend-agnostic from first boot | `94184d8`, `41bd8b2`, `725758c` ✅ COMPLETED |
 
 | Plan | Description | PR / Git References |
