@@ -6,6 +6,8 @@ use anyhow::{anyhow, Result};
 use super::build::build_cmake_args;
 use super::build::emit;
 use super::detect::detect_hip_env;
+use super::detect::detect_rocm_lib_dir;
+use super::detect::register_ldconfig_path;
 use crate::backends::installer::extract::find_backend_binary;
 use crate::backends::installer::prebuilt::prepare_target_dir;
 use crate::backends::types::BackendType;
@@ -97,8 +99,61 @@ pub async fn install_from_source(
     // Build
     build_cmake(&build_output, progress).await?;
 
+    // Register ROCm library path with ldconfig so the built binary can find
+    // shared libraries like libhipblas.so at runtime.
+    #[cfg(not(target_os = "windows"))]
+    if matches!(options.gpu_type, Some(GpuType::RocM { .. })) {
+        if let Some(lib_dir) = detect_rocm_lib_dir() {
+            match register_ldconfig_path(&lib_dir, "rocm.conf") {
+                Ok(()) => {
+                    tracing::info!("Registered ROCm library path: {}", lib_dir);
+                }
+                Err(e) => {
+                    emit(
+                        progress,
+                        format!(
+                            "Warning: Could not register ROCm library path with ldconfig: {}.\n\n\
+                             The built binary may fail with 'cannot open shared object file' errors.\n\
+                             Fix: run as root:  echo '{lib_dir}' > /etc/ld.so.conf.d/rocm.conf && ldconfig\n\
+                             Or set LD_LIBRARY_PATH:  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{lib_dir}",
+                            e
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     // Install binary
     let result = install_binary(&build_output, options, progress).await;
+
+    // Register the backend install directory with ldconfig so the binary can
+    // find its own shared libraries (libllama.so, libllama-common.so, etc.).
+    #[cfg(not(target_os = "windows"))]
+    if result.is_ok() {
+        let target = options
+            .target_dir
+            .canonicalize()
+            .unwrap_or(options.target_dir.clone());
+        let target_str = target.to_string_lossy().to_string();
+        match register_ldconfig_path(&target_str, "tama-backend.conf") {
+            Ok(()) => {
+                tracing::info!("Registered backend library path: {}", target_str);
+            }
+            Err(e) => {
+                emit(
+                    progress,
+                    format!(
+                        "Warning: Could not register backend library path with ldconfig: {}.\n\n\
+                         The built binary may fail with 'cannot open shared object file' errors.\n\
+                         Fix: run as root:  echo '{}' > /etc/ld.so.conf.d/tama-backend.conf && ldconfig\n\
+                         Or set LD_LIBRARY_PATH:  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{}",
+                        e, target_str, target_str
+                    ),
+                );
+            }
+        }
+    }
 
     // Clean up build artifacts on success — the binary is installed and the
     // multi-GB build tree is no longer needed. On failure, leave it in place

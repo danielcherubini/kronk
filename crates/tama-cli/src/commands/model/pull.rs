@@ -373,6 +373,7 @@ pub(crate) fn cmd_scan(config: &Config) -> Result<()> {
                                 kv_unified: true,
                                 cache_type_k: None,
                                 cache_type_v: None,
+                                spec_decoding: None,
                                 created_at: super::utils::manual_timestamp(),
                                 updated_at: super::utils::manual_timestamp(),
                             };
@@ -532,6 +533,7 @@ mod tests {
             kv_unified: true,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };
@@ -594,6 +596,7 @@ mod tests {
             kv_unified: true,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };
@@ -648,6 +651,7 @@ mod tests {
                 kv_unified: true,
                 cache_type_k: None,
                 cache_type_v: None,
+                spec_decoding: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
             },
@@ -694,6 +698,7 @@ mod tests {
                 kv_unified: true,
                 cache_type_k: None,
                 cache_type_v: None,
+                spec_decoding: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
             },
@@ -732,6 +737,7 @@ mod tests {
                 kv_unified: true,
                 cache_type_k: None,
                 cache_type_v: None,
+                spec_decoding: None,
                 created_at: "now".to_string(),
                 updated_at: "now".to_string(),
             },

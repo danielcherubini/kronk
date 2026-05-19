@@ -279,6 +279,7 @@ async fn test_cmd_server_edit_valid_profile_succeeds() {
             hf_num_layers: None,
             hf_last_modified: None,
             db_id: None,
+            spec_decoding: Default::default(),
         };
         tama_core::db::save_model_config(&conn, "test_server", &dummy_model)
             .expect("Failed to save model config to DB");

@@ -4,6 +4,7 @@
 pub(crate) enum Section {
     General,
     Sampling,
+    SpecDecoding,
     QuantsVision,
     ExtraArgs,
 }
@@ -13,6 +14,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Sampling => "Sampling",
+            Self::SpecDecoding => "Spec Decoding",
             Self::QuantsVision => "Quants & Vision",
             Self::ExtraArgs => "Extra Args",
         }
@@ -22,6 +24,7 @@ impl Section {
         match self {
             Self::General => "⚙️",
             Self::Sampling => "🎲",
+            Self::SpecDecoding => "⚡",
             Self::QuantsVision => "📊 👁️",
             Self::ExtraArgs => "📝",
         }

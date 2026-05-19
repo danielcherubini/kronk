@@ -403,6 +403,47 @@ impl Config {
             }
         }
 
+        // Inject spec-decoding flags when configured (llama.cpp backends only).
+        if is_llama_cpp_backend && !server.spec_decoding.spec_types.is_empty() {
+            let sd = &server.spec_decoding;
+
+            let already_has_spec_type = grouped
+                .iter()
+                .any(|e| matches!(crate::config::flag_name(e), Some("--spec-type")));
+            if !already_has_spec_type {
+                grouped.push(format!("--spec-type {}", sd.spec_types.join(",")));
+            }
+
+            if let Some(n) = sd.n_max {
+                let already_has = grouped
+                    .iter()
+                    .any(|e| matches!(crate::config::flag_name(e), Some("--spec-draft-n-max")));
+                if !already_has {
+                    grouped.push(format!("--spec-draft-n-max {}", n));
+                }
+            }
+
+            if let Some(n) = sd.n_min {
+                let already_has = grouped
+                    .iter()
+                    .any(|e| matches!(crate::config::flag_name(e), Some("--spec-draft-n-min")));
+                if !already_has {
+                    grouped.push(format!("--spec-draft-n-min {}", n));
+                }
+            }
+
+            if sd.spec_types.iter().any(|t| t == "draft-mtp") {
+                if let Some(spec_ngl) = sd.draft_ngl {
+                    let already_has = grouped
+                        .iter()
+                        .any(|e| matches!(crate::config::flag_name(e), Some("--spec-draft-ngl")));
+                    if !already_has {
+                        grouped.push(format!("--spec-draft-ngl {}", spec_ngl));
+                    }
+                }
+            }
+        }
+
         // Sampling: each sampling flag fully replaces the same flag in
         // anything injected so far.
         if let Some(sampling) = &server.sampling {

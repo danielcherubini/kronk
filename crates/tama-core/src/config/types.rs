@@ -283,6 +283,9 @@ pub struct ModelConfig {
     /// expose the canonical integer id for API consumers.
     #[serde(default, skip)]
     pub db_id: Option<i64>,
+    /// Speculative decoding configuration.
+    #[serde(default)]
+    pub spec_decoding: SpecDecodingConfig,
 }
 
 impl ModelConfig {
@@ -330,6 +333,7 @@ impl ModelConfig {
             hf_context_length: self.hf_context_length,
             hf_num_layers: self.hf_num_layers,
             hf_last_modified: self.hf_last_modified.clone(),
+            spec_decoding: serde_json::to_string(&self.spec_decoding).ok(),
             created_at: now.clone(),
             updated_at: now,
         }
@@ -390,8 +394,32 @@ impl ModelConfig {
             profile: record.profile.clone(),
             quants: BTreeMap::new(), // Not stored in DB record
             db_id: Some(record.id),
+            spec_decoding: record
+                .spec_decoding
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default(),
         }
     }
+}
+
+/// Configuration for speculative decoding (draft model) support.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecDecodingConfig {
+    /// Enabled spec types (e.g. ["draft-mtp", "ngram-simple"]).
+    /// Passed as comma-separated to --spec-type. Empty = disabled.
+    #[serde(default)]
+    pub spec_types: Vec<String>,
+    /// Draft context length (--spec-draft-n-max). Range: 1-8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_max: Option<u32>,
+    /// Minimum draft tokens (--spec-draft-n-min). Range: 1-8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n_min: Option<u32>,
+    /// Draft model GPU layers (--spec-draft-ngl). MTP-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_ngl: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -629,6 +657,44 @@ host = "0.0.0.0"
         assert_eq!(config.max_loaded_models, 1);
     }
 
+    /// Test that SpecDecodingConfig round-trips through TOML serialization.
+    #[test]
+    fn test_spec_decoding_in_model_config_toml_roundtrip() {
+        let spec = SpecDecodingConfig {
+            spec_types: vec!["draft-mtp".to_string(), "ngram-simple".to_string()],
+            n_max: Some(4),
+            n_min: Some(2),
+            draft_ngl: Some(16),
+        };
+        let config = ModelConfig {
+            backend: "llama.cpp".to_string(),
+            spec_decoding: spec.clone(),
+            ..Default::default()
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let loaded: ModelConfig = toml::from_str(&toml_str).unwrap();
+
+        assert_eq!(loaded.spec_decoding.spec_types, spec.spec_types);
+        assert_eq!(loaded.spec_decoding.n_max, spec.n_max);
+        assert_eq!(loaded.spec_decoding.n_min, spec.n_min);
+        assert_eq!(loaded.spec_decoding.draft_ngl, spec.draft_ngl);
+    }
+
+    /// Test that omitting spec_decoding in TOML yields SpecDecodingConfig::default().
+    #[test]
+    fn test_spec_decoding_missing_in_toml_defaults() {
+        let toml_str = r#"
+backend = "llama.cpp"
+"#;
+        let config: ModelConfig = toml::from_str(toml_str).unwrap();
+
+        assert!(config.spec_decoding.spec_types.is_empty());
+        assert_eq!(config.spec_decoding.n_max, None);
+        assert_eq!(config.spec_decoding.n_min, None);
+        assert_eq!(config.spec_decoding.draft_ngl, None);
+    }
+
     /// Test that a ModelConfig survives a round-trip through the DB record.
     #[test]
     fn test_model_config_round_trip() {
@@ -690,8 +756,92 @@ host = "0.0.0.0"
         assert_eq!(round_trip.kv_unified, mc.kv_unified);
         assert_eq!(round_trip.hf_architecture_type, mc.hf_architecture_type);
         assert_eq!(round_trip.hf_total_params, mc.hf_total_params);
+        assert_eq!(round_trip.spec_decoding, mc.spec_decoding);
 
         // quants should be empty as it's not persisted
         assert!(round_trip.quants.is_empty());
+    }
+
+    /// Test that SpecDecodingConfig survives a round-trip through the DB record.
+    #[test]
+    fn test_model_config_spec_decoding_db_roundtrip() {
+        let spec = SpecDecodingConfig {
+            spec_types: vec!["draft-mtp".to_string(), "ngram-simple".to_string()],
+            n_max: Some(4),
+            n_min: Some(2),
+            draft_ngl: Some(16),
+        };
+        let mc = ModelConfig {
+            backend: "llama.cpp".to_string(),
+            spec_decoding: spec.clone(),
+            ..Default::default()
+        };
+
+        let record = mc.to_db_record("owner/repo");
+        let round_trip = ModelConfig::from_db_record(&record);
+
+        assert_eq!(round_trip.spec_decoding, spec);
+    }
+
+    /// Test that SpecDecodingConfig serializes to camelCase JSON and deserializes back.
+    #[test]
+    fn test_spec_decoding_json_camel_case_roundtrip() {
+        let spec = SpecDecodingConfig {
+            spec_types: vec!["draft-mtp".to_string(), "ngram-simple".to_string()],
+            n_max: Some(4),
+            n_min: Some(2),
+            draft_ngl: Some(16),
+        };
+
+        let json = serde_json::to_string(&spec).expect("Failed to serialize SpecDecodingConfig");
+
+        // Verify camelCase keys in JSON output
+        assert!(
+            json.contains("\"specTypes\""),
+            "Expected 'specTypes' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"nMax\""),
+            "Expected 'nMax' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"nMin\""),
+            "Expected 'nMin' key in JSON: {}",
+            json
+        );
+        assert!(
+            json.contains("\"draftNgl\""),
+            "Expected 'draftNgl' key in JSON: {}",
+            json
+        );
+
+        // Verify no snake_case keys
+        assert!(
+            !json.contains("spec_types"),
+            "Should not contain snake_case 'spec_types': {}",
+            json
+        );
+        assert!(
+            !json.contains("n_max"),
+            "Should not contain snake_case 'n_max': {}",
+            json
+        );
+        assert!(
+            !json.contains("n_min"),
+            "Should not contain snake_case 'n_min': {}",
+            json
+        );
+        assert!(
+            !json.contains("draft_ngl"),
+            "Should not contain snake_case 'draft_ngl': {}",
+            json
+        );
+
+        // Deserialize back and verify
+        let deserialized: SpecDecodingConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize SpecDecodingConfig");
+        assert_eq!(deserialized, spec);
     }
 }

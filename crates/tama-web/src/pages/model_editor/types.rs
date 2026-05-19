@@ -90,6 +90,8 @@ pub struct ModelDetail {
     pub repo_pulled_at: Option<String>,
     #[serde(default)]
     pub modalities: Option<ModelModalities>,
+    #[serde(default)]
+    pub spec_decoding: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +105,17 @@ pub struct ModelListResponse {
 pub struct SamplingField {
     pub enabled: bool,
     pub value: String,
+}
+
+/// Speculative decoding configuration for the model editor form.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecDecodingForm {
+    #[serde(default)]
+    pub spec_types: Vec<String>,
+    pub n_max: Option<u32>,
+    pub n_min: Option<u32>,
+    pub draft_ngl: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -133,6 +146,8 @@ pub struct ModelForm {
     pub quants: BTreeMap<String, QuantInfo>,
     #[serde(default)]
     pub modalities: Option<ModelModalities>,
+    #[serde(default)]
+    pub spec_decoding: SpecDecodingForm,
 }
 
 fn default_kv_unified() -> bool {

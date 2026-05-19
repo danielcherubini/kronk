@@ -207,6 +207,7 @@ fn test_upsert_and_get_model_config() {
         hf_context_length: None,
         hf_num_layers: None,
         hf_last_modified: None,
+        spec_decoding: None,
         created_at: "2024-04-15T12:00:00Z".to_string(),
         updated_at: "2024-04-15T12:00:00Z".to_string(),
     };
@@ -276,6 +277,7 @@ fn test_get_all_model_configs() {
         hf_context_length: None,
         hf_num_layers: None,
         hf_last_modified: None,
+        spec_decoding: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
     };
@@ -310,6 +312,7 @@ fn test_get_all_model_configs() {
         hf_context_length: None,
         hf_num_layers: None,
         hf_last_modified: None,
+        spec_decoding: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
     };
@@ -355,6 +358,7 @@ fn test_delete_model_config() {
         hf_context_length: None,
         hf_num_layers: None,
         hf_last_modified: None,
+        spec_decoding: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
     };

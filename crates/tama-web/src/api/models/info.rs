@@ -122,6 +122,7 @@ fn model_entry_json(
         "hf_context_length": record.hf_context_length,
         "quants": quants_json,
         "modalities": m.modalities,
+        "spec_decoding": serde_json::to_value(&m.spec_decoding).unwrap_or_default(),
     });
 
     if let Some(meta) = db_meta {

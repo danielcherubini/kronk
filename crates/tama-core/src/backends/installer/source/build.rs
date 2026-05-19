@@ -47,7 +47,9 @@ pub(crate) fn build_cmake_args(
                 cmake_args.push("-DGGML_HIP=ON".to_string());
                 cmake_args.push("-DGGML_HIP_ROCWMMA_FATTN=ON".to_string());
                 cmake_args.push("-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string());
-                cmake_args.push("-DGGML_BACKEND_DL=ON".to_string());
+                // Note: `-DGGML_BACKEND_DL=ON` was removed because it conflicts
+                // with GGML_NATIVE (ON by default). llama.cpp cmake hard-stops
+                // when both are set. Keeping GGML_NATIVE for CPU optimizations.
                 // Note: `-DLLAMA_CURL=ON` was deprecated upstream and is now
                 // silently ignored (emits a cmake warning). curl support is
                 // handled implicitly by current llama.cpp builds, so we do
@@ -170,8 +172,8 @@ mod tests {
             args
         );
         assert!(
-            args.contains(&"-DGGML_BACKEND_DL=ON".to_string()),
-            "ROCm build must include -DGGML_BACKEND_DL=ON, got: {:?}",
+            !args.iter().any(|a| a.starts_with("-DGGML_BACKEND_DL=")),
+            "ROCm build must NOT include -DGGML_BACKEND_DL= (conflicts with GGML_NATIVE), got: {:?}",
             args
         );
         assert!(
@@ -227,7 +229,11 @@ mod tests {
         assert!(args.contains(&"-DGGML_HIP=ON".to_string()));
         assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
         assert!(args.contains(&"-DGGML_CUDA_FA_ALL_QUANTS=ON".to_string()));
-        assert!(args.contains(&"-DGGML_BACKEND_DL=ON".to_string()));
+        assert!(
+            !args.iter().any(|a| a.starts_with("-DGGML_BACKEND_DL=")),
+            "ROCm build must NOT include -DGGML_BACKEND_DL= (conflicts with GGML_NATIVE), got: {:?}",
+            args
+        );
         assert!(
             !args.iter().any(|a| a.starts_with("-DLLAMA_CURL=")),
             "ROCm build must NOT include -DLLAMA_CURL= (deprecated upstream), got: {:?}",
@@ -278,7 +284,6 @@ mod tests {
         );
         assert!(args.contains(&"-DGGML_IQK_FA_ALL_QUANTS=ON".to_string()));
         assert!(args.contains(&"-DGGML_HIP_ROCWMMA_FATTN=ON".to_string()));
-        assert!(args.contains(&"-DGGML_BACKEND_DL=ON".to_string()));
     }
 
     #[test]

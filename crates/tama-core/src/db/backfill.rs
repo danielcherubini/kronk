@@ -668,6 +668,7 @@ installed_at = 1700000000
             hf_context_length: None,
             hf_num_layers: None,
             hf_last_modified: None,
+            spec_decoding: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -755,6 +756,7 @@ installed_at = 1700000000
             hf_context_length: None,
             hf_num_layers: None,
             hf_last_modified: None,
+            spec_decoding: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -817,6 +819,7 @@ installed_at = 1700000000
                 hf_context_length: None,
                 hf_num_layers: None,
                 hf_last_modified: None,
+                spec_decoding: None,
                 created_at: now.clone(),
                 updated_at: now,
             };
@@ -901,6 +904,7 @@ installed_at = 1700000000
                 hf_context_length: None,
                 hf_num_layers: None,
                 hf_last_modified: None,
+                spec_decoding: None,
                 created_at: now.clone(),
                 updated_at: now,
             };

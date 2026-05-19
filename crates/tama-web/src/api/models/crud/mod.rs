@@ -64,12 +64,17 @@ pub struct ModelBody {
     pub cache_type_k: Option<String>,
     #[serde(default)]
     pub cache_type_v: Option<String>,
+    pub spec_decoding: Option<tama_core::config::SpecDecodingConfig>,
 }
 
 fn apply_model_body(
     body: ModelBody,
     existing: Option<tama_core::config::ModelConfig>,
 ) -> tama_core::config::ModelConfig {
+    // Extract spec_decoding before consuming existing to avoid cloning the
+    // entire ModelConfig. Only the small SpecDecodingConfig is cloned if needed.
+    let existing_spec_decoding = existing.as_ref().map(|m| m.spec_decoding.clone());
+
     let base = existing.unwrap_or_else(|| tama_core::config::ModelConfig {
         gpu_variant: None,
         backend: String::new(),
@@ -102,6 +107,7 @@ fn apply_model_body(
         hf_num_layers: None,
         hf_last_modified: None,
         db_id: None,
+        spec_decoding: Default::default(),
     });
 
     // Handle sampling from body
@@ -172,6 +178,9 @@ fn apply_model_body(
         hf_num_layers: base.hf_num_layers,
         hf_last_modified: base.hf_last_modified,
         db_id: base.db_id,
+        spec_decoding: body
+            .spec_decoding
+            .unwrap_or_else(|| existing_spec_decoding.unwrap_or_default()),
     }
 }
 
@@ -299,6 +308,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         }
     }
 
@@ -345,6 +355,7 @@ mod tests {
             hf_num_layers: None,
             hf_last_modified: None,
             db_id: None,
+            spec_decoding: Default::default(),
         }
     }
 
@@ -493,6 +504,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -521,6 +533,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -550,6 +563,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -578,6 +592,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -606,6 +621,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -634,6 +650,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -663,6 +680,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -691,6 +709,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -719,6 +738,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -752,6 +772,7 @@ mod tests {
             kv_unified: None, // omitted — should preserve existing
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, Some(existing));
@@ -785,6 +806,7 @@ mod tests {
             kv_unified: None, // omitted — should default to true
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -817,6 +839,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("q4_0".to_string()),
             cache_type_v: Some("q8_0".to_string()),
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -847,6 +870,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("a".repeat(MAX_CACHE_TYPE + 1)),
             cache_type_v: None,
+            spec_decoding: None,
         };
         let result = validate_model_body(&body);
         assert!(result.is_err());
@@ -876,6 +900,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: Some("a".repeat(MAX_CACHE_TYPE + 1)),
+            spec_decoding: None,
         };
         let result = validate_model_body(&body);
         assert!(result.is_err());
@@ -905,6 +930,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("a".repeat(MAX_CACHE_TYPE)),
             cache_type_v: Some("b".repeat(MAX_CACHE_TYPE)),
+            spec_decoding: None,
         };
         assert!(validate_model_body(&body).is_ok());
     }
@@ -932,6 +958,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: None,
             cache_type_v: None,
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -962,6 +989,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("   ".to_string()),
             cache_type_v: Some("\t\n".to_string()),
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);
@@ -998,6 +1026,7 @@ mod tests {
             kv_unified: None,
             cache_type_k: Some("  q4_0  ".to_string()),
             cache_type_v: Some(" q8_0 ".to_string()),
+            spec_decoding: None,
         };
 
         let result = apply_model_body(body, None);

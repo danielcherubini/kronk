@@ -17,12 +17,12 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
             sampling, modalities, profile, api_name, health_check,
             hf_format, hf_base_model, hf_pipeline_tag, hf_total_params,
             hf_active_params, hf_architecture_type, hf_context_length,
-            hf_num_layers, hf_last_modified,
+            hf_num_layers, hf_last_modified, spec_decoding,
             created_at, updated_at
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29,
-            ?30, ?31
+            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
+            ?31, ?32
         )
          ON CONFLICT(repo_id) DO UPDATE SET
              display_name = excluded.display_name,
@@ -55,6 +55,7 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
              hf_context_length = COALESCE(excluded.hf_context_length, hf_context_length),
              hf_num_layers = COALESCE(excluded.hf_num_layers, hf_num_layers),
              hf_last_modified = COALESCE(excluded.hf_last_modified, hf_last_modified),
+             spec_decoding = excluded.spec_decoding,
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
         params![
             record.repo_id,
@@ -86,6 +87,7 @@ pub fn upsert_model_config(conn: &Connection, record: &ModelConfigRecord) -> Res
             record.hf_context_length,
             record.hf_num_layers,
             record.hf_last_modified,
+            record.spec_decoding,
             record.created_at,
             record.updated_at,
         ],
@@ -108,7 +110,7 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
                 sampling, modalities, profile, api_name, health_check,
                 hf_format, hf_base_model, hf_pipeline_tag, hf_total_params,
                 hf_active_params, hf_architecture_type, hf_context_length,
-                hf_num_layers, hf_last_modified,
+                hf_num_layers, hf_last_modified, spec_decoding,
                 created_at, updated_at
          FROM model_configs WHERE id = ?1",
     )?;
@@ -144,8 +146,9 @@ pub fn get_model_config(conn: &Connection, id: i64) -> Result<Option<ModelConfig
             hf_context_length: row.get(27)?,
             hf_num_layers: row.get(28)?,
             hf_last_modified: row.get(29)?,
-            created_at: row.get(30)?,
-            updated_at: row.get(31)?,
+            spec_decoding: row.get(30)?,
+            created_at: row.get(31)?,
+            updated_at: row.get(32)?,
         })
     })?;
     match rows.next() {
@@ -166,7 +169,7 @@ pub fn get_model_config_by_repo_id(
                 sampling, modalities, profile, api_name, health_check,
                 hf_format, hf_base_model, hf_pipeline_tag, hf_total_params,
                 hf_active_params, hf_architecture_type, hf_context_length,
-                hf_num_layers, hf_last_modified,
+                hf_num_layers, hf_last_modified, spec_decoding,
                 created_at, updated_at
          FROM model_configs WHERE repo_id = ?1",
     )?;
@@ -202,8 +205,9 @@ pub fn get_model_config_by_repo_id(
             hf_context_length: row.get(27)?,
             hf_num_layers: row.get(28)?,
             hf_last_modified: row.get(29)?,
-            created_at: row.get(30)?,
-            updated_at: row.get(31)?,
+            spec_decoding: row.get(30)?,
+            created_at: row.get(31)?,
+            updated_at: row.get(32)?,
         })
     })?;
     match rows.next() {
@@ -221,7 +225,7 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
                 sampling, modalities, profile, api_name, health_check,
                 hf_format, hf_base_model, hf_pipeline_tag, hf_total_params,
                 hf_active_params, hf_architecture_type, hf_context_length,
-                hf_num_layers, hf_last_modified,
+                hf_num_layers, hf_last_modified, spec_decoding,
                 created_at, updated_at
          FROM model_configs",
     )?;
@@ -257,8 +261,9 @@ pub fn get_all_model_configs(conn: &Connection) -> Result<Vec<ModelConfigRecord>
             hf_context_length: row.get(27)?,
             hf_num_layers: row.get(28)?,
             hf_last_modified: row.get(29)?,
-            created_at: row.get(30)?,
-            updated_at: row.get(31)?,
+            spec_decoding: row.get(30)?,
+            created_at: row.get(31)?,
+            updated_at: row.get(32)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
