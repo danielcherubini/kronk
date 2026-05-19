@@ -14,16 +14,22 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 ## Quick Stats
 
-- **Total Plans**: 98
+- **Total Plans**: 99
 - **Completed**: 98 ✅
-- **In Progress**: 0 🚧
-- **Remaining**: 0
+- **In Progress**: 1 🚧
+- **Remaining**: 1
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
 
 ---
 
 ## Completed Plans
+
+### In Progress
+
+| Plan | Description | PR / Git References |
+|------|-------------|---------------------|
+| [Wildcard Model Routing (whatevers-hot-n-fresh)](2026-05-19-whatevers-hot-n-fresh.md) | Virtual model alias that routes to most-recently-accessed loaded LLM, or loads last-used model from DB as fallback | 🚧 IN PROGRESS |
 
 ### Recently Completed
 
