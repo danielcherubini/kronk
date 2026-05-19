@@ -5,6 +5,10 @@ use std::time::Instant;
 use super::download_queue::DownloadQueueService;
 use super::pull_jobs::PullJob;
 
+/// Virtual model name that routes to whatever LLM model is active.
+/// If no model is loaded, loads the last-used model from DB.
+pub const WILDCARD_MODEL_NAME: &str = "whatevers-hot-n-fresh";
+
 /// State for a model backend.
 #[derive(Debug, Clone)]
 pub enum ModelState {
@@ -239,6 +243,9 @@ pub struct ProxyState {
     /// Watch channel for latest inference stats. Single-producer (intercept handler),
     /// multi-consumer (metrics task). `None` until first stats are received.
     pub inference_stats: tokio::sync::watch::Sender<Option<LatestInferenceStats>>,
+    /// Guard to prevent concurrent wildcard resolution from triggering
+    /// multiple redundant loads. Only one caller proceeds to DB lookup + load.
+    pub wildcard_resolve_guard: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ProxyState {
