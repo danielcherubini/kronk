@@ -108,6 +108,14 @@ pub struct TtsConfigRecord {
     pub updated_at: String,
 }
 
+/// The last-used LLM model record (single row, id = 1).
+#[derive(Debug, Clone)]
+pub struct LastUsedModelRecord {
+    pub server_name: String, // config key (HashMap key for models map)
+    pub model_name: String,  // model identifier used for load_model
+    pub used_at: String,     // ISO 8601 timestamp
+}
+
 /// A stored update check record for a backend or model.
 #[derive(Debug, Clone)]
 pub struct UpdateCheckRecord {

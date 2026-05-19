@@ -34,7 +34,7 @@ impl Drop for FkGuard<'_> {
 pub type Migration = (i32, &'static str);
 
 /// Version number for the latest migration
-pub const LATEST_VERSION: i32 = 24;
+pub const LATEST_VERSION: i32 = 25;
 
 /// Migrations that rebuild a parent table via DROP + RENAME. SQLite with
 /// `foreign_keys=ON` performs an implicit DELETE on the dropped table which
@@ -550,6 +550,17 @@ pub(crate) fn run_up_to(conn: &Connection, target_version: i32) -> anyhow::Resul
             24,
             r#"
                 ALTER TABLE model_configs ADD COLUMN spec_decoding TEXT;
+            "#,
+        ),
+        (
+            25,
+            r#"
+                CREATE TABLE IF NOT EXISTS last_used_model (
+                    id INTEGER PRIMARY KEY,
+                    server_name TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    used_at TEXT NOT NULL
+                );
             "#,
         ),
     ];
@@ -1252,5 +1263,72 @@ mod tests {
         assert_eq!(parsed["nMax"], 4);
         assert_eq!(parsed["nMin"], 2);
         assert_eq!(parsed["draftNgl"], 16);
+    }
+
+    /// Regression test: migration v25 must create the last_used_model table
+    /// with the correct schema.
+    #[test]
+    fn test_migration_v25_creates_last_used_model_table() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring DB up to v24 (pre-v25 schema)
+        run_up_to(&conn, 24).unwrap();
+
+        // Verify table does NOT exist yet
+        let table_before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='last_used_model'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            table_before, 0,
+            "last_used_model should not exist before v25"
+        );
+
+        // Apply v25
+        run(&conn).unwrap();
+
+        // Verify table now exists
+        let table_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='last_used_model'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_after, 1, "last_used_model must exist after v25");
+
+        // Verify columns
+        let columns = ["id", "server_name", "model_name", "used_at"];
+        for col in &columns {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('last_used_model') WHERE name=?",
+                    [col],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "column '{}' must exist", col);
+        }
+
+        // Verify INSERT OR REPLACE works (single row, id = 1)
+        conn.execute(
+            "INSERT OR REPLACE INTO last_used_model (id, server_name, model_name, used_at) \
+             VALUES (1, 'test-server', 'test-model.gguf', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        // Verify round-trip
+        let server_name: String = conn
+            .query_row(
+                "SELECT server_name FROM last_used_model WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(server_name, "test-server");
     }
 }

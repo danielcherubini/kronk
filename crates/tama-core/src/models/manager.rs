@@ -5,8 +5,8 @@ use rusqlite::Connection;
 
 use crate::config::ModelConfig;
 use crate::db::queries::{
-    ActiveModelRecord, DownloadLogEntry, DownloadQueueItem, ModelConfigRecord, ModelFileRecord,
-    ModelPullRecord, UpdateCheckParams, UpdateCheckRecord,
+    ActiveModelRecord, DownloadLogEntry, DownloadQueueItem, LastUsedModelRecord, ModelConfigRecord,
+    ModelFileRecord, ModelPullRecord, UpdateCheckParams, UpdateCheckRecord,
 };
 
 /// Centralized model data access. Each caller opens its own instance.
@@ -232,6 +232,20 @@ impl ModelManager {
     /// Rename an active model by updating its primary key (server_name).
     pub fn rename_active(&self, old_name: &str, new_name: &str) -> Result<()> {
         crate::db::queries::rename_active_model(&self.conn, old_name, new_name)
+    }
+
+    // ── Last used model ────────────────────────────────────────
+
+    /// Returns the full record so the caller can use whichever field it needs.
+    /// `load_model` needs the model_name (the identifier that
+    /// resolve_servers_for_model can match), NOT the server_name (config key).
+    pub fn get_last_used(&self) -> Result<Option<LastUsedModelRecord>> {
+        crate::db::queries::get_last_used_model(&self.conn)
+    }
+
+    /// Set the last used model. Best-effort — caller should ignore errors.
+    pub fn set_last_used(&self, server_name: &str, model_name: &str) -> Result<()> {
+        crate::db::queries::set_last_used_model(&self.conn, server_name, model_name)
     }
 
     // ── Download queue ─────────────────────────────────────────
