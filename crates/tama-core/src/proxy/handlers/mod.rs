@@ -928,7 +928,7 @@ mod tests {
     // ── Wildcard routing tests ────────────────────────────────────────────────
 
     /// Create a test state with a Ready model loaded.
-    async fn create_test_state_with_ready_model() -> ProxyState {
+    async fn create_test_state_with_ready_model() -> Arc<ProxyState> {
         let config = Config::default();
         let state = ProxyState::new(config, None);
 
@@ -966,13 +966,12 @@ mod tests {
             );
         }
 
-        state
+        Arc::new(state)
     }
 
     #[tokio::test]
     async fn test_handle_chat_completions_wildcard_routes_to_loaded_model() {
-        let state_inner = create_test_state_with_ready_model().await;
-        let state_arc = Arc::new(state_inner);
+        let state_arc = create_test_state_with_ready_model().await;
         let state = State(state_arc.clone());
 
         // POST with wildcard model name
@@ -1032,8 +1031,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_list_models_includes_wildcard() {
-        let state_inner = create_test_state_with_ready_model().await;
-        let state_arc = Arc::new(state_inner);
+        let state_arc = create_test_state_with_ready_model().await;
         let state = State(state_arc.clone());
 
         let response = handle_list_models(state).await;
@@ -1170,8 +1168,7 @@ mod tests {
     /// Verifies the fallback POST handler also routes wildcard correctly.
     #[tokio::test]
     async fn test_handle_forward_post_wildcard_with_ready_model() {
-        let state_inner = create_test_state_with_ready_model().await;
-        let state_arc = Arc::new(state_inner);
+        let state_arc = create_test_state_with_ready_model().await;
 
         let body = serde_json::json!({
             "model": crate::proxy::WILDCARD_MODEL_NAME,
