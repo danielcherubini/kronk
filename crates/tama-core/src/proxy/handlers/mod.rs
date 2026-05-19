@@ -29,6 +29,19 @@ pub fn json_error_response() -> Response {
         .into_response()
 }
 
+/// Update the last_used_model in DB. Best-effort — never fails the request.
+/// Throttled: only writes if the server_name differs from what's stored.
+async fn update_last_used_best_effort(state: &ProxyState, server_name: &str, model_name: &str) {
+    let Some(mgr) = state.model_mgr() else {
+        return;
+    };
+    let current = mgr.get_last_used().ok().flatten();
+    if current.as_ref().map(|r| r.server_name.as_str()) == Some(server_name) {
+        return; // Same model, no write needed
+    }
+    let _ = mgr.set_last_used(server_name, model_name);
+}
+
 #[axum::debug_handler]
 pub async fn handle_chat_completions(
     state: State<Arc<ProxyState>>,
@@ -74,6 +87,36 @@ pub async fn handle_chat_completions(
 
     info!("Routing request for model: {}", model_name);
 
+    // Check for wildcard model
+    if model_name == crate::proxy::WILDCARD_MODEL_NAME {
+        match state.resolve_wildcard_model().await {
+            Ok(server_name) => {
+                state.update_last_accessed(&server_name).await;
+                update_last_used_best_effort(&state, &server_name, model_name).await;
+                return forward_request(
+                    &state,
+                    &server_name,
+                    &parts,
+                    &body_bytes,
+                    Some(model_name),
+                )
+                .await;
+            }
+            Err(e) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("No model available: {}", e),
+                            "type": "NoModelError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let server_name = match state.get_available_server_for_model(model_name).await {
         Some(name) => name,
         None => {
@@ -99,6 +142,7 @@ pub async fn handle_chat_completions(
     };
 
     state.update_last_accessed(&server_name).await;
+    update_last_used_best_effort(&state, &server_name, model_name).await;
 
     forward_request(&state, &server_name, &parts, &body_bytes, Some(model_name)).await
 }
@@ -149,6 +193,36 @@ pub async fn handle_stream_chat_completions(
 
     info!("Streaming request for model: {}", model_name);
 
+    // Check for wildcard model
+    if model_name == crate::proxy::WILDCARD_MODEL_NAME {
+        match state.resolve_wildcard_model().await {
+            Ok(server_name) => {
+                state.update_last_accessed(&server_name).await;
+                update_last_used_best_effort(&state, &server_name, model_name).await;
+                return forward_request(
+                    &state,
+                    &server_name,
+                    &parts,
+                    &body_bytes,
+                    Some(model_name),
+                )
+                .await;
+            }
+            Err(e) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": format!("No model available: {}", e),
+                            "type": "NoModelError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let server_name = match state.get_available_server_for_model(model_name).await {
         Some(name) => name,
         None => {
@@ -173,6 +247,7 @@ pub async fn handle_stream_chat_completions(
     };
 
     state.update_last_accessed(&server_name).await;
+    update_last_used_best_effort(&state, &server_name, model_name).await;
 
     forward_request(&state, &server_name, &parts, &body_bytes, Some(model_name)).await
 }
@@ -326,6 +401,24 @@ pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_jso
         }
     }
 
+    // Check if any non-TTS model is Ready or Starting
+    let has_available_llm = loaded_models.iter().any(|(_, s)| {
+        !s.is_tts_backend()
+            && (s.is_ready() || matches!(s, crate::proxy::ModelState::Starting { .. }))
+    });
+
+    // Prepend virtual wildcard entry
+    data.insert(
+        0,
+        serde_json::json!({
+            "id": crate::proxy::WILDCARD_MODEL_NAME,
+            "object": "model",
+            "created": 0,
+            "owned_by": "tama-proxy",
+            "ready": has_available_llm
+        }),
+    );
+
     Json(serde_json::json!({
         "object": "list",
         "data": data
@@ -368,6 +461,36 @@ pub async fn handle_forward_post(
         .and_then(|v| v.get("model")?.as_str().map(String::from));
 
     let server_name = if let Some(ref model) = model_name {
+        // Check for wildcard model
+        if model.as_str() == crate::proxy::WILDCARD_MODEL_NAME {
+            match state.resolve_wildcard_model().await {
+                Ok(server_name) => {
+                    state.update_last_accessed(&server_name).await;
+                    update_last_used_best_effort(&state, &server_name, model).await;
+                    return forward_request(
+                        &state,
+                        &server_name,
+                        &parts,
+                        &body_bytes,
+                        Some(model.as_str()),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!("No model available: {}", e),
+                                "type": "NoModelError"
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+
         match state.get_available_server_for_model(model).await {
             Some(name) => name,
             None => {
@@ -411,6 +534,9 @@ pub async fn handle_forward_post(
     };
 
     state.update_last_accessed(&server_name).await;
+    if let Some(ref model) = model_name {
+        update_last_used_best_effort(&state, &server_name, model).await;
+    }
     forward_request(
         &state,
         &server_name,
@@ -505,10 +631,17 @@ mod tests {
         let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
 
         let data = json.get("data").unwrap().as_array().unwrap();
-        assert_eq!(data.len(), 2);
+        // 2 models + 1 wildcard virtual entry
+        assert_eq!(data.len(), 3);
 
-        // Collect all model ids
-        let ids: Vec<&str> = data
+        // First entry should be the wildcard virtual entry
+        assert_eq!(
+            data[0].get("id").unwrap().as_str().unwrap(),
+            crate::proxy::WILDCARD_MODEL_NAME
+        );
+
+        // Collect all model ids (excluding wildcard)
+        let ids: Vec<&str> = data[1..]
             .iter()
             .map(|m| m.get("id").unwrap().as_str().unwrap())
             .collect();
@@ -790,5 +923,179 @@ mod tests {
 
         // With no servers, returns 503 (not a crash)
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // ── Wildcard routing tests ────────────────────────────────────────────────
+
+    /// Create a test state with a Ready model loaded.
+    async fn create_test_state_with_ready_model() -> ProxyState {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add a model config
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "test-server".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: None,
+                    model: Some("test/model".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Add a Ready model state
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "test-server".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "test-model".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 1234,
+                    backend_url: "http://localhost:8080".to_string(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        state
+    }
+
+    #[tokio::test]
+    async fn test_handle_chat_completions_wildcard_routes_to_loaded_model() {
+        let state_inner = create_test_state_with_ready_model().await;
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        // POST with wildcard model name
+        let body = serde_json::json!({
+            "model": crate::proxy::WILDCARD_MODEL_NAME,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = Request::post("/v1/chat/completions")
+            .body(Body::from(body.to_string().into_bytes()))
+            .unwrap();
+
+        let response = handle_chat_completions(state, req).await;
+
+        // The response will be a forward (likely 404 from non-existent backend),
+        // but it should NOT be 503 (No model available).
+        // The key assertion: wildcard was resolved, not treated as unknown model.
+        let status = response.status();
+        // Should not be 503 (no model available) — it should attempt to forward
+        assert_ne!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Wildcard should resolve to loaded model, not return 503"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_chat_completions_wildcard_503_no_models() {
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        // POST with wildcard model name but no models loaded
+        let body = serde_json::json!({
+            "model": crate::proxy::WILDCARD_MODEL_NAME,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = Request::post("/v1/chat/completions")
+            .body(Body::from(body.to_string().into_bytes()))
+            .unwrap();
+
+        let response = handle_chat_completions(state, req).await;
+
+        // No models loaded → 503
+        let status = response.status();
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Wildcard with no models should return 503"
+        );
+
+        let (_parts, body_bytes) = response.into_response().into_parts();
+        let bytes = to_bytes(body_bytes, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json["error"]["type"].as_str(), Some("NoModelError"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_list_models_includes_wildcard() {
+        let state_inner = create_test_state_with_ready_model().await;
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // First entry should be the wildcard virtual entry
+        assert!(data.len() >= 1, "Should have at least the wildcard entry");
+        assert_eq!(
+            data[0].get("id").unwrap().as_str().unwrap(),
+            crate::proxy::WILDCARD_MODEL_NAME
+        );
+        assert_eq!(data[0].get("object").unwrap().as_str(), Some("model"));
+        assert_eq!(
+            data[0].get("owned_by").unwrap().as_str(),
+            Some("tama-proxy")
+        );
+        // ready should be true since we have a Ready LLM model
+        assert_eq!(data[0].get("ready").unwrap().as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_handle_list_models_wildcard_ready_false_when_only_tts() {
+        let config = Config::default();
+        let state_inner = ProxyState::new(config, None);
+
+        // Add only a TTS backend
+        {
+            let mut models = state_inner.models.write().await;
+            models.insert(
+                "tts_server".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "kokoro".to_string(),
+                    backend: "tts_kokoro".to_string(),
+                    backend_pid: 300,
+                    backend_url: "http://localhost:9000".to_string(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        let state_arc = Arc::new(state_inner);
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+        // Wildcard entry should have ready: false (only TTS, no LLM)
+        assert_eq!(
+            data[0].get("id").unwrap().as_str().unwrap(),
+            crate::proxy::WILDCARD_MODEL_NAME
+        );
+        assert_eq!(data[0].get("ready").unwrap().as_bool(), Some(false));
     }
 }
