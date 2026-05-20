@@ -15,8 +15,8 @@ This directory contains implementation plans for the Tama project. Each plan doc
 ## Quick Stats
 
 - **Total Plans**: 101
-- **Completed**: 100 ✅
-- **In Progress**: 1 🚧
+- **Completed**: 101 ✅
+- **In Progress**: 0 🚧
 - **Remaining**: 0
 
 > **Note**: The Tama Management API Spec (2026-04-03) was removed as it was a design document, not an implementation plan. The functionality it describes is already implemented via other plans.
@@ -29,7 +29,7 @@ This directory contains implementation plans for the Tama project. Each plan doc
 
 | Plan | Description | PR / Git References |
 |------|-------------|---------------------|
-| [Unified Server](2026-05-20-unified-server.md) | Merge proxy (11434) and web UI (11435) into single server on one port | 🚧 IN PROGRESS |
+| [Unified Server](2026-05-20-unified-server.md) | Merge proxy (11434) and web UI (11435) into single server on one port, mount web UI at /ui, add backend forwarding | `d9204add` (merged directly to main) ✅ COMPLETED |
 | [/v1/models Meta Enrichment](2026-05-20-v1-models-meta.md) | Forward /v1/models to backends for full GGUF meta, merge and inject ready | #92 ✅ COMPLETED |
 | [Wildcard Model Routing (whatevers-hot-n-fresh)](2026-05-19-whatevers-hot-n-fresh.md) | Virtual model alias that routes to most-recently-accessed loaded LLM, or loads last-used model from DB as fallback | `2048fb97`, `44c50a06`, `947f46b2`, `bcc95694`, `8e112e0a` ✅ COMPLETED |
 
