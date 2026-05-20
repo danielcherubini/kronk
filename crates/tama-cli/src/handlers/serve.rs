@@ -115,6 +115,11 @@ async fn start_proxy_server(
             let _ = std::fs::create_dir_all(dir);
         }
 
+        // Set the binary version for the web UI
+        let mut state_inner = (*state).clone();
+        state_inner.web_binary_version = env!("CARGO_PKG_VERSION").to_string();
+        let state = Arc::new(state_inner);
+
         // Build the unified router: proxy routes + web UI routes on a single server.
         // The proxy handles OS signals (SIGTERM/SIGINT) and graceful shutdown.
         let web_routes = tama_web::router::build_web_routes();

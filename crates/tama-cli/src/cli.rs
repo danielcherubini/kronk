@@ -180,7 +180,7 @@ pub enum Commands {
         #[arg(long)]
         skip_models: bool,
     },
-    /// Start the tama web control plane UI
+    /// Start the tama web control plane UI (deprecated: use `tama serve` instead)
     #[cfg(feature = "web-ui")]
     Web {
         /// Port to listen on (default: 11435)

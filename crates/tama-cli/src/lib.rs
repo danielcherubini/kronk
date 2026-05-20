@@ -141,6 +141,11 @@ pub async fn main() -> Result<()> {
             proxy_url,
             logs_dir,
             config_path,
-        } => handlers::web::cmd_web(port, proxy_url, logs_dir, config_path).await,
+        } => {
+            eprintln!(
+                "WARNING: `tama web` is deprecated. Use `tama serve` instead, which now includes the web UI."
+            );
+            handlers::web::cmd_web(port, proxy_url, logs_dir, config_path).await
+        }
     }
 }

@@ -106,6 +106,7 @@ pub fn build_unified_router(
     // - /tama/v1/models/:id (GET) — web UI handles CRUD
     // - /tama/v1/system/health (GET) — web UI re-exports proxy handler
     // - /tama/v1/logs/:backend (GET) — web UI has its own handler
+    // - /tama/v1/hf/*repo_id (GET) — web UI handles HF metadata
     let proxy_routes = Router::new()
         // OpenAI-compatible routes
         // Some clients (e.g. those with base_url = http://host/v1) POST directly to /v1
@@ -129,8 +130,7 @@ pub fn build_unified_router(
         .route("/tama/v1/pulls", post(handle_tama_pull_model))
         .route("/tama/v1/pulls/:job_id", get(handle_tama_get_pull_job))
         .route("/tama/v1/pulls/:job_id/stream", get(handle_pull_job_stream))
-        // HuggingFace quant listing — wildcard captures `owner/repo` with embedded slash
-        .route("/tama/v1/hf/*repo_id", get(handle_hf_list_quants))
+        // NOTE: /tama/v1/hf/*repo_id excluded — web UI handles HF metadata
         // System
         .route(
             "/tama/v1/system/reload-configs",
