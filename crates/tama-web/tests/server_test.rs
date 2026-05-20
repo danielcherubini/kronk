@@ -8,9 +8,12 @@ mod tests {
         tokio::spawn(async move {
             let config = tama_core::config::Config::default();
             let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
-            axum::serve(listener, tama_web::server::build_router(state))
-                .await
-                .unwrap();
+            axum::serve(
+                listener,
+                tama_web::router::build_web_routes().with_state(state),
+            )
+            .await
+            .unwrap();
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         (reqwest::Client::new(), addr)
@@ -135,11 +138,13 @@ mod tests {
             tokio::spawn(async move {
                 let mut config = (*proxy_config_server.read().await).clone();
                 config.loaded_from = Some(config_path_server);
-                let mut state = tama_core::proxy::ProxyState::new(config, None);
-                let state = Arc::new(state);
-                axum::serve(listener, tama_web::server::build_router(state))
-                    .await
-                    .unwrap();
+                let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
+                axum::serve(
+                    listener,
+                    tama_web::router::build_web_routes().with_state(state),
+                )
+                .await
+                .unwrap();
             });
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -371,9 +376,12 @@ mod tests {
                 let mut config = tama_core::config::Config::default();
                 config.loaded_from = Some(config_path_server);
                 let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
-                axum::serve(listener, tama_web::server::build_router(state))
-                    .await
-                    .unwrap();
+                axum::serve(
+                    listener,
+                    tama_web::router::build_web_routes().with_state(state),
+                )
+                .await
+                .unwrap();
             });
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

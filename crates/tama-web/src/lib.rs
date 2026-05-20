@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 #[cfg(feature = "ssr")]
-pub mod server;
+pub mod router;
 
 #[cfg(feature = "ssr")]
 pub mod api;

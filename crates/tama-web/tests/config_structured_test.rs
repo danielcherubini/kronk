@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use tower::util::ServiceExt;
 
 use tama_core::proxy::ProxyState;
-use tama_web::server::build_router;
+use tama_web::router::build_web_routes;
 
 /// Helper to extract CSRF token from response headers and set cookie.
 async fn get_csrf_token(router: &axum::Router) -> String {
@@ -134,7 +134,7 @@ fn build_test_state(config_content: &str) -> (Arc<ProxyState>, TempDir) {
 async fn test_get_structured_config_returns_valid_json() {
     let config_content = create_test_config();
     let (state, _temp_dir) = build_test_state(&config_content);
-    let router = build_router(state);
+    let router = build_web_routes().with_state(state);
 
     let req = axum::extract::Request::builder()
         .method("GET")
@@ -161,7 +161,7 @@ async fn test_get_structured_config_returns_valid_json() {
 async fn test_post_structured_config_persists_and_round_trips() {
     let config_content = create_test_config();
     let (state, _temp_dir) = build_test_state(&config_content);
-    let router = build_router(state);
+    let router = build_web_routes().with_state(state);
 
     // Get CSRF token first
     let csrf_token = get_csrf_token(&router).await;
@@ -214,7 +214,7 @@ async fn test_post_structured_config_persists_and_round_trips() {
 async fn test_400_on_invalid_json() {
     let config_content = create_test_config();
     let (state, _temp_dir) = build_test_state(&config_content);
-    let router = build_router(state);
+    let router = build_web_routes().with_state(state);
 
     let csrf_token = get_csrf_token(&router).await;
 
@@ -232,7 +232,7 @@ async fn test_400_on_invalid_json() {
 async fn test_404_when_config_path_not_configured() {
     let config = tama_core::config::Config::default();
     let state = Arc::new(ProxyState::new(config, None));
-    let router = build_router(state);
+    let router = build_web_routes().with_state(state);
 
     let req = axum::extract::Request::builder()
         .method("GET")

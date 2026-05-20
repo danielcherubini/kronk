@@ -111,16 +111,13 @@ async fn start_proxy_server(
     // The web server runs on port 11435 and terminates when this process exits.
     #[cfg(feature = "web-ui")]
     {
-        let proxy_base_url = format!("http://127.0.0.1:{}", port);
         let logs_dir = updated_config.logs_dir().ok();
         // Ensure logs directory exists (creates if missing)
         if let Some(ref dir) = logs_dir {
             let _ = std::fs::create_dir_all(dir);
         }
-        let config_path = tama_core::config::Config::config_path().ok();
         let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
         tracing::info!("Starting tama web UI on http://{}", web_addr);
-        let proxy_config = Some(Arc::clone(&state.config));
         let jobs = std::sync::Arc::new(tama_core::web_types::JobManager::new());
         let capabilities = std::sync::Arc::new(tama_core::web_types::CapabilitiesCache::new());
         let download_queue = state.download_queue.clone();
@@ -128,22 +125,58 @@ async fn start_proxy_server(
         // Shared shutdown channel: proxy server signals, web UI listens.
         // This avoids competing SIGINT/SIGTERM handlers — only the proxy
         // registers OS signals and broadcasts to the web UI.
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
 
+        let state_for_web = state.clone();
         let web_handle = tokio::spawn(async move {
-            if let Err(e) = tama_web::server::run_with_opts(
-                web_addr,
-                proxy_base_url,
-                logs_dir,
-                config_path,
-                proxy_config,
-                Some(jobs),
-                Some(capabilities),
-                env!("CARGO_PKG_VERSION").to_string(),
-                download_queue,
-                Some(shutdown_rx),
-            )
-            .await
+            // Set web-specific fields on the shared state
+            let mut state_inner = (*state_for_web).clone();
+            state_inner.web_jobs = Some(jobs);
+            state_inner.web_capabilities = Some(capabilities);
+            state_inner.web_binary_version = env!("CARGO_PKG_VERSION").to_string();
+            if let Some(ref dq) = download_queue {
+                state_inner.download_queue = Some(dq.clone());
+            }
+            let web_state = std::sync::Arc::new(state_inner);
+
+            let jobs_for_shutdown = web_state.web_jobs.clone();
+            let app = tama_web::router::build_web_routes().with_state(web_state);
+            tracing::info!("Tama web UI listening on http://{}", web_addr);
+
+            // Use axum-server for timeout-based graceful shutdown.
+            let handle = axum_server::Handle::new();
+            let shutdown_handle = handle.clone();
+
+            // Listen for shutdown signal from proxy server
+            tokio::spawn(async move {
+                if let Err(e) = shutdown_rx.changed().await {
+                    tracing::debug!("Shutdown channel closed: {}", e);
+                }
+                tracing::info!("Web UI initiating graceful shutdown (timeout: 5s)...");
+                shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(5)));
+
+                // Cleanup: kill all child processes for active jobs
+                if let Some(jobs) = jobs_for_shutdown {
+                    if let Some(active_job) = jobs.active().await {
+                        tracing::info!("Killing children of active job {}...", active_job.id);
+                        jobs.kill_children(&active_job).await;
+                    }
+                }
+            });
+
+            let std_listener = match std::net::TcpListener::bind(web_addr) {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!("Failed to bind web UI: {}", e);
+                    return;
+                }
+            };
+            std_listener.set_nonblocking(true).ok();
+
+            if let Err(e) = axum_server::from_tcp(std_listener)
+                .handle(handle)
+                .serve(app.into_make_service())
+                .await
             {
                 tracing::error!("Web UI server error: {}", e);
             }

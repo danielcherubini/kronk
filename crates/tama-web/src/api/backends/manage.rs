@@ -314,7 +314,7 @@ mod tests {
         let config = tama_core::config::Config::default();
         let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
 
-        let router = crate::server::build_router(state);
+        let router = crate::router::build_web_routes().with_state(state);
 
         // Valid CSRF token pair — cookie and header must match.
         let csrf_token = "test-csrf-token-12345";

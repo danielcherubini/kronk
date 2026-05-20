@@ -17,11 +17,12 @@ path = "tests/tests.rs"
 
 [features]
 default = ["web-ui"]
-web-ui = ["dep:tama-web"]
+web-ui = ["dep:tama-web", "dep:axum-server"]
 
 [dependencies]
 tama-core = { path = "../tama-core" }
 tama-web = { path = "../tama-web", features = ["ssr"], optional = true }
+axum-server = { workspace = true, optional = true }
 tokio.workspace = true
 clap.workspace = true
 tracing.workspace = true
