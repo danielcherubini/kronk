@@ -708,9 +708,9 @@ fn test_build_full_args_injects_np_flag() {
     );
 }
 
-/// Tests that -np flag is NOT injected when num_parallel is None or 1.
+/// Tests that -np flag is NOT injected when num_parallel is 0 (auto).
 #[test]
-fn test_build_full_args_no_np_when_default() {
+fn test_build_full_args_no_np_when_auto() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let models_dir = temp_dir.path().join("models");
     let org_dir = models_dir.join("org").join("repo");
@@ -734,7 +734,77 @@ fn test_build_full_args_no_np_when_default() {
     config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
     config.loaded_from = Some(temp_dir.path().to_path_buf());
 
-    // num_parallel=1 → should NOT inject -np (it's the default)
+    // num_parallel=0 → should NOT inject -np (0 = auto)
+    let server = ModelConfig {
+        backend: "llama_cpp".to_string(),
+        args: vec![],
+        sampling: None,
+        model: Some("org/repo".to_string()),
+        quant: Some("Q4_K_M".to_string()),
+        mmproj: None,
+        port: None,
+        health_check: None,
+        enabled: true,
+        context_length: Some(8192),
+        num_parallel: Some(0),
+        kv_unified: false,
+        profile: None,
+        api_name: None,
+        gpu_layers: None,
+        cache_type_k: None,
+        cache_type_v: None,
+        quants,
+        modalities: None,
+        display_name: None,
+        db_id: None,
+        ..Default::default()
+    };
+
+    let backend = BackendConfig {
+        path: None,
+        version: None,
+        gpu_variant: None,
+    };
+
+    let args = config
+        .build_full_args(&server, &backend, None, &[])
+        .expect("build_full_args failed");
+
+    // -np should NOT be present when num_parallel is 0 (auto)
+    assert!(
+        !args.contains(&"-np".to_string()),
+        "Expected no -np flag when num_parallel=0, got: {:?}",
+        args
+    );
+}
+
+/// Tests that -np flag IS injected when num_parallel is 1.
+#[test]
+fn test_build_full_args_np_when_one() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let models_dir = temp_dir.path().join("models");
+    let org_dir = models_dir.join("org").join("repo");
+    let quant_file = org_dir.join("model-Q4_K_M.gguf");
+
+    std::fs::create_dir_all(&org_dir).expect("Failed to create model dir");
+    std::fs::write(&quant_file, b"dummy gguf content").expect("Failed to write model file");
+
+    let mut quants = std::collections::BTreeMap::new();
+    quants.insert(
+        "Q4_K_M".to_string(),
+        crate::config::types::QuantEntry {
+            file: "model-Q4_K_M.gguf".to_string(),
+            kind: Default::default(),
+            size_bytes: None,
+            context_length: Some(8192),
+        },
+    );
+
+    let mut config = Config::default();
+    config.general.models_dir = Some(models_dir.to_string_lossy().to_string());
+    config.loaded_from = Some(temp_dir.path().to_path_buf());
+
+    // num_parallel=1 → should inject -np 1
     let server = ModelConfig {
         backend: "llama_cpp".to_string(),
         args: vec![],
@@ -770,10 +840,15 @@ fn test_build_full_args_no_np_when_default() {
         .build_full_args(&server, &backend, None, &[])
         .expect("build_full_args failed");
 
-    // -np should NOT be present when num_parallel is 1
+    // -np 1 SHOULD be present when num_parallel is 1
     assert!(
-        !args.contains(&"-np".to_string()),
-        "Expected no -np flag when num_parallel=1, got: {:?}",
+        args.contains(&"-np".to_string()),
+        "Expected -np flag when num_parallel=1, got: {:?}",
+        args
+    );
+    assert!(
+        args.contains(&"1".to_string()),
+        "Expected value 1 after -np flag, got: {:?}",
         args
     );
 }

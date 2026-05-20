@@ -317,7 +317,7 @@ impl Config {
                 .iter()
                 .any(|e| matches!(crate::config::flag_name(e), Some("-c") | Some("--ctx-size")));
             if !already_has_c {
-                let slots = server.num_parallel.unwrap_or(1);
+                let slots = server.num_parallel.unwrap_or(1).max(1); // 0 = auto, treat as 1 for ctx calc
                 let total_ctx = if is_llama_cpp_backend && server.kv_unified {
                     // Unified KV: all slots share one pool, -c = per-slot context
                     ctx
@@ -329,9 +329,10 @@ impl Config {
             }
         }
 
-        // Inject -np (number of parallel slots) only if set and > 1.
+        // Inject -np (number of parallel slots) if set and >= 1.
+        // 0 means auto (don't set the flag).
         if let Some(slots) = server.num_parallel {
-            if slots > 1 {
+            if slots >= 1 {
                 let already_has_np = grouped.iter().any(|e| {
                     matches!(
                         crate::config::flag_name(e),

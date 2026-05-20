@@ -26,7 +26,7 @@ pub async fn fetch_model(id: String) -> Option<ModelDetail> {
             sampling: None,
             enabled: true,
             context_length: None,
-            num_parallel: Some(1),
+            num_parallel: Some(0), // 0 = auto
             port: None,
             api_name: None,
             display_name: None,

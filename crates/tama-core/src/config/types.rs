@@ -503,7 +503,8 @@ fn default_enabled() -> bool {
 }
 
 pub fn default_num_parallel() -> Option<u32> {
-    Some(1)
+    // 0 = auto (don't set -np flag), 1+ = explicitly set -np N
+    Some(0)
 }
 
 fn default_restart_policy() -> String {

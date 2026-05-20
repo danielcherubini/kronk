@@ -315,12 +315,18 @@ pub fn ModelEditorGeneralForm(
                 id="field-num-parallel"
                 class="form-input"
                 type="number"
-                min="1"
-                placeholder="1"
+                min="0"
+                placeholder="0 = auto"
                 on:input=move |ev| {
                     form.update(|f| {
                         if let Some(form) = f {
-                            form.num_parallel = target_value(&ev).parse::<u32>().ok();
+                            // Empty string = None (use default), "0" = Some(0) (explicit auto), "1+" = Some(N)
+                            let val = target_value(&ev);
+                            form.num_parallel = if val.is_empty() {
+                                None
+                            } else {
+                                val.parse::<u32>().ok()
+                            };
                         }
                     });
                 }
