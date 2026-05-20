@@ -69,15 +69,8 @@ pub struct QuantDetailJson {
 
 /// GET /tama/v1/updates - Returns cached results from DB
 pub async fn get_updates(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    let config_dir = match state
-        .config
-        .read()
-        .await
-        .loaded_from
-        .as_ref()
-        .and_then(|p| p.parent())
-    {
-        Some(d) => d.to_path_buf(),
+    let config_dir = match state.db_dir.clone() {
+        Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -178,15 +171,8 @@ pub async fn get_updates(State(state): State<Arc<ProxyState>>) -> impl IntoRespo
 
 /// POST /tama/v1/updates/check - Trigger full re-check
 pub async fn trigger_check(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
-    let config_dir = match state
-        .config
-        .read()
-        .await
-        .loaded_from
-        .as_ref()
-        .and_then(|p| p.parent())
-    {
-        Some(d) => d.to_path_buf(),
+    let config_dir = match state.db_dir.clone() {
+        Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -228,15 +214,8 @@ pub async fn check_single(
     Path((item_type, item_id)): Path<(String, String)>,
     axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
-    let config_dir = match state
-        .config
-        .read()
-        .await
-        .loaded_from
-        .as_ref()
-        .and_then(|p| p.parent())
-    {
-        Some(d) => d.to_path_buf(),
+    let config_dir = match state.db_dir.clone() {
+        Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -352,15 +331,8 @@ pub async fn apply_backend_update(
     Path(name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<CheckSingleQuery>,
 ) -> impl IntoResponse {
-    let config_dir = match state
-        .config
-        .read()
-        .await
-        .loaded_from
-        .as_ref()
-        .and_then(|p| p.parent())
-    {
-        Some(d) => d.to_path_buf(),
+    let config_dir = match state.db_dir.clone() {
+        Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -590,15 +562,8 @@ pub async fn apply_model_update(
     Path(id): Path<i64>,
     Json(req): Json<ModelUpdateRequest>,
 ) -> impl IntoResponse {
-    let config_dir = match state
-        .config
-        .read()
-        .await
-        .loaded_from
-        .as_ref()
-        .and_then(|p| p.parent())
-    {
-        Some(d) => d.to_path_buf(),
+    let config_dir = match state.db_dir.clone() {
+        Some(d) => d,
         None => {
             return (
                 StatusCode::NOT_FOUND,
