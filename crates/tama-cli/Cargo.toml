@@ -17,7 +17,7 @@ path = "tests/tests.rs"
 
 [features]
 default = ["web-ui"]
-web-ui = ["dep:tama-web", "dep:axum-server"]
+web-ui = ["dep:tama-web", "dep:axum-server", "tama-core/web-ui"]
 
 [dependencies]
 tama-core = { path = "../tama-core" }

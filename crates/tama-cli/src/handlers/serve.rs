@@ -107,8 +107,6 @@ async fn start_proxy_server(
     }
     let state = Arc::new(ProxyState::new(updated_config.clone(), db_dir));
 
-    // Spawn the web control plane alongside the proxy (when built with the web-ui feature).
-    // The web server runs on port 11435 and terminates when this process exits.
     #[cfg(feature = "web-ui")]
     {
         let logs_dir = updated_config.logs_dir().ok();
@@ -116,104 +114,45 @@ async fn start_proxy_server(
         if let Some(ref dir) = logs_dir {
             let _ = std::fs::create_dir_all(dir);
         }
-        let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
-        tracing::info!("Starting tama web UI on http://{}", web_addr);
-        let jobs = std::sync::Arc::new(tama_core::web_types::JobManager::new());
-        let capabilities = std::sync::Arc::new(tama_core::web_types::CapabilitiesCache::new());
-        let download_queue = state.download_queue.clone();
 
-        // Shared shutdown channel: proxy server signals, web UI listens.
-        // This avoids competing SIGINT/SIGTERM handlers — only the proxy
-        // registers OS signals and broadcasts to the web UI.
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
-
-        let state_for_web = state.clone();
-        let web_handle = tokio::spawn(async move {
-            // Set web-specific fields on the shared state
-            let mut state_inner = (*state_for_web).clone();
-            state_inner.web_jobs = Some(jobs);
-            state_inner.web_capabilities = Some(capabilities);
-            state_inner.web_binary_version = env!("CARGO_PKG_VERSION").to_string();
-            if let Some(ref dq) = download_queue {
-                state_inner.download_queue = Some(dq.clone());
-            }
-            let web_state = std::sync::Arc::new(state_inner);
-
-            let jobs_for_shutdown = web_state.web_jobs.clone();
-            let app = tama_web::router::build_web_routes().with_state(web_state);
-            tracing::info!("Tama web UI listening on http://{}", web_addr);
-
-            // Use axum-server for timeout-based graceful shutdown.
-            let handle = axum_server::Handle::new();
-            let shutdown_handle = handle.clone();
-
-            // Listen for shutdown signal from proxy server
-            tokio::spawn(async move {
-                if let Err(e) = shutdown_rx.changed().await {
-                    tracing::debug!("Shutdown channel closed: {}", e);
-                }
-                tracing::info!("Web UI initiating graceful shutdown (timeout: 5s)...");
-                shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(5)));
-
-                // Cleanup: kill all child processes for active jobs
-                if let Some(jobs) = jobs_for_shutdown {
-                    if let Some(active_job) = jobs.active().await {
-                        tracing::info!("Killing children of active job {}...", active_job.id);
-                        jobs.kill_children(&active_job).await;
-                    }
-                }
-            });
-
-            let std_listener = match std::net::TcpListener::bind(web_addr) {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!("Failed to bind web UI: {}", e);
-                    return;
-                }
-            };
-            std_listener.set_nonblocking(true).ok();
-
-            if let Err(e) = axum_server::from_tcp(std_listener)
-                .handle(handle)
-                .serve(app.into_make_service())
-                .await
-            {
-                tracing::error!("Web UI server error: {}", e);
-            }
-        });
-
-        // Pass the shutdown sender to the proxy server
-        let shutdown_tx_for_proxy = Some(shutdown_tx);
-
-        // Create and run proxy server
+        // Build the unified router: proxy routes + web UI routes on a single server.
+        // The proxy handles OS signals (SIGTERM/SIGINT) and graceful shutdown.
+        let web_routes = tama_web::router::build_web_routes();
         let server = ProxyServer::new(state.clone()).await;
-        server.run(addr, shutdown_tx_for_proxy).await?;
+        let app = server.into_unified_router(web_routes);
 
-        // Proxy has shut down (signal received, TTS backends unloaded, etc.).
-        // Now wait for the web UI to finish its own graceful shutdown.
-        // The web UI listens on the shared shutdown channel — it will exit
-        // promptly since the proxy already broadcast the signal.
-        // Use a timeout so systemd stop never hangs (systemd default TimeoutStopSec=90s).
-        match tokio::time::timeout(std::time::Duration::from_secs(10), web_handle).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                tracing::warn!("Web UI task joined with error: {}", e);
+        // Clone state for shutdown cleanup (unloads TTS backends + kills job children)
+        let cleanup_state = Arc::clone(&state);
+        let on_shutdown = async move {
+            // Kill children of any active backend job
+            if let Some(jobs) = &cleanup_state.web_jobs {
+                if let Some(active_job) = jobs.active().await {
+                    tracing::info!("Killing children of active job {}...", active_job.id);
+                    jobs.kill_children(&active_job).await;
+                }
             }
-            Err(_) => {
-                tracing::warn!("Web UI did not shut down within 10s — aborting");
+            // Unload TTS backends
+            let models = cleanup_state.models.read().await;
+            let tts_backends: Vec<String> = models
+                .iter()
+                .filter(|(_, ms)| ms.is_tts_backend())
+                .map(|(name, _)| name.clone())
+                .collect();
+            drop(models);
+            for name in tts_backends {
+                if let Err(e) = cleanup_state.unload_tts_backend(&name).await {
+                    tracing::warn!("Failed to unload TTS backend '{}': {}", name, e);
+                }
             }
-        }
+        };
 
-        Ok(())
+        // Use the listener module which handles OS signals + graceful shutdown
+        tama_core::proxy::server::listener::run(app, addr, Some(on_shutdown), None).await
     }
 
-    // Non web-ui path
     #[cfg(not(feature = "web-ui"))]
     {
-        // Create and run proxy server
         let server = ProxyServer::new(state.clone()).await;
-        server.run(addr, None).await?;
-
-        Ok(())
+        server.run(addr, None).await
     }
 }

@@ -48,9 +48,9 @@ impl ProxyState {
             wildcard_resolve_guard: Arc::new(tokio::sync::Mutex::new(())),
             // ── Web UI fields ──
             #[cfg(feature = "web-ui")]
-            web_jobs: None, // Set later by build_unified_router
+            web_jobs: Some(Arc::new(crate::web_types::JobManager::new())),
             #[cfg(feature = "web-ui")]
-            web_capabilities: None,
+            web_capabilities: Some(Arc::new(crate::web_types::CapabilitiesCache::new())),
             #[cfg(feature = "web-ui")]
             web_update_checker: Arc::new(crate::updates::UpdateChecker::new()),
             #[cfg(feature = "web-ui")]

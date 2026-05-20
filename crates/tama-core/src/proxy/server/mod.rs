@@ -337,6 +337,25 @@ impl ProxyServer {
         router::build_router(self.state)
     }
 
+    /// Consume the server and return a unified axum Router that merges
+    /// proxy routes with extra routes (e.g., web UI routes from `tama-web`).
+    ///
+    /// Proxy-specific routes are defined before extra routes to ensure
+    /// correct route priority in axum.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let web_routes = tama_web::router::build_web_routes();
+    /// let app = server.into_unified_router(web_routes);
+    /// ```
+    #[cfg(feature = "web-ui")]
+    pub fn into_unified_router(
+        self,
+        extra_routes: axum::Router<Arc<crate::proxy::ProxyState>>,
+    ) -> axum::Router {
+        router::build_unified_router(self.state, extra_routes)
+    }
+
     /// Start serving on the given address.
     ///
     /// Builds the router and delegates to the listener module.
