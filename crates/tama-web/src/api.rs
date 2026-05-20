@@ -289,27 +289,28 @@ pub async fn save_structured_config(
 async fn load_config_from_state(
     state: &ProxyState,
 ) -> Result<(tama_core::config::Config, std::path::PathBuf), (StatusCode, serde_json::Value)> {
-    let config_path = state
-        .config
-        .read()
-        .await
-        .loaded_from
+    // Prefer db_dir (set at startup to Config::config_dir()) to ensure we
+    // always open the correct database. Fall back to loaded_from when db_dir
+    // is None (e.g. in tests that create ProxyState without a db_dir).
+    let config_dir = state
+        .db_dir
         .clone()
+        .or_else(|| {
+            state.config.try_read().ok()?.loaded_from.clone()
+        })
+        .and_then(|loaded| {
+            if loaded.is_dir() {
+                Some(loaded)
+            } else {
+                loaded.parent().map(|p| p.to_path_buf())
+            }
+        })
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
                 serde_json::json!({"error": "config_path not configured"}),
             )
         })?;
-    let config_dir = config_path
-        .parent()
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({"error": "Cannot determine config directory"}),
-            )
-        })?
-        .to_path_buf();
     let config_dir_clone = config_dir.clone();
     let cfg = tokio::task::spawn_blocking(move || {
         tama_core::config::Config::load_from(&config_dir_clone)
