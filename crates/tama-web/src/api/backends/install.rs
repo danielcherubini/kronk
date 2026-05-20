@@ -8,11 +8,11 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::types::*;
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// POST /tama/v1/backends/install
 pub async fn install_backend(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(req): Json<InstallRequest>,
 ) -> impl IntoResponse {
     // Validate backend_type: non-empty and <= 64 chars
@@ -78,7 +78,7 @@ pub async fn install_backend(
         _ => {}
     }
 
-    let jobs = match &state.jobs {
+    let jobs = match &state.web_jobs {
         Some(j) => j,
         None => {
             return (
@@ -117,11 +117,14 @@ pub async fn install_backend(
     if is_tts {
         // For TTS backends: submit job first, then spawn the install task.
         let job = match jobs
-            .submit(crate::jobs::JobKind::Install, Some(backend_type.clone()))
+            .submit(
+                tama_core::web_types::JobKind::Install,
+                Some(backend_type.clone()),
+            )
             .await
         {
             Ok(j) => j,
-            Err(crate::jobs::JobError::AlreadyRunning(existing_id)) => {
+            Err(tama_core::web_types::JobError::AlreadyRunning(existing_id)) => {
                 return (
                     StatusCode::CONFLICT,
                     Json(serde_json::json!({
@@ -145,9 +148,12 @@ pub async fn install_backend(
             _ => unreachable!(),
         };
 
-        // Capture config_path for the background task
+        // Capture config_dir for the background task
         let config_dir = state
-            .config_path
+            .config
+            .read()
+            .await
+            .loaded_from
             .as_ref()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
@@ -181,7 +187,7 @@ pub async fn install_backend(
                             let _ = jobs_clone
                                 .finish(
                                     &job_clone,
-                                    crate::jobs::JobStatus::Failed,
+                                    tama_core::web_types::JobStatus::Failed,
                                     Some("Failed to open manager".to_string()),
                                 )
                                 .await;
@@ -203,7 +209,7 @@ pub async fn install_backend(
             match result {
                 Ok(()) => {
                     let _ = jobs_clone
-                        .finish(&job_clone, crate::jobs::JobStatus::Succeeded, None)
+                        .finish(&job_clone, tama_core::web_types::JobStatus::Succeeded, None)
                         .await;
                 }
                 Err(e) => {
@@ -213,7 +219,7 @@ pub async fn install_backend(
                     let _ = jobs_clone
                         .finish(
                             &job_clone,
-                            crate::jobs::JobStatus::Failed,
+                            tama_core::web_types::JobStatus::Failed,
                             Some(e.to_string()),
                         )
                         .await;
@@ -265,7 +271,7 @@ pub async fn install_backend(
 
     // Check prerequisites if source build
     if effective_build_from_source {
-        let cache = match &state.capabilities {
+        let cache = match &state.web_capabilities {
             Some(c) => c,
             None => {
                 return (
@@ -318,11 +324,14 @@ pub async fn install_backend(
 
     // Submit job
     let job = match jobs
-        .submit(crate::jobs::JobKind::Install, Some(backend_type.clone()))
+        .submit(
+            tama_core::web_types::JobKind::Install,
+            Some(backend_type.clone()),
+        )
         .await
     {
         Ok(j) => j,
-        Err(crate::jobs::JobError::AlreadyRunning(existing_id)) => {
+        Err(tama_core::web_types::JobError::AlreadyRunning(existing_id)) => {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
@@ -412,7 +421,10 @@ pub async fn install_backend(
     }
     .to_string();
     let reg_config_dir = state
-        .config_path
+        .config
+        .read()
+        .await
+        .loaded_from
         .as_ref()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
@@ -472,7 +484,7 @@ pub async fn install_backend(
                     }
                 }
                 let _ = jobs_clone
-                    .finish(&job_clone, crate::jobs::JobStatus::Succeeded, None)
+                    .finish(&job_clone, tama_core::web_types::JobStatus::Succeeded, None)
                     .await;
             }
             Err(e) => {
@@ -481,7 +493,7 @@ pub async fn install_backend(
                     .append_log(&job_clone, format!("Error: {}", e))
                     .await;
                 let _ = jobs_clone
-                    .finish(&job_clone, crate::jobs::JobStatus::Failed, Some(e))
+                    .finish(&job_clone, tama_core::web_types::JobStatus::Failed, Some(e))
                     .await;
             }
         }
@@ -506,11 +518,11 @@ pub struct RemoveQuery {
 
 /// DELETE /tama/v1/backends/:name
 pub async fn remove_backend(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<RemoveQuery>,
 ) -> impl IntoResponse {
-    let jobs = match &state.jobs {
+    let jobs = match &state.web_jobs {
         Some(j) => j,
         None => {
             return (
@@ -521,8 +533,8 @@ pub async fn remove_backend(
         }
     };
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,

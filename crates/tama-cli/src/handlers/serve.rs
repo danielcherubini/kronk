@@ -121,8 +121,8 @@ async fn start_proxy_server(
         let web_addr: SocketAddr = "0.0.0.0:11435".parse().unwrap();
         tracing::info!("Starting tama web UI on http://{}", web_addr);
         let proxy_config = Some(Arc::clone(&state.config));
-        let jobs = std::sync::Arc::new(tama_web::jobs::JobManager::new());
-        let capabilities = std::sync::Arc::new(tama_web::api::backends::CapabilitiesCache::new());
+        let jobs = std::sync::Arc::new(tama_core::web_types::JobManager::new());
+        let capabilities = std::sync::Arc::new(tama_core::web_types::CapabilitiesCache::new());
         let download_queue = state.download_queue.clone();
 
         // Shared shutdown channel: proxy server signals, web UI listens.

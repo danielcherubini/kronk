@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::resolve_model_id;
 use crate::api::load_config_from_state;
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Serialize a `ModelFileRecord` into the same shape used by the enriched
 /// quants response so refresh/verify callers get data identical to a GET.
@@ -31,17 +31,22 @@ fn file_record_json(rec: &tama_core::db::queries::ModelFileRecord) -> serde_json
 /// SHA and per-file LFS hashes / sizes, and write them into the local DB.
 ///
 /// Structured to keep `rusqlite::Connection` off `.await` points:
-///   1. `spawn_blocking` — resolve repo_id from config
-///   2. `.await` — fetch from HF
-///   3. `spawn_blocking` — open DB, upsert pull + files, read back
+///   1. Load config (async, handles its own spawn_blocking)
+///   2. `spawn_blocking` — resolve repo_id from DB
+///   3. `.await` — fetch from HF
+///   4. `spawn_blocking` — open DB, upsert pull + files, read back
 pub async fn refresh_model_metadata(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
 ) -> impl IntoResponse {
-    // Step 1: resolve model_id (from id_str) and repo_id (config load on blocking pool).
-    let state1 = state.clone();
+    // Load config first (async, handles its own spawn_blocking)
+    let (cfg, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
+    // Step 1: resolve model_id (from id_str) and repo_id (DB operations on blocking pool).
     let resolved = tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state1)?;
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -189,12 +194,16 @@ pub async fn refresh_model_metadata(
 /// the blocking threadpool. Per-file progress events are NOT streamed here;
 /// the wizard already streams them during pulls.
 pub async fn verify_model_files(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
 ) -> impl IntoResponse {
-    let state1 = state.clone();
+    // Load config first (async, handles its own spawn_blocking)
+    let (_cfg, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
     let resolved = tokio::task::spawn_blocking(move || {
-        let (_cfg, config_dir) = load_config_from_state(&state1)?;
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

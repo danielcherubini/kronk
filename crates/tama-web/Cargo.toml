@@ -51,6 +51,7 @@ ssr = [
   "dep:reqwest", "dep:mime_guess", "dep:tracing", "dep:tracing-subscriber",
   "dep:tama-core", "dep:toml", "dep:tower-http", "dep:thiserror",
   "dep:rusqlite", "dep:nix", "dep:utoipa", "dep:utoipa-gen",
+  "tama-core/web-ui",
 ]
 
 [[test]]

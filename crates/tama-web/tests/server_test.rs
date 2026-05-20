@@ -6,22 +6,8 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let state = Arc::new(tama_web::server::AppState {
-                jobs: None,
-                capabilities: None,
-                proxy_base_url: "http://127.0.0.1:11434".to_string(),
-                client: reqwest::Client::new(),
-                logs_dir: None,
-                config_path: None,
-                proxy_config: None,
-                binary_version: "0.0.0-test".to_string(),
-                update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
-                    std::collections::HashMap::new(),
-                )),
-                update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-                download_queue: None,
-            });
+            let config = tama_core::config::Config::default();
+            let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
             axum::serve(listener, tama_web::server::build_router(state))
                 .await
                 .unwrap();
@@ -147,22 +133,10 @@ mod tests {
             let proxy_config_server = proxy_config.clone();
             let config_path_server = config_path.clone();
             tokio::spawn(async move {
-                let state = Arc::new(tama_web::server::AppState {
-                    jobs: None,
-                    capabilities: None,
-                    proxy_base_url: "http://127.0.0.1:11434".to_string(),
-                    client: reqwest::Client::new(),
-                    logs_dir: None,
-                    config_path: Some(config_path_server),
-                    proxy_config: Some(proxy_config_server),
-                    binary_version: "0.0.0-test".to_string(),
-                    update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                    upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
-                        std::collections::HashMap::new(),
-                    )),
-                    update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-                    download_queue: None,
-                });
+                let mut config = (*proxy_config_server.read().await).clone();
+                config.loaded_from = Some(config_path_server);
+                let mut state = tama_core::proxy::ProxyState::new(config, None);
+                let state = Arc::new(state);
                 axum::serve(listener, tama_web::server::build_router(state))
                     .await
                     .unwrap();
@@ -394,22 +368,9 @@ mod tests {
         {
             let config_path_server = config_path.clone();
             tokio::spawn(async move {
-                let state = Arc::new(tama_web::server::AppState {
-                    jobs: None,
-                    capabilities: None,
-                    proxy_base_url: "http://127.0.0.1:11434".to_string(),
-                    client: reqwest::Client::new(),
-                    logs_dir: None,
-                    config_path: Some(config_path_server),
-                    proxy_config: None,
-                    binary_version: "0.0.0-test".to_string(),
-                    update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                    upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
-                        std::collections::HashMap::new(),
-                    )),
-                    update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-                    download_queue: None,
-                });
+                let mut config = tama_core::config::Config::default();
+                config.loaded_from = Some(config_path_server);
+                let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
                 axum::serve(listener, tama_web::server::build_router(state))
                     .await
                     .unwrap();

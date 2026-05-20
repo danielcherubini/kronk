@@ -12,7 +12,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Maximum number of lines to return (clamp for the `lines` query parameter).
 pub const MAX_LINES: usize = 10_000;
@@ -40,27 +40,18 @@ pub fn is_valid_backend_name(name: &str) -> bool {
 
 /// GET /tama/v1/logs/:backend — return the last N lines of a backend's log file.
 pub async fn get_backend_logs(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(backend): Path<String>,
     Query(query): Query<BackendLogsQuery>,
 ) -> impl IntoResponse {
-    let dir = match &state.logs_dir {
-        Some(d) => d.clone(),
-        None => {
-            let config_dir = match &state.config_path {
-                Some(p) => p.parent().map(|d| d.to_path_buf()),
-                None => None,
-            };
-            match config_dir {
-                Some(dir) => dir.join("logs"),
-                None => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        Json(serde_json::json!({"error": "logs_dir not configured"})),
-                    )
-                        .into_response()
-                }
-            }
+    let dir = match state.config.read().await.logs_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 

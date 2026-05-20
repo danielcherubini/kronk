@@ -7,8 +7,8 @@ use axum::{
 use std::sync::Arc;
 
 use crate::api::load_config_from_state;
-use crate::server::AppState;
 use tama_core::backends::BackendOption;
+use tama_core::proxy::ProxyState;
 
 /// Build the list of available backend options by querying installed variants from the DB.
 fn build_backend_options(
@@ -134,10 +134,9 @@ fn model_entry_json(
 }
 
 /// GET /tama/v1/models — list all model configs plus available backends.
-pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let state = state.clone();
-    match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
-        Ok(Ok((cfg, config_dir))) => {
+pub async fn list_models(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    match load_config_from_state(&state).await {
+        Ok((cfg, config_dir)) => {
             let configs_dir = config_dir.join("configs");
             let backend_options = build_backend_options(&cfg, &config_dir);
 
@@ -183,23 +182,18 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
             }))
             .into_response()
         }
-        Ok(Err((status, body))) => (status, Json(body)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err((status, body)) => (status, Json(body)).into_response(),
     }
 }
 
 /// GET /tama/v1/models/:id — get a single model config.
 /// Accepts integer id or config_key (double-dash format) for compatibility.
 pub async fn get_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
 ) -> impl IntoResponse {
-    match tokio::task::spawn_blocking(move || load_config_from_state(&state)).await {
-        Ok(Ok((cfg, config_dir))) => {
+    match load_config_from_state(&state).await {
+        Ok((cfg, config_dir)) => {
             let configs_dir = config_dir.join("configs");
             let backend_options = build_backend_options(&cfg, &config_dir);
 
@@ -265,11 +259,6 @@ pub async fn get_model(
                     .into_response(),
             }
         }
-        Ok(Err((status, body))) => (status, Json(body)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err((status, body)) => (status, Json(body)).into_response(),
     }
 }

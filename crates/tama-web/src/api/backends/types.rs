@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use crate::jobs::JobManager;
 use tama_core::backends::ProgressSink;
+use tama_core::web_types::JobManager;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wire DTOs (tama-web only, not exposed from tama-core)
@@ -182,14 +182,14 @@ pub struct ActiveJobDto {
     pub backend_type: String,
 }
 
-pub(super) fn job_to_active_dto(j: &crate::jobs::Job) -> ActiveJobDto {
+pub(super) fn job_to_active_dto(j: &tama_core::web_types::Job) -> ActiveJobDto {
     ActiveJobDto {
         id: j.id.clone(),
         kind: match j.kind {
-            crate::jobs::JobKind::Install => "install".to_string(),
-            crate::jobs::JobKind::Update => "update".to_string(),
-            crate::jobs::JobKind::Restore => "restore".to_string(),
-            crate::jobs::JobKind::Benchmark => "benchmark".to_string(),
+            tama_core::web_types::JobKind::Install => "install".to_string(),
+            tama_core::web_types::JobKind::Update => "update".to_string(),
+            tama_core::web_types::JobKind::Restore => "restore".to_string(),
+            tama_core::web_types::JobKind::Benchmark => "benchmark".to_string(),
         },
         backend_type: match j.backend_type.as_ref() {
             Some(tama_core::backends::BackendType::LlamaCpp) => "llama_cpp".to_string(),
@@ -302,7 +302,7 @@ pub struct CheckUpdatesResponse {
 pub struct JobSnapshotDto {
     pub id: String,
     pub kind: String,
-    pub status: crate::jobs::JobStatus,
+    pub status: tama_core::web_types::JobStatus,
     pub backend_type: String,
     pub started_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -342,7 +342,7 @@ pub(super) const KNOWN_BACKENDS: &[(&str, &str, Option<&str>)] = &[
 
 pub struct JobAdapter {
     pub(super) jobs: Arc<JobManager>,
-    pub(super) job: Arc<crate::jobs::Job>,
+    pub(super) job: Arc<tama_core::web_types::Job>,
 }
 
 impl ProgressSink for JobAdapter {

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::is_valid_repo_id;
 use crate::api::models::resolve_model_id;
 use crate::api::{load_config_from_state, trigger_proxy_reload};
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Body for rename endpoint.
 #[derive(serde::Deserialize)]
@@ -19,14 +19,19 @@ pub struct RenameBody {
 
 /// POST /tama/v1/models/:id/rename — rename a model config entry.
 pub async fn rename_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
     Json(body): Json<RenameBody>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
-    match tokio::task::spawn_blocking(move || {
-        let (_, config_dir) = load_config_from_state(&state)?;
 
+    // Load config first (async, handles its own spawn_blocking)
+    let (_, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
+    match tokio::task::spawn_blocking(move || {
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

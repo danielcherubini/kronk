@@ -20,7 +20,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Response for `GET /tama/v1/self-update/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,13 +41,13 @@ pub struct UpdateTriggerResponse {
 
 /// Check whether a newer version of Tama is available on GitHub Releases.
 ///
-/// Uses `state.binary_version` (the actual running binary version passed from
+/// Uses `state.web_binary_version` (the actual running binary version passed from
 /// the CLI) rather than `env!("CARGO_PKG_VERSION")` to avoid version mismatch
 /// between tama-web and tama-cli crate versions.
 pub async fn check_update(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
 ) -> Result<Json<UpdateCheckResponse>, (StatusCode, Json<serde_json::Value>)> {
-    match tama_core::self_update::check_for_update(&state.binary_version).await {
+    match tama_core::self_update::check_for_update(&state.web_binary_version).await {
         Ok(info) => Ok(Json(UpdateCheckResponse {
             update_available: info.update_available,
             current_version: info.current_version,
@@ -70,11 +70,11 @@ pub async fn check_update(
 /// The update runs asynchronously. Progress is streamed via
 /// `GET /tama/v1/self-update/events` (SSE).
 pub async fn trigger_update(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
 ) -> Result<Json<UpdateTriggerResponse>, (StatusCode, Json<serde_json::Value>)> {
     // Check if an update is already in progress
     {
-        let guard = state.update_tx.lock().await;
+        let guard = state.web_update_tx.lock().await;
         if let Some(ref tx) = *guard {
             if tx.receiver_count() > 0 || !tx.is_empty() {
                 return Err((
@@ -88,13 +88,13 @@ pub async fn trigger_update(
     // Create a broadcast channel for progress messages
     let (tx, _) = broadcast::channel::<String>(64);
 
-    // Store the sender in AppState so the SSE endpoint can subscribe
+    // Store the sender in ProxyState so the SSE endpoint can subscribe
     {
-        let mut guard = state.update_tx.lock().await;
+        let mut guard = state.web_update_tx.lock().await;
         *guard = Some(tx.clone());
     }
 
-    let binary_version = state.binary_version.clone();
+    let binary_version = state.web_binary_version.clone();
 
     // Spawn the update task
     tokio::spawn(async move {
@@ -141,7 +141,7 @@ pub async fn trigger_update(
                     }
 
                     // Cleanup: set update_tx back to None so future requests can start a new update
-                    let mut guard = state_clone.update_tx.lock().await;
+                    let mut guard = state_clone.web_update_tx.lock().await;
                     *guard = None;
                 }
             }
@@ -158,7 +158,7 @@ pub async fn trigger_update(
                 }
 
                 // Cleanup: set update_tx back to None so future requests can start a new update
-                let mut guard = state_clone.update_tx.lock().await;
+                let mut guard = state_clone.web_update_tx.lock().await;
                 *guard = None;
             }
         }
@@ -180,10 +180,10 @@ pub async fn trigger_update(
 /// - `event: status` with JSON `{ "status": "succeeded"|"failed", ... }` for completion
 /// - `event: restarting` with JSON `{}` before process restart
 pub async fn update_events(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
 ) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
     let rx = {
-        let guard = state.update_tx.lock().await;
+        let guard = state.web_update_tx.lock().await;
         guard.as_ref().map(|tx| tx.subscribe())
     };
 

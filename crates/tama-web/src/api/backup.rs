@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Request body for restore preview.
 #[derive(Deserialize)]
@@ -64,9 +64,9 @@ pub struct BackendEntry {
 }
 
 /// GET /tama/v1/backup - Create backup and return as file download
-pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let config_dir = match &state.config_path {
-        Some(p) => p.parent().unwrap_or(p.as_path()),
+pub async fn create_backup(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let config_dir: std::path::PathBuf = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p.parent().map(|d| d.to_path_buf()).unwrap_or(p),
         None => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -75,8 +75,6 @@ pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 .into_response();
         }
     };
-
-    let config_dir = config_dir.to_path_buf();
 
     // Spawn blocking task for backup
     let result = tokio::task::spawn_blocking(move || {
@@ -132,11 +130,18 @@ pub async fn create_backup(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
 /// POST /tama/v1/restore/preview - Upload archive and return manifest preview
 pub async fn restore_preview(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Save upload to temp file
-    let temp_dir = state.temp_uploads_dir();
+    let temp_dir = state
+        .config
+        .read()
+        .await
+        .loaded_from
+        .as_ref()
+        .map(|p| p.parent().unwrap_or(p.as_path()).join("uploads"))
+        .unwrap_or_else(|| std::env::temp_dir().join("tama_uploads"));
     if let Err(e) = std::fs::create_dir_all(&temp_dir) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -188,7 +193,7 @@ pub async fn restore_preview(
     match manifest_result {
         Ok(Ok(manifest)) => {
             // Store upload reference
-            let mut uploads = state.upload_lock.write().await;
+            let mut uploads = state.web_upload_lock.write().await;
             uploads.insert(
                 upload_id.clone(),
                 UploadEntry {
@@ -238,11 +243,11 @@ pub async fn restore_preview(
 
 /// POST /tama/v1/restore - Start restore job
 pub async fn start_restore(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(body): Json<RestoreRequest>,
 ) -> impl IntoResponse {
     // Look up upload
-    let uploads = state.upload_lock.read().await;
+    let uploads = state.web_upload_lock.read().await;
     let _upload_path = match uploads.get(&body.upload_id) {
         Some(entry) => entry.path.clone(),
         None => {
@@ -256,7 +261,7 @@ pub async fn start_restore(
     drop(uploads);
 
     // Create restore job
-    let Some(jobs) = state.jobs.as_ref() else {
+    let Some(jobs) = state.web_jobs.as_ref() else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "Jobs not configured"})),
@@ -266,7 +271,7 @@ pub async fn start_restore(
 
     let job = jobs
         .submit(
-            crate::jobs::JobKind::Restore,
+            tama_core::web_types::JobKind::Restore,
             None, // No backend type for restore
         )
         .await;
@@ -274,7 +279,7 @@ pub async fn start_restore(
     match job {
         Ok(job) => {
             // Spawn background task for restore with safe error handling
-            let config_dir = match state.config_path.as_ref() {
+            let config_dir = match state.config.read().await.loaded_from.as_ref() {
                 Some(path) => match path.parent() {
                     Some(parent) => parent.to_path_buf(),
                     None => {
@@ -295,7 +300,14 @@ pub async fn start_restore(
                         .into_response();
                 }
             };
-            let temp_dir = state.temp_uploads_dir();
+            let temp_dir = state
+                .config
+                .read()
+                .await
+                .loaded_from
+                .as_ref()
+                .map(|p| p.parent().unwrap_or(p.as_path()).join("uploads"))
+                .unwrap_or_else(|| std::env::temp_dir().join("tama_uploads"));
             let job_id = job.id.clone();
 
             tokio::spawn(async move {
@@ -322,12 +334,8 @@ pub async fn start_restore(
     }
 }
 
-/// Temporary upload entry.
-#[derive(Clone)]
-pub struct UploadEntry {
-    pub path: std::path::PathBuf,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
+/// Re-export from tama-core for backward compatibility.
+pub use tama_core::web_types::UploadEntry;
 
 #[cfg(test)]
 mod tests {

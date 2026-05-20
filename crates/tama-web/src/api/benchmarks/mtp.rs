@@ -45,10 +45,10 @@ fn default_context_size() -> Option<u32> {
 // ── Handler: Submit MTP benchmark job ─────────────────────────────────
 
 pub async fn run_mtp_benchmark(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(req): Json<MtpBenchmarkRunRequest>,
 ) -> impl IntoResponse {
-    let jobs = match &state.jobs {
+    let jobs = match &state.web_jobs {
         Some(j) => j.clone(),
         None => {
             return (
@@ -82,8 +82,8 @@ pub async fn run_mtp_benchmark(
 
     let job_id = job.id.clone();
     let req_clone = req.clone();
-    let config_path = state.config_path.clone();
-    let proxy_base_url = state.proxy_base_url.clone();
+    let config_path = state.config.read().await.loaded_from.clone();
+    let proxy_base_url = state.config.read().await.proxy_url();
     let client = state.client.clone();
 
     // Spawn the benchmark in the background
@@ -111,7 +111,7 @@ pub async fn run_mtp_benchmark(
 
 pub async fn run_mtp_benchmark_inner(
     jobs: Arc<JobManager>,
-    job: &Arc<crate::jobs::Job>,
+    job: &Arc<tama_core::web_types::Job>,
     req: &MtpBenchmarkRunRequest,
     config_path: Option<std::path::PathBuf>,
     proxy_base_url: String,
@@ -184,7 +184,7 @@ pub async fn run_mtp_benchmark_inner(
     let job_clone = job.clone();
     let jobs_clone = jobs.clone();
     struct MtpBenchProgressSink {
-        job: Arc<crate::jobs::Job>,
+        job: Arc<tama_core::web_types::Job>,
         jobs: Arc<JobManager>,
     }
     impl tama_core::backends::ProgressSink for MtpBenchProgressSink {

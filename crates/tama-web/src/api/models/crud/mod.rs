@@ -13,7 +13,7 @@ use super::resolve_model_id;
 #[allow(unused_imports)]
 use crate::api::{load_config_from_state, trigger_proxy_reload};
 #[allow(unused_imports)]
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Maximum lengths for ModelBody fields.
 const MAX_BACKEND: usize = 256;

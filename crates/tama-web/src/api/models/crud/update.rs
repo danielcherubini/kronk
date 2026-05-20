@@ -9,26 +9,32 @@ use std::sync::Arc;
 use super::{apply_model_body, validate_model_body, ModelBody};
 use crate::api::models::resolve_model_id;
 use crate::api::{load_config_from_state, trigger_proxy_reload};
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// PUT /tama/v1/models/:id — update an existing model.
 pub async fn update_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
     Json(body): Json<ModelBody>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
+
+    // Validate ModelBody fields
+    if let Err(e) = validate_model_body(&body) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response();
+    }
+
+    // Load config first (async, handles its own spawn_blocking)
+    let (_cfg, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
     match tokio::task::spawn_blocking(move || {
-        // Validate ModelBody fields
-        if let Err(e) = validate_model_body(&body) {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::json!({"error": e}),
-            ));
-        }
-
-        let (_cfg, config_dir) = load_config_from_state(&state)?;
-
         // Load existing from DB
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (

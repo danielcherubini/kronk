@@ -8,8 +8,8 @@ pub async fn cmd_web(
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
     let addr: std::net::SocketAddr = format!("0.0.0.0:{port}").parse()?;
-    let jobs = Arc::new(tama_web::jobs::JobManager::new());
-    let capabilities = Arc::new(tama_web::api::backends::CapabilitiesCache::new());
+    let jobs = Arc::new(tama_core::web_types::JobManager::new());
+    let capabilities = Arc::new(tama_core::web_types::CapabilitiesCache::new());
     tama_web::server::run_with_opts(
         addr,
         proxy_url,

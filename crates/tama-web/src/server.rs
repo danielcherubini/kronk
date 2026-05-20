@@ -92,7 +92,7 @@ async fn serve_static(path: Option<Path<String>>) -> Response {
 /// Forward a request to the Tama proxy at `/tama/v1/<path>`.
 /// Only allows GET, POST, and PATCH methods; returns 405 for others.
 async fn proxy_tama(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<tama_core::proxy::ProxyState>>,
     method: Method,
     headers: HeaderMap,
     path: Path<String>,
@@ -103,7 +103,8 @@ async fn proxy_tama(
         return (StatusCode::METHOD_NOT_ALLOWED, "Method not allowed").into_response();
     }
 
-    let url = format!("{}/tama/v1/{}", state.proxy_base_url, path.0);
+    let proxy_url = state.config.read().await.proxy_url();
+    let url = format!("{}/tama/v1/{}", proxy_url, path.0);
     // Cap at 16 MiB — same as MAX_REQUEST_BODY_SIZE in tama-core — to prevent memory exhaustion.
     let body_bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
         Ok(bytes) => bytes,
@@ -185,7 +186,7 @@ async fn serve_index() -> Response {
     serve_static(None).await
 }
 
-pub fn build_router(state: Arc<AppState>) -> Router {
+pub fn build_router(state: Arc<tama_core::proxy::ProxyState>) -> Router {
     // Build sub-router for backends API with CORS and origin enforcement.
     // CorsLayer must be outermost (applied last) so it runs before same-origin check.
     let backend_routes = Router::new()
@@ -387,31 +388,49 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_with_opts(
     addr: std::net::SocketAddr,
-    proxy_base_url: String,
-    logs_dir: Option<std::path::PathBuf>,
+    _proxy_base_url: String,
+    _logs_dir: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
     proxy_config: Option<Arc<tokio::sync::RwLock<tama_core::config::Config>>>,
-    jobs: Option<Arc<JobManager>>,
-    capabilities: Option<Arc<CapabilitiesCache>>,
+    jobs: Option<Arc<tama_core::web_types::JobManager>>,
+    capabilities: Option<Arc<tama_core::web_types::CapabilitiesCache>>,
     binary_version: String,
     download_queue: Option<Arc<DownloadQueueService>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<()>>,
 ) -> anyhow::Result<()> {
-    let state = Arc::new(AppState {
-        proxy_base_url,
-        client: reqwest::Client::new(),
-        logs_dir,
-        config_path,
-        proxy_config,
-        jobs,
-        capabilities,
-        update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-        binary_version,
-        update_tx: Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        download_queue,
-    });
-    let jobs_for_shutdown = state.jobs.clone();
+    // Build config from proxy_config or load from disk
+    let config = if let Some(ref pc) = proxy_config {
+        pc.read().await.clone()
+    } else if let Some(ref cp) = config_path {
+        let config_dir = cp.parent().map(|p| p.to_path_buf());
+        if let Some(cd) = config_dir {
+            tama_core::config::Config::load_from(&cd).unwrap_or_default()
+        } else {
+            tama_core::config::Config::default()
+        }
+    } else {
+        tama_core::config::Config::default()
+    };
+
+    // Derive db_dir from config_path
+    let db_dir = config_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf());
+
+    let state = Arc::new(tama_core::proxy::ProxyState::new(config, db_dir.clone()));
+
+    // Set web-specific fields
+    let mut state_inner = (*state).clone();
+    state_inner.web_jobs = jobs.clone();
+    state_inner.web_capabilities = capabilities.clone();
+    state_inner.web_binary_version = binary_version;
+    if let Some(ref dq) = download_queue {
+        state_inner.download_queue = Some(dq.clone());
+    }
+    let state = Arc::new(state_inner);
+
+    let jobs_for_shutdown = state.web_jobs.clone();
     let app = build_router(state);
     tracing::info!("Tama web UI listening on http://{}", addr);
 
@@ -444,7 +463,7 @@ pub async fn run_with_opts(
 /// Wait for the shutdown trigger (shared channel or own signal handlers).
 /// Does NOT do cleanup here — cleanup is done by the caller after this returns.
 async fn shutdown_signal_inner(
-    jobs: Option<Arc<JobManager>>,
+    jobs: Option<Arc<tama_core::web_types::JobManager>>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<()>>,
 ) {
     if let Some(mut rx) = shutdown_rx {

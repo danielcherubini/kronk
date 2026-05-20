@@ -8,18 +8,23 @@ use std::sync::Arc;
 
 use crate::api::models::resolve_model_id;
 use crate::api::{load_config_from_state, trigger_proxy_reload};
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// DELETE /tama/v1/models/:id/quants/:quant_key — delete a single quant's file
 /// and remove it from the config.
 pub async fn delete_quant(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path((id, quant_key)): Path<(i64, String)>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
-    match tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state)?;
 
+    // Load config first (async, handles its own spawn_blocking)
+    let (cfg, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
+    match tokio::task::spawn_blocking(move || {
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -128,13 +133,18 @@ pub async fn delete_quant(
 
 /// DELETE /tama/v1/models/:id — delete a model.
 pub async fn delete_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(id_str): Path<String>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
-    match tokio::task::spawn_blocking(move || {
-        let (cfg, config_dir) = load_config_from_state(&state)?;
 
+    // Load config first (async, handles its own spawn_blocking)
+    let (cfg, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
+    match tokio::task::spawn_blocking(move || {
         // Capture the removed model for cleanup
         let mut mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (

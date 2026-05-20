@@ -6,13 +6,13 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// GET /tama/v1/hf/*repo_id — fetch HuggingFace model metadata (API + README).
 /// Wildcard captures `owner/repo/metadata`; we strip the trailing `/metadata`.
 /// If path doesn't end with `/metadata`, forward to proxy for quant list handling.
 pub async fn hf_metadata(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(path): Path<String>,
 ) -> axum::http::Response<axum::body::Body> {
     // Strip trailing "/metadata" from the wildcard path
@@ -36,10 +36,14 @@ pub async fn hf_metadata(
 
 /// Forward a non-metadata HF request to the proxy server.
 async fn proxy_hf_request(
-    state: &Arc<AppState>,
+    state: &Arc<ProxyState>,
     path: &str,
 ) -> axum::http::Response<axum::body::Body> {
-    let url = format!("{}/tama/v1/hf/{}", state.proxy_base_url, path);
+    let url = format!(
+        "{}/tama/v1/hf/{}",
+        state.config.read().await.proxy_url(),
+        path
+    );
     match reqwest::get(&url).await {
         Ok(resp) => {
             let status = resp.status();

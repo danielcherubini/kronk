@@ -3,10 +3,10 @@ use super::*;
 // ── Handler: Get benchmark result ─────────────────────────────────────
 
 pub async fn get_benchmark_result(
-    State(_state): State<Arc<AppState>>,
+    State(_state): State<Arc<ProxyState>>,
     Path(job_id): Path<String>,
 ) -> impl IntoResponse {
-    let jobs = match &_state.jobs {
+    let jobs = match &_state.web_jobs {
         Some(j) => j.clone(),
         None => {
             return (
@@ -69,10 +69,10 @@ pub async fn get_benchmark_result(
 // ── Handler: SSE events for benchmark progress ────────────────────────
 
 pub async fn benchmark_events(
-    State(_state): State<Arc<AppState>>,
+    State(_state): State<Arc<ProxyState>>,
     Path(job_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
-    let jobs = match &_state.jobs {
+    let jobs = match &_state.web_jobs {
         Some(j) => j.clone(),
         None => {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -181,7 +181,7 @@ pub async fn benchmark_events(
 
 // ── Handler: List benchmark history ───────────────────────────────────
 
-pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn list_benchmark_history(State(_state): State<Arc<ProxyState>>) -> impl IntoResponse {
     let db_dir = match tama_core::config::Config::config_dir() {
         Ok(d) => d,
         Err(e) => {
@@ -311,7 +311,7 @@ pub async fn list_benchmark_history(State(_state): State<Arc<AppState>>) -> impl
 // ── Handler: Delete benchmark history entry ───────────────────────────
 
 pub async fn delete_benchmark(
-    State(_state): State<Arc<AppState>>,
+    State(_state): State<Arc<ProxyState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     let db_dir = match tama_core::config::Config::config_dir() {

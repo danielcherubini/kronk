@@ -1,7 +1,7 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::sync::Arc;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 pub mod backends;
 pub mod backup;
@@ -30,15 +30,15 @@ fn default_lines() -> usize {
 }
 
 pub async fn get_logs(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     axum::extract::Query(query): axum::extract::Query<LogsQuery>,
 ) -> impl IntoResponse {
-    let dir = match &state.logs_dir {
-        Some(d) => d.clone(),
-        None => {
+    let dir = match state.config.read().await.logs_dir() {
+        Ok(d) => d,
+        Err(e) => {
             return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "logs_dir not configured"})),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
             )
                 .into_response()
         }
@@ -55,9 +55,9 @@ pub async fn get_logs(
     Json(serde_json::json!({ "lines": lines })).into_response()
 }
 
-pub async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let path = match &state.config_path {
-        Some(p) => p.clone(),
+pub async fn get_config(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -88,31 +88,19 @@ pub struct ConfigBody {
 }
 
 /// Update the proxy's live in-memory config after a successful disk save.
-/// No-op if proxy_config is None (standalone web server without proxy).
-async fn sync_proxy_config(state: &AppState, new_config: tama_core::config::Config) {
-    if let Some(ref proxy_config) = state.proxy_config {
-        let mut config = proxy_config.write().await;
-        *config = new_config;
-    }
+async fn sync_proxy_config(state: &ProxyState, new_config: tama_core::config::Config) {
+    let mut config = state.config.write().await;
+    *config = new_config;
 }
 
 /// Trigger the proxy to reload its model registry from the database.
-async fn trigger_proxy_reload(state: &AppState) -> Result<(), (StatusCode, serde_json::Value)> {
-    let url = format!("{}/tama/v1/system/reload-configs", state.proxy_base_url);
-    let resp = state.client.post(&url).send().await.map_err(|e| {
+async fn trigger_proxy_reload(state: &ProxyState) -> Result<(), (StatusCode, serde_json::Value)> {
+    state.reload_model_configs().await.map_err(|e| {
         (
-            StatusCode::BAD_GATEWAY,
-            serde_json::json!({"error": format!("Failed to reach proxy: {}", e)}),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({"error": format!("Failed to reload model configs: {}", e)}),
         )
-    })?;
-
-    if !resp.status().is_success() {
-        return Err((
-            resp.status(),
-            serde_json::json!({"error": "Proxy failed to reload configurations"}),
-        ));
-    }
-    Ok(())
+    })
 }
 
 /// Body for structured config save.
@@ -133,11 +121,11 @@ pub struct StructuredConfigBody {
 }
 
 pub async fn save_config(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(body): Json<ConfigBody>,
 ) -> impl IntoResponse {
-    let path = match &state.config_path {
-        Some(p) => p.clone(),
+    let path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -165,10 +153,8 @@ pub async fn save_config(
             if let Ok(mut new_config) =
                 toml::from_str::<tama_core::config::Config>(&content_for_sync)
             {
-                // Restore loaded_from from the existing proxy config (it is skipped by serde).
-                if let Some(ref proxy_config) = state.proxy_config {
-                    new_config.loaded_from = proxy_config.read().await.loaded_from.clone();
-                }
+                // Restore loaded_from from the existing config (it is skipped by serde).
+                new_config.loaded_from = state.config.read().await.loaded_from.clone();
                 sync_proxy_config(&state, new_config).await;
             }
             Json(serde_json::json!({ "ok": true })).into_response()
@@ -189,9 +175,9 @@ pub async fn save_config(
 // ── Structured Config API (JSON-based for WASM) ─────────────────────────────────
 
 /// GET /api/config/structured — returns full Config as JSON.
-pub async fn get_structured_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+pub async fn get_structured_config(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -243,11 +229,11 @@ pub async fn get_structured_config(State(state): State<Arc<AppState>>) -> impl I
 
 /// POST /api/config/structured — accept JSON Config, persist as TOML.
 pub async fn save_structured_config(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(body): Json<StructuredConfigBody>,
 ) -> impl IntoResponse {
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -271,10 +257,8 @@ pub async fn save_structured_config(
     // Convert mirror types back to tama_core::Config
     let mut new_config: tama_core::config::Config = body.into();
 
-    // Restore loaded_from from existing proxy config (it has #[serde(skip)])
-    if let Some(ref proxy_config) = state.proxy_config {
-        new_config.loaded_from = proxy_config.read().await.loaded_from.clone();
-    }
+    // Restore loaded_from from existing config (it has #[serde(skip)])
+    new_config.loaded_from = state.config.read().await.loaded_from.clone();
 
     // Persist to disk using tama_core's save_to (consistent with other endpoints)
     let config_dir_clone = config_dir.clone();
@@ -300,17 +284,23 @@ pub async fn save_structured_config(
 
 // ── Shared helpers (used by both model and non-model endpoints) ──────────────
 
-/// Load config from the config_path stored in AppState.
+/// Load config from the config directory derived from ProxyState.
 /// Returns (config, config_dir) on success.
-fn load_config_from_state(
-    state: &AppState,
+async fn load_config_from_state(
+    state: &ProxyState,
 ) -> Result<(tama_core::config::Config, std::path::PathBuf), (StatusCode, serde_json::Value)> {
-    let config_path = state.config_path.as_ref().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            serde_json::json!({"error": "config_path not configured"}),
-        )
-    })?;
+    let config_path = state
+        .config
+        .read()
+        .await
+        .loaded_from
+        .clone()
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({"error": "config_path not configured"}),
+            )
+        })?;
     let config_dir = config_path
         .parent()
         .ok_or_else(|| {
@@ -320,7 +310,18 @@ fn load_config_from_state(
             )
         })?
         .to_path_buf();
-    let cfg = tama_core::config::Config::load_from(&config_dir).map_err(|e| {
+    let config_dir_clone = config_dir.clone();
+    let cfg = tokio::task::spawn_blocking(move || {
+        tama_core::config::Config::load_from(&config_dir_clone)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({"error": e.to_string()}),
+        )
+    })?
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             serde_json::json!({"error": e.to_string()}),

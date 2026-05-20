@@ -8,18 +8,18 @@ use serde_json::json;
 use std::sync::Arc;
 
 use super::types::*;
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// GET /tama/v1/backends
-pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn list_backends(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
     // active_job is only available when job manager is configured
-    let active_job = if let Some(jobs) = &state.jobs {
+    let active_job = if let Some(jobs) = &state.web_jobs {
         jobs.active()
             .await
             .filter(|j| {
                 let st = j.state.try_read().ok();
                 if let Some(s) = &st {
-                    matches!(s.status, crate::jobs::JobStatus::Running)
+                    matches!(s.status, tama_core::web_types::JobStatus::Running)
                 } else {
                     false
                 }
@@ -30,8 +30,8 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
     };
 
     // Open registry
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -286,8 +286,8 @@ pub async fn list_backends(State(state): State<Arc<AppState>>) -> impl IntoRespo
 }
 
 /// POST /tama/v1/backends/check-updates
-pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let jobs = match &state.jobs {
+pub async fn check_backend_updates(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let jobs = match &state.web_jobs {
         Some(j) => j,
         None => {
             return (
@@ -305,15 +305,15 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
         .filter(|j| {
             let state = j.state.try_read().ok();
             if let Some(s) = &state {
-                matches!(s.status, crate::jobs::JobStatus::Running)
+                matches!(s.status, tama_core::web_types::JobStatus::Running)
             } else {
                 false
             }
         })
         .map(|j| job_to_active_dto(&j));
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -553,7 +553,7 @@ pub async fn check_backend_updates(State(state): State<Arc<AppState>>) -> impl I
 
 /// GET /tama/v1/backends/:name/versions
 pub async fn list_backend_versions(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     // Validate name (prevent path traversal)
@@ -565,8 +565,8 @@ pub async fn list_backend_versions(
             .into_response();
     }
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,

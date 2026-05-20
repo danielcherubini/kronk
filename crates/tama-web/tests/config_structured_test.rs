@@ -13,7 +13,8 @@ use tempfile::TempDir;
 
 use tower::util::ServiceExt;
 
-use tama_web::server::{build_router, AppState};
+use tama_core::proxy::ProxyState;
+use tama_web::server::build_router;
 
 /// Helper to extract CSRF token from response headers and set cookie.
 async fn get_csrf_token(router: &axum::Router) -> String {
@@ -115,36 +116,24 @@ repeat_penalty = 1.1
     .to_string()
 }
 
-/// Build test AppState with config in temp dir.
-fn build_test_app_state(config_content: &str) -> (Arc<AppState>, TempDir) {
+/// Build test ProxyState with config in temp dir.
+fn build_test_state(config_content: &str) -> (Arc<ProxyState>, TempDir) {
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("tama.toml");
     std::fs::write(&config_path, config_content).expect("write config");
 
-    let state = AppState {
-        jobs: None,
-        capabilities: None,
-        logs_dir: Some(temp_dir.path().join("logs")),
-        config_path: Some(config_path),
-        proxy_config: None,
-        client: reqwest::Client::new(),
-        proxy_base_url: "http://127.0.0.1:11434".to_string(),
-        binary_version: "0.0.0-test".to_string(),
-        update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: std::sync::Arc::new(
-            tokio::sync::RwLock::new(std::collections::HashMap::new()),
-        ),
-        update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-        download_queue: None,
-    };
+    let mut config = tama_core::config::Config::default();
+    config.loaded_from = Some(config_path);
 
-    (Arc::new(state), temp_dir)
+    let state = Arc::new(ProxyState::new(config, None));
+
+    (state, temp_dir)
 }
 
 #[tokio::test]
 async fn test_get_structured_config_returns_valid_json() {
     let config_content = create_test_config();
-    let (state, _temp_dir) = build_test_app_state(&config_content);
+    let (state, _temp_dir) = build_test_state(&config_content);
     let router = build_router(state);
 
     let req = axum::extract::Request::builder()
@@ -171,7 +160,7 @@ async fn test_get_structured_config_returns_valid_json() {
 #[tokio::test]
 async fn test_post_structured_config_persists_and_round_trips() {
     let config_content = create_test_config();
-    let (state, _temp_dir) = build_test_app_state(&config_content);
+    let (state, _temp_dir) = build_test_state(&config_content);
     let router = build_router(state);
 
     // Get CSRF token first
@@ -224,7 +213,7 @@ async fn test_post_structured_config_persists_and_round_trips() {
 #[tokio::test]
 async fn test_400_on_invalid_json() {
     let config_content = create_test_config();
-    let (state, _temp_dir) = build_test_app_state(&config_content);
+    let (state, _temp_dir) = build_test_state(&config_content);
     let router = build_router(state);
 
     let csrf_token = get_csrf_token(&router).await;
@@ -241,22 +230,8 @@ async fn test_400_on_invalid_json() {
 
 #[tokio::test]
 async fn test_404_when_config_path_not_configured() {
-    let state = Arc::new(AppState {
-        jobs: None,
-        capabilities: None,
-        logs_dir: None,
-        config_path: None,
-        proxy_config: None,
-        client: reqwest::Client::new(),
-        proxy_base_url: "http://127.0.0.1:11434".to_string(),
-        binary_version: "0.0.0-test".to_string(),
-        update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: std::sync::Arc::new(
-            tokio::sync::RwLock::new(std::collections::HashMap::new()),
-        ),
-        update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-        download_queue: None,
-    });
+    let config = tama_core::config::Config::default();
+    let state = Arc::new(ProxyState::new(config, None));
     let router = build_router(state);
 
     let req = axum::extract::Request::builder()

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::{apply_model_body, is_valid_repo_id, validate_model_body, ModelBody};
 use crate::api::{load_config_from_state, trigger_proxy_reload};
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// POST /tama/v1/models — create a new model.
 /// The body contains `repo_id` (HuggingFace repo name). Returns the auto-generated integer id.
@@ -19,46 +19,55 @@ pub struct CreateModelBody {
 }
 
 pub async fn create_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Json(body): Json<CreateModelBody>,
 ) -> impl IntoResponse {
     let state_clone = state.clone();
+
+    // Validate repo_id: non-empty, max 256 chars, valid regex pattern
+    let repo_id = body.repo_id.trim().to_string();
+    if repo_id.is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "repo_id cannot be empty"})),
+        )
+            .into_response();
+    }
+    if repo_id.len() > 256 {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "repo_id must be at most 256 characters"})),
+        )
+            .into_response();
+    }
+    if !is_valid_repo_id(&repo_id) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"error": "repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}))).into_response();
+    }
+
+    // Validate ModelBody fields
+    if let Err(e) = validate_model_body(&body.model) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response();
+    }
+
+    // Load config first (async, handles its own spawn_blocking)
+    let (_, config_dir) = match load_config_from_state(&state).await {
+        Ok(x) => x,
+        Err((status, body)) => return (status, Json(body)).into_response(),
+    };
+
     match tokio::task::spawn_blocking(move || {
-        // Validate repo_id: non-empty, max 256 chars, valid regex pattern
-        let repo_id = body.repo_id.trim().to_string();
-        if repo_id.is_empty() {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::json!({"error": "repo_id cannot be empty"}),
-            ));
-        }
-        if repo_id.len() > 256 {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::json!({"error": "repo_id must be at most 256 characters"}),
-            ));
-        }
-        if !is_valid_repo_id(&repo_id) {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::json!({"error": "repo_id contains invalid characters (only alphanumeric, dots, underscores, hyphens, and slashes are allowed)"}),
-            ));
-        }
-
-        // Validate ModelBody fields
-        if let Err(e) = validate_model_body(&body.model) {
-            return Err((StatusCode::UNPROCESSABLE_ENTITY, serde_json::json!({"error": e})));
-        }
-
-        let (_, config_dir) = load_config_from_state(&state)?;
-
         let mgr = tama_core::models::ModelManager::open(&config_dir).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 serde_json::json!({"error": e.to_string()}),
             )
         })?;
-        if mgr.get_config_by_repo_id(&repo_id)
+        if mgr
+            .get_config_by_repo_id(&repo_id)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,7 +117,8 @@ pub async fn create_model(
         } else {
             model_config
         };
-        let model_id = mgr.save_model_config(&repo_id, &model_config)
+        let model_id = mgr
+            .save_model_config(&repo_id, &model_config)
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,

@@ -24,9 +24,9 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::gpu::query_vram;
-use crate::jobs::{JobEvent, JobKind, JobManager, JobStatus};
-use crate::server::AppState;
 use tama_core::bench::llama_cli_spec::{SpecBenchConfig, SpecType};
+use tama_core::proxy::ProxyState;
+use tama_core::web_types::{JobEvent, JobKind, JobManager, JobStatus};
 
 // ── Request/Response DTOs ─────────────────────────────────────────────
 

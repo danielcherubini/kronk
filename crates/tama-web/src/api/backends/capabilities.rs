@@ -1,11 +1,11 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::sync::Arc;
 
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// GET /tama/v1/system/capabilities
-pub async fn system_capabilities(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let cache = match &state.capabilities {
+pub async fn system_capabilities(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
+    let cache = match &state.web_capabilities {
         Some(c) => c,
         None => {
             return (

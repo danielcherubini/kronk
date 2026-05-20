@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::types::*;
-use crate::server::AppState;
+use tama_core::proxy::ProxyState;
 
 /// Query params for POST /tama/v1/backends/:name/update
 #[derive(Deserialize)]
@@ -20,7 +20,7 @@ pub struct UpdateQuery {
 
 /// POST /tama/v1/backends/:name/update
 pub async fn update_backend(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<UpdateQuery>,
 ) -> impl IntoResponse {
@@ -33,7 +33,7 @@ pub async fn update_backend(
             .into_response();
     }
 
-    let jobs = match &state.jobs {
+    let jobs = match &state.web_jobs {
         Some(j) => j,
         None => {
             return (
@@ -44,8 +44,8 @@ pub async fn update_backend(
         }
     };
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -167,11 +167,14 @@ pub async fn update_backend(
 
     // Submit job
     let job = match jobs
-        .submit(crate::jobs::JobKind::Update, Some(backend_type.clone()))
+        .submit(
+            tama_core::web_types::JobKind::Update,
+            Some(backend_type.clone()),
+        )
         .await
     {
         Ok(j) => j,
-        Err(crate::jobs::JobError::AlreadyRunning(existing_id)) => {
+        Err(tama_core::web_types::JobError::AlreadyRunning(existing_id)) => {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
@@ -276,12 +279,12 @@ pub async fn update_backend(
         match result {
             Ok(_) => {
                 let _ = jobs_clone
-                    .finish(&job_clone, crate::jobs::JobStatus::Succeeded, None)
+                    .finish(&job_clone, tama_core::web_types::JobStatus::Succeeded, None)
                     .await;
             }
             Err(e) => {
                 let _ = jobs_clone
-                    .finish(&job_clone, crate::jobs::JobStatus::Failed, Some(e))
+                    .finish(&job_clone, tama_core::web_types::JobStatus::Failed, Some(e))
                     .await;
             }
         }
@@ -308,22 +311,8 @@ mod tests {
     /// Path traversal in update_backend name should return 400.
     #[tokio::test]
     async fn test_update_backend_path_traversal_rejected() {
-        let state = Arc::new(crate::server::AppState {
-            jobs: None,
-            capabilities: None,
-            proxy_base_url: "http://127.0.0.1:11434".to_string(),
-            client: reqwest::Client::new(),
-            logs_dir: None,
-            config_path: None,
-            proxy_config: None,
-            binary_version: "0.0.0-test".to_string(),
-            update_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-            upload_lock: std::sync::Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
-            update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-            download_queue: None,
-        });
+        let config = tama_core::config::Config::default();
+        let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
 
         let router = crate::server::build_router(state);
 
@@ -386,7 +375,7 @@ pub struct RemoveVersionQuery {
 
 /// DELETE /tama/v1/backends/:name/versions/:version
 pub async fn remove_backend_version(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path((name, version)): Path<(String, String)>,
     axum::extract::Query(query): axum::extract::Query<RemoveVersionQuery>,
 ) -> impl IntoResponse {
@@ -406,8 +395,8 @@ pub async fn remove_backend_version(
             .into_response();
     }
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -516,7 +505,7 @@ pub async fn remove_backend_version(
     };
 
     // Check if a job is running for this backend
-    if let Some(jobs) = &state.jobs {
+    if let Some(jobs) = &state.web_jobs {
         if let Some(active_job) = jobs.active().await {
             let active_type = active_job
                 .backend_type
@@ -582,7 +571,7 @@ pub struct ActivateQuery {
 
 /// POST /tama/v1/backends/:name/activate
 pub async fn activate_backend_version(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<ActivateQuery>,
     Json(req): Json<ActivateRequest>,
@@ -596,8 +585,8 @@ pub async fn activate_backend_version(
             .into_response();
     }
 
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -768,13 +757,13 @@ pub struct DefaultArgsQuery {
 }
 
 pub async fn update_backend_default_args(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<ProxyState>>,
     Path(backend_name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<DefaultArgsQuery>,
     Json(req): Json<UpdateDefaultArgsRequest>,
 ) -> impl IntoResponse {
-    let config_path = match &state.config_path {
-        Some(p) => p.clone(),
+    let config_path = match state.config.read().await.loaded_from.clone() {
+        Some(p) => p,
         None => {
             return (
                 StatusCode::NOT_FOUND,

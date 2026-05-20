@@ -4,13 +4,13 @@ use axum::{body::Body, http::Request, Router};
 use std::sync::Arc;
 use tower::ServiceExt;
 
+use tama_core::proxy::ProxyState;
 use tama_web::api::downloads::{
     DownloadCancelResponse, DownloadsActiveResponse, DownloadsHistoryResponse,
 };
-use tama_web::server::AppState;
 
-/// Create a test AppState with an in-memory download queue service.
-fn create_test_state() -> Arc<AppState> {
+/// Create a test ProxyState with an in-memory download queue service.
+fn create_test_state() -> Arc<ProxyState> {
     use tama_core::proxy::download_queue::DownloadQueueService;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -20,24 +20,14 @@ fn create_test_state() -> Arc<AppState> {
     let mgr = tama_core::models::ModelManager::open(&db_dir).unwrap();
     let svc = DownloadQueueService::new(mgr, 2);
 
-    Arc::new(AppState {
-        proxy_base_url: "http://localhost:8080".to_string(),
-        client: reqwest::Client::new(),
-        logs_dir: None,
-        config_path: None,
-        proxy_config: None,
-        jobs: None,
-        capabilities: None,
-        update_checker: Arc::new(tama_core::updates::UpdateChecker::new()),
-        binary_version: "0.0.0-test".to_string(),
-        update_tx: Arc::new(tokio::sync::Mutex::new(None)),
-        upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        download_queue: Some(Arc::new(svc)),
-    })
+    let config = tama_core::config::Config::default();
+    let mut state = ProxyState::new(config, Some(db_dir));
+    state.download_queue = Some(Arc::new(svc));
+    Arc::new(state)
 }
 
 /// Build the router with the given state, including only downloads routes.
-fn build_download_router(state: Arc<AppState>) -> Router {
+fn build_download_router(state: Arc<ProxyState>) -> Router {
     use axum::routing::{get, post};
 
     Router::new()
@@ -59,7 +49,7 @@ fn build_download_router(state: Arc<AppState>) -> Router {
 /// Seed the download queue with test data:
 /// - 2 active items (queued + running)
 /// - 3 history items (completed, failed, cancelled)
-fn seed_test_data(state: &AppState) {
+fn seed_test_data(state: &ProxyState) {
     let svc = state
         .download_queue
         .as_ref()
