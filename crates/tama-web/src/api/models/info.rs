@@ -206,7 +206,9 @@ pub async fn get_model(
                 Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": format!("Failed to open database: {}", e)})),
+                        Json(
+                            serde_json::json!({"error": format!("Failed to open database: {}", e)}),
+                        ),
                     )
                         .into_response();
                 }

@@ -12,7 +12,7 @@ use axum::{
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::forward::forward_request;
 
@@ -580,6 +580,48 @@ pub async fn handle_forward_get(
     forward_request(&state, &server_name, &parts, &body_bytes, None).await
 }
 
+/// Parse a /v1/models response body and extract the `data` array.
+/// Returns empty Vec if the response is invalid or missing `data`.
+pub fn parse_models_response(body: &[u8]) -> Vec<serde_json::Value> {
+    let parsed: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| arr.to_vec())
+        .unwrap_or_default()
+}
+
+/// Query a single backend's /v1/models endpoint and return the `data` array.
+/// Returns an empty Vec on any error (backend down, bad response, timeout).
+pub async fn fetch_models_from_backend(
+    state: &ProxyState,
+    backend_url: &str,
+) -> Vec<serde_json::Value> {
+    let url = format!("{}/v1/models", backend_url);
+    match state
+        .client
+        .get(&url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(response) => match response.bytes().await {
+            Ok(body) => parse_models_response(&body),
+            Err(e) => {
+                warn!("Failed to read response body from {}: {}", backend_url, e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("Failed to fetch /v1/models from {}: {}", backend_url, e);
+            Vec::new()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,6 +629,73 @@ mod tests {
     use crate::proxy::ProxyState;
     use axum::{http::StatusCode, response::IntoResponse};
     use serde_json::Value as JsonValue;
+
+    // ── parse_models_response tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_models_response_valid_data() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "model-1", "object": "model"},
+                {"id": "model-2", "object": "model"}
+            ]
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["id"], "model-1");
+        assert_eq!(result[1]["id"], "model-2");
+    }
+
+    #[test]
+    fn test_parse_models_response_invalid_json() {
+        let result = parse_models_response(b"this is not json");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_missing_data_field() {
+        let body = serde_json::json!({
+            "object": "list"
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_data_not_array() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": "not an array"
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_empty_data_array() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": []
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_empty_body() {
+        let result = parse_models_response(b"");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_data_is_object() {
+        let body = serde_json::json!({
+            "data": {"id": "single-model"}
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
 
     fn create_test_state() -> ProxyState {
         let config = Config::default();

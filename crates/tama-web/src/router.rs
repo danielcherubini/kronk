@@ -91,11 +91,17 @@ async fn handle_static_or_forward(
     };
 
     if server_name.is_empty() {
-        return (StatusCode::SERVICE_UNAVAILABLE, "No backend server available").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No backend server available",
+        )
+            .into_response();
     }
 
     let (parts, body) = req.into_parts();
-    let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024).await.unwrap_or_default();
+    let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
+        .await
+        .unwrap_or_default();
     forward_request(&state, &server_name, &parts, &body_bytes, None).await
 }
 
