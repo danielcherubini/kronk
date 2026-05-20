@@ -93,7 +93,7 @@ pub fn DownloadStep(
                                     <li>{msg}</li>
                                 }).collect::<Vec<_>>()}
                             </ul>
-                            <a href="/models" class="mt-2 d-inline">"Go to Models →"</a>
+                            <a href="/ui/models" class="mt-2 d-inline">"Go to Models →"</a>
                         </div>
                     </div>
                 }.into_any())
@@ -103,7 +103,7 @@ pub fn DownloadStep(
                          <span class="alert__icon">"✓"</span>
                          <div>
                              <p>"All downloads completed successfully!"</p>
-                             <a href="/models" class="mt-1 d-inline">"Go to Models →"</a>
+                             <a href="/ui/models" class="mt-1 d-inline">"Go to Models →"</a>
                          </div>
                      </div>
                  }.into_any())

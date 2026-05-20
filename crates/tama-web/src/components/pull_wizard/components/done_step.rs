@@ -38,7 +38,7 @@ pub fn DoneStep(
                     </button>
                 }.into_any(),
                 None => view! {
-                    <a href="/models">
+                    <a href="/ui/models">
                         <button class="btn btn-primary">"View Models →"</button>
                     </a>
                 }.into_any(),

@@ -297,15 +297,15 @@ pub fn App() -> impl IntoView {
                     </div>
                 </Show>
                 <Routes fallback=|| "Page not found">
-                    <Route path=path!("/") view=pages::dashboard::Dashboard />
-                    <Route path=path!("/models") view=pages::models::Models />
-                    <Route path=path!("/models/:id/edit") view=pages::model_editor::ModelEditor />
-                    <Route path=path!("/backends") view=pages::backends::Backends />
-                    <Route path=path!("/benchmarks") view=pages::benchmarks::Benchmarks />
-                    <Route path=path!("/logs") view=pages::logs::Logs />
-                    <Route path=path!("/config") view=pages::config_editor::ConfigEditor />
-                    <Route path=path!("/updates") view=pages::updates::Updates />
-                    <Route path=path!("/downloads") view=pages::downloads::Downloads />
+                    <Route path=path!("/ui") view=pages::dashboard::Dashboard />
+                    <Route path=path!("/ui/models") view=pages::models::Models />
+                    <Route path=path!("/ui/models/:id/edit") view=pages::model_editor::ModelEditor />
+                    <Route path=path!("/ui/backends") view=pages::backends::Backends />
+                    <Route path=path!("/ui/benchmarks") view=pages::benchmarks::Benchmarks />
+                    <Route path=path!("/ui/logs") view=pages::logs::Logs />
+                    <Route path=path!("/ui/config") view=pages::config_editor::ConfigEditor />
+                    <Route path=path!("/ui/updates") view=pages::updates::Updates />
+                    <Route path=path!("/ui/downloads") view=pages::downloads::Downloads />
                 </Routes>
             </main>
             <components::toast::ToastContainer store=toast_store />

@@ -91,36 +91,36 @@ pub fn Sidebar() -> impl IntoView {
                 "✕"
             </button>
 
-            <A href="/" attr:class="sidebar-header" on:click=move |_| mobile_open.set(false)>
+            <A href="/ui" attr:class="sidebar-header" on:click=move |_| mobile_open.set(false)>
                 <span class="sidebar-header__logo">"🦙"</span>
                 <span class="sidebar-header__text">"Tama"</span>
             </A>
 
             <nav class="sidebar-nav">
-                <A href="/" attr:class="sidebar-item" attr:data-tooltip="Dashboard" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui" attr:class="sidebar-item" attr:data-tooltip="Dashboard" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"🏠"</span>
                     <span class="sidebar-item__text">"Dashboard"</span>
                 </A>
-                <A href="/backends" attr:class="sidebar-item" attr:data-tooltip="Backends" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui/backends" attr:class="sidebar-item" attr:data-tooltip="Backends" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"🔧"</span>
                     <span class="sidebar-item__text">"Backends"</span>
                 </A>
-                <A href="/logs" attr:class="sidebar-item" attr:data-tooltip="Logs" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui/logs" attr:class="sidebar-item" attr:data-tooltip="Logs" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"📋"</span>
                     <span class="sidebar-item__text">"Logs"</span>
                 </A>
-                <A href="/updates" attr:class="sidebar-item" attr:data-tooltip="Updates" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui/updates" attr:class="sidebar-item" attr:data-tooltip="Updates" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"🔄"</span>
                     <span class="sidebar-item__text">"Updates"</span>
                     {move || update_badge_visible.get().then(|| view! {
                         <span class="sidebar-badge">"!"</span>
                     })}
                 </A>
-                <A href="/downloads" attr:class="sidebar-item" attr:data-tooltip="Downloads" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui/downloads" attr:class="sidebar-item" attr:data-tooltip="Downloads" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"📥"</span>
                     <span class="sidebar-item__text">"Downloads"</span>
                 </A>
-                <A href="/benchmarks" attr:class="sidebar-item" attr:data-tooltip="Benchmarks" on:click=move |_| mobile_open.set(false)>
+                <A href="/ui/benchmarks" attr:class="sidebar-item" attr:data-tooltip="Benchmarks" on:click=move |_| mobile_open.set(false)>
                     <span class="sidebar-item__icon">"📊"</span>
                     <span class="sidebar-item__text">"Benchmarks"</span>
                 </A>
@@ -128,7 +128,7 @@ pub fn Sidebar() -> impl IntoView {
 
             <div class="sidebar-footer">
                 <div class="sidebar-section" style="border-top:none;margin:0;padding:0;">
-                    <A href="/config" attr:class="sidebar-item" attr:data-tooltip="Config" on:click=move |_| mobile_open.set(false)>
+                    <A href="/ui/config" attr:class="sidebar-item" attr:data-tooltip="Config" on:click=move |_| mobile_open.set(false)>
                         <span class="sidebar-item__icon">"⚙️"</span>
                         <span class="sidebar-item__text">"Config"</span>
                     </A>

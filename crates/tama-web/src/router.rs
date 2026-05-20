@@ -250,8 +250,13 @@ pub fn build_web_routes() -> Router<Arc<tama_core::proxy::ProxyState>> {
         .route("/tama/v1/logs/:backend", get(api::logs::get_backend_logs))
         .merge(csrf_routes)
         .merge(backend_routes)
-        // Static file serving — SPA fallback
-        .route("/", get(serve_index))
+        // Web UI — mounted at /ui
+        .route("/ui", get(serve_index))
+        .route(
+            "/ui/*path",
+            get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
+        )
+        // Root-level static files (JS/CSS/WASM loaded from index.html)
         .route(
             "/*path",
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),

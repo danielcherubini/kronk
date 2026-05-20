@@ -595,14 +595,14 @@ pub fn ModelEditor() -> impl IntoView {
                         }
                     >"Delete Model"</button>
                 })}
-                <A href="/models" attr:class="btn btn-secondary btn-sm ml-2">"← Back to Models"</A>
+                <A href="/ui/models" attr:class="btn btn-secondary btn-sm ml-2">"← Back to Models"</A>
             </div>
         </div>
 
         {move || deleted.get().then(|| view! {
             <div class="alert alert--success mb-3">
                 <span class="alert__icon">"✓"</span>
-                <span>"Model deleted. " <A href="/models">"← Back to Models"</A></span>
+                <span>"Model deleted. " <A href="/ui/models">"← Back to Models"</A></span>
             </div>
         })}
 
