@@ -170,7 +170,10 @@ pub async fn list_models(State(state): State<Arc<ProxyState>>) -> impl IntoRespo
                         })
                         .collect::<Vec<_>>()
                 }
-                Err(_) => Vec::new(),
+                Err(e) => {
+                    tracing::error!("Failed to open database for model list: {}", e);
+                    Vec::new()
+                }
             };
 
             let sampling_templates: serde_json::Value =
@@ -200,10 +203,10 @@ pub async fn get_model(
             // Resolve id (integer or config_key) to model_id
             let mgr = match tama_core::models::ModelManager::open(&config_dir) {
                 Ok(m) => m,
-                Err(_) => {
+                Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": "Failed to open database"})),
+                        Json(serde_json::json!({"error": format!("Failed to open database: {}", e)})),
                     )
                         .into_response();
                 }

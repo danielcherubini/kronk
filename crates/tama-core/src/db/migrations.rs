@@ -1402,4 +1402,41 @@ mod tests {
             .unwrap();
         assert_eq!(server_name, "test-server");
     }
+
+    #[test]
+    fn test_migration_v26_rebuilds_model_configs() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring DB up to v25
+        run_up_to(&conn, 25).unwrap();
+
+        // Insert a model config with num_parallel = 1 (to simulate existing data)
+        conn.execute(
+            "INSERT INTO model_configs (repo_id, display_name, num_parallel) \
+             VALUES ('org/repo', 'Test Model', 1)",
+            [],
+        )
+        .unwrap();
+
+        // Apply v26
+        run(&conn).unwrap();
+
+        // Verify we can insert num_parallel = 0 (which would have failed under CHECK of v25)
+        conn.execute(
+            "INSERT INTO model_configs (repo_id, display_name, num_parallel) \
+             VALUES ('org/repo-auto', 'Auto Model', 0)",
+            [],
+        )
+        .unwrap();
+
+        // Verify the original model config is still there and correct
+        let num_parallel: i32 = conn
+            .query_row(
+                "SELECT num_parallel FROM model_configs WHERE repo_id = 'org/repo'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(num_parallel, 1);
+    }
 }
