@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
-    extract::Path,
-    http::StatusCode,
+    extract::{Path, State},
+    http::{Request, StatusCode},
     middleware,
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
@@ -22,6 +22,8 @@ use crate::api::benchmarks::{
     benchmark_events, delete_benchmark, get_benchmark_result, list_benchmark_history,
     run_benchmark, run_mtp_benchmark, run_spec_benchmark,
 };
+use tama_core::proxy::forward::forward_request;
+use tama_core::proxy::ProxyState;
 
 /// Embedded dist/ directory for serving the web UI.
 static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/dist");
@@ -56,6 +58,45 @@ async fn serve_static(path: Option<Path<String>>) -> Response {
 /// Dedicated handler for the root path — avoids Axum type-inference issues with inline closures.
 async fn serve_index() -> Response {
     serve_static(None).await
+}
+
+/// Serve a static file from dist if it exists, otherwise forward to an available
+/// backend. This handles root-level paths like /slots, /tokenize, etc. that the
+/// llama.cpp server exposes, while still allowing the web UI's JS/CSS/WASM files
+/// to be served from /.
+async fn handle_static_or_forward(
+    State(state): State<Arc<ProxyState>>,
+    req: Request<Body>,
+) -> Response {
+    let path = req.uri().path().to_string();
+    let file_path = if path.is_empty() || path == "/" {
+        "index.html".to_string()
+    } else {
+        path.trim_start_matches('/').to_string()
+    };
+
+    // Try static file first
+    if let Some(f) = DIST.get_file(&file_path) {
+        let mime = mime_guess::from_path(&file_path).first_or_octet_stream();
+        return Response::builder()
+            .header("Content-Type", mime.as_ref())
+            .body(Body::from(f.contents()))
+            .unwrap();
+    }
+
+    // File not in dist — forward to an available backend
+    let server_name = {
+        let models = state.models.read().await;
+        models.keys().next().cloned().unwrap_or_default()
+    };
+
+    if server_name.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "No backend server available").into_response();
+    }
+
+    let (parts, body) = req.into_parts();
+    let body_bytes = axum::body::to_bytes(body, 16 * 1024 * 1024).await.unwrap_or_default();
+    forward_request(&state, &server_name, &parts, &body_bytes, None).await
 }
 
 /// Build the web UI routes without attaching state.
@@ -256,10 +297,7 @@ pub fn build_web_routes() -> Router<Arc<tama_core::proxy::ProxyState>> {
             "/ui/*path",
             get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
         )
-        // Root-level static files (JS/CSS/WASM loaded from index.html)
-        .route(
-            "/*path",
-            get(|Path(p): Path<String>| async move { serve_static(Some(Path(p))).await }),
-        )
+        // Root-level static files + backend forwarding for unknown paths
+        .route("/*path", get(handle_static_or_forward))
         .layer(CatchPanicLayer::new())
 }

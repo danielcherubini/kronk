@@ -148,7 +148,9 @@ pub fn build_unified_router(
         .route("/v1/audio/models", get(handle_audio_models))
         .route("/v1/audio/speech", post(handle_audio_speech))
         .route("/v1/audio/speech/stream", post(handle_audio_stream))
-        .route("/v1/audio/voices", get(handle_audio_voices));
+        .route("/v1/audio/voices", get(handle_audio_voices))
+        // Wildcard POST forwarding for backend endpoints (completions, tokenize, slots, etc.)
+        .route("/*path", post(handle_forward_post));
 
     // Proxy routes first (higher priority), then extra routes.
     // NOTE: Wildcard forwarding routes (*path) and fallback are NOT included

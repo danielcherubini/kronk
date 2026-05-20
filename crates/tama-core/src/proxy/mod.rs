@@ -1,5 +1,5 @@
 pub mod download_queue;
-mod forward;
+pub mod forward;
 mod handlers;
 mod lifecycle;
 pub mod process;
