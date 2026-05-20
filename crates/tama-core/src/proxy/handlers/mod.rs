@@ -1222,7 +1222,7 @@ mod tests {
         let data = json.get("data").unwrap().as_array().unwrap();
 
         // First entry should be the wildcard virtual entry
-        assert!(data.len() >= 1, "Should have at least the wildcard entry");
+        assert!(!data.is_empty(), "Should have at least the wildcard entry");
         assert_eq!(
             data[0].get("id").unwrap().as_str().unwrap(),
             crate::proxy::WILDCARD_MODEL_NAME
