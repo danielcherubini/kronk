@@ -24,6 +24,9 @@ pub mod proxy;
 pub mod self_update;
 pub mod updates;
 
+#[cfg(feature = "web-ui")]
+pub mod web_types;
+
 #[cfg(test)]
 mod tests {
     mod mmproj_detection_test;

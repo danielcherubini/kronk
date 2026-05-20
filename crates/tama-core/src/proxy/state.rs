@@ -46,6 +46,19 @@ impl ProxyState {
             backend_logs: crate::backends::log_stream::BackendLogManager::default(),
             inference_stats: tokio::sync::watch::channel(None).0,
             wildcard_resolve_guard: Arc::new(tokio::sync::Mutex::new(())),
+            // ── Web UI fields ──
+            #[cfg(feature = "web-ui")]
+            web_jobs: None, // Set later by build_unified_router
+            #[cfg(feature = "web-ui")]
+            web_capabilities: None,
+            #[cfg(feature = "web-ui")]
+            web_update_checker: Arc::new(crate::updates::UpdateChecker::new()),
+            #[cfg(feature = "web-ui")]
+            web_binary_version: String::new(), // Set later by CLI
+            #[cfg(feature = "web-ui")]
+            web_update_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            #[cfg(feature = "web-ui")]
+            web_upload_lock: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         };
 
         // Spawn the queue processor background task if download queue is configured.

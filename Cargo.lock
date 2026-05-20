@@ -3790,6 +3790,7 @@ dependencies = [
  "inquire",
  "libc",
  "lru",
+ "nix",
  "regex",
  "reqwest 0.12.28",
  "rusqlite",

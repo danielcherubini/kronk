@@ -246,6 +246,28 @@ pub struct ProxyState {
     /// Guard to prevent concurrent wildcard resolution from triggering
     /// multiple redundant loads. Only one caller proceeds to DB lookup + load.
     pub wildcard_resolve_guard: Arc<tokio::sync::Mutex<()>>,
+
+    // ── Web UI fields (only present when `web-ui` feature is enabled) ──
+    /// Job manager for backend install/update/restore/benchmark operations.
+    #[cfg(feature = "web-ui")]
+    pub web_jobs: Option<Arc<crate::web_types::JobManager>>,
+    /// Cache for backend capabilities.
+    #[cfg(feature = "web-ui")]
+    pub web_capabilities: Option<Arc<crate::web_types::CapabilitiesCache>>,
+    /// Shared update checker to prevent concurrent runs across requests.
+    #[cfg(feature = "web-ui")]
+    pub web_update_checker: Arc<crate::updates::UpdateChecker>,
+    /// The version of the running tama binary (passed from the CLI at startup).
+    #[cfg(feature = "web-ui")]
+    pub web_binary_version: String,
+    /// Broadcast sender for self-update progress messages.
+    /// `None` when no update is in progress.
+    #[cfg(feature = "web-ui")]
+    pub web_update_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::broadcast::Sender<String>>>>,
+    /// Temporary upload storage for restore archives.
+    #[cfg(feature = "web-ui")]
+    pub web_upload_lock:
+        Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::web_types::UploadEntry>>>,
 }
 
 impl ProxyState {
