@@ -122,8 +122,10 @@ fn build_test_state(config_content: &str) -> (Arc<ProxyState>, TempDir) {
     let config_path = temp_dir.path().join("tama.toml");
     std::fs::write(&config_path, config_content).expect("write config");
 
-    let mut config = tama_core::config::Config::default();
-    config.loaded_from = Some(config_path);
+    let config = tama_core::config::Config {
+        loaded_from: Some(config_path),
+        ..Default::default()
+    };
 
     let state = Arc::new(ProxyState::new(config, None));
 

@@ -373,8 +373,10 @@ mod tests {
         {
             let config_path_server = config_path.clone();
             tokio::spawn(async move {
-                let mut config = tama_core::config::Config::default();
-                config.loaded_from = Some(config_path_server);
+                let config = tama_core::config::Config {
+                    loaded_from: Some(config_path_server),
+                    ..Default::default()
+                };
                 let state = Arc::new(tama_core::proxy::ProxyState::new(config, None));
                 axum::serve(
                     listener,

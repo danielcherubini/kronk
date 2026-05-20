@@ -11,8 +11,8 @@ use axum::{
 };
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
 
 use super::forward::forward_request;
 
@@ -252,75 +252,97 @@ pub async fn handle_stream_chat_completions(
     forward_request(&state, &server_name, &parts, &body_bytes, Some(model_name)).await
 }
 
+/// Find a matching model entry from backend responses.
+/// - If entries has exactly one model → return it
+/// - If multiple → try to match by config's `model` field against backend's `id` (file path)
+/// - If no match → return first entry (best guess)
+fn find_model_in_entries(
+    entries: &[serde_json::Value],
+    config_model: Option<&str>,
+) -> Option<serde_json::Value> {
+    if entries.is_empty() {
+        return None;
+    }
+    if entries.len() == 1 {
+        return Some(entries[0].clone());
+    }
+    // Multiple entries: try to match by config's model field (file path)
+    if let Some(model_path) = config_model {
+        for entry in entries {
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                if id == model_path {
+                    return Some(entry.clone());
+                }
+            }
+        }
+    }
+    // No match found — return first entry as best guess
+    Some(entries[0].clone())
+}
+
 #[axum::debug_handler]
 pub async fn handle_get_model(
     state: State<Arc<ProxyState>>,
     Path(model_id): Path<String>,
 ) -> Response {
-    // Acquire both locks upfront
-    let _config = state.config.read().await;
-    let model_configs = state.model_configs.read().await;
-    let loaded_models = state.models.read().await;
+    // Phase 1: Look up model by model_id in config.
+    // Match by config_name, api_name, or model field.
+    let (config_name, server_cfg) = {
+        let model_configs = state.model_configs.read().await;
+        let mut found: Option<(&String, &crate::config::ModelConfig)> = None;
 
-    // First check: runtime state found by config key
-    if let Some(ms) = loaded_models.get(&model_id) {
-        let load_time = ms.load_time().unwrap_or(SystemTime::now());
-        let owned_by = ms.backend();
-        let created = load_time
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_secs();
-        // Look up config to get api_name
-        if let Some(server_cfg) = model_configs.get(&model_id) {
-            let model_id_val = server_cfg.api_name.as_deref().unwrap_or(&model_id);
-            return Json(serde_json::json!({
-                "id": model_id_val,
-                "object": "model",
-                "created": created,
-                "owned_by": owned_by,
-                "ready": ms.is_ready()
-            }))
-            .into_response();
-        }
-    }
-
-    // Fallback: check if model_id matches config_name, api_name, or model field
-    for (config_name, server_cfg) in model_configs.iter() {
-        if !server_cfg.enabled {
-            continue;
-        }
-        // Check if model_id matches config_name, api_name, or model field
-        if config_name == &model_id
-            || server_cfg.api_name.as_deref() == Some(&*model_id)
-            || server_cfg.model.as_deref() == Some(model_id.as_str())
-        {
-            let model_id_val = server_cfg.api_name.as_deref().unwrap_or(config_name);
-            // Check runtime state for accurate ready status
-            let ready = loaded_models
-                .get(config_name)
-                .map(|ms| ms.is_ready())
-                .unwrap_or(false);
-            return Json(serde_json::json!({
-                "id": model_id_val,
-                "object": "model",
-                "created": 0,
-                "owned_by": server_cfg.backend,
-                "ready": ready
-            }))
-            .into_response();
-        }
-    }
-
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({
-            "error": {
-                "message": "Model not found",
-                "type": "NotFoundError"
+        for (name, cfg) in model_configs.iter() {
+            if !cfg.enabled {
+                continue;
             }
-        })),
-    )
-        .into_response()
+            if name == &model_id
+                || cfg.api_name.as_deref() == Some(&*model_id)
+                || cfg.model.as_deref() == Some(model_id.as_str())
+            {
+                found = Some((name, cfg));
+                break;
+            }
+        }
+
+        match found {
+            Some((name, cfg)) => (name.clone(), cfg.clone()),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({
+                        "error": {
+                            "message": "Model not found",
+                            "type": "NotFoundError"
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    // Phase 2: Check if the config's backend is loaded and Ready.
+    if let Some(crate::proxy::ModelState::Ready { backend_url, .. }) =
+        state.models.read().await.get(&config_name)
+    {
+        // Query backend's /v1/models and find matching entry
+        let entries = fetch_models_from_backend(&state, backend_url).await;
+        if let Some(mut entry) = find_model_in_entries(&entries, server_cfg.model.as_deref()) {
+            entry["ready"] = serde_json::value::to_value(true).unwrap();
+            return Json(entry).into_response();
+        }
+    }
+
+    // Phase 3: Fallback — construct from config (no meta, ready: false).
+    let model_id_val = server_cfg.api_name.as_deref().unwrap_or(&config_name);
+    Json(serde_json::json!({
+        "id": model_id_val,
+        "object": "model",
+        "created": 0,
+        "owned_by": server_cfg.backend,
+        "ready": false
+    }))
+    .into_response()
 }
 
 #[axum::debug_handler]
@@ -364,50 +386,95 @@ pub async fn handle_metrics(state: State<Arc<ProxyState>>) -> Json<serde_json::V
 
 #[axum::debug_handler]
 pub async fn handle_list_models(state: State<Arc<ProxyState>>) -> Json<serde_json::Value> {
-    let loaded_models = state.models.read().await;
-    let model_configs = state.model_configs.read().await;
-    let _config = state.config.read().await;
+    // Phase 1: Snapshot data under locks, then drop them before I/O.
+    let (backend_info, has_available_llm, all_configs) = {
+        let models = state.models.read().await;
+        let configs = state.model_configs.read().await;
 
-    // Build a list of all configured (enabled) models, enriched with runtime state
+        // Collect (config_name, backend_url, is_ready) for all models
+        let backend_info: Vec<_> = models
+            .iter()
+            .map(|(name, ms)| {
+                if let crate::proxy::ModelState::Ready { backend_url, .. } = ms {
+                    (name.clone(), Some(backend_url.clone()), true)
+                } else {
+                    (name.clone(), None, false)
+                }
+            })
+            .collect();
+
+        // Clone config map for use outside lock
+        let configs = configs.clone();
+
+        // Check if any non-TTS model is Ready or Starting (for wildcard ready flag)
+        let has_available_llm = models.iter().any(|(_, s)| {
+            !s.is_tts_backend()
+                && (s.is_ready() || matches!(s, crate::proxy::ModelState::Starting { .. }))
+        });
+
+        (backend_info, has_available_llm, configs)
+    };
+    // All locks dropped here
+
+    // Phase 2: Query all Ready backends concurrently.
+    let futures: Vec<_> = backend_info
+        .iter()
+        .filter_map(|(_, url, _)| url.as_ref().map(|u| fetch_models_from_backend(&state, u)))
+        .collect();
+    let results: Vec<Vec<serde_json::Value>> = futures::future::join_all(futures).await;
+
+    // Phase 3: Merge results and inject `ready`.
     let mut data: Vec<serde_json::Value> = Vec::new();
-    for (config_name, server_cfg) in model_configs.iter() {
-        if !server_cfg.enabled {
-            continue;
-        }
+    let mut seen_ids = std::collections::HashSet::new();
 
-        let model_id = server_cfg.api_name.as_deref().unwrap_or(config_name);
+    // Track which config_names were served by backends (for fallback logic)
+    let mut served_config_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
-        if let Some(model_state) = loaded_models.get(config_name) {
-            let created = model_state
-                .load_time()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            data.push(serde_json::json!({
-                "id": model_id,
-                "object": "model",
-                "created": created,
-                "owned_by": model_state.backend(),
-                "ready": model_state.is_ready()
-            }));
-        } else {
-            data.push(serde_json::json!({
-                "id": model_id,
-                "object": "model",
-                "created": 0,
-                "owned_by": server_cfg.backend,
-                "ready": false
-            }));
+    // We need to correlate backend results with config_names.
+    // The order of `results` matches the order of Ready backends in `backend_info`.
+    let mut ready_iter = backend_info.iter().filter(|(_, _, ready)| *ready);
+    for entries in results {
+        if let Some((config_name, _, _)) = ready_iter.next() {
+            served_config_names.insert(config_name.clone());
+            for mut entry in entries {
+                let id = entry
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if seen_ids.contains(&id) {
+                    warn!("Duplicate model id {} from backends", id);
+                    continue;
+                }
+                seen_ids.insert(id);
+
+                // Inject ready
+                entry["ready"] = serde_json::value::to_value(true).unwrap();
+                data.push(entry);
+            }
         }
     }
 
-    // Check if any non-TTS model is Ready or Starting
-    let has_available_llm = loaded_models.iter().any(|(_, s)| {
-        !s.is_tts_backend()
-            && (s.is_ready() || matches!(s, crate::proxy::ModelState::Starting { .. }))
-    });
+    // Phase 4: Add unloaded models (in config but not loaded on any backend).
+    for (config_name, server_cfg) in all_configs.iter() {
+        if !server_cfg.enabled {
+            continue;
+        }
+        let model_id = server_cfg.api_name.as_deref().unwrap_or(config_name);
+        if seen_ids.contains(model_id) {
+            continue; // already added from backend
+        }
+        data.push(serde_json::json!({
+            "id": model_id,
+            "object": "model",
+            "created": 0,
+            "owned_by": server_cfg.backend,
+            "ready": false
+        }));
+    }
 
-    // Prepend virtual wildcard entry
+    // Phase 5: Prepend wildcard entry.
     data.insert(
         0,
         serde_json::json!({
@@ -580,6 +647,48 @@ pub async fn handle_forward_get(
     forward_request(&state, &server_name, &parts, &body_bytes, None).await
 }
 
+/// Parse a /v1/models response body and extract the `data` array.
+/// Returns empty Vec if the response is invalid or missing `data`.
+pub fn parse_models_response(body: &[u8]) -> Vec<serde_json::Value> {
+    let parsed: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| arr.to_vec())
+        .unwrap_or_default()
+}
+
+/// Query a single backend's /v1/models endpoint and return the `data` array.
+/// Returns an empty Vec on any error (backend down, bad response, timeout).
+pub async fn fetch_models_from_backend(
+    state: &ProxyState,
+    backend_url: &str,
+) -> Vec<serde_json::Value> {
+    let url = format!("{}/v1/models", backend_url);
+    match state
+        .client
+        .get(&url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(response) => match response.bytes().await {
+            Ok(body) => parse_models_response(&body),
+            Err(e) => {
+                warn!("Failed to read response body from {}: {}", backend_url, e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("Failed to fetch /v1/models from {}: {}", backend_url, e);
+            Vec::new()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,6 +696,77 @@ mod tests {
     use crate::proxy::ProxyState;
     use axum::{http::StatusCode, response::IntoResponse};
     use serde_json::Value as JsonValue;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    // ── parse_models_response tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_models_response_valid_data() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "model-1", "object": "model"},
+                {"id": "model-2", "object": "model"}
+            ]
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["id"], "model-1");
+        assert_eq!(result[1]["id"], "model-2");
+    }
+
+    #[test]
+    fn test_parse_models_response_invalid_json() {
+        let result = parse_models_response(b"this is not json");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_missing_data_field() {
+        let body = serde_json::json!({
+            "object": "list"
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_data_not_array() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": "not an array"
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_empty_data_array() {
+        let body = serde_json::json!({
+            "object": "list",
+            "data": []
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_empty_body() {
+        let result = parse_models_response(b"");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_models_response_data_is_object() {
+        let body = serde_json::json!({
+            "data": {"id": "single-model"}
+        });
+        let result = parse_models_response(body.to_string().as_bytes());
+        assert!(result.is_empty());
+    }
 
     fn create_test_state() -> ProxyState {
         let config = Config::default();
@@ -1042,7 +1222,7 @@ mod tests {
         let data = json.get("data").unwrap().as_array().unwrap();
 
         // First entry should be the wildcard virtual entry
-        assert!(data.len() >= 1, "Should have at least the wildcard entry");
+        assert!(!data.is_empty(), "Should have at least the wildcard entry");
         assert_eq!(
             data[0].get("id").unwrap().as_str().unwrap(),
             crate::proxy::WILDCARD_MODEL_NAME
@@ -1189,5 +1369,741 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE,
             "Forward POST wildcard should resolve to loaded model"
         );
+    }
+
+    // ── handle_list_models: backend merge tests ──────────────────────────────
+
+    /// Helper: set up a ProxyState with two Ready backends and model configs.
+    async fn create_state_with_two_backends(
+        backend1_url: &str,
+        backend2_url: &str,
+    ) -> Arc<ProxyState> {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add model configs
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "model-a".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("api-model-a".to_string()),
+                    model: Some("test/model-a".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+            mc.insert(
+                "model-b".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("api-model-b".to_string()),
+                    model: Some("test/model-b".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+            // Unloaded model (enabled but no backend loaded)
+            mc.insert(
+                "model-c".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("api-model-c".to_string()),
+                    model: Some("test/model-c".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Add two Ready model states
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "model-a".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "model-a".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 1001,
+                    backend_url: backend1_url.to_string(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+            models.insert(
+                "model-b".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "model-b".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 1002,
+                    backend_url: backend2_url.to_string(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        Arc::new(state)
+    }
+
+    /// Test that handle_list_models merges models from two mock backends,
+    /// preserves `meta` data from backend responses, and injects `ready`.
+    #[tokio::test]
+    async fn test_handle_list_models_merges_backend_responses_with_meta() {
+        let mock_server1 = MockServer::start().await;
+        let mock_server2 = MockServer::start().await;
+
+        // Mock backend 1: returns model with meta
+        let backend1_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "llama3.gguf",
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "backend1",
+                    "meta": {
+                        "general_name": "Llama 3",
+                        "general_tags": ["llama"],
+                        "architecture": "llama"
+                    }
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&backend1_response))
+            .expect(1)
+            .mount(&mock_server1)
+            .await;
+
+        // Mock backend 2: returns model with meta
+        let backend2_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "mistral.gguf",
+                    "object": "model",
+                    "created": 1700000001,
+                    "owned_by": "backend2",
+                    "meta": {
+                        "general_name": "Mistral",
+                        "architecture": "mistral"
+                    }
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&backend2_response))
+            .expect(1)
+            .mount(&mock_server2)
+            .await;
+
+        let state_arc =
+            create_state_with_two_backends(&mock_server1.uri(), &mock_server2.uri()).await;
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // Should have: wildcard + 2 from backends + 3 from config = 6
+        // Backend IDs (llama3.gguf, mistral.gguf) don't match config api_names,
+        // so all config entries are also added.
+        assert_eq!(data.len(), 6, "Expected 6 entries, got: {}", data.len());
+
+        // Wildcard should be first
+        assert_eq!(
+            data[0]["id"],
+            crate::proxy::WILDCARD_MODEL_NAME,
+            "First entry should be wildcard"
+        );
+        assert_eq!(data[0]["ready"], true, "Wildcard ready should be true");
+
+        // Collect model entries (excluding wildcard)
+        let model_entries: Vec<_> = data[1..].iter().collect();
+
+        // Find the model from backend 1
+        let backend1_model = model_entries
+            .iter()
+            .find(|e| e["id"] == "llama3.gguf")
+            .expect("llama3.gguf should be in response");
+
+        // Verify meta is preserved from backend response
+        assert!(
+            backend1_model.get("meta").is_some(),
+            "meta should be preserved from backend response"
+        );
+        assert_eq!(
+            backend1_model["meta"]["general_name"], "Llama 3",
+            "meta.general_name should match backend response"
+        );
+        assert_eq!(
+            backend1_model["ready"], true,
+            "Loaded model should have ready: true"
+        );
+
+        // Find the model from backend 2
+        let backend2_model = model_entries
+            .iter()
+            .find(|e| e["id"] == "mistral.gguf")
+            .expect("mistral.gguf should be in response");
+
+        assert!(
+            backend2_model.get("meta").is_some(),
+            "meta should be preserved from backend response"
+        );
+        assert_eq!(
+            backend2_model["ready"], true,
+            "Loaded model should have ready: true"
+        );
+
+        // Find the unloaded model (from config)
+        let unloaded_model = model_entries
+            .iter()
+            .find(|e| e["id"] == "api-model-c")
+            .expect("api-model-c should be in response as unloaded");
+        assert_eq!(
+            unloaded_model["ready"], false,
+            "Unloaded model should have ready: false"
+        );
+        assert!(
+            unloaded_model.get("meta").is_none(),
+            "Unloaded model should not have meta"
+        );
+    }
+
+    /// Test that unloaded models (in config but not loaded on any backend)
+    /// still appear with ready: false and no meta.
+    #[tokio::test]
+    async fn test_handle_list_models_unloaded_from_config() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add model configs — all enabled, none loaded
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "unloaded-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("my-unloaded-model".to_string()),
+                    model: Some("test/unloaded".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+            // Disabled model should NOT appear
+            mc.insert(
+                "disabled-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("disabled-model".to_string()),
+                    model: Some("test/disabled".to_string()),
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // No models loaded
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // Should have: wildcard + 1 unloaded = 2 (disabled excluded)
+        assert_eq!(data.len(), 2, "Expected 2 entries, got: {}", data.len());
+
+        // Wildcard first
+        assert_eq!(data[0]["id"], crate::proxy::WILDCARD_MODEL_NAME);
+        assert_eq!(
+            data[0]["ready"], false,
+            "Wildcard ready should be false (no LLM backends)"
+        );
+
+        // Unloaded model
+        assert_eq!(data[1]["id"], "my-unloaded-model");
+        assert_eq!(data[1]["ready"], false);
+        assert!(data[1].get("meta").is_none());
+    }
+
+    /// Test that wildcard entry is always prepended and has correct ready value.
+    #[tokio::test]
+    async fn test_handle_list_models_wildcard_prepended_with_correct_ready() {
+        let mock_server = MockServer::start().await;
+
+        let backend_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "some-model", "object": "model", "created": 123}
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&backend_response))
+            .mount(&mock_server)
+            .await;
+
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add one Ready model
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "server1".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("api-s1".to_string()),
+                    model: Some("test/s1".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "server1".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "server1".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 999,
+                    backend_url: mock_server.uri(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // Wildcard must be first
+        assert_eq!(data[0]["id"], crate::proxy::WILDCARD_MODEL_NAME);
+        assert_eq!(data[0]["object"], "model");
+        assert_eq!(data[0]["owned_by"], "tama-proxy");
+        assert_eq!(
+            data[0]["ready"], true,
+            "Wildcard ready should be true when LLM backend is Ready"
+        );
+    }
+
+    /// Test that duplicate model IDs across backends are deduplicated.
+    #[tokio::test]
+    async fn test_handle_list_models_deduplicates_model_ids() {
+        let mock_server1 = MockServer::start().await;
+        let mock_server2 = MockServer::start().await;
+
+        // Both backends return the same model id
+        let same_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "duplicate-model", "object": "model", "created": 100}
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&same_response))
+            .mount(&mock_server1)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&same_response))
+            .mount(&mock_server2)
+            .await;
+
+        let state_arc =
+            create_state_with_two_backends(&mock_server1.uri(), &mock_server2.uri()).await;
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // Count occurrences of "duplicate-model" (excluding wildcard)
+        let dup_count = data[1..]
+            .iter()
+            .filter(|e| e["id"] == "duplicate-model")
+            .count();
+        assert_eq!(
+            dup_count, 1,
+            "duplicate-model should appear exactly once, found {} times",
+            dup_count
+        );
+    }
+
+    /// Test that backend failure falls back to config-based entry.
+    #[tokio::test]
+    async fn test_handle_list_models_backend_failure_fallback() {
+        // Don't mount any mock — the backend URL will be unreachable
+        let state_arc = create_state_with_two_backends(
+            "http://localhost:59999", // unreachable
+            "http://localhost:59998", // unreachable
+        )
+        .await;
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        let data = json.get("data").unwrap().as_array().unwrap();
+
+        // Should still have entries from config fallback
+        // wildcard + model-a + model-b + model-c = 4
+        assert_eq!(data.len(), 4, "Expected 4 entries from config fallback");
+
+        // Wildcard should have ready: true (backends are in Ready state even if unreachable)
+        assert_eq!(data[0]["id"], crate::proxy::WILDCARD_MODEL_NAME);
+        assert_eq!(data[0]["ready"], true);
+    }
+
+    /// Test response shape matches OpenAI spec.
+    #[tokio::test]
+    async fn test_handle_list_models_response_shape() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        let response = handle_list_models(state).await;
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        // Must have "object": "list" at top level
+        assert_eq!(json["object"], "list");
+        assert!(json["data"].is_array());
+    }
+
+    // ── handle_get_model: backend fetch tests ──────────────────────────────
+
+    /// Test that handle_get_model fetches from backend when model is loaded,
+    /// preserves `meta` data, and injects `ready: true`.
+    #[tokio::test]
+    async fn test_handle_get_model_fetches_from_backend_with_meta() {
+        let mock_server = MockServer::start().await;
+
+        // Mock backend returns model with meta
+        let backend_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "llama3.gguf",
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "backend1",
+                    "meta": {
+                        "general_name": "Llama 3",
+                        "architecture": "llama"
+                    }
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&backend_response))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add model config
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "test-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("my-api-model".to_string()),
+                    model: Some("llama3.gguf".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Add a Ready model state
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "test-model".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "test-model".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 1234,
+                    backend_url: mock_server.uri(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        // Query by config key
+        let response = handle_get_model(state.clone(), Path("test-model".to_string())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        // Should have meta from backend
+        assert!(
+            json.get("meta").is_some(),
+            "meta should be preserved from backend response"
+        );
+        assert_eq!(
+            json["meta"]["general_name"], "Llama 3",
+            "meta.general_name should match backend response"
+        );
+        // ready should be injected as true
+        assert_eq!(json["ready"], true, "Loaded model should have ready: true");
+    }
+
+    /// Test that handle_get_model falls back to config when model is not loaded.
+    /// Response should have no `meta` and `ready: false`.
+    #[tokio::test]
+    async fn test_handle_get_model_fallback_to_config_when_not_loaded() {
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        // Add model config but do NOT add it to loaded models
+        {
+            let mut mc = state_arc.model_configs.write().await;
+            mc.insert(
+                "unloaded-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("my-unloaded-model".to_string()),
+                    model: Some("test/unloaded".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let state = State(state_arc.clone());
+
+        // Query by config key
+        let response = handle_get_model(state.clone(), Path("unloaded-model".to_string())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        // Should use api_name as id
+        assert_eq!(json["id"], "my-unloaded-model");
+        // Should NOT have meta
+        assert!(
+            json.get("meta").is_none(),
+            "Unloaded model should not have meta"
+        );
+        // ready should be false
+        assert_eq!(
+            json["ready"], false,
+            "Unloaded model should have ready: false"
+        );
+    }
+
+    /// Test that handle_get_model returns 404 for unknown model IDs.
+    #[tokio::test]
+    async fn test_handle_get_model_404_for_unknown_model() {
+        let state_inner = create_test_state();
+        let state_arc = Arc::new(state_inner);
+
+        let state = State(state_arc.clone());
+
+        // Query with a model_id that doesn't exist in config
+        let response =
+            handle_get_model(state.clone(), Path("totally-unknown-model".to_string())).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json["error"]["type"], "NotFoundError");
+    }
+
+    /// Test that handle_get_model works when backend returns multiple models
+    /// and matches by config's model field (file path).
+    #[tokio::test]
+    async fn test_handle_get_model_matches_by_model_field_when_multiple() {
+        let mock_server = MockServer::start().await;
+
+        // Backend returns multiple models
+        let backend_response = serde_json::json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "/path/to/model-a.gguf",
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "backend1"
+                },
+                {
+                    "id": "/path/to/model-b.gguf",
+                    "object": "model",
+                    "created": 1700000001,
+                    "owned_by": "backend1"
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&backend_response))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Config's model field matches model-b
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "my-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("my-api-name".to_string()),
+                    model: Some("/path/to/model-b.gguf".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "my-model".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "my-model".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 5678,
+                    backend_url: mock_server.uri(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        let response = handle_get_model(state.clone(), Path("my-model".to_string())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        // Should match model-b by config's model field
+        assert_eq!(
+            json["id"], "/path/to/model-b.gguf",
+            "Should match by config's model field"
+        );
+        assert_eq!(json["ready"], true);
+    }
+
+    /// Test that handle_get_model falls back to config when backend query fails.
+    #[tokio::test]
+    async fn test_handle_get_model_backend_failure_fallback() {
+        let config = Config::default();
+        let state = ProxyState::new(config, None);
+
+        // Add model config
+        {
+            let mut mc = state.model_configs.write().await;
+            mc.insert(
+                "fail-model".to_string(),
+                ModelConfig {
+                    backend: "llama_cpp".to_string(),
+                    api_name: Some("fail-api".to_string()),
+                    model: Some("test/fail".to_string()),
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Add a Ready model with unreachable backend URL
+        {
+            let mut models = state.models.write().await;
+            models.insert(
+                "fail-model".to_string(),
+                crate::proxy::ModelState::Ready {
+                    model_name: "fail-model".to_string(),
+                    backend: "llama_cpp".to_string(),
+                    backend_pid: 9999,
+                    backend_url: "http://localhost:59999".to_string(),
+                    load_time: std::time::SystemTime::now(),
+                    last_accessed: std::time::Instant::now(),
+                    consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                    failure_timestamp: None,
+                    restart_count: 0,
+                },
+            );
+        }
+
+        let state_arc = Arc::new(state);
+        let state = State(state_arc.clone());
+
+        let response = handle_get_model(state.clone(), Path("fail-model".to_string())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let (_parts, body) = response.into_response().into_parts();
+        let bytes = to_bytes(body, 1024 * 1024).await.unwrap();
+        let json: JsonValue = serde_json::from_slice(&bytes).unwrap();
+
+        // Should fall back to config-based response
+        assert_eq!(json["id"], "fail-api");
+        assert!(json.get("meta").is_none());
+        assert_eq!(json["ready"], false);
     }
 }

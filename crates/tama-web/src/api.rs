@@ -295,9 +295,7 @@ async fn load_config_from_state(
     let config_dir = state
         .db_dir
         .clone()
-        .or_else(|| {
-            state.config.try_read().ok()?.loaded_from.clone()
-        })
+        .or_else(|| state.config.try_read().ok()?.loaded_from.clone())
         .and_then(|loaded| {
             if loaded.is_dir() {
                 Some(loaded)
